@@ -605,7 +605,8 @@ def create_calculator_templates():
             "name": "Ponyva nyomtatás",
             "code": "CALC_PONYVA",
             "description": "Ponyva/molinó nyomtatás kalkulátor - frontlit, kamion ponyva, épületháló",
-            "markup": 35.0,
+            "material_markup": 30.0,
+            "service_markup": 40.0,
             "materials": ["PONYVA_510", "PONYVA_670", "EPULETHALO_270", "PONYVA_BACKLIT"],
             "services": [
                 "PRINT_CMYK_ROLL", "PRINT_CMYKW_ROLL", "CUT_STRAIGHT",
@@ -617,7 +618,8 @@ def create_calculator_templates():
             "name": "Vinyl fólia",
             "code": "CALC_VINYL",
             "description": "Vinyl fólia nyomtatás és vágás - 2D/3D vinyl, perforált fólia",
-            "markup": 40.0,
+            "material_markup": 35.0,
+            "service_markup": 45.0,
             "materials": ["VINYL_2D", "VINYL_3D", "FOLIA_PERFORALT", "FOLIA_PADLO"],
             "services": [
                 "PRINT_CMYK_ROLL", "PRINT_CMYKW_ROLL", "CUT_CONTOUR",
@@ -628,7 +630,8 @@ def create_calculator_templates():
             "name": "Textil nyomtatás",
             "code": "CALC_TEXTIL",
             "description": "Textil alapú nyomatok - vászon, fényzáró, átvilágítható textil",
-            "markup": 38.0,
+            "material_markup": 33.0,
+            "service_markup": 43.0,
             "materials": ["TEXTIL_VASZON", "TEXTIL_STD", "TEXTIL_FENYZARO", "TEXTIL_BACKLIT"],
             "services": [
                 "PRINT_CMYK_ROLL", "PRINT_CMYKW_ROLL", "CUT_STRAIGHT",
@@ -640,7 +643,8 @@ def create_calculator_templates():
             "name": "Habosított PVC tábla",
             "code": "CALC_PVC_HAB",
             "description": "Habosított PVC táblák nyomtatása - 3/5/10/19mm vastagságban",
-            "markup": 42.0,
+            "material_markup": 37.0,
+            "service_markup": 47.0,
             "materials": ["PVC_HAB_3", "PVC_HAB_5", "PVC_HAB_10", "PVC_HAB_19"],
             "services": [
                 "PRINT_CMYK_SHEET", "PRINT_CMYKW_SHEET", "VARNISH",
@@ -652,7 +656,8 @@ def create_calculator_templates():
             "name": "Plexi tábla",
             "code": "CALC_PLEXI",
             "description": "Plexiüveg táblák nyomtatása - víztiszta és opál változatban",
-            "markup": 45.0,
+            "material_markup": 40.0,
+            "service_markup": 50.0,
             "materials": ["PLEXI_VT_3", "PLEXI_VT_5", "PLEXI_OPAL_3", "PLEXI_OPAL_5"],
             "services": [
                 "PRINT_CMYK_SHEET", "PRINT_CMYKW_SHEET", "VARNISH",
@@ -663,7 +668,8 @@ def create_calculator_templates():
             "name": "Fa rétegelt lemez",
             "code": "CALC_FA",
             "description": "Fa rétegelt lemezek nyomtatása - 12/18mm vastagságban",
-            "markup": 43.0,
+            "material_markup": 38.0,
+            "service_markup": 48.0,
             "materials": ["FA_12", "FA_18"],
             "services": [
                 "PRINT_CMYK_SHEET", "PRINT_CMYKW_SHEET", "VARNISH",
@@ -674,7 +680,8 @@ def create_calculator_templates():
             "name": "Alumínium kompozit",
             "code": "CALC_ALU",
             "description": "Alumínium kompozit lemezek nyomtatása - 3mm",
-            "markup": 44.0,
+            "material_markup": 39.0,
+            "service_markup": 49.0,
             "materials": ["ALU_KOMP_3"],
             "services": [
                 "PRINT_CMYK_SHEET", "PRINT_CMYKW_SHEET", "VARNISH",
@@ -685,7 +692,8 @@ def create_calculator_templates():
             "name": "Polikarbonát",
             "code": "CALC_POLIKARB",
             "description": "Polikarbonát lemezek nyomtatása - 3/5mm víztiszta",
-            "markup": 46.0,
+            "material_markup": 41.0,
+            "service_markup": 51.0,
             "materials": ["POLIKARB_3", "POLIKARB_5"],
             "services": [
                 "PRINT_CMYK_SHEET", "PRINT_CMYKW_SHEET", "VARNISH",
@@ -696,7 +704,8 @@ def create_calculator_templates():
             "name": "Kültéri papír (plakát)",
             "code": "CALC_PAPER",
             "description": "Kültéri papír plakátok - Blueback, Citylight",
-            "markup": 32.0,
+            "material_markup": 27.0,
+            "service_markup": 37.0,
             "materials": ["PAPER_BLUEBACK", "PAPER_CITYLIGHT"],
             "services": [
                 "PRINT_CMYK_ROLL", "CUT_STRAIGHT", "LAMINATE_ADHESIVE",
@@ -707,7 +716,8 @@ def create_calculator_templates():
             "name": "Mágnesfólia",
             "code": "CALC_MAGNES",
             "description": "Mágnesfólia nyomtatás - 0.6mm fehér mágneses alapanyag",
-            "markup": 48.0,
+            "material_markup": 43.0,
+            "service_markup": 53.0,
             "materials": ["MAGNES_06"],
             "services": [
                 "PRINT_CMYK_ROLL", "PRINT_CMYKW_ROLL", "CUT_CONTOUR",
@@ -723,7 +733,9 @@ def create_calculator_templates():
             defaults={
                 "name": tmpl_data["name"],
                 "description": tmpl_data["description"],
-                "default_markup_percentage": tmpl_data["markup"],
+                "default_material_markup_percentage": tmpl_data["material_markup"],
+                "default_service_markup_percentage": tmpl_data["service_markup"],
+                "default_markup_percentage": (tmpl_data["material_markup"] + tmpl_data["service_markup"]) / 2,  # Átlag kompatibilitásért
             }
         )
         
