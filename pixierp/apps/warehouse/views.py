@@ -1,21 +1,58 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from django.db.models import Q, Sum
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+import os
+from datetime import datetime, date
+from .nav_invoice_service import NavInvoiceService
 from .models import (
-    MaterialType, Material, Warehouse, Shelf, MaterialSupplier, 
-    Inventory, MaterialReceipt
+    MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
+    Inventory, MaterialCostItem,
+    MaterialStock, MaterialReceipt, StockMovement,
+    SupplierInvoice, InvoiceItem,
+    ScrapRecord, ScrapItem
 )
 from .serializers import (
-    MaterialTypeSerializer, MaterialSerializer, WarehouseSerializer, 
+    MaterialTypeSerializer, MaterialGroupSerializer, MaterialSerializer, WarehouseSerializer, 
     ShelfSerializer, MaterialSupplierSerializer, InventorySerializer, 
-    MaterialReceiptSerializer, MaterialReceiptCreateSerializer
+    MaterialCostItemSerializer,
+    MaterialStockSerializer, MaterialReceiptSerializer, StockMovementSerializer,
+    SupplierInvoiceSerializer, InvoiceItemSerializer,
+    ScrapRecordSerializer, ScrapItemSerializer
 )
 
 class MaterialTypeViewSet(viewsets.ModelViewSet):
     """Alapanyag típusok kezelése"""
     queryset = MaterialType.objects.all()
     serializer_class = MaterialTypeSerializer
+
+
+class MaterialGroupViewSet(viewsets.ModelViewSet):
+    """Alapanyag gyűjtők kezelése"""
+    queryset = MaterialGroup.objects.all()
+    serializer_class = MaterialGroupSerializer
+    
+    def get_queryset(self):
+        queryset = MaterialGroup.objects.all()
+        
+        # Szűrés aktív státusz szerint
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        
+        # Keresés név szerint
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(name__icontains=search)
+        
+        return queryset.order_by('name')
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
 
 class MaterialViewSet(viewsets.ModelViewSet):
     """Alapanyagok kezelése"""
@@ -123,77 +160,671 @@ class InventoryViewSet(viewsets.ModelViewSet):
             'warehouse_summary': warehouse_summary
         })
 
-class MaterialReceiptViewSet(viewsets.ModelViewSet):
-    """Alapanyag bevételezések kezelése"""
-    queryset = MaterialReceipt.objects.all()
-    
-    def get_serializer_class(self):
-        if self.action in ['create', 'update', 'partial_update']:
-            return MaterialReceiptCreateSerializer
-        return MaterialReceiptSerializer
+
+
+class MaterialCostItemViewSet(viewsets.ModelViewSet):
+    """Alapanyag költség elemek kezelése"""
+    queryset = MaterialCostItem.objects.all()
+    serializer_class = MaterialCostItemSerializer
     
     def get_queryset(self):
-        queryset = MaterialReceipt.objects.all()
-        material = self.request.query_params.get('material', None)
-        supplier = self.request.query_params.get('supplier', None)
-        warehouse = self.request.query_params.get('warehouse', None)
+        queryset = MaterialCostItem.objects.select_related('material', 'supplier')
+        material_id = self.request.query_params.get('material_id', None)
+        supplier_id = self.request.query_params.get('supplier_id', None)
+        is_internal = self.request.query_params.get('is_internal', None)
+        
+        if material_id:
+            queryset = queryset.filter(material_id=material_id)
+        
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+        
+        if is_internal is not None:
+            queryset = queryset.filter(is_internal=is_internal.lower() == 'true')
+        
+        return queryset
+
+
+class MaterialStockViewSet(viewsets.ModelViewSet):
+    """Készletek kezelése"""
+    queryset = MaterialStock.objects.all()
+    serializer_class = MaterialStockSerializer
+    
+    def get_queryset(self):
+        queryset = MaterialStock.objects.select_related(
+            'material', 'warehouse', 'receipt', 'created_by'
+        ).all()
+        
+        material_id = self.request.query_params.get('material_id', None)
+        warehouse_id = self.request.query_params.get('warehouse_id', None)
+        stock_status = self.request.query_params.get('status', None)
+        
+        if material_id:
+            queryset = queryset.filter(material_id=material_id)
+        
+        if warehouse_id:
+            queryset = queryset.filter(warehouse_id=warehouse_id)
+        
+        if stock_status:
+            queryset = queryset.filter(status=stock_status)
+        
+        return queryset
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def move(self, request, pk=None):
+        """Készlet mozgatása raktárak között"""
+        stock = self.get_object()
+        to_warehouse_id = request.data.get('to_warehouse')
+        quantity = request.data.get('quantity', stock.quantity)
+        notes = request.data.get('notes', '')
+        
+        if not to_warehouse_id:
+            return Response(
+                {'error': 'Cél raktár megadása kötelező'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            to_warehouse = Warehouse.objects.get(id=to_warehouse_id)
+        except Warehouse.DoesNotExist:
+            return Response(
+                {'error': 'Nem létező raktár'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        if float(quantity) > float(stock.quantity):
+            return Response(
+                {'error': 'Nincs elegendő mennyiség'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Mozgás rögzítése
+        movement = StockMovement.objects.create(
+            stock=stock,
+            movement_type='transfer',
+            from_warehouse=stock.warehouse,
+            to_warehouse=to_warehouse,
+            quantity=quantity,
+            notes=notes,
+            created_by=request.user
+        )
+        
+        # Ha teljes mennyiséget mozgat
+        if float(quantity) == float(stock.quantity):
+            stock.warehouse = to_warehouse
+            stock.save()
+        else:
+            # Új készlet tétel a cél raktárban
+            MaterialStock.objects.create(
+                material=stock.material,
+                warehouse=to_warehouse,
+                quantity=quantity,
+                width=stock.width,
+                length=stock.length,
+                thickness=stock.thickness,
+                dimension_unit=stock.dimension_unit,
+                unit_value=stock.unit_value,
+                total_value=float(quantity) * float(stock.unit_value),
+                currency=stock.currency,
+                status=stock.status,
+                receipt=stock.receipt,
+                created_by=request.user
+            )
+            # Eredeti készlet csökkentése
+            stock.quantity = float(stock.quantity) - float(quantity)
+            stock.save()
+        
+        return Response({
+            'message': 'Készlet sikeresen mozgatva',
+            'movement_id': movement.id
+        })
+    
+    @action(detail=True, methods=['post'])
+    def scrap(self, request, pk=None):
+        """Készlet selejtezése"""
+        stock = self.get_object()
+        notes = request.data.get('notes', '')
+        
+        # Mozgás rögzítése
+        movement = StockMovement.objects.create(
+            stock=stock,
+            movement_type='scrap',
+            from_warehouse=stock.warehouse,
+            quantity=stock.quantity,
+            notes=notes,
+            created_by=request.user
+        )
+        
+        stock.status = 'scrapped'
+        stock.save()
+        
+        return Response({
+            'message': 'Készlet selejtezve',
+            'movement_id': movement.id
+        })
+    
+    @action(detail=True, methods=['post'])
+    def mark_defective(self, request, pk=None):
+        """Készlet hibásnak jelölése"""
+        stock = self.get_object()
+        notes = request.data.get('notes', '')
+        
+        # Mozgás rögzítése
+        movement = StockMovement.objects.create(
+            stock=stock,
+            movement_type='mark_defective',
+            from_warehouse=stock.warehouse,
+            quantity=stock.quantity,
+            notes=notes,
+            created_by=request.user
+        )
+        
+        stock.status = 'defective'
+        stock.save()
+        
+        return Response({
+            'message': 'Készlet hibásnak jelölve',
+            'movement_id': movement.id
+        })
+
+
+class MaterialReceiptViewSet(viewsets.ModelViewSet):
+    """Bevételezések kezelése"""
+    queryset = MaterialReceipt.objects.all()
+    serializer_class = MaterialReceiptSerializer
+    
+    def get_queryset(self):
+        queryset = MaterialReceipt.objects.select_related(
+            'material', 'warehouse', 'supplier', 'created_by'
+        ).all()
+        
+        material_id = self.request.query_params.get('material_id', None)
+        warehouse_id = self.request.query_params.get('warehouse_id', None)
+        supplier_id = self.request.query_params.get('supplier_id', None)
+        date_from = self.request.query_params.get('date_from', None)
+        date_to = self.request.query_params.get('date_to', None)
+        
+        if material_id:
+            queryset = queryset.filter(material_id=material_id)
+        
+        if warehouse_id:
+            queryset = queryset.filter(warehouse_id=warehouse_id)
+        
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+        
+        if date_from:
+            queryset = queryset.filter(receipt_date__gte=date_from)
+        
+        if date_to:
+            queryset = queryset.filter(receipt_date__lte=date_to)
+        
+        return queryset
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class StockMovementViewSet(viewsets.ReadOnlyModelViewSet):
+    """Készlet mozgások (csak olvasható)"""
+    queryset = StockMovement.objects.all()
+    serializer_class = StockMovementSerializer
+    
+    def get_queryset(self):
+        queryset = StockMovement.objects.select_related(
+            'stock', 'stock__material', 'from_warehouse', 'to_warehouse', 'created_by'
+        ).all()
+        
+        stock_id = self.request.query_params.get('stock_id', None)
+        material_id = self.request.query_params.get('material_id', None)
+        movement_type = self.request.query_params.get('movement_type', None)
+        
+        if stock_id:
+            queryset = queryset.filter(stock_id=stock_id)
+        
+        if material_id:
+            queryset = queryset.filter(stock__material_id=material_id)
+        
+        if movement_type:
+            queryset = queryset.filter(movement_type=movement_type)
+        
+        return queryset
+
+
+class SupplierInvoiceViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet a beszállítói számlák kezeléséhez.
+    """
+    queryset = SupplierInvoice.objects.all()
+    serializer_class = SupplierInvoiceSerializer
+    
+    def get_queryset(self):
+        queryset = SupplierInvoice.objects.select_related('supplier').prefetch_related('items').all()
+        
+        # Szűrések
+        supplier_id = self.request.query_params.get('supplier_id', None)
         status_filter = self.request.query_params.get('status', None)
+        date_from = self.request.query_params.get('date_from', None)
+        date_to = self.request.query_params.get('date_to', None)
         
-        if material:
-            queryset = queryset.filter(material_id=material)
-        
-        if supplier:
-            queryset = queryset.filter(supplier_id=supplier)
-        
-        if warehouse:
-            queryset = queryset.filter(warehouse_id=warehouse)
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
         
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         
-        return queryset
+        if date_from:
+            queryset = queryset.filter(invoice_date__gte=date_from)
+        
+        if date_to:
+            queryset = queryset.filter(invoice_date__lte=date_to)
+        
+        return queryset.order_by('-invoice_date', '-created_at')
     
     @action(detail=True, methods=['post'])
-    def confirm_receipt(self, request, pk=None):
-        """Bevételezés megerősítése és készlet frissítése"""
-        receipt = self.get_object()
+    def confirm(self, request, pk=None):
+        """Számla megerősítése (draft → confirmed)"""
+        invoice = self.get_object()
         
-        if receipt.status != 'pending':
+        if invoice.status != 'draft':
             return Response(
-                {'error': 'Csak függőben lévő bevételezés erősíthető meg!'},
+                {'error': 'Csak piszkozat állapotú számla erősíthető meg'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        # Készlet frissítése
-        inventory, created = Inventory.objects.get_or_create(
-            material=receipt.material,
-            warehouse=receipt.warehouse,
-            shelf=receipt.shelf,
-            defaults={'quantity': 0}
-        )
+        invoice.status = 'confirmed'
+        invoice.save()
         
-        inventory.quantity += receipt.quantity
-        inventory.updated_by = request.user
-        inventory.save()
-        
-        # Bevételezés státuszának frissítése
-        receipt.status = 'received'
-        receipt.save()
-        
-        return Response({'message': 'Bevételezés sikeresen megerősítve!'})
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
     
     @action(detail=True, methods=['post'])
-    def cancel_receipt(self, request, pk=None):
-        """Bevételezés törlése"""
-        receipt = self.get_object()
+    def receive(self, request, pk=None):
+        """Számla bevételezése (confirmed → received)"""
+        invoice = self.get_object()
         
-        if receipt.status == 'received':
+        if invoice.status != 'confirmed':
             return Response(
-                {'error': 'Már bevételezett tétel nem törölhető!'},
+                {'error': 'Csak megerősített számla bevételezhető'},
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        receipt.status = 'cancelled'
-        receipt.save()
+        # Bevételezési dátum beállítása, ha nincs megadva
+        if not invoice.receipt_date:
+            from datetime import date
+            invoice.receipt_date = date.today()
         
-        return Response({'message': 'Bevételezés sikeresen törölve!'})
+        invoice.status = 'received'
+        invoice.save()
+        
+        # Készletek létrehozása a számlatételekből
+        for item in invoice.items.all():
+            MaterialStock.objects.create(
+                material=item.material,
+                warehouse=item.warehouse,
+                quantity=item.quantity,
+                width=item.width,
+                length=item.length,
+                thickness=item.thickness,
+                dimension_unit=item.dimension_unit,
+                unit_value=item.unit_price,
+                total_value=item.total_price,
+                currency=invoice.currency,
+                status='in_stock',
+                created_by=request.user
+            )
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def mark_paid(self, request, pk=None):
+        """Számla kifizetettként jelölése (received → paid)"""
+        invoice = self.get_object()
+        
+        if invoice.status not in ['received', 'confirmed']:
+            return Response(
+                {'error': 'Csak bevételezett vagy megerősített számla jelölhető kifizetettként'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # Fizetés dátuma
+        payment_date = request.data.get('payment_date', None)
+        if payment_date:
+            invoice.payment_date = payment_date
+        else:
+            from datetime import date
+            invoice.payment_date = date.today()
+        
+        invoice.status = 'paid'
+        invoice.save()
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Számla törlése/érvénytelenítése"""
+        invoice = self.get_object()
+        
+        if invoice.status == 'received':
+            return Response(
+                {'error': 'Bevételezett számla nem törölhető'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        invoice.status = 'cancelled'
+        invoice.save()
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def upload_image(self, request, pk=None):
+        """Számlakép feltöltése"""
+        invoice = self.get_object()
+        
+        if 'image' not in request.FILES:
+            return Response(
+                {'error': 'Nincs kép csatolva'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        image = request.FILES['image']
+        
+        # Fájlnév generálása
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        ext = os.path.splitext(image.name)[1]
+        filename = f"invoice_{invoice.id}_{timestamp}{ext}"
+        
+        # Kép mentése
+        filepath = os.path.join('invoice_images', filename)
+        saved_path = default_storage.save(filepath, ContentFile(image.read()))
+        
+        # invoice_images frissítése
+        if invoice.invoice_images is None:
+            invoice.invoice_images = []
+        
+        invoice.invoice_images.append(saved_path)
+        invoice.save()
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def delete_image(self, request, pk=None):
+        """Számlakép törlése"""
+        invoice = self.get_object()
+        image_path = request.data.get('image_path')
+        
+        if not image_path:
+            return Response(
+                {'error': 'Nincs képútvonal megadva'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        if image_path not in (invoice.invoice_images or []):
+            return Response(
+                {'error': 'Kép nem található'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Kép törlése fájlrendszerből
+        if default_storage.exists(image_path):
+            default_storage.delete(image_path)
+        
+        # invoice_images frissítése
+        invoice.invoice_images.remove(image_path)
+        invoice.save()
+        
+        serializer = self.get_serializer(invoice)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['post'])
+    def search_nav_invoices(self, request):
+        """NAV számlák keresése számlaszám vagy beszállító alapján"""
+        try:
+            nav_service = NavInvoiceService()
+            
+            # Keresési paraméterek
+            invoice_number = request.data.get('invoice_number')
+            supplier_name = request.data.get('supplier_name')
+            supplier_tax_number = request.data.get('supplier_tax_number')
+            amount_min = request.data.get('amount_min')
+            amount_max = request.data.get('amount_max')
+            date_from_str = request.data.get('date_from')
+            date_to_str = request.data.get('date_to')
+            
+            # Dátumok konvertálása
+            date_from = datetime.fromisoformat(date_from_str).date() if date_from_str else None
+            date_to = datetime.fromisoformat(date_to_str).date() if date_to_str else None
+            
+            # Keresés
+            results = nav_service.search_invoices(
+                invoice_number=invoice_number,
+                supplier_name=supplier_name,
+                supplier_tax_number=supplier_tax_number,
+                amount_min=amount_min,
+                amount_max=amount_max,
+                date_from=date_from,
+                date_to=date_to,
+                limit=50
+            )
+            
+            return Response({
+                'success': True,
+                'count': len(results),
+                'invoices': results
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'NAV keresési hiba: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'])
+    def import_nav_invoice(self, request):
+        """NAV számla importálása és feldolgozása"""
+        try:
+            nav_service = NavInvoiceService()
+            
+            invoice_number = request.data.get('invoice_number')
+            supplier_tax_number = request.data.get('supplier_tax_number')
+            
+            if not invoice_number or not supplier_tax_number:
+                return Response(
+                    {'error': 'Számlaszám és beszállító adószám kötelező'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Számla részletek lekérése
+            nav_invoice = nav_service.get_invoice_details(invoice_number, supplier_tax_number)
+            
+            if not nav_invoice:
+                return Response(
+                    {'error': 'Számla nem található a NAV rendszerben'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+            
+            # Konvertálás ERP formátumra
+            erp_data = nav_service.parse_invoice_to_erp_format(nav_invoice)
+            
+            return Response({
+                'success': True,
+                'invoice_data': erp_data,
+                'message': 'Számla sikeresen importálva, ellenőrizd az adatokat'
+            })
+            
+        except ValueError as e:
+            return Response(
+                {'success': False, 'error': str(e)},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        except Exception as e:
+            return Response(
+                {'success': False, 'error': f'NAV import hiba: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+
+class InvoiceItemViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet a számlatételek kezeléséhez.
+    """
+    queryset = InvoiceItem.objects.all()
+    serializer_class = InvoiceItemSerializer
+    
+    def get_queryset(self):
+        queryset = InvoiceItem.objects.select_related(
+            'invoice', 'material', 'warehouse'
+        ).all()
+        
+        # Szűrések
+        invoice_id = self.request.query_params.get('invoice_id', None)
+        material_id = self.request.query_params.get('material_id', None)
+        
+        if invoice_id:
+            queryset = queryset.filter(invoice_id=invoice_id)
+        
+        if material_id:
+            queryset = queryset.filter(material_id=material_id)
+        
+        return queryset.order_by('id')
+
+
+class ScrapRecordViewSet(viewsets.ModelViewSet):
+    """Selejtezési jegyzőkönyvek kezelése"""
+    queryset = ScrapRecord.objects.all()
+    serializer_class = ScrapRecordSerializer
+    parser_classes = [MultiPartParser, FormParser]
+    
+    def get_queryset(self):
+        queryset = ScrapRecord.objects.select_related(
+            'created_by', 'approved_by'
+        ).prefetch_related('items__material', 'items__warehouse').all()
+        
+        # Szűrés dátum szerint
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        
+        if date_from:
+            queryset = queryset.filter(scrap_date__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(scrap_date__lte=date_to)
+        
+        # Szűrés jóváhagyott szerint
+        is_approved = self.request.query_params.get('is_approved')
+        if is_approved is not None:
+            queryset = queryset.filter(is_approved=is_approved.lower() == 'true')
+        
+        # Keresés
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(scrap_number__icontains=search) |
+                Q(reason__icontains=search)
+            )
+        
+        return queryset.order_by('-scrap_date', '-created_at')
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+    
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        """Selejtezés jóváhagyása"""
+        scrap_record = self.get_object()
+        scrap_record.is_approved = True
+        scrap_record.approved_by = request.user
+        scrap_record.approved_at = datetime.now()
+        scrap_record.save()
+        
+        serializer = self.get_serializer(scrap_record)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def upload_image(self, request, pk=None):
+        """Fotó feltöltése selejtezéshez"""
+        scrap_record = self.get_object()
+        file = request.FILES.get('file')
+        
+        if not file:
+            return Response({'error': 'Nincs fájl'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Fájlnév generálás
+        ext = os.path.splitext(file.name)[1]
+        filename = f"scrap_{scrap_record.scrap_number}_{datetime.now().strftime('%Y%m%d%H%M%S')}{ext}"
+        filepath = f"scrap_images/{filename}"
+        
+        # Mentés
+        path = default_storage.save(filepath, ContentFile(file.read()))
+        
+        # Hozzáadás a jegyzőkönyvhöz
+        images = scrap_record.images if scrap_record.images else []
+        images.append(filename)
+        scrap_record.images = images
+        scrap_record.save()
+        
+        return Response({'filename': filename, 'path': path})
+    
+    @action(detail=True, methods=['delete'])
+    def delete_image(self, request, pk=None):
+        """Fotó törlése selejtezésről"""
+        scrap_record = self.get_object()
+        filename = request.data.get('filename')
+        
+        if not filename or filename not in scrap_record.images:
+            return Response({'error': 'Érvénytelen fájlnév'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Törlés a tárolóból
+        filepath = f"scrap_images/{filename}"
+        if default_storage.exists(filepath):
+            default_storage.delete(filepath)
+        
+        # Törlés a jegyzőkönyvből
+        images = scrap_record.images
+        images.remove(filename)
+        scrap_record.images = images
+        scrap_record.save()
+        
+        return Response({'message': 'Kép törölve'})
+
+
+class ScrapItemViewSet(viewsets.ModelViewSet):
+    """Selejtezett tételek kezelése"""
+    queryset = ScrapItem.objects.all()
+    serializer_class = ScrapItemSerializer
+    
+    def get_queryset(self):
+        queryset = ScrapItem.objects.select_related(
+            'scrap_record', 'stock', 'material', 'warehouse'
+        ).all()
+        
+        # Szűrés jegyzőkönyv szerint
+        scrap_record_id = self.request.query_params.get('scrap_record_id')
+        if scrap_record_id:
+            queryset = queryset.filter(scrap_record_id=scrap_record_id)
+        
+        return queryset.order_by('id')
+    
+    def perform_create(self, serializer):
+        """Selejtezett tétel létrehozása és készlet csökkentése"""
+        scrap_item = serializer.save()
+        
+        # Készlet csökkentése
+        stock = scrap_item.stock
+        stock.quantity -= scrap_item.quantity
+        if stock.quantity <= 0:
+            stock.status = 'scrapped'
+            stock.quantity = 0
+        stock.save()
+

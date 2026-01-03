@@ -4,10 +4,14 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import ProductClass, Project, ManufacturingProduct, Service, CalculatorTemplate, Calculation
+from .models import (
+    ProductClass, Project, ManufacturingProduct, Service, 
+    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
+)
 from .serializers import (
     ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer, 
-    CurrencySerializer, ServiceSerializer, CalculatorTemplateSerializer, CalculationSerializer
+    CurrencySerializer, ServiceSerializer, CalculatorTemplateSerializer, 
+    CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer
 )
 from apps.crm.models import Contact
 from apps.hr.models import Employee
@@ -203,3 +207,47 @@ class CalculationViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(calculation)
         return Response(serializer.data)
+
+
+class ServiceSupplierPriceViewSet(viewsets.ModelViewSet):
+    """Szolgáltatás beszállítói árak kezelése"""
+    queryset = ServiceSupplierPrice.objects.all()
+    serializer_class = ServiceSupplierPriceSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        queryset = ServiceSupplierPrice.objects.select_related('service', 'supplier')
+        service_id = self.request.query_params.get('service', None)
+        supplier_id = self.request.query_params.get('supplier', None)
+        
+        if service_id:
+            queryset = queryset.filter(service_id=service_id)
+        
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+        
+        return queryset
+
+
+class ServiceCostItemViewSet(viewsets.ModelViewSet):
+    """Szolgáltatás költség elemek kezelése"""
+    queryset = ServiceCostItem.objects.all()
+    serializer_class = ServiceCostItemSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        queryset = ServiceCostItem.objects.select_related('service', 'supplier')
+        service_id = self.request.query_params.get('service_id', None)
+        supplier_id = self.request.query_params.get('supplier_id', None)
+        is_internal = self.request.query_params.get('is_internal', None)
+        
+        if service_id:
+            queryset = queryset.filter(service_id=service_id)
+        
+        if supplier_id:
+            queryset = queryset.filter(supplier_id=supplier_id)
+        
+        if is_internal is not None:
+            queryset = queryset.filter(is_internal=is_internal.lower() == 'true')
+        
+        return queryset

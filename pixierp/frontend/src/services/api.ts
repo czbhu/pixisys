@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const DEFAULT_DEV_API_BASE_URL = 'http://localhost:8003/api/v1';
+const DEFAULT_DEV_API_BASE_URL = 'http://192.168.5.25:8003/api/v1';
 const DEFAULT_PROD_API_BASE_URL = '/api/v1';
 
 const API_BASE_URL =
@@ -10,6 +10,7 @@ const API_BASE_URL =
 // Create axios instance
 const api = axios.create({
     baseURL: API_BASE_URL,
+    timeout: 10000, // 10 second timeout
     headers: {
         'Content-Type': 'application/json',
     },

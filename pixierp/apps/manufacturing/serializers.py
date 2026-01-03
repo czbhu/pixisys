@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import ProductClass, Project, ManufacturingProduct, Service, CalculatorTemplate, Calculation
+from .models import (
+    ProductClass, Project, ManufacturingProduct, Service, 
+    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
+)
 from apps.crm.models import Contact
 from apps.hr.models import Department, Employee
 from apps.core.models import Currency
@@ -81,6 +84,10 @@ class ServiceSerializer(serializers.ModelSerializer):
     unit_display = serializers.CharField(source='get_unit_display', read_only=True)
     calculation_basis_display = serializers.CharField(source='get_calculation_basis_display', read_only=True)
     created_by_name = serializers.SerializerMethodField()
+    default_supplier_name = serializers.CharField(source='default_supplier.name', read_only=True)
+    internal_production_department_name = serializers.CharField(
+        source='internal_production_department.name', read_only=True
+    )
     
     class Meta:
         model = Service
@@ -112,7 +119,19 @@ class CalculatorTemplateSerializer(serializers.ModelSerializer):
             'material_format': m.material_format,
             'roll_width': m.roll_width,
             'sheet_division': m.sheet_division,
-            'yield_percentage': m.yield_percentage
+            'yield_percentage': m.yield_percentage,
+            'unit_cost_price': m.unit_cost_price,
+            'markup_percentage': m.markup_percentage,
+            'unit_selling_price': m.unit_selling_price,
+            'currency': m.currency,
+            'is_internal_production': m.is_internal_production,
+            'internal_production_cost': m.internal_production_cost,  # deprecated
+            'internal_fixed_cost': m.internal_fixed_cost,
+            'internal_price_per_unit': m.internal_price_per_unit,
+            'internal_price_per_perimeter': m.internal_price_per_perimeter,
+            'internal_price_per_area': m.internal_price_per_area,
+            'internal_price_per_weight': m.internal_price_per_weight,
+            'internal_price_per_time': m.internal_price_per_time,
         } for m in materials]
     
     def get_allowed_services_details(self, obj):
@@ -123,8 +142,20 @@ class CalculatorTemplateSerializer(serializers.ModelSerializer):
             'code': s.code,
             'unit': s.unit,
             'unit_price': s.unit_price,
-            'calculation_basis': s.calculation_basis,
-            'category': s.category
+            'calculation_basis': s.calculation_basis,  # deprecated
+            'category': s.category,
+            'unit_cost_price': s.unit_cost_price,
+            'markup_percentage': s.markup_percentage,
+            'unit_selling_price': s.unit_selling_price,
+            'currency': s.currency,
+            'is_internal_production': s.is_internal_production,
+            'internal_production_cost': s.internal_production_cost,  # deprecated
+            'internal_fixed_cost': s.internal_fixed_cost,
+            'internal_price_per_unit': s.internal_price_per_unit,
+            'internal_price_per_perimeter': s.internal_price_per_perimeter,
+            'internal_price_per_area': s.internal_price_per_area,
+            'internal_price_per_weight': s.internal_price_per_weight,
+            'internal_price_per_time': s.internal_price_per_time,
         } for s in services]
     
     def get_created_by_name(self, obj):
@@ -146,3 +177,36 @@ class CalculationSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return 'Rendszer'
+
+
+class ServiceSupplierPriceSerializer(serializers.ModelSerializer):
+    """Szolgáltatás beszállítói ár serializer"""
+    service_name = serializers.CharField(source='service.name', read_only=True)
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    
+    class Meta:
+        model = ServiceSupplierPrice
+        fields = [
+            'id', 'service', 'service_name', 'supplier', 'supplier_name',
+            'is_default', 'fixed_cost', 'price_per_unit', 'price_per_perimeter',
+            'price_per_area', 'price_per_weight', 'price_per_time',
+            'currency', 'min_order_quantity', 'lead_time_days', 'notes',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class ServiceCostItemSerializer(serializers.ModelSerializer):
+    """Szolgáltatás költség elem serializer"""
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    calculation_type_display = serializers.CharField(source='get_calculation_type_display', read_only=True)
+    
+    class Meta:
+        model = ServiceCostItem
+        fields = [
+            'id', 'service', 'supplier', 'supplier_name', 'is_internal',
+            'name', 'calculation_type', 'calculation_type_display', 'unit',
+            'unit_price', 'markup_percentage', 'selling_price', 'currency',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'selling_price']

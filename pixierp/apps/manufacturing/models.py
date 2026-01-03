@@ -1,6 +1,6 @@
 from django.db import models
 from django.contrib.auth import get_user_model
-from django.core.validators import MinValueValidator
+from django.core.validators import MinValueValidator, MaxValueValidator
 from apps.core.models import Company, Currency
 from apps.sales.models import Order, OrderItem, Product
 from apps.crm.models import Contact
@@ -355,15 +355,46 @@ class Service(models.Model):
         max_length=20,
         choices=CALCULATION_BASIS_CHOICES,
         default='fixed',
-        verbose_name="Kalkuláció alapja"
+        verbose_name="Kalkuláció alapja",
+        help_text="DEPRECATED: A kalkuláció alapját a beszállítói vagy belső gyártási árkalkuláció határozza meg"
     )
     
+    # Árazás
+    unit_cost_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységár (bekerülési)",
+        help_text="Bekerülési ár mértékegységenként"
+    )
+    
+    markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=35.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Haszonkulcs %",
+        help_text="Haszonkulcs százalékban"
+    )
+    
+    unit_selling_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységár (eladási)",
+        help_text="Eladási ár mértékegységenként (számított vagy manuális)"
+    )
+    
+    # Régi mező kompatibilitásért (deprecated - unit_selling_price-ra mutat)
     unit_price = models.DecimalField(
         max_digits=10,
         decimal_places=2,
+        default=0,
         validators=[MinValueValidator(0)],
-        verbose_name="Egységár (nettó)",
-        help_text="Ár mértékegységenként"
+        verbose_name="Egységár (nettó) - DEPRECATED",
+        help_text="Használd helyette: unit_selling_price"
     )
     
     currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
@@ -374,6 +405,88 @@ class Service(models.Model):
         blank=True,
         verbose_name="Kategória",
         help_text="pl. Nyomtatás, Utómunka, Szállítás"
+    )
+    
+    # Beszállítók és belső gyártás
+    default_supplier = models.ForeignKey(
+        'crm.Company',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        limit_choices_to={'company_type': 'supplier'},
+        related_name='default_services',
+        verbose_name="Alapértelmezett beszállító",
+        help_text="Ez a beszállító lesz használva a kalkulációban"
+    )
+    
+    is_internal_production = models.BooleanField(
+        default=False,
+        verbose_name="Belső gyártás",
+        help_text="Házon belül végezzük"
+    )
+    
+    internal_production_department = models.ForeignKey(
+        Department,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='provided_services',
+        verbose_name="Gyártó osztály",
+        help_text="Melyik osztály végzi"
+    )
+    
+    # Belső gyártás árkalkuláció komponensek
+    internal_fixed_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső fix költség"
+    )
+    internal_price_per_unit = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső egységár"
+    )
+    internal_price_per_perimeter = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső ár kerület alapján"
+    )
+    internal_price_per_area = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső ár terület alapján"
+    )
+    internal_price_per_weight = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső ár súly alapján"
+    )
+    internal_price_per_time = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső ár idő alapján"
+    )
+    
+    # Deprecated - internal_production_cost már nem használt, komponensek helyettesítik
+    internal_production_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Belső gyártási költség (deprecated)",
+        help_text="Használd helyette az árkalkulációs komponenseket"
     )
     
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
@@ -394,6 +507,29 @@ class Service(models.Model):
     
     def __str__(self):
         return f"{self.name} ({self.code})"
+    
+    def calculate_selling_price(self):
+        """Eladási ár számítása bekerülési árból és haszonkulcsból"""
+        if self.unit_cost_price:
+            self.unit_selling_price = self.unit_cost_price * (1 + self.markup_percentage / 100)
+            self.unit_price = self.unit_selling_price  # kompatibilitás
+    
+    def calculate_markup(self):
+        """Haszonkulcs számítása bekerülési és eladási árból"""
+        if self.unit_cost_price and self.unit_cost_price > 0 and self.unit_selling_price:
+            profit = self.unit_selling_price - self.unit_cost_price
+            self.markup_percentage = (profit / self.unit_cost_price) * 100
+    
+    def save(self, *args, **kwargs):
+        # Szinkronizálás: unit_price = unit_selling_price (kompatibilitás)
+        if self.unit_selling_price:
+            self.unit_price = self.unit_selling_price
+        
+        # Ha van bekerülési ár és haszonkulcs, de nincs eladási ár, akkor számoljuk
+        if self.unit_cost_price and not self.unit_selling_price:
+            self.calculate_selling_price()
+        
+        super().save(*args, **kwargs)
 
 
 class CalculatorTemplate(models.Model):
@@ -630,4 +766,238 @@ class Calculation(models.Model):
     
     def save(self, *args, **kwargs):
         self.calculate_prices()
+        super().save(*args, **kwargs)
+
+
+class ServiceSupplierPrice(models.Model):
+    """Szolgáltatás beszállítói árazás"""
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name='supplier_prices',
+        verbose_name="Szolgáltatás"
+    )
+    supplier = models.ForeignKey(
+        'crm.Company',
+        on_delete=models.CASCADE,
+        limit_choices_to={'company_type': 'supplier'},
+        related_name='service_prices',
+        verbose_name="Beszállító"
+    )
+    is_default = models.BooleanField(
+        default=False,
+        verbose_name="Alapértelmezett beszállító",
+        help_text="Ez a beszállító lesz használva a kalkulációban"
+    )
+    
+    # Árazási komponensek
+    fixed_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Fix költség",
+        help_text="Fix költség (pl. beállítási díj)"
+    )
+    price_per_unit = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységár",
+        help_text="Ár darabonként/mértékegységenként"
+    )
+    price_per_perimeter = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Ár kerület alapján",
+        help_text="Ár folyóméterenként (kerület)"
+    )
+    price_per_area = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Ár terület alapján",
+        help_text="Ár négyzetméterenként"
+    )
+    price_per_weight = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Ár súly alapján",
+        help_text="Ár kilogrammonként"
+    )
+    price_per_time = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Ár idő alapján",
+        help_text="Ár óránként"
+    )
+    
+    currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
+    min_order_quantity = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Minimum rendelési mennyiség"
+    )
+    lead_time_days = models.IntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Szállítási határidő (nap)"
+    )
+    notes = models.TextField(blank=True, verbose_name="Megjegyzések")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    
+    class Meta:
+        verbose_name = "Szolgáltatás beszállítói ár"
+        verbose_name_plural = "Szolgáltatás beszállítói árak"
+        ordering = ['service', 'supplier']
+        unique_together = ['service', 'supplier']
+    
+    def __str__(self):
+        default = " (alapértelmezett)" if self.is_default else ""
+        return f"{self.service.name} - {self.supplier.name}{default}"
+    
+    def save(self, *args, **kwargs):
+        # Ha ez az alapértelmezett, akkor a többi ne legyen az
+        if self.is_default:
+            ServiceSupplierPrice.objects.filter(
+                service=self.service,
+                is_default=True
+            ).exclude(id=self.id).update(is_default=False)
+        super().save(*args, **kwargs)
+    
+    def calculate_total_cost(self, quantity=1, perimeter=0, area=0, weight=0, time=0):
+        """Teljes költség számítása a különböző komponensek alapján"""
+        total = self.fixed_cost
+        total += self.price_per_unit * quantity
+        total += self.price_per_perimeter * perimeter
+        total += self.price_per_area * area
+        total += self.price_per_weight * weight
+        total += self.price_per_time * time
+        return total
+
+
+class ServiceCostItem(models.Model):
+    """Szolgáltatás költség elem (beszállítóhoz vagy belső gyártáshoz)"""
+    
+    CALCULATION_TYPE_CHOICES = [
+        ('fixed', 'Fix költség'),
+        ('unit', 'Darab alapú'),
+        ('length', 'Folyóméter'),
+        ('perimeter', 'Kerület'),
+        ('area', 'Terület'),
+        ('weight', 'Súly'),
+        ('time', 'Idő'),
+    ]
+    
+    service = models.ForeignKey(
+        Service,
+        on_delete=models.CASCADE,
+        related_name='cost_items',
+        verbose_name="Szolgáltatás"
+    )
+    
+    supplier = models.ForeignKey(
+        'crm.Company',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        limit_choices_to={'company_type': 'supplier'},
+        related_name='service_cost_items',
+        verbose_name="Beszállító",
+        help_text="Null = belső gyártás"
+    )
+    
+    is_internal = models.BooleanField(
+        default=False,
+        verbose_name="Belső gyártás",
+        help_text="Ez a költség elem belső gyártáshoz tartozik"
+    )
+    
+    name = models.CharField(
+        max_length=200,
+        verbose_name="Megnevezés",
+        help_text="pl. Anyagköltség, Munkadíj, stb."
+    )
+    
+    calculation_type = models.CharField(
+        max_length=20,
+        choices=CALCULATION_TYPE_CHOICES,
+        default='unit',
+        verbose_name="Számítás típusa"
+    )
+    
+    unit = models.CharField(
+        max_length=50,
+        blank=True,
+        verbose_name="Egység",
+        help_text="pl. db, kg, m, m², óra"
+    )
+    
+    unit_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységár",
+        help_text="Bekerülési egységár"
+    )
+    
+    markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        verbose_name="Haszon kulcs (%)"
+    )
+    
+    selling_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Eladási ár",
+        help_text="Automatikusan számított"
+    )
+    
+    currency = models.CharField(
+        max_length=3,
+        default='HUF',
+        verbose_name="Pénznem"
+    )
+    
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name="Aktív"
+    )
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    
+    class Meta:
+        verbose_name = "Szolgáltatás költség elem"
+        verbose_name_plural = "Szolgáltatás költség elemek"
+        ordering = ['service', 'supplier', 'name']
+    
+    def __str__(self):
+        source = "Belső" if self.is_internal else (self.supplier.name if self.supplier else "Ismeretlen")
+        return f"{self.service.name} - {source} - {self.name}"
+    
+    def save(self, *args, **kwargs):
+        # Automatikus eladási ár számítás
+        if self.unit_price and self.markup_percentage:
+            self.selling_price = self.unit_price * (1 + self.markup_percentage / 100)
         super().save(*args, **kwargs)

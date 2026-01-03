@@ -1,7 +1,10 @@
 from rest_framework import serializers
 from .models import (
-    MaterialType, Material, Warehouse, Shelf, MaterialSupplier, 
-    Inventory, MaterialReceipt
+    MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
+    Inventory, MaterialCostItem,
+    MaterialStock, MaterialReceipt, StockMovement,
+    SupplierInvoice, InvoiceItem,
+    ScrapRecord, ScrapItem
 )
 
 class MaterialTypeSerializer(serializers.ModelSerializer):
@@ -12,18 +15,55 @@ class MaterialTypeSerializer(serializers.ModelSerializer):
         fields = ['id', 'name', 'description', 'created_at', 'updated_at']
         read_only_fields = ['created_at', 'updated_at']
 
+
+class MaterialGroupSerializer(serializers.ModelSerializer):
+    """Alapanyag gyűjtő serializer"""
+    materials_count = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = MaterialGroup
+        fields = [
+            'id', 'name', 'description', 'is_active', 
+            'materials_count', 'created_at', 'updated_at', 
+            'created_by', 'created_by_name'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'created_by', 'materials_count']
+    
+    def get_materials_count(self, obj):
+        return obj.get_materials_count()
+
+
 class MaterialSerializer(serializers.ModelSerializer):
     """Alapanyag serializer"""
     material_type_name = serializers.CharField(source='material_type.name', read_only=True)
+    material_group_name = serializers.CharField(source='material_group.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    default_supplier_name = serializers.CharField(source='default_supplier.name', read_only=True)
+    internal_production_department_name = serializers.CharField(
+        source='internal_production_department.name', read_only=True
+    )
     
     class Meta:
         model = Material
         fields = [
-            'id', 'name', 'code', 'description', 'material_type', 'material_type_name',
+            'id', 'name', 'code', 'description', 
+            'material_type', 'material_type_name',
+            'material_group', 'material_group_name',
             'unit', 'min_stock_level', 'width', 'length', 'height', 'dimension_unit',
-            'density', 'density_unit', 'is_active', 'created_at', 'updated_at',
-            'created_by', 'created_by_name'
+            'width_fixed', 'length_fixed', 'height_fixed',
+            'density', 'density_unit', 'material_format', 'roll_width', 'sheet_division',
+            'yield_percentage',
+            'area_weight', 'area_weight_unit', 'specific_weight', 'specific_weight_unit',
+            'weight', 'weight_unit', 'volume_liter',
+            'unit_cost_price', 'markup_percentage', 'unit_selling_price',
+            'currency', 'default_supplier', 'default_supplier_name',
+            'is_internal_production', 'internal_production_department',
+            'internal_production_department_name', 'internal_production_cost',
+            'internal_fixed_cost', 'internal_price_per_unit', 'internal_price_per_perimeter',
+            'internal_price_per_area', 'internal_price_per_weight', 'internal_price_per_time',
+            'available_widths', 'available_lengths', 'available_thicknesses',
+            'is_active', 'created_at', 'updated_at', 'created_by', 'created_by_name'
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']
 
@@ -115,3 +155,220 @@ class MaterialReceiptCreateSerializer(serializers.ModelSerializer):
             'receipt_number', 'material', 'supplier', 'warehouse', 'shelf',
             'quantity', 'unit_price', 'currency', 'receipt_date', 'notes'
         ]
+
+
+
+
+class MaterialCostItemSerializer(serializers.ModelSerializer):
+    """Alapanyag költség elem serializer"""
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    calculation_type_display = serializers.CharField(source='get_calculation_type_display', read_only=True)
+    
+    class Meta:
+        model = MaterialCostItem
+        fields = [
+            'id', 'material', 'supplier', 'supplier_name', 'is_internal',
+            'name', 'calculation_type', 'calculation_type_display', 'unit',
+            'unit_price', 'markup_percentage', 'selling_price', 'currency',
+            'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'selling_price']
+
+
+class MaterialStockSerializer(serializers.ModelSerializer):
+    """Készlet serializer"""
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    material_unit = serializers.CharField(source='material.unit', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    receipt_info = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    
+    class Meta:
+        model = MaterialStock
+        fields = [
+            'id', 'material', 'material_name', 'material_code', 'material_unit',
+            'warehouse', 'warehouse_name', 'quantity',
+            'width', 'length', 'thickness', 'dimension_unit',
+            'unit_value', 'total_value', 'currency', 'status', 'status_display',
+            'receipt', 'receipt_info', 'created_at', 'updated_at',
+            'created_by', 'created_by_name'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'total_value']
+    
+    def get_receipt_info(self, obj):
+        if obj.receipt:
+            return {
+                'id': obj.receipt.id,
+                'date': obj.receipt.receipt_date,
+                'supplier': obj.receipt.supplier.name if obj.receipt.supplier else None,
+                'invoice_number': obj.receipt.invoice_number
+            }
+        return None
+
+
+class MaterialReceiptSerializer(serializers.ModelSerializer):
+    """Bevételezés serializer"""
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = MaterialReceipt
+        fields = [
+            'id', 'material', 'material_name', 'material_code',
+            'warehouse', 'warehouse_name', 'supplier', 'supplier_name',
+            'receipt_date', 'invoice_number', 'invoice_value', 'currency',
+            'quantity', 'unit_price', 'width', 'length', 'thickness',
+            'dimension_unit', 'notes', 'created_at', 'updated_at',
+            'created_by', 'created_by_name'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+
+class StockMovementSerializer(serializers.ModelSerializer):
+    """Készlet mozgás serializer"""
+    stock_info = serializers.SerializerMethodField()
+    from_warehouse_name = serializers.CharField(source='from_warehouse.name', read_only=True)
+    to_warehouse_name = serializers.CharField(source='to_warehouse.name', read_only=True)
+    movement_type_display = serializers.CharField(source='get_movement_type_display', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    class Meta:
+        model = StockMovement
+        fields = [
+            'id', 'stock', 'stock_info', 'movement_type', 'movement_type_display',
+            'from_warehouse', 'from_warehouse_name', 'to_warehouse', 'to_warehouse_name',
+            'quantity', 'notes', 'created_at', 'created_by', 'created_by_name'
+        ]
+        read_only_fields = ['created_at']
+    
+    def get_stock_info(self, obj):
+        return {
+            'id': obj.stock.id,
+            'material_name': obj.stock.material.name,
+            'material_code': obj.stock.material.code
+        }
+
+
+class InvoiceItemSerializer(serializers.ModelSerializer):
+    """Számla tétel serializer"""
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    material_unit = serializers.CharField(source='material.unit', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    
+    # Figyelmeztetés, ha az egységár eltér a beállított bekerülési ártól
+    price_warning = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = InvoiceItem
+        fields = [
+            'id', 'invoice', 'material', 'material_name', 'material_code', 'material_unit',
+            'warehouse', 'warehouse_name', 'quantity', 'unit', 'unit_price', 'total_price',
+            'width', 'length', 'thickness', 'dimension_unit', 'notes',
+            'price_warning', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'total_price', 'price_warning']
+    
+    def get_price_warning(self, obj):
+        """Ellenőrzi, hogy az egységár eltér-e a beállított bekerülési ártól"""
+        if obj.material and obj.material.unit_cost_price:
+            expected_price = float(obj.material.unit_cost_price)
+            actual_price = float(obj.unit_price)
+            difference = abs(expected_price - actual_price)
+            percentage_diff = (difference / expected_price * 100) if expected_price > 0 else 0
+            
+            if percentage_diff > 5:  # 5% eltérés felett figyelmeztet
+                return {
+                    'has_warning': True,
+                    'expected_price': expected_price,
+                    'actual_price': actual_price,
+                    'difference': round(difference, 2),
+                    'percentage_diff': round(percentage_diff, 2)
+                }
+        return {'has_warning': False}
+
+
+class SupplierInvoiceSerializer(serializers.ModelSerializer):
+    """Beszállítói számla serializer"""
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    payment_method_display = serializers.CharField(source='get_payment_method_display', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    
+    # Tételek
+    items = InvoiceItemSerializer(many=True, read_only=True)
+    items_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = SupplierInvoice
+        fields = [
+            'id', 'invoice_number', 'supplier', 'supplier_name',
+            'invoice_date', 'fulfillment_date', 'receipt_date', 'due_date', 'payment_date',
+            'payment_method', 'payment_method_display', 'currency', 'total_amount',
+            'status', 'status_display', 'invoice_images', 'notes',
+            'items', 'items_count',
+            'created_at', 'updated_at', 'created_by', 'created_by_name'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'items', 'items_count']
+    
+    def get_items_count(self, obj):
+        return obj.items.count()
+
+
+class ScrapItemSerializer(serializers.ModelSerializer):
+    """Selejtezett tétel serializer"""
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    
+    class Meta:
+        model = ScrapItem
+        fields = [
+            'id', 'scrap_record', 'stock', 'material', 'material_name', 'material_code',
+            'warehouse', 'warehouse_name', 'quantity',
+            'width', 'length', 'thickness', 'dimension_unit',
+            'unit_cost_value', 'unit_selling_value',
+            'total_cost_value', 'total_selling_value', 'currency',
+            'created_at'
+        ]
+        read_only_fields = ['created_at', 'total_cost_value', 'total_selling_value']
+
+
+class ScrapRecordSerializer(serializers.ModelSerializer):
+    """Selejtezési jegyzőkönyv serializer"""
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    approved_by_name = serializers.CharField(source='approved_by.get_full_name', read_only=True)
+    items = ScrapItemSerializer(many=True, read_only=True)
+    items_count = serializers.SerializerMethodField()
+    materials_summary = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ScrapRecord
+        fields = [
+            'id', 'scrap_date', 'scrap_number', 'reason', 'images',
+            'total_cost_value', 'total_selling_value', 'currency',
+            'is_approved', 'approved_by', 'approved_by_name', 'approved_at',
+            'notes', 'items', 'items_count', 'materials_summary',
+            'created_at', 'updated_at', 'created_by', 'created_by_name'
+        ]
+        read_only_fields = [
+            'scrap_number', 'total_cost_value', 'total_selling_value',
+            'created_at', 'updated_at', 'items', 'items_count', 'materials_summary'
+        ]
+    
+    def get_items_count(self, obj):
+        return obj.items.count()
+    
+    def get_materials_summary(self, obj):
+        """Összesítés selejtezett termékekről"""
+        items = obj.items.select_related('material').all()
+        summary = []
+        for item in items:
+            summary.append(f"{item.material.name} ({item.quantity} {item.material.unit})")
+        return ", ".join(summary) if summary else "-"
+

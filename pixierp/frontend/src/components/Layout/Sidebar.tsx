@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Layout, Menu, Badge, message } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
@@ -26,6 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
+  const siderRef = useRef<HTMLDivElement>(null);
   
   const collapsed = propCollapsed !== undefined ? propCollapsed : internalCollapsed;
   const setCollapsed = onCollapse || setInternalCollapsed;
@@ -47,6 +48,24 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     const t = setInterval(load, 60000);
     return () => { cancelled = true; clearInterval(t); };
   }, []);
+
+  // Görgetés az aktív menüelemhez
+  useEffect(() => {
+    const scrollToActiveMenuItem = () => {
+      // Késleltetés, hogy a DOM teljesen renderelődjön
+      setTimeout(() => {
+        const activeMenuItem = document.querySelector('.ant-menu-item-selected, .ant-menu-submenu-selected');
+        if (activeMenuItem && siderRef.current) {
+          activeMenuItem.scrollIntoView({
+            behavior: 'smooth',
+            block: 'center',
+          });
+        }
+      }, 100);
+    };
+
+    scrollToActiveMenuItem();
+  }, [location.pathname]);
 
   const menuItems = [
     {
@@ -251,6 +270,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
           label: 'Bevételezések',
         },
         {
+          key: '/warehouse/supplier-invoices',
+          label: 'Beszállítói számlák',
+        },
+        {
+          key: '/warehouse/scraps',
+          label: 'Selejtezések',
+        },
+        {
           key: '/warehouse/warehouses',
           label: 'Raktárak',
         },
@@ -354,6 +381,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
 
   return (
     <Sider
+      ref={siderRef}
       collapsible
       collapsed={collapsed}
       onCollapse={(value) => setCollapsed(value)}

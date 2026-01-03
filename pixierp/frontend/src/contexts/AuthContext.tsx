@@ -18,17 +18,24 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
 
     useEffect(() => {
         const initAuth = async () => {
+            console.log('[AuthContext] Initializing auth...');
             try {
                 const token = localStorage.getItem('access_token');
+                console.log('[AuthContext] Token found:', !!token);
                 if (token) {
+                    console.log('[AuthContext] Fetching profile...');
                     const userData = await authService.getProfile();
+                    console.log('[AuthContext] Profile received:', userData);
                     setUser(userData);
+                } else {
+                    console.log('[AuthContext] No token, skipping profile fetch');
                 }
             } catch (error) {
-                console.error('Auth initialization error:', error);
+                console.error('[AuthContext] Auth initialization error:', error);
                 localStorage.removeItem('access_token');
                 localStorage.removeItem('refresh_token');
             } finally {
+                console.log('[AuthContext] Auth initialization complete, setting loading=false');
                 setLoading(false);
             }
         };
@@ -37,8 +44,10 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     }, []);
 
     const login = async (credentials: any) => {
+        console.log('[AuthContext] Login attempt with:', credentials);
         try {
             const response = await authService.login(credentials);
+            console.log('[AuthContext] Login response:', response);
             const { user: userData, tokens } = response;
 
             localStorage.setItem('access_token', tokens.access);
@@ -48,6 +57,7 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             message.success('Sikeres bejelentkezés!');
             return { success: true };
         } catch (error: any) {
+            console.error('[AuthContext] Login error:', error);
             message.error(error.message || 'Bejelentkezési hiba');
             return { success: false, error: error.message };
         }

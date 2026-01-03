@@ -162,19 +162,19 @@ export const warehouseService = {
         return response.data;
     },
 
-    // Material Receipts
+    // Material Receipts (now using supplier invoices)
     async getReceipts(params?: any) {
-        const response = await api.get('/warehouse/receipts/', { params });
+        const response = await api.get('/warehouse/supplier-invoices/', { params });
         return response.data;
     },
 
     async getReceipt(id: number) {
-        const response = await api.get(`/warehouse/receipts/${id}/`);
+        const response = await api.get(`/warehouse/supplier-invoices/${id}/`);
         return response.data;
     },
 
     async createReceipt(data: any) {
-        const response = await api.post('/warehouse/receipts/', data);
+        const response = await api.post('/warehouse/supplier-invoices/', data);
         return response.data;
     },
 

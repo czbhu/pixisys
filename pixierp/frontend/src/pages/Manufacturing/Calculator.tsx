@@ -20,6 +20,10 @@ interface Material {
   roll_width: number;
   sheet_division: string;
   yield_percentage: number;
+  unit_cost_price: number;
+  markup_percentage: number;
+  unit_selling_price: number;
+  currency: string;
 }
 
 interface Service {
@@ -30,6 +34,9 @@ interface Service {
   unit_price: number;
   calculation_basis: string;
   category: string;
+  unit_cost_price: number;
+  markup_percentage: number;
+  unit_selling_price: number;
 }
 
 interface Template {
@@ -50,7 +57,9 @@ interface SelectedMaterial {
   material_name: string;
   quantity: number;
   unit: string;
-  unit_price: number;
+  unit_cost_price: number;
+  markup_percentage: number;
+  unit_selling_price: number;
   calculated_price: number;
 }
 
@@ -59,7 +68,9 @@ interface SelectedService {
   service_name: string;
   quantity: number;
   unit: string;
-  unit_price: number;
+  unit_cost_price: number;
+  markup_percentage: number;
+  unit_selling_price: number;
   calculated_price: number;
 }
 
@@ -74,8 +85,6 @@ const Calculator: React.FC = () => {
   const [width, setWidth] = useState<number>(0);
   const [height, setHeight] = useState<number>(0);
   const [quantity, setQuantity] = useState<number>(1);
-  const [materialMarkupPercentage, setMaterialMarkupPercentage] = useState<number>(30);
-  const [serviceMarkupPercentage, setServiceMarkupPercentage] = useState<number>(35);
 
   const [selectedMaterials, setSelectedMaterials] = useState<SelectedMaterial[]>([]);
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
@@ -95,7 +104,7 @@ const Calculator: React.FC = () => {
 
   useEffect(() => {
     calculatePrices();
-  }, [selectedMaterials, selectedServices, materialMarkupPercentage, serviceMarkupPercentage]);
+  }, [selectedMaterials, selectedServices]);
   
   // Amikor a mértékegység változik, újraszámoljuk az összes mennyiséget
   useEffect(() => {
@@ -109,8 +118,6 @@ const Calculator: React.FC = () => {
     try {
       const response = await api.get(`/manufacturing/calculator-templates/${templateId}/`);
       setTemplate(response.data);
-      setMaterialMarkupPercentage(response.data.default_material_markup_percentage || 30);
-      setServiceMarkupPercentage(response.data.default_service_markup_percentage || 35);
     } catch (error) {
       message.error('Hiba a sablon betöltésekor');
       console.error(error);
@@ -184,11 +191,16 @@ const Calculator: React.FC = () => {
       if (!material) return sm;
       
       const qty = calculateMaterialQuantity(material);
-      const price = qty * (sm.unit_price || 1000); // TODO: valós anyagár
+      const costPrice = Number(material.unit_cost_price) || 0;
+      const markup = Number(sm.markup_percentage) || Number(material.markup_percentage) || 0;
+      const sellingPrice = costPrice * (1 + markup / 100);
+      const price = qty * sellingPrice;
       
       return {
         ...sm,
         quantity: qty,
+        unit_cost_price: costPrice,
+        unit_selling_price: sellingPrice,
         calculated_price: price
       };
     }));
@@ -198,11 +210,16 @@ const Calculator: React.FC = () => {
       if (!service) return ss;
       
       const qty = calculateServiceQuantity(service);
-      const price = qty * ss.unit_price;
+      const costPrice = Number(service.unit_cost_price) || 0;
+      const markup = Number(ss.markup_percentage) || Number(service.markup_percentage) || 0;
+      const sellingPrice = costPrice * (1 + markup / 100);
+      const price = qty * sellingPrice;
       
       return {
         ...ss,
         quantity: qty,
+        unit_cost_price: costPrice,
+        unit_selling_price: sellingPrice,
         calculated_price: price
       };
     }));
@@ -213,15 +230,19 @@ const Calculator: React.FC = () => {
     if (!material) return;
 
     const qty = calculateMaterialQuantity(material);
-    const unitPrice = 1000; // TODO: Material unit price from supplier
-    const calculated_price = qty * unitPrice;
+    const costPrice = Number(material.unit_cost_price) || 0;
+    const markup = Number(material.markup_percentage) || 0;
+    const sellingPrice = costPrice * (1 + markup / 100);
+    const calculated_price = qty * sellingPrice;
 
     const newMaterial: SelectedMaterial = {
       material_id: material.id,
       material_name: material.name,
       quantity: qty,
       unit: material.unit,
-      unit_price: unitPrice,
+      unit_cost_price: costPrice,
+      markup_percentage: markup,
+      unit_selling_price: sellingPrice,
       calculated_price,
     };
 
@@ -237,14 +258,19 @@ const Calculator: React.FC = () => {
     if (!service) return;
 
     const qty = calculateServiceQuantity(service);
-    const calculated_price = qty * service.unit_price;
+    const costPrice = Number(service.unit_cost_price) || 0;
+    const markup = Number(service.markup_percentage) || 0;
+    const sellingPrice = costPrice * (1 + markup / 100);
+    const calculated_price = qty * sellingPrice;
 
     const newService: SelectedService = {
       service_id: service.id,
       service_name: service.name,
       quantity: qty,
       unit: service.unit,
-      unit_price: service.unit_price,
+      unit_cost_price: costPrice,
+      markup_percentage: markup,
+      unit_selling_price: sellingPrice,
       calculated_price,
     };
 
@@ -256,13 +282,15 @@ const Calculator: React.FC = () => {
   };
 
   const calculatePrices = () => {
-    const matCost = selectedMaterials.reduce((sum, m) => sum + m.calculated_price, 0);
-    const svcCost = selectedServices.reduce((sum, s) => sum + s.calculated_price, 0);
-    const total = matCost + svcCost;
+    // Alapanyagok költsége és eladási ára
+    const matCost = selectedMaterials.reduce((sum, m) => sum + (m.quantity * m.unit_cost_price), 0);
+    const matSelling = selectedMaterials.reduce((sum, m) => sum + m.calculated_price, 0);
     
-    // Külön haszonkulcsok az alapanyagra és szolgáltatásokra
-    const matSelling = matCost * (1 + materialMarkupPercentage / 100);
-    const svcSelling = svcCost * (1 + serviceMarkupPercentage / 100);
+    // Szolgáltatások költsége és eladási ára
+    const svcCost = selectedServices.reduce((sum, s) => sum + (s.quantity * s.unit_cost_price), 0);
+    const svcSelling = selectedServices.reduce((sum, s) => sum + s.calculated_price, 0);
+    
+    const total = matCost + svcCost;
     const selling = matSelling + svcSelling;
 
     setMaterialCost(matCost);
@@ -293,8 +321,6 @@ const Calculator: React.FC = () => {
           quantity: s.quantity,
           calculated_price: s.calculated_price,
         })),
-        material_markup_percentage: materialMarkupPercentage,
-        service_markup_percentage: serviceMarkupPercentage,
       };
 
       await api.post('/manufacturing/calculations/', payload);
@@ -314,13 +340,42 @@ const Calculator: React.FC = () => {
       render: (qty: number, record: SelectedMaterial) => `${qty.toFixed(2)} ${record.unit}`
     },
     {
-      title: 'Egységár',
-      dataIndex: 'unit_price',
-      key: 'unit_price',
-      render: (price: number) => `${price.toLocaleString()} Ft`
+      title: 'Bekerülési ár',
+      dataIndex: 'unit_cost_price',
+      key: 'unit_cost_price',
+      render: (price: number, record: SelectedMaterial) => `${price.toLocaleString()} Ft/${record.unit || 'db'}`
     },
     {
-      title: 'Bekerülési ár',
+      title: 'Haszonkulcs %',
+      dataIndex: 'markup_percentage',
+      key: 'markup_percentage',
+      render: (markup: number, record: SelectedMaterial, index: number) => (
+        <InputNumber
+          min={0}
+          max={1000}
+          value={Number(markup) || 0}
+          onChange={(value) => {
+            const newMaterials = [...selectedMaterials];
+            const newMarkup = Number(value) || 0;
+            newMaterials[index].markup_percentage = newMarkup;
+            newMaterials[index].unit_selling_price = newMaterials[index].unit_cost_price * (1 + newMarkup / 100);
+            newMaterials[index].calculated_price = newMaterials[index].quantity * newMaterials[index].unit_selling_price;
+            setSelectedMaterials(newMaterials);
+          }}
+          formatter={value => `${Number(value) || 0}%`}
+          parser={value => parseFloat(value!.replace('%', '')) || 0}
+          style={{ width: 100 }}
+        />
+      )
+    },
+    {
+      title: 'Eladási ár',
+      dataIndex: 'unit_selling_price',
+      key: 'unit_selling_price',
+      render: (price: number, record: SelectedMaterial) => `${price.toLocaleString()} Ft/${record.unit || 'db'}`
+    },
+    {
+      title: 'Összesen',
       dataIndex: 'calculated_price',
       key: 'calculated_price',
       render: (price: number) => `${price.toLocaleString()} Ft`
@@ -347,10 +402,45 @@ const Calculator: React.FC = () => {
       render: (_: any, record: SelectedService) => `${record.quantity.toFixed(2)} ${record.unit}`,
     },
     {
-      title: 'Ár',
+      title: 'Bekerülési ár',
+      dataIndex: 'unit_cost_price',
+      key: 'unit_cost_price',
+      render: (price: number, record: SelectedService) => `${price.toLocaleString()} Ft/${record.unit || 'db'}`
+    },
+    {
+      title: 'Haszonkulcs %',
+      dataIndex: 'markup_percentage',
+      key: 'markup_percentage',
+      render: (markup: number, record: SelectedService, index: number) => (
+        <InputNumber
+          min={0}
+          max={1000}
+          value={Number(markup) || 0}
+          onChange={(value) => {
+            const newServices = [...selectedServices];
+            const newMarkup = Number(value) || 0;
+            newServices[index].markup_percentage = newMarkup;
+            newServices[index].unit_selling_price = newServices[index].unit_cost_price * (1 + newMarkup / 100);
+            newServices[index].calculated_price = newServices[index].quantity * newServices[index].unit_selling_price;
+            setSelectedServices(newServices);
+          }}
+          formatter={value => `${Number(value) || 0}%`}
+          parser={value => parseFloat(value!.replace('%', '')) || 0}
+          style={{ width: 100 }}
+        />
+      )
+    },
+    {
+      title: 'Eladási ár',
+      dataIndex: 'unit_selling_price',
+      key: 'unit_selling_price',
+      render: (price: number, record: SelectedService) => `${price.toLocaleString()} Ft/${record.unit || 'db'}`
+    },
+    {
+      title: 'Összesen',
       dataIndex: 'calculated_price',
       key: 'calculated_price',
-      render: (price: number) => `${price.toLocaleString()} HUF`,
+      render: (price: number) => `${price.toLocaleString()} Ft`,
     },
     {
       title: 'Művelet',
@@ -486,17 +576,6 @@ const Calculator: React.FC = () => {
               suffix="HUF"
               precision={0}
             />
-            <Form.Item label="Alapanyag haszonkulcs (%)">
-              <InputNumber
-                style={{ width: '100%' }}
-                min={0}
-                max={1000}
-                precision={2}
-                value={materialMarkupPercentage}
-                onChange={(value) => setMaterialMarkupPercentage(value || 0)}
-                addonAfter="%"
-              />
-            </Form.Item>
             <Statistic
               title="Alapanyag eladási ár"
               value={materialSellingPrice}
@@ -511,17 +590,6 @@ const Calculator: React.FC = () => {
               suffix="HUF"
               precision={0}
             />
-            <Form.Item label="Szolgáltatás haszonkulcs (%)">
-              <InputNumber
-                style={{ width: '100%' }}
-                min={0}
-                max={1000}
-                precision={2}
-                value={serviceMarkupPercentage}
-                onChange={(value) => setServiceMarkupPercentage(value || 0)}
-                addonAfter="%"
-              />
-            </Form.Item>
             <Statistic
               title="Szolgáltatás eladási ár"
               value={serviceSellingPrice}

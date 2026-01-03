@@ -17,6 +17,16 @@ class CompanyViewSet(viewsets.ModelViewSet):
     serializer_class = CompanySerializer
     permission_classes = [AllowAny]
     
+    def get_queryset(self):
+        """Cég queryset szűrése company_type alapján"""
+        queryset = Company.objects.all()
+        company_type = self.request.query_params.get('company_type')
+        
+        if company_type:
+            queryset = queryset.filter(company_type=company_type)
+        
+        return queryset
+    
     def perform_create(self, serializer):
         """Cég létrehozásakor beállítjuk a létrehozót"""
         if self.request.user.is_authenticated:

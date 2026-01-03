@@ -26,11 +26,10 @@ import dayjs from 'dayjs';
 import 'dayjs/locale/hu';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
 import ClockPicker from '../../components/ClockPicker';
+import api from '../../services/api';
 
 dayjs.locale('hu');
 dayjs.extend(customParseFormat);
-
-const API_BASE_URL = process.env.NODE_ENV === 'production' ? '/api/v1' : 'http://localhost:8003/api/v1';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -91,15 +90,8 @@ const AttendanceReport: React.FC = () => {
 
     const fetchEmployees = async () => {
         try {
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(`${API_BASE_URL}/hr/employees/`, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-            });
-            const data = await response.json();
-            setEmployees(data.results || data);
+            const response = await api.get('/hr/employees/');
+            setEmployees(response.data.results || response.data);
         } catch (error) {
             console.error('Error fetching employees:', error);
             message.error('Hiba az alkalmazottak betöltésekor');
@@ -109,7 +101,7 @@ const AttendanceReport: React.FC = () => {
     const fetchAttendanceData = async () => {
         setLoading(true);
         try {
-            let url = `${API_BASE_URL}/hr/attendance-reports/`;
+            let url = '/hr/attendance-reports/';
             const params = new URLSearchParams();
 
             if (selectedEmployee) {
@@ -127,14 +119,8 @@ const AttendanceReport: React.FC = () => {
                 url += '?' + params.toString();
             }
 
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(url, {
-                headers: {
-                    'Authorization': `Bearer ${token}`,
-                    'Content-Type': 'application/json',
-                },
-            });
-            const data = await response.json();
+            const response = await api.get(url);
+            const data = response.data;
             
             setAttendanceData(data.results || []);
             setSummary(data.summary || null);
@@ -179,32 +165,20 @@ const AttendanceReport: React.FC = () => {
                 return;
             }
 
-            const token = localStorage.getItem('access_token');
-            const response = await fetch(
-                `${API_BASE_URL}/hr/attendance-reports/${editingRecord.id}/`,
+            await api.patch(
+                `/hr/attendance-reports/${editingRecord.id}/`,
                 {
-                    method: 'PATCH',
-                    headers: {
-                        'Authorization': `Bearer ${token}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        check_in: values.check_in ? values.check_in.toISOString() : null,
-                        check_out: values.check_out ? values.check_out.toISOString() : null,
-                        notes: values.notes || '',
-                    }),
+                    check_in: values.check_in ? values.check_in.toISOString() : null,
+                    check_out: values.check_out ? values.check_out.toISOString() : null,
+                    notes: values.notes || '',
                 }
             );
 
-            if (response.ok) {
-                message.success('Jelenlét rekord sikeresen frissítve');
-                setEditModalVisible(false);
-                setEditingRecord(null);
-                form.resetFields();
-                fetchAttendanceData();
-            } else {
-                message.error('Hiba a jelenlét rekord frissítésekor');
-            }
+            message.success('Jelenlét rekord sikeresen frissítve');
+            setEditModalVisible(false);
+            setEditingRecord(null);
+            form.resetFields();
+            fetchAttendanceData();
         } catch (error) {
             console.error('Error saving attendance record:', error);
             message.error('Hiba a mentés során');
@@ -243,63 +217,29 @@ const AttendanceReport: React.FC = () => {
                 
                 newDateTime = newDateTime.toISOString();
             }
-
-            const token = localStorage.getItem('access_token');
             
             // Ha nincs ID, akkor új rekordot kell létrehozni
             if (!record.id) {
                 // POST request új rekord létrehozásához
                 const fieldName = field === 'check_in' ? 'check_in_time' : 'check_out_time';
-                const response = await fetch(
-                    `${API_BASE_URL}/hr/access-logs/`,
-                    {
-                        method: 'POST',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            employee: record.employee_id,
-                            [fieldName]: newDateTime,
-                        }),
-                    }
-                );
+                await api.post('/hr/access-logs/', {
+                    employee: record.employee_id,
+                    [fieldName]: newDateTime,
+                });
 
-                if (response.ok) {
-                    message.success('Idő sikeresen rögzítve');
-                    setEditingCell(null);
-                    fetchAttendanceData();
-                } else {
-                    const errorData = await response.json();
-                    console.error('Error creating record:', errorData);
-                    message.error('Hiba az idő rögzítésekor');
-                }
+                message.success('Idő sikeresen rögzítve');
+                setEditingCell(null);
+                fetchAttendanceData();
             } else {
                 // PATCH request meglévő rekord frissítéséhez
                 const fieldName = field === 'check_in' ? 'check_in_time' : 'check_out_time';
-                const response = await fetch(
-                    `${API_BASE_URL}/hr/attendance-reports/${record.id}/`,
-                    {
-                        method: 'PATCH',
-                        headers: {
-                            'Authorization': `Bearer ${token}`,
-                            'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                            [fieldName]: newDateTime,
-                        }),
-                    }
-                );
+                await api.patch(`/hr/attendance-reports/${record.id}/`, {
+                    [fieldName]: newDateTime,
+                });
 
-                if (response.ok) {
-                    message.success('Idő sikeresen frissítve');
-                    setEditingCell(null);
-                    fetchAttendanceData();
-                } else {
-                    const errorData = await response.json();
-                    console.error('Error updating record:', errorData);
-                    message.error('Hiba az idő frissítésekor');
-                }
+                message.success('Idő sikeresen frissítve');
+                setEditingCell(null);
+                fetchAttendanceData();
             }
         } catch (error) {
             console.error('Error updating time:', error);
