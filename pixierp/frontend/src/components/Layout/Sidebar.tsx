@@ -378,13 +378,15 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       }}>
         {collapsed ? 'PixiERP' : 'PixiERP Rendszer'}
       </div>
-      <Menu
-        theme="dark"
-        mode="inline"
-        selectedKeys={[location.pathname]}
-        defaultOpenKeys={['/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings']}
-        items={itemsWithLinks}
-      />
+      <div style={{ paddingBottom: '80px' }}>
+        <Menu
+          theme="dark"
+          mode="inline"
+          selectedKeys={[location.pathname]}
+          defaultOpenKeys={['/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings']}
+          items={itemsWithLinks}
+        />
+      </div>
     </Sider>
   );
 };
