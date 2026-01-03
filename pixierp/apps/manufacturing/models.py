@@ -1,10 +1,13 @@
 from django.db import models
 from django.contrib.auth import get_user_model
+from django.core.validators import MinValueValidator
 from apps.core.models import Company, Currency
 from apps.sales.models import Order, OrderItem, Product
 from apps.crm.models import Contact
 from apps.hr.models import Department
+from apps.warehouse.models import Material
 from django.utils import timezone
+import json
 
 User = get_user_model()
 
@@ -314,4 +317,256 @@ class ManufacturingProduct(models.Model):
     def save(self, *args, **kwargs):
         # Automatikus nettó ár számítás
         self.net_total_price = self.quantity * self.net_unit_price
+        super().save(*args, **kwargs)
+
+
+class Service(models.Model):
+    """Gyártási szolgáltatás modell (munkadíjak, szolgáltatási díjak)"""
+    UNIT_CHOICES = [
+        ('db', 'darab'),
+        ('m', 'folyóméter'),
+        ('m2', 'négyzetméter'),
+        ('kg', 'kilogramm'),
+        ('hour', 'óra'),
+        ('perimeter', 'kerület (méter)'),
+    ]
+    
+    CALCULATION_BASIS_CHOICES = [
+        ('fixed', 'Fix ár'),
+        ('area', 'Terület alapú'),
+        ('perimeter', 'Kerület alapú'),
+        ('length', 'Hossz alapú'),
+        ('weight', 'Súly alapú'),
+        ('quantity', 'Darabszám alapú'),
+    ]
+    
+    name = models.CharField(max_length=200, verbose_name="Szolgáltatás neve")
+    code = models.CharField(max_length=50, unique=True, verbose_name="Kód")
+    description = models.TextField(blank=True, verbose_name="Leírás")
+    
+    unit = models.CharField(
+        max_length=20,
+        choices=UNIT_CHOICES,
+        default='db',
+        verbose_name="Mértékegység"
+    )
+    
+    calculation_basis = models.CharField(
+        max_length=20,
+        choices=CALCULATION_BASIS_CHOICES,
+        default='fixed',
+        verbose_name="Kalkuláció alapja"
+    )
+    
+    unit_price = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységár (nettó)",
+        help_text="Ár mértékegységenként"
+    )
+    
+    currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
+    
+    # Kategória/csoport (pl. nyomtatás, utómunka, szállítás)
+    category = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name="Kategória",
+        help_text="pl. Nyomtatás, Utómunka, Szállítás"
+    )
+    
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Létrehozta"
+    )
+    
+    class Meta:
+        verbose_name = "Szolgáltatás"
+        verbose_name_plural = "Szolgáltatások"
+        ordering = ['category', 'name']
+    
+    def __str__(self):
+        return f"{self.name} ({self.code})"
+
+
+class CalculatorTemplate(models.Model):
+    """Kalkulátor sablon (pl. molinó nyomtatás, matrica, stb.)"""
+    name = models.CharField(max_length=200, verbose_name="Kalkulátor neve")
+    code = models.CharField(max_length=50, unique=True, verbose_name="Kód")
+    description = models.TextField(blank=True, verbose_name="Leírás")
+    
+    # Megengedett alapanyagok és szolgáltatások
+    allowed_materials = models.ManyToManyField(
+        Material,
+        blank=True,
+        verbose_name="Engedélyezett alapanyagok",
+        help_text="Ezekből az alapanyagokból lehet választani"
+    )
+    
+    allowed_services = models.ManyToManyField(
+        Service,
+        blank=True,
+        verbose_name="Engedélyezett szolgáltatások",
+        help_text="Ezeket a szolgáltatásokat lehet hozzáadni"
+    )
+    
+    # Haszonkulcs (markup)
+    default_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=30.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Alapértelmezett haszonkulcs %"
+    )
+    
+    # Input mezők definíciója JSON-ban
+    # pl: [{"name": "width", "label": "Szélesség", "type": "number", "unit": "cm", "required": true}]
+    input_fields = models.JSONField(
+        default=list,
+        verbose_name="Bemenet mezők",
+        help_text="Kalkulátorhoz szükséges input mezők definíciója"
+    )
+    
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_calculator_templates',
+        verbose_name="Létrehozta"
+    )
+    
+    class Meta:
+        verbose_name = "Kalkulátor sablon"
+        verbose_name_plural = "Kalkulátor sablonok"
+        ordering = ['name']
+    
+    def __str__(self):
+        return self.name
+
+
+class Calculation(models.Model):
+    """Kalkuláció (sablon alapján elkészített számítás)"""
+    template = models.ForeignKey(
+        CalculatorTemplate,
+        on_delete=models.CASCADE,
+        verbose_name="Kalkulátor sablon"
+    )
+    
+    # Bemenet értékek (JSON)
+    input_values = models.JSONField(
+        default=dict,
+        verbose_name="Bemenet értékek"
+    )
+    
+    # Kiválasztott alapanyagok és mennyiségek
+    # [{material_id: 1, quantity: 10, calculated_price: 5000}]
+    selected_materials = models.JSONField(
+        default=list,
+        verbose_name="Kiválasztott alapanyagok"
+    )
+    
+    # Kiválasztott szolgáltatások és mennyiségek
+    # [{service_id: 1, quantity: 5, calculated_price: 2500}]
+    selected_services = models.JSONField(
+        default=list,
+        verbose_name="Kiválasztott szolgáltatások"
+    )
+    
+    # Számított árak
+    material_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Alapanyag költség"
+    )
+    
+    service_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Szolgáltatás költség"
+    )
+    
+    total_cost = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Össz bekerülési ár"
+    )
+    
+    markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        validators=[MinValueValidator(0)],
+        verbose_name="Haszonkulcs %"
+    )
+    
+    selling_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Eladási ár"
+    )
+    
+    currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
+    
+    # Referencia ajánlat ID-ra (string, mert később lesz Quote modell)
+    quote_reference = models.CharField(
+        max_length=100,
+        blank=True,
+        verbose_name="Ajánlat referencia",
+        help_text="Hivatkozás ajánlatra"
+    )
+    
+    notes = models.TextField(blank=True, verbose_name="Megjegyzések")
+    
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Létrehozta"
+    )
+    
+    class Meta:
+        verbose_name = "Kalkuláció"
+        verbose_name_plural = "Kalkulációk"
+        ordering = ['-created_at']
+    
+    def __str__(self):
+        return f"{self.template.name} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
+    
+    def calculate_prices(self):
+        """Árak újraszámítása"""
+        # Alapanyag költség
+        self.material_cost = sum(
+            item.get('calculated_price', 0) for item in self.selected_materials
+        )
+        
+        # Szolgáltatás költség
+        self.service_cost = sum(
+            item.get('calculated_price', 0) for item in self.selected_services
+        )
+        
+        # Össz bekerülési ár
+        self.total_cost = self.material_cost + self.service_cost
+        
+        # Eladási ár haszonkulccsal
+        self.selling_price = self.total_cost * (1 + self.markup_percentage / 100)
+    
+    def save(self, *args, **kwargs):
+        self.calculate_prices()
         super().save(*args, **kwargs)

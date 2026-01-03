@@ -1,8 +1,9 @@
 from rest_framework import serializers
-from .models import ProductClass, Project, ManufacturingProduct
+from .models import ProductClass, Project, ManufacturingProduct, Service, CalculatorTemplate, Calculation
 from apps.crm.models import Contact
 from apps.hr.models import Department, Employee
 from apps.core.models import Currency
+from apps.warehouse.models import Material
 
 
 class ProductClassSerializer(serializers.ModelSerializer):
@@ -74,3 +75,74 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
                 'exchange_rate': obj.currency.exchange_rate
             }
         return None
+
+class ServiceSerializer(serializers.ModelSerializer):
+    """Szolgáltatás serializer"""
+    unit_display = serializers.CharField(source='get_unit_display', read_only=True)
+    calculation_basis_display = serializers.CharField(source='get_calculation_basis_display', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Service
+        fields = '__all__'
+    
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return 'Rendszer'
+
+
+class CalculatorTemplateSerializer(serializers.ModelSerializer):
+    """Kalkulátor sablon serializer"""
+    allowed_materials_details = serializers.SerializerMethodField()
+    allowed_services_details = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CalculatorTemplate
+        fields = '__all__'
+    
+    def get_allowed_materials_details(self, obj):
+        materials = obj.allowed_materials.all()
+        return [{
+            'id': m.id,
+            'name': m.name,
+            'code': m.code,
+            'unit': m.unit,
+            'material_format': m.material_format,
+            'roll_width': m.roll_width,
+            'sheet_division': m.sheet_division,
+            'yield_percentage': m.yield_percentage
+        } for m in materials]
+    
+    def get_allowed_services_details(self, obj):
+        services = obj.allowed_services.all()
+        return [{
+            'id': s.id,
+            'name': s.name,
+            'code': s.code,
+            'unit': s.unit,
+            'unit_price': s.unit_price,
+            'calculation_basis': s.calculation_basis,
+            'category': s.category
+        } for s in services]
+    
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return 'Rendszer'
+
+
+class CalculationSerializer(serializers.ModelSerializer):
+    """Kalkuláció serializer"""
+    template_name = serializers.CharField(source='template.name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Calculation
+        fields = '__all__'
+    
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return 'Rendszer'

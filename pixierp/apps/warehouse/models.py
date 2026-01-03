@@ -43,6 +43,19 @@ class Material(models.Model):
         ('kg/liter', 'kg/liter'),
     ]
     
+    MATERIAL_FORMAT_CHOICES = [
+        ('roll', 'Tekercses'),
+        ('sheet', 'Táblás'),
+        ('piece', 'Darabos'),
+        ('bulk', 'Ömlesztett'),
+    ]
+    
+    SHEET_DIVISION_CHOICES = [
+        ('full', 'Csak egész tábla'),
+        ('half', '1/2 és egész'),
+        ('third', '1/3, 1/2 és egész'),
+    ]
+    
     name = models.CharField(max_length=200, verbose_name="Alapanyag neve")
     code = models.CharField(max_length=50, unique=True, verbose_name="Kód")
     description = models.TextField(blank=True, verbose_name="Leírás")
@@ -111,6 +124,45 @@ class Material(models.Model):
         choices=DENSITY_UNIT_CHOICES,
         default="kg/m3",
         verbose_name="Fajsúly mértékegység"
+    )
+    
+    # Anyagformátum és kihozatal
+    material_format = models.CharField(
+        max_length=20,
+        choices=MATERIAL_FORMAT_CHOICES,
+        default='piece',
+        verbose_name="Anyagformátum"
+    )
+    
+    # Tekercses anyagokhoz
+    roll_width = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(0)],
+        verbose_name="Tekercs szélesség",
+        help_text="Tekercses anyag szélessége (cm vagy m)"
+    )
+    
+    # Táblás anyagokhoz
+    sheet_division = models.CharField(
+        max_length=20,
+        choices=SHEET_DIVISION_CHOICES,
+        null=True,
+        blank=True,
+        verbose_name="Tábla oszthatóság",
+        help_text="Hogyan osztható a tábla"
+    )
+    
+    # Kihozatal/hulló %
+    yield_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=100.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Kihozatal %",
+        help_text="Hány százalék a tényleges kihozatal (pl. 85% = 15% hulló)"
     )
     
     is_active = models.BooleanField(default=True, verbose_name="Aktív")

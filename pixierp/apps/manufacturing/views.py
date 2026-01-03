@@ -4,8 +4,11 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
-from .models import ProductClass, Project, ManufacturingProduct
-from .serializers import ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer, CurrencySerializer
+from .models import ProductClass, Project, ManufacturingProduct, Service, CalculatorTemplate, Calculation
+from .serializers import (
+    ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer, 
+    CurrencySerializer, ServiceSerializer, CalculatorTemplateSerializer, CalculationSerializer
+)
 from apps.crm.models import Contact
 from apps.hr.models import Employee
 from apps.core.models import Currency
@@ -114,3 +117,89 @@ class CurrencyViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': f'Hiba történt az árfolyamok frissítése során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ServiceViewSet(viewsets.ModelViewSet):
+    """Szolgáltatás viewset"""
+    queryset = Service.objects.all()
+    serializer_class = ServiceSerializer
+    permission_classes = [AllowAny]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active', 'category']
+    search_fields = ['name', 'code', 'description']
+    ordering_fields = ['name', 'category', 'unit_price', 'created_at']
+    ordering = ['category', 'name']
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+
+class CalculatorTemplateViewSet(viewsets.ModelViewSet):
+    """Kalkulátor sablon viewset"""
+    queryset = CalculatorTemplate.objects.all()
+    serializer_class = CalculatorTemplateSerializer
+    permission_classes = [AllowAny]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['name', 'code', 'description']
+    ordering_fields = ['name', 'created_at']
+    ordering = ['name']
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+    
+    @action(detail=True, methods=['post'])
+    def calculate(self, request, pk=None):
+        """Kalkuláció végrehajtása sablon alapján"""
+        template = self.get_object()
+        
+        # Input adatok a request body-ból
+        input_values = request.data.get('input_values', {})
+        selected_materials = request.data.get('selected_materials', [])
+        selected_services = request.data.get('selected_services', [])
+        markup_percentage = request.data.get('markup_percentage', template.default_markup_percentage)
+        
+        # Kalkuláció létrehozása
+        calculation = Calculation.objects.create(
+            template=template,
+            input_values=input_values,
+            selected_materials=selected_materials,
+            selected_services=selected_services,
+            markup_percentage=markup_percentage,
+            created_by=self.request.user if self.request.user.is_authenticated else None
+        )
+        
+        serializer = CalculationSerializer(calculation)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+class CalculationViewSet(viewsets.ModelViewSet):
+    """Kalkuláció viewset"""
+    queryset = Calculation.objects.all()
+    serializer_class = CalculationSerializer
+    permission_classes = [AllowAny]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['template']
+    search_fields = ['notes', 'quote_reference']
+    ordering_fields = ['created_at', 'total_cost', 'selling_price']
+    ordering = ['-created_at']
+    
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+    
+    @action(detail=True, methods=['post'])
+    def recalculate(self, request, pk=None):
+        """Kalkuláció újraszámítása"""
+        calculation = self.get_object()
+        
+        # Frissítjük az adatokat ha vannak
+        if 'selected_materials' in request.data:
+            calculation.selected_materials = request.data['selected_materials']
+        if 'selected_services' in request.data:
+            calculation.selected_services = request.data['selected_services']
+        if 'markup_percentage' in request.data:
+            calculation.markup_percentage = request.data['markup_percentage']
+        
+        calculation.save()  # Ez automatikusan újraszámolja az árakat
+        
+        serializer = self.get_serializer(calculation)
+        return Response(serializer.data)

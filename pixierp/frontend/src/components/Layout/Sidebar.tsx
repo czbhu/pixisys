@@ -131,6 +131,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
           label: 'Termékkategóriák',
         },
         {
+          key: '/manufacturing/services',
+          label: 'Szolgáltatások',
+        },
+        {
+          key: '/manufacturing/calculators',
+          label: 'Kalkulátorok',
+        },
+        {
           key: '/manufacturing/boms',
           label: 'BOM-ok',
         },
