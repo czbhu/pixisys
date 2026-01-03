@@ -54,7 +54,7 @@ const CalculatorTemplates: React.FC = () => {
   const fetchTemplates = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/api/v1/manufacturing/calculator-templates/');
+      const response = await api.get('/manufacturing/calculator-templates/');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setTemplates(data);
     } catch (error) {
@@ -77,7 +77,7 @@ const CalculatorTemplates: React.FC = () => {
 
   const fetchServices = async () => {
     try {
-      const response = await api.get('/api/v1/manufacturing/services/');
+      const response = await api.get('/manufacturing/services/');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setServices(data);
     } catch (error) {
@@ -126,10 +126,10 @@ const CalculatorTemplates: React.FC = () => {
       };
 
       if (editingTemplate) {
-        await api.put(`/api/v1/manufacturing/calculator-templates/${editingTemplate.id}/`, payload);
+        await api.put(`/manufacturing/calculator-templates/${editingTemplate.id}/`, payload);
         message.success('Sablon módosítva');
       } else {
-        await api.post('/api/v1/manufacturing/calculator-templates/', payload);
+        await api.post('/manufacturing/calculator-templates/', payload);
         message.success('Sablon létrehozva');
       }
       setModalVisible(false);
