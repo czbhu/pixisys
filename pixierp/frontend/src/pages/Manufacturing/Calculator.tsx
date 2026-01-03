@@ -325,15 +325,6 @@ const Calculator: React.FC = () => {
       key: 'calculated_price',
       render: (price: number) => `${price.toLocaleString()} Ft`
     },
-      key: 'quantity',
-      render: (_: any, record: SelectedMaterial) => `${record.quantity.toFixed(2)} ${record.unit}`,
-    },
-    {
-      title: 'Ár',
-      dataIndex: 'calculated_price',
-      key: 'calculated_price',
-      render: (price: number) => `${price.toLocaleString()} HUF`,
-    },
     {
       title: 'Művelet',
       key: 'action',
