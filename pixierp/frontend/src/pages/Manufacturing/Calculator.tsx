@@ -37,7 +37,9 @@ interface Template {
   name: string;
   code: string;
   description: string;
-  default_markup_percentage: number;
+  default_material_markup_percentage: number;
+  default_service_markup_percentage: number;
+  default_markup_percentage: number; // deprecated de még szükséges kompatibilitáshoz
   allowed_materials_details: Material[];
   allowed_services_details: Service[];
   input_fields: any[];
@@ -48,6 +50,7 @@ interface SelectedMaterial {
   material_name: string;
   quantity: number;
   unit: string;
+  unit_price: number;
   calculated_price: number;
 }
 
@@ -56,6 +59,7 @@ interface SelectedService {
   service_name: string;
   quantity: number;
   unit: string;
+  unit_price: number;
   calculated_price: number;
 }
 
@@ -66,10 +70,12 @@ const Calculator: React.FC = () => {
   const [form] = Form.useForm();
 
   // Kalkuláció állapotok
+  const [inputUnit, setInputUnit] = useState<'mm' | 'cm' | 'm'>('cm'); // Mértékegység választó
   const [width, setWidth] = useState<number>(0);
   const [height, setHeight] = useState<number>(0);
   const [quantity, setQuantity] = useState<number>(1);
-  const [markupPercentage, setMarkupPercentage] = useState<number>(30);
+  const [materialMarkupPercentage, setMaterialMarkupPercentage] = useState<number>(30);
+  const [serviceMarkupPercentage, setServiceMarkupPercentage] = useState<number>(35);
 
   const [selectedMaterials, setSelectedMaterials] = useState<SelectedMaterial[]>([]);
   const [selectedServices, setSelectedServices] = useState<SelectedService[]>([]);
@@ -77,6 +83,8 @@ const Calculator: React.FC = () => {
   const [materialCost, setMaterialCost] = useState<number>(0);
   const [serviceCost, setServiceCost] = useState<number>(0);
   const [totalCost, setTotalCost] = useState<number>(0);
+  const [materialSellingPrice, setMaterialSellingPrice] = useState<number>(0);
+  const [serviceSellingPrice, setServiceSellingPrice] = useState<number>(0);
   const [sellingPrice, setSellingPrice] = useState<number>(0);
 
   useEffect(() => {
@@ -87,14 +95,22 @@ const Calculator: React.FC = () => {
 
   useEffect(() => {
     calculatePrices();
-  }, [selectedMaterials, selectedServices, markupPercentage]);
+  }, [selectedMaterials, selectedServices, materialMarkupPercentage, serviceMarkupPercentage]);
+  
+  // Amikor a mértékegység változik, újraszámoljuk az összes mennyiséget
+  useEffect(() => {
+    if (width && height) {
+      recalculateMaterialsAndServices();
+    }
+  }, [inputUnit, width, height, quantity]);
 
   const fetchTemplate = async () => {
     setLoading(true);
     try {
       const response = await api.get(`/manufacturing/calculator-templates/${templateId}/`);
       setTemplate(response.data);
-      setMarkupPercentage(response.data.default_markup_percentage);
+      setMaterialMarkupPercentage(response.data.default_material_markup_percentage || 30);
+      setServiceMarkupPercentage(response.data.default_service_markup_percentage || 35);
     } catch (error) {
       message.error('Hiba a sablon betöltésekor');
       console.error(error);
@@ -102,19 +118,32 @@ const Calculator: React.FC = () => {
       setLoading(false);
     }
   };
+  
+  // Mértékegység konverzió méterbe
+  const convertToMeters = (value: number): number => {
+    switch (inputUnit) {
+      case 'mm': return value / 1000;
+      case 'cm': return value / 100;
+      case 'm': return value;
+      default: return value / 100; // default cm
+    }
+  };
 
   const calculateMaterialQuantity = (material: Material): number => {
-    // Egyszerű logika: terület alapú számítás (szélesség * magasság * darabszám)
-    const area = (width / 100) * (height / 100); // cm-ből méter
+    // Szélesség és magasság konvertálása méterbe
+    const widthM = convertToMeters(width);
+    const heightM = convertToMeters(height);
+    const area = widthM * heightM;
     const totalArea = area * quantity;
 
-    // Kihozatal figyelembevétele
+    // Kihozatal figyelembevétele (hulladék)
     const yieldFactor = material.yield_percentage / 100;
     const adjustedArea = totalArea / yieldFactor;
 
     // Tekercses anyag esetén folyóméterben számolunk
     if (material.material_format === 'roll' && material.roll_width) {
-      return adjustedArea / (material.roll_width / 100); // folyóméter
+      const rollWidthM = material.roll_width / 100; // cm-ből méter
+      return adjustedArea / rollWidthM; // folyóméter
     }
 
     // Táblás anyag esetén négyzetméterben
@@ -127,8 +156,10 @@ const Calculator: React.FC = () => {
   };
 
   const calculateServiceQuantity = (service: Service): number => {
-    const area = (width / 100) * (height / 100); // cm-ből méter
-    const perimeter = 2 * ((width / 100) + (height / 100)); // kerület méterben
+    const widthM = convertToMeters(width);
+    const heightM = convertToMeters(height);
+    const area = widthM * heightM;
+    const perimeter = 2 * (widthM + heightM); // kerület méterben
 
     switch (service.calculation_basis) {
       case 'area':
@@ -136,26 +167,61 @@ const Calculator: React.FC = () => {
       case 'perimeter':
         return perimeter * quantity; // kerület
       case 'length':
-        return (Math.max(width, height) / 100) * quantity; // hosszabb oldal
+        return Math.max(widthM, heightM) * quantity; // hosszabb oldal
       case 'quantity':
         return quantity;
-      default:
+      case 'fixed':
         return 1; // fix ár
+      default:
+        return 1;
     }
+  };
+  
+  const recalculateMaterialsAndServices = () => {
+    // Újraszámoljuk az összes kiválasztott anyag és szolgáltatás mennyiségét és árát
+    setSelectedMaterials(prev => prev.map(sm => {
+      const material = template?.allowed_materials_details.find(m => m.id === sm.material_id);
+      if (!material) return sm;
+      
+      const qty = calculateMaterialQuantity(material);
+      const price = qty * (sm.unit_price || 1000); // TODO: valós anyagár
+      
+      return {
+        ...sm,
+        quantity: qty,
+        calculated_price: price
+      };
+    }));
+    
+    setSelectedServices(prev => prev.map(ss => {
+      const service = template?.allowed_services_details.find(s => s.id === ss.service_id);
+      if (!service) return ss;
+      
+      const qty = calculateServiceQuantity(service);
+      const price = qty * ss.unit_price;
+      
+      return {
+        ...ss,
+        quantity: qty,
+        calculated_price: price
+      };
+    }));
   };
 
   const addMaterial = (materialId: number) => {
     const material = template?.allowed_materials_details.find(m => m.id === materialId);
     if (!material) return;
 
-    const quantity = calculateMaterialQuantity(material);
-    const calculated_price = quantity * 1000; // TODO: Material unit price from supplier
+    const qty = calculateMaterialQuantity(material);
+    const unitPrice = 1000; // TODO: Material unit price from supplier
+    const calculated_price = qty * unitPrice;
 
     const newMaterial: SelectedMaterial = {
       material_id: material.id,
       material_name: material.name,
-      quantity,
+      quantity: qty,
       unit: material.unit,
+      unit_price: unitPrice,
       calculated_price,
     };
 
@@ -170,14 +236,15 @@ const Calculator: React.FC = () => {
     const service = template?.allowed_services_details.find(s => s.id === serviceId);
     if (!service) return;
 
-    const quantity = calculateServiceQuantity(service);
-    const calculated_price = quantity * service.unit_price;
+    const qty = calculateServiceQuantity(service);
+    const calculated_price = qty * service.unit_price;
 
     const newService: SelectedService = {
       service_id: service.id,
       service_name: service.name,
-      quantity,
+      quantity: qty,
       unit: service.unit,
+      unit_price: service.unit_price,
       calculated_price,
     };
 
@@ -192,11 +259,17 @@ const Calculator: React.FC = () => {
     const matCost = selectedMaterials.reduce((sum, m) => sum + m.calculated_price, 0);
     const svcCost = selectedServices.reduce((sum, s) => sum + s.calculated_price, 0);
     const total = matCost + svcCost;
-    const selling = total * (1 + markupPercentage / 100);
+    
+    // Külön haszonkulcsok az alapanyagra és szolgáltatásokra
+    const matSelling = matCost * (1 + materialMarkupPercentage / 100);
+    const svcSelling = svcCost * (1 + serviceMarkupPercentage / 100);
+    const selling = matSelling + svcSelling;
 
     setMaterialCost(matCost);
     setServiceCost(svcCost);
     setTotalCost(total);
+    setMaterialSellingPrice(matSelling);
+    setServiceSellingPrice(svcSelling);
     setSellingPrice(selling);
   };
 
@@ -208,6 +281,7 @@ const Calculator: React.FC = () => {
           width,
           height,
           quantity,
+          input_unit: inputUnit,
         },
         selected_materials: selectedMaterials.map(m => ({
           material_id: m.material_id,
@@ -219,7 +293,8 @@ const Calculator: React.FC = () => {
           quantity: s.quantity,
           calculated_price: s.calculated_price,
         })),
-        markup_percentage: markupPercentage,
+        material_markup_percentage: materialMarkupPercentage,
+        service_markup_percentage: serviceMarkupPercentage,
       };
 
       await api.post('/manufacturing/calculations/', payload);
@@ -234,6 +309,22 @@ const Calculator: React.FC = () => {
     { title: 'Alapanyag', dataIndex: 'material_name', key: 'material_name' },
     {
       title: 'Mennyiség',
+      dataIndex: 'quantity',
+      key: 'quantity',
+      render: (qty: number, record: SelectedMaterial) => `${qty.toFixed(2)} ${record.unit}`
+    },
+    {
+      title: 'Egységár',
+      dataIndex: 'unit_price',
+      key: 'unit_price',
+      render: (price: number) => `${price.toLocaleString()} Ft`
+    },
+    {
+      title: 'Bekerülési ár',
+      dataIndex: 'calculated_price',
+      key: 'calculated_price',
+      render: (price: number) => `${price.toLocaleString()} Ft`
+    },
       key: 'quantity',
       render: (_: any, record: SelectedMaterial) => `${record.quantity.toFixed(2)} ${record.unit}`,
     },
@@ -300,8 +391,21 @@ const Calculator: React.FC = () => {
           <Card title="Paraméterek" style={{ marginBottom: 16 }}>
             <Form layout="vertical" form={form}>
               <Row gutter={16}>
-                <Col span={8}>
-                  <Form.Item label="Szélesség (cm)">
+                <Col span={6}>
+                  <Form.Item label="Mértékegység">
+                    <Select
+                      value={inputUnit}
+                      onChange={(value) => setInputUnit(value as 'mm' | 'cm' | 'm')}
+                      style={{ width: '100%' }}
+                    >
+                      <Option value="mm">Milliméter (mm)</Option>
+                      <Option value="cm">Centiméter (cm)</Option>
+                      <Option value="m">Méter (m)</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label={`Szélesség (${inputUnit})`}>
                     <InputNumber
                       style={{ width: '100%' }}
                       min={0}
@@ -310,8 +414,8 @@ const Calculator: React.FC = () => {
                     />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
-                  <Form.Item label="Magasság (cm)">
+                <Col span={6}>
+                  <Form.Item label={`Magasság (${inputUnit})`}>
                     <InputNumber
                       style={{ width: '100%' }}
                       min={0}
@@ -320,7 +424,7 @@ const Calculator: React.FC = () => {
                     />
                   </Form.Item>
                 </Col>
-                <Col span={8}>
+                <Col span={6}>
                   <Form.Item label="Darabszám">
                     <InputNumber
                       style={{ width: '100%' }}
@@ -391,12 +495,48 @@ const Calculator: React.FC = () => {
               suffix="HUF"
               precision={0}
             />
+            <Form.Item label="Alapanyag haszonkulcs (%)">
+              <InputNumber
+                style={{ width: '100%' }}
+                min={0}
+                max={1000}
+                precision={2}
+                value={materialMarkupPercentage}
+                onChange={(value) => setMaterialMarkupPercentage(value || 0)}
+                addonAfter="%"
+              />
+            </Form.Item>
+            <Statistic
+              title="Alapanyag eladási ár"
+              value={materialSellingPrice}
+              suffix="HUF"
+              precision={0}
+              valueStyle={{ color: '#1890ff' }}
+            />
             <Divider />
             <Statistic
               title="Szolgáltatás költség"
               value={serviceCost}
               suffix="HUF"
               precision={0}
+            />
+            <Form.Item label="Szolgáltatás haszonkulcs (%)">
+              <InputNumber
+                style={{ width: '100%' }}
+                min={0}
+                max={1000}
+                precision={2}
+                value={serviceMarkupPercentage}
+                onChange={(value) => setServiceMarkupPercentage(value || 0)}
+                addonAfter="%"
+              />
+            </Form.Item>
+            <Statistic
+              title="Szolgáltatás eladási ár"
+              value={serviceSellingPrice}
+              suffix="HUF"
+              precision={0}
+              valueStyle={{ color: '#52c41a' }}
             />
             <Divider />
             <Statistic
@@ -407,20 +547,8 @@ const Calculator: React.FC = () => {
               valueStyle={{ color: '#3f8600' }}
             />
             <Divider />
-            <Form.Item label="Haszonkulcs (%)">
-              <InputNumber
-                style={{ width: '100%' }}
-                min={0}
-                max={1000}
-                precision={2}
-                value={markupPercentage}
-                onChange={(value) => setMarkupPercentage(value || 0)}
-                addonAfter="%"
-              />
-            </Form.Item>
-            <Divider />
             <Statistic
-              title="Eladási ár"
+              title="ÖSSZ ELADÁSI ÁR"
               value={sellingPrice}
               suffix="HUF"
               precision={0}

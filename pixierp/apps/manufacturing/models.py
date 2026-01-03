@@ -417,13 +417,30 @@ class CalculatorTemplate(models.Model):
         help_text="Ezeket a szolgáltatásokat lehet hozzáadni"
     )
     
-    # Haszonkulcs (markup)
+    # Haszonkulcs (markup) - külön alapanyagra és szolgáltatásokra
+    default_material_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=30.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Alapanyag haszonkulcs %"
+    )
+    
+    default_service_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=35.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Szolgáltatás haszonkulcs %"
+    )
+    
+    # Régi mező kompatibilitásért (deprecated)
     default_markup_percentage = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         default=30.00,
         validators=[MinValueValidator(0)],
-        verbose_name="Alapértelmezett haszonkulcs %"
+        verbose_name="Alapértelmezett haszonkulcs % (deprecated)"
     )
     
     # Input mezők definíciója JSON-ban
@@ -505,18 +522,51 @@ class Calculation(models.Model):
         verbose_name="Össz bekerülési ár"
     )
     
+    material_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=30.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Alapanyag haszonkulcs %"
+    )
+    
+    service_markup_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        default=35.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Szolgáltatás haszonkulcs %"
+    )
+    
+    # Régi mező kompatibilitásért (deprecated)
     markup_percentage = models.DecimalField(
         max_digits=5,
         decimal_places=2,
         validators=[MinValueValidator(0)],
-        verbose_name="Haszonkulcs %"
+        verbose_name="Haszonkulcs % (deprecated)",
+        null=True,
+        blank=True
+    )
+    
+    material_selling_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Alapanyag eladási ár"
+    )
+    
+    service_selling_price = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0,
+        verbose_name="Szolgáltatás eladási ár"
     )
     
     selling_price = models.DecimalField(
         max_digits=12,
         decimal_places=2,
         default=0,
-        verbose_name="Eladási ár"
+        verbose_name="Össz eladási ár"
     )
     
     currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
@@ -550,22 +600,33 @@ class Calculation(models.Model):
         return f"{self.template.name} - {self.created_at.strftime('%Y-%m-%d %H:%M')}"
     
     def calculate_prices(self):
-        """Árak újraszámítása"""
+        """Árak újraszámítása külön haszonkulcsokkal"""
+        from decimal import Decimal
+        
         # Alapanyag költség
-        self.material_cost = sum(
+        self.material_cost = Decimal(sum(
             item.get('calculated_price', 0) for item in self.selected_materials
-        )
+        ))
         
         # Szolgáltatás költség
-        self.service_cost = sum(
+        self.service_cost = Decimal(sum(
             item.get('calculated_price', 0) for item in self.selected_services
-        )
+        ))
         
         # Össz bekerülési ár
         self.total_cost = self.material_cost + self.service_cost
         
-        # Eladási ár haszonkulccsal
-        self.selling_price = self.total_cost * (1 + self.markup_percentage / 100)
+        # Eladási árak külön haszonkulcsokkal
+        self.material_selling_price = self.material_cost * (1 + self.material_markup_percentage / 100)
+        self.service_selling_price = self.service_cost * (1 + self.service_markup_percentage / 100)
+        self.selling_price = self.material_selling_price + self.service_selling_price
+        
+        # Kompatibilitás régi markup_percentage-el (átlagos haszonkulcs)
+        if self.total_cost > 0:
+            profit = self.selling_price - self.total_cost
+            self.markup_percentage = (profit / self.total_cost) * 100
+        else:
+            self.markup_percentage = 0
     
     def save(self, *args, **kwargs):
         self.calculate_prices()
