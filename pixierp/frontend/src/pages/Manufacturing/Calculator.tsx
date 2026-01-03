@@ -339,7 +339,7 @@ const Calculator: React.FC = () => {
               <Select
                 placeholder="Válassz alapanyagot"
                 style={{ width: 300 }}
-                onSelect={(value: number) => addMaterial(value)}
+                onSelect={(value) => value && addMaterial(value as number)}
                 value={null}
               >
                 {template.allowed_materials_details.map(m => (
@@ -363,7 +363,7 @@ const Calculator: React.FC = () => {
               <Select
                 placeholder="Válassz szolgáltatást"
                 style={{ width: 300 }}
-                onSelect={(value: number) => addService(value)}
+                onSelect={(value) => value && addService(value as number)}
                 value={null}
               >
                 {template.allowed_services_details.map(s => (
