@@ -25,9 +25,11 @@ from .serializers import (
     EmailTemplateSerializer,
     SignatureTemplateSerializer,
     PixinvoiceConfigSerializer,
+    BackupConfigurationSerializer,
+    BackupFileSerializer,
 )
 from rest_framework import viewsets
-from .models import EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig
+from .models import EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile
 import traceback
 import requests
 import json
@@ -517,3 +519,148 @@ def import_database_view(request):
         return Response({
             'error': f'Hiba az adatbázis importálása során: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+# Backup Management Views
+class BackupConfigurationViewSet(viewsets.ModelViewSet):
+    """ViewSet for backup configurations"""
+    queryset = BackupConfiguration.objects.all()
+    serializer_class = BackupConfigurationSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class BackupFileViewSet(viewsets.ModelViewSet):
+    """ViewSet for backup files"""
+    queryset = BackupFile.objects.all()
+    serializer_class = BackupFileSerializer
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['get', 'post', 'delete']
+    
+    @action(detail=False, methods=['post'])
+    def create_backup(self, request):
+        """Create a manual backup"""
+        import os
+        from django.conf import settings
+        
+        try:
+            # Create backups directory if not exists
+            backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            # Generate filename
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'manual_backup_{timestamp}.sqlite3'
+            filepath = os.path.join(backup_dir, filename)
+            
+            # Copy database file
+            import shutil
+            db_path = settings.DATABASES['default']['NAME']
+            shutil.copy2(db_path, filepath)
+            
+            # Get file size
+            file_size = os.path.getsize(filepath)
+            
+            # Create backup record
+            backup = BackupFile.objects.create(
+                filename=filename,
+                filepath=filepath,
+                file_size=file_size,
+                created_by=request.user,
+                is_manual=True
+            )
+            
+            serializer = self.get_serializer(backup)
+            return Response({
+                'message': 'Backup sikeresen létrehozva',
+                'backup': serializer.data
+            })
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a backup létrehozása során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Download a backup file"""
+        import os
+        
+        try:
+            backup = self.get_object()
+            
+            if not os.path.exists(backup.filepath):
+                return Response({
+                    'error': 'A backup fájl nem található'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            with open(backup.filepath, 'rb') as f:
+                response = HttpResponse(f.read(), content_type='application/octet-stream')
+                response['Content-Disposition'] = f'attachment; filename="{backup.filename}"'
+                return response
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a letöltés során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        """Restore from a backup file"""
+        import os
+        import shutil
+        from django.conf import settings
+        
+        try:
+            backup = self.get_object()
+            
+            if not os.path.exists(backup.filepath):
+                return Response({
+                    'error': 'A backup fájl nem található'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Create a backup of current database before restore
+            db_path = settings.DATABASES['default']['NAME']
+            current_backup = f"{db_path}.before-restore-{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+            shutil.copy2(db_path, current_backup)
+            
+            # Restore from backup
+            shutil.copy2(backup.filepath, db_path)
+            
+            return Response({
+                'message': 'Adatbázis sikeresen visszaállítva. Kérjük jelentkezzen be újra.',
+                'current_backup': current_backup
+            })
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a visszaállítás során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def cleanup_old_backups(self, request):
+        """Clean up old backups based on retention policy"""
+        import os
+        
+        try:
+            deleted_count = 0
+            configs = BackupConfiguration.objects.filter(is_active=True)
+            
+            for config in configs:
+                cutoff_date = timezone.now() - timedelta(days=config.retention_days)
+                old_backups = BackupFile.objects.filter(
+                    configuration=config,
+                    created_at__lt=cutoff_date,
+                    is_manual=False
+                )
+                
+                for backup in old_backups:
+                    if os.path.exists(backup.filepath):
+                        os.remove(backup.filepath)
+                    backup.delete()
+                    deleted_count += 1
+            
+            return Response({
+                'message': f'{deleted_count} régi backup törölve',
+                'deleted_count': deleted_count
+            })
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a tisztítás során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

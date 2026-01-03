@@ -1,124 +1,478 @@
-import React, { useState } from 'react';
-import { Card, Button, Upload, message, Space, Typography, Alert } from 'antd';
-import { DownloadOutlined, UploadOutlined, DatabaseOutlined } from '@ant-design/icons';
-import type { UploadProps } from 'antd';
-import axios from 'axios';
+import React, { useState, useEffect } from 'react';
+import {
+  Card,
+  Table,
+  Button,
+  Space,
+  message,
+  Popconfirm,
+  Tag,
+  Modal,
+  Form,
+  Input,
+  Select,
+  InputNumber,
+  Switch,
+  Alert,
+} from 'antd';
+import {
+  DownloadOutlined,
+  DeleteOutlined,
+  ReloadOutlined,
+  PlusOutlined,
+  SettingOutlined,
+  ClockCircleOutlined,
+} from '@ant-design/icons';
+import type { ColumnsType } from 'antd/es/table';
+import api from '../../services/api';
+import { formatDistanceToNow } from 'date-fns';
+import { hu } from 'date-fns/locale';
 
-const { Title, Paragraph } = Typography;
+interface BackupFile {
+  id: number;
+  configuration: number | null;
+  configuration_name: string;
+  filename: string;
+  filepath: string;
+  file_size: number;
+  file_size_mb: number;
+  created_at: string;
+  created_by: number | null;
+  created_by_name: string;
+  is_manual: boolean;
+}
 
-const Backup: React.FC = () => {
-  const [exporting, setExporting] = useState(false);
-  const [importing, setImporting] = useState(false);
+interface BackupConfiguration {
+  id: number;
+  name: string;
+  interval: string;
+  interval_display: string;
+  retention_days: number;
+  is_active: boolean;
+  last_backup: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
-  const handleExport = async () => {
-    setExporting(true);
+const BackupPage: React.FC = () => {
+  const [backups, setBackups] = useState<BackupFile[]>([]);
+  const [configs, setConfigs] = useState<BackupConfiguration[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [configModalVisible, setConfigModalVisible] = useState(false);
+  const [editingConfig, setEditingConfig] = useState<BackupConfiguration | null>(null);
+  const [form] = Form.useForm();
+
+  useEffect(() => {
+    fetchBackups();
+    fetchConfigs();
+  }, []);
+
+  const fetchBackups = async () => {
+    setLoading(true);
     try {
-      const response = await axios.get('/api/v1/backup/export/', {
+      const response = await api.get('/backup-files/');
+      setBackups(response.data);
+    } catch (error) {
+      console.error('Hiba a backup-ok betöltésekor:', error);
+      message.error('Nem sikerült betölteni a backup fájlokat');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchConfigs = async () => {
+    try {
+      const response = await api.get('/backup-configs/');
+      setConfigs(response.data);
+    } catch (error) {
+      console.error('Hiba a konfigurációk betöltésekor:', error);
+    }
+  };
+
+  const handleCreateBackup = async () => {
+    setLoading(true);
+    try {
+      const response = await api.post('/backup-files/create_backup/');
+      message.success(response.data.message);
+      fetchBackups();
+    } catch (error: any) {
+      console.error('Hiba a backup létrehozásakor:', error);
+      message.error(error.response?.data?.error || 'Nem sikerült létrehozni a backup-ot');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDownload = async (backup: BackupFile) => {
+    try {
+      const response = await api.get(`/backup-files/${backup.id}/download/`, {
         responseType: 'blob',
       });
       
       const url = window.URL.createObjectURL(new Blob([response.data]));
       const link = document.createElement('a');
       link.href = url;
-      const filename = response.headers['content-disposition']
-        ?.split('filename=')[1]
-        ?.replace(/"/g, '') || `backup_${new Date().toISOString()}.json`;
-      link.setAttribute('download', filename);
+      link.setAttribute('download', backup.filename);
       document.body.appendChild(link);
       link.click();
       link.remove();
       
-      message.success('Adatbázis sikeresen exportálva');
-    } catch (error: any) {
-      message.error(error.response?.data?.error || 'Hiba az exportálás során');
-    } finally {
-      setExporting(false);
+      message.success('Backup letöltve');
+    } catch (error) {
+      console.error('Hiba a letöltéskor:', error);
+      message.error('Nem sikerült letölteni a backup fájlt');
     }
   };
 
-  const uploadProps: UploadProps = {
-    name: 'file',
-    action: '/api/v1/backup/import/',
-    headers: {
-      Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-    },
-    maxCount: 1,
-    accept: '.json',
-    beforeUpload: (file) => {
-      const isJson = file.type === 'application/json' || file.name.endsWith('.json');
-      if (!isJson) {
-        message.error('Csak JSON fájlokat lehet feltölteni!');
-      }
-      return isJson;
-    },
-    onChange(info) {
-      if (info.file.status === 'uploading') {
-        setImporting(true);
-      }
-      if (info.file.status === 'done') {
-        setImporting(false);
-        message.success('Adatbázis sikeresen importálva');
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
-      } else if (info.file.status === 'error') {
-        setImporting(false);
-        message.error(info.file.response?.error || 'Hiba az importálás során');
-      }
-    },
+  const handleRestore = async (backup: BackupFile) => {
+    Modal.confirm({
+      title: 'Adatbázis visszaállítása',
+      content: (
+        <div>
+          <Alert
+            message="Figyelem!"
+            description="A visszaállítás felülírja a jelenlegi adatbázist. A művelet előtt automatikusan készül egy mentés a jelenlegi állapotról."
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+          />
+          <p>Biztosan vissza szeretné állítani az adatbázist erről a backup-ról?</p>
+          <p><strong>{backup.filename}</strong></p>
+          <p>Létrehozva: {new Date(backup.created_at).toLocaleString('hu-HU')}</p>
+        </div>
+      ),
+      okText: 'Visszaállítás',
+      okType: 'danger',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          const response = await api.post(`/backup-files/${backup.id}/restore/`);
+          message.success(response.data.message);
+          
+          // Logout and redirect to login
+          setTimeout(() => {
+            localStorage.clear();
+            window.location.href = '/login';
+          }, 2000);
+        } catch (error: any) {
+          console.error('Hiba a visszaállításkor:', error);
+          message.error(error.response?.data?.error || 'Nem sikerült visszaállítani az adatbázist');
+        }
+      },
+    });
   };
 
-  return (
-    <div style={{ padding: '24px' }}>
-      <Title level={2}>
-        <DatabaseOutlined /> Adatbázis Backup
-      </Title>
-      
-      <Alert
-        message="Figyelmeztetés"
-        description="Az importálás felülírja az összes jelenlegi adatot! Mindig készíts biztonsági mentést az importálás előtt."
-        type="warning"
-        showIcon
-        style={{ marginBottom: '24px' }}
-      />
+  const handleDelete = async (id: number) => {
+    try {
+      await api.delete(`/backup-files/${id}/`);
+      message.success('Backup törölve');
+      fetchBackups();
+    } catch (error) {
+      console.error('Hiba a törléskor:', error);
+      message.error('Nem sikerült törölni a backup-ot');
+    }
+  };
 
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Card title="Export" bordered={false}>
-          <Paragraph>
-            Az adatbázis teljes exportálása JSON formátumban. Ez tartalmazza az összes modult (HR, Sales, Finance, stb.).
-          </Paragraph>
+  const handleCleanupOldBackups = async () => {
+    try {
+      const response = await api.post('/backup-files/cleanup_old_backups/');
+      message.success(response.data.message);
+      fetchBackups();
+    } catch (error: any) {
+      console.error('Hiba a tisztításkor:', error);
+      message.error(error.response?.data?.error || 'Nem sikerült törölni a régi backup-okat');
+    }
+  };
+
+  const showConfigModal = (config?: BackupConfiguration) => {
+    if (config) {
+      setEditingConfig(config);
+      form.setFieldsValue(config);
+    } else {
+      setEditingConfig(null);
+      form.resetFields();
+    }
+    setConfigModalVisible(true);
+  };
+
+  const handleConfigSubmit = async (values: any) => {
+    try {
+      if (editingConfig) {
+        await api.put(`/backup-configs/${editingConfig.id}/`, values);
+        message.success('Konfiguráció frissítve');
+      } else {
+        await api.post('/backup-configs/', values);
+        message.success('Konfiguráció létrehozva');
+      }
+      setConfigModalVisible(false);
+      form.resetFields();
+      fetchConfigs();
+    } catch (error) {
+      console.error('Hiba a konfiguráció mentésekor:', error);
+      message.error('Nem sikerült menteni a konfigurációt');
+    }
+  };
+
+  const columns: ColumnsType<BackupFile> = [
+    {
+      title: 'Fájlnév',
+      dataIndex: 'filename',
+      key: 'filename',
+      sorter: (a, b) => a.filename.localeCompare(b.filename),
+    },
+    {
+      title: 'Típus',
+      dataIndex: 'is_manual',
+      key: 'type',
+      render: (is_manual: boolean, record) => (
+        <Space>
+          {is_manual ? (
+            <Tag color="blue">Manuális</Tag>
+          ) : (
+            <Tag color="green">{record.configuration_name}</Tag>
+          )}
+        </Space>
+      ),
+      filters: [
+        { text: 'Manuális', value: true },
+        { text: 'Automatikus', value: false },
+      ],
+      onFilter: (value, record) => record.is_manual === value,
+    },
+    {
+      title: 'Létrehozva',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (date: string) => (
+        <span title={new Date(date).toLocaleString('hu-HU')}>
+          {formatDistanceToNow(new Date(date), { addSuffix: true, locale: hu })}
+        </span>
+      ),
+      sorter: (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime(),
+      defaultSortOrder: 'descend',
+    },
+    {
+      title: 'Létrehozta',
+      dataIndex: 'created_by_name',
+      key: 'created_by_name',
+    },
+    {
+      title: 'Méret',
+      dataIndex: 'file_size_mb',
+      key: 'file_size_mb',
+      render: (size: number) => `${size} MB`,
+      sorter: (a, b) => a.file_size - b.file_size,
+    },
+    {
+      title: 'Műveletek',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button
+            type="link"
+            icon={<DownloadOutlined />}
+            onClick={() => handleDownload(record)}
+          >
+            Letöltés
+          </Button>
+          <Button
+            type="link"
+            onClick={() => handleRestore(record)}
+          >
+            Visszaállítás
+          </Button>
+          <Popconfirm
+            title="Biztosan törli ezt a backup-ot?"
+            onConfirm={() => handleDelete(record.id)}
+            okText="Igen"
+            cancelText="Nem"
+          >
+            <Button type="link" danger icon={<DeleteOutlined />}>
+              Törlés
+            </Button>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
+
+  const configColumns: ColumnsType<BackupConfiguration> = [
+    {
+      title: 'Név',
+      dataIndex: 'name',
+      key: 'name',
+    },
+    {
+      title: 'Gyakoriság',
+      dataIndex: 'interval_display',
+      key: 'interval_display',
+    },
+    {
+      title: 'Megőrzés (nap)',
+      dataIndex: 'retention_days',
+      key: 'retention_days',
+      render: (days: number) => `${days} nap`,
+    },
+    {
+      title: 'Utolsó mentés',
+      dataIndex: 'last_backup',
+      key: 'last_backup',
+      render: (date: string | null) =>
+        date ? (
+          <span title={new Date(date).toLocaleString('hu-HU')}>
+            {formatDistanceToNow(new Date(date), { addSuffix: true, locale: hu })}
+          </span>
+        ) : (
+          <span style={{ color: '#999' }}>Még nem futott</span>
+        ),
+    },
+    {
+      title: 'Állapot',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (is_active: boolean) =>
+        is_active ? <Tag color="success">Aktív</Tag> : <Tag>Inaktív</Tag>,
+    },
+    {
+      title: 'Műveletek',
+      key: 'actions',
+      render: (_, record) => (
+        <Button
+          type="link"
+          icon={<SettingOutlined />}
+          onClick={() => showConfigModal(record)}
+        >
+          Szerkesztés
+        </Button>
+      ),
+    },
+  ];
+
+  return (
+    <div>
+      <Card
+        title="Automatikus Backup Konfigurációk"
+        extra={
           <Button
             type="primary"
-            icon={<DownloadOutlined />}
-            onClick={handleExport}
-            loading={exporting}
-            size="large"
+            icon={<PlusOutlined />}
+            onClick={() => showConfigModal()}
           >
-            Adatbázis letöltése
+            Új konfiguráció
           </Button>
-        </Card>
+        }
+        style={{ marginBottom: 24 }}
+      >
+        <Table
+          columns={configColumns}
+          dataSource={configs}
+          rowKey="id"
+          pagination={false}
+          size="small"
+        />
+      </Card>
 
-        <Card title="Import" bordered={false}>
-          <Paragraph>
-            Korábban exportált adatbázis visszatöltése. <strong>FIGYELEM:</strong> Ez felülírja az összes jelenlegi adatot!
-          </Paragraph>
-          <Upload {...uploadProps}>
+      <Card
+        title="Backup Fájlok"
+        extra={
+          <Space>
             <Button
-              icon={<UploadOutlined />}
-              loading={importing}
-              size="large"
-              danger
+              icon={<ClockCircleOutlined />}
+              onClick={handleCleanupOldBackups}
             >
-              Adatbázis feltöltése
+              Régi backup-ok törlése
             </Button>
-          </Upload>
-          <Paragraph type="secondary" style={{ marginTop: '12px' }}>
-            Csak .json fájlokat fogad el
-          </Paragraph>
-        </Card>
-      </Space>
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={handleCreateBackup}
+              loading={loading}
+            >
+              Új manuális backup
+            </Button>
+            <Button icon={<ReloadOutlined />} onClick={fetchBackups}>
+              Frissítés
+            </Button>
+          </Space>
+        }
+      >
+        <Alert
+          message="Fontos információ"
+          description="Az automatikus backup-ok a rendszer cron job-ja alapján készülnek. A megőrzési időn túli backup-ok automatikusan törlődnek."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+        <Table
+          columns={columns}
+          dataSource={backups}
+          rowKey="id"
+          loading={loading}
+          pagination={{
+            pageSize: 10,
+            showSizeChanger: true,
+            showTotal: (total) => `Összesen ${total} backup`,
+          }}
+        />
+      </Card>
+
+      <Modal
+        title={editingConfig ? 'Konfiguráció szerkesztése' : 'Új konfiguráció'}
+        open={configModalVisible}
+        onCancel={() => {
+          setConfigModalVisible(false);
+          form.resetFields();
+        }}
+        onOk={() => form.submit()}
+        okText="Mentés"
+        cancelText="Mégse"
+      >
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={handleConfigSubmit}
+          initialValues={{
+            interval: 'daily',
+            retention_days: 14,
+            is_active: true,
+          }}
+        >
+          <Form.Item
+            label="Név"
+            name="name"
+            rules={[{ required: true, message: 'Adja meg a nevet!' }]}
+          >
+            <Input placeholder="pl. Napi automatikus mentés" />
+          </Form.Item>
+
+          <Form.Item
+            label="Mentési gyakoriság"
+            name="interval"
+            rules={[{ required: true, message: 'Válassza ki a gyakoriságot!' }]}
+          >
+            <Select>
+              <Select.Option value="daily">Napi</Select.Option>
+              <Select.Option value="weekly">Heti</Select.Option>
+              <Select.Option value="monthly">Havi</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            label="Megőrzési idő (nap)"
+            name="retention_days"
+            rules={[{ required: true, message: 'Adja meg a megőrzési időt!' }]}
+            help="Ennyi nap után törölhetők a régi backup-ok"
+          >
+            <InputNumber min={1} max={365} style={{ width: '100%' }} />
+          </Form.Item>
+
+          <Form.Item label="Aktív" name="is_active" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };
 
-export default Backup;
+export default BackupPage;

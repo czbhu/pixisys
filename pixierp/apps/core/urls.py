@@ -4,6 +4,8 @@ from . import views
 
 router = DefaultRouter()
 router.register(r'pixinvoice-configs', views.PixinvoiceConfigViewSet, basename='pixinvoice-config')
+router.register(r'backup-configs', views.BackupConfigurationViewSet, basename='backup-config')
+router.register(r'backup-files', views.BackupFileViewSet, basename='backup-file')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

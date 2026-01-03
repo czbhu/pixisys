@@ -157,3 +157,54 @@ class PixinvoiceConfig(models.Model):
         super().save(*args, **kwargs)
         if self.is_active:
             PixinvoiceConfig.objects.exclude(id=self.id).filter(is_active=True).update(is_active=False)
+
+
+class BackupConfiguration(models.Model):
+    """Backup configuration settings"""
+    INTERVAL_CHOICES = [
+        ('daily', 'Napi'),
+        ('weekly', 'Heti'),
+        ('monthly', 'Havi'),
+    ]
+    
+    name = models.CharField(max_length=100, verbose_name="Konfiguráció neve")
+    interval = models.CharField(max_length=10, choices=INTERVAL_CHOICES, verbose_name="Mentési gyakoriság")
+    retention_days = models.IntegerField(verbose_name="Megőrzési idő (nap)", help_text="Ennyi nap után felülírhatók a régi backup fájlok")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    last_backup = models.DateTimeField(null=True, blank=True, verbose_name="Utolsó mentés")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = 'Backup konfiguráció'
+        verbose_name_plural = 'Backup konfigurációk'
+        ordering = ['interval']
+        db_table = 'backup_configurations'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_interval_display()})"
+
+
+class BackupFile(models.Model):
+    """Backup file records"""
+    configuration = models.ForeignKey(BackupConfiguration, on_delete=models.SET_NULL, null=True, blank=True, related_name='backups', verbose_name="Konfiguráció")
+    filename = models.CharField(max_length=255, verbose_name="Fájlnév")
+    filepath = models.CharField(max_length=500, verbose_name="Fájl útvonal")
+    file_size = models.BigIntegerField(verbose_name="Fájlméret (byte)")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    is_manual = models.BooleanField(default=False, verbose_name="Manuális mentés")
+
+    class Meta:
+        verbose_name = 'Backup fájl'
+        verbose_name_plural = 'Backup fájlok'
+        ordering = ['-created_at']
+        db_table = 'backup_files'
+
+    def __str__(self):
+        return self.filename
+
+    @property
+    def file_size_mb(self):
+        """Return file size in MB"""
+        return round(self.file_size / (1024 * 1024), 2)
