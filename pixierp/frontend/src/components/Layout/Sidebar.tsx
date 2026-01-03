@@ -112,7 +112,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
           ),
         },
         {
-          key: '/sales/projects',
+          key: '/manufacturing/projects',
           label: 'Projektek',
         },
       ],
@@ -129,10 +129,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
         {
           key: '/manufacturing/product-classes',
           label: 'Termékkategóriák',
-        },
-        {
-          key: '/manufacturing/projects',
-          label: 'Projektek',
         },
         {
           key: '/manufacturing/boms',
