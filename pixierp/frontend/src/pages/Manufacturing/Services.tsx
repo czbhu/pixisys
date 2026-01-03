@@ -36,7 +36,7 @@ const Services: React.FC = () => {
   const fetchServices = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/api/v1/manufacturing/services/');
+      const response = await api.get('/manufacturing/services/');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setServices(data);
     } catch (error) {
@@ -61,7 +61,7 @@ const Services: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await api.delete(`/api/v1/manufacturing/services/${id}/`);
+      await api.delete(`/manufacturing/services/${id}/`);
       message.success('Szolgáltatás törölve');
       fetchServices();
     } catch (error) {
@@ -73,10 +73,10 @@ const Services: React.FC = () => {
   const handleSubmit = async (values: any) => {
     try {
       if (editingService) {
-        await api.put(`/api/v1/manufacturing/services/${editingService.id}/`, values);
+        await api.put(`/manufacturing/services/${editingService.id}/`, values);
         message.success('Szolgáltatás módosítva');
       } else {
-        await api.post('/api/v1/manufacturing/services/', values);
+        await api.post('/manufacturing/services/', values);
         message.success('Szolgáltatás létrehozva');
       }
       setModalVisible(false);

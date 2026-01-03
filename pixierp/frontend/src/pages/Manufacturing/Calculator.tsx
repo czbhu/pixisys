@@ -92,7 +92,7 @@ const Calculator: React.FC = () => {
   const fetchTemplate = async () => {
     setLoading(true);
     try {
-      const response = await api.get(`/api/v1/manufacturing/calculator-templates/${templateId}/`);
+      const response = await api.get(`/manufacturing/calculator-templates/${templateId}/`);
       setTemplate(response.data);
       setMarkupPercentage(response.data.default_markup_percentage);
     } catch (error) {
@@ -222,7 +222,7 @@ const Calculator: React.FC = () => {
         markup_percentage: markupPercentage,
       };
 
-      await api.post('/api/v1/manufacturing/calculations/', payload);
+      await api.post('/manufacturing/calculations/', payload);
       message.success('Kalkuláció elmentve');
     } catch (error) {
       message.error('Hiba a mentés során');

@@ -67,7 +67,7 @@ const CalculatorTemplates: React.FC = () => {
 
   const fetchMaterials = async () => {
     try {
-      const response = await api.get('/api/v1/warehouse/materials/');
+      const response = await api.get('/warehouse/materials/');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setMaterials(data);
     } catch (error) {
@@ -107,7 +107,7 @@ const CalculatorTemplates: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await api.delete(`/api/v1/manufacturing/calculator-templates/${id}/`);
+      await api.delete(`/manufacturing/calculator-templates/${id}/`);
       message.success('Sablon törölve');
       fetchTemplates();
     } catch (error) {
