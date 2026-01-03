@@ -71,10 +71,12 @@ const BackupPage: React.FC = () => {
     setLoading(true);
     try {
       const response = await api.get('/backup-files/');
-      setBackups(response.data);
+      const data = response.data.results || response.data;
+      setBackups(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Hiba a backup-ok betöltésekor:', error);
       message.error('Nem sikerült betölteni a backup fájlokat');
+      setBackups([]);
     } finally {
       setLoading(false);
     }
@@ -83,9 +85,11 @@ const BackupPage: React.FC = () => {
   const fetchConfigs = async () => {
     try {
       const response = await api.get('/backup-configs/');
-      setConfigs(response.data);
+      const data = response.data.results || response.data;
+      setConfigs(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('Hiba a konfigurációk betöltésekor:', error);
+      setConfigs([]);
     }
   };
 
