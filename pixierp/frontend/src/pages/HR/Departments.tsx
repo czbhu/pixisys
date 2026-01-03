@@ -1,0 +1,498 @@
+import React, { useState, useEffect } from 'react';
+import {
+    Card,
+    Table,
+    Button,
+    Space,
+    Modal,
+    Form,
+    Input,
+    Select,
+    Spin,
+    Alert,
+    message,
+    Tag,
+    Descriptions,
+    Row,
+    Col,
+    Popconfirm,
+    Tooltip
+} from 'antd';
+import {
+    PlusOutlined,
+    EditOutlined,
+    DeleteOutlined,
+    EyeOutlined,
+    UserOutlined,
+    SearchOutlined
+} from '@ant-design/icons';
+import { hrService } from '../../services/hrService';
+
+const { Option } = Select;
+const { TextArea } = Input;
+
+interface Department {
+    id: number;
+    name: string;
+    description?: string;
+    managers?: number[];
+    manager_names?: string[];
+    budget: number;
+    created_at: string;
+    updated_at: string;
+    employee_count?: number;
+}
+
+interface Employee {
+    id: number;
+    full_name: string;
+    employee_id: string;
+    department_names?: string[];
+    position_name?: string;
+}
+
+const Departments: React.FC = () => {
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [departments, setDepartments] = useState<Department[]>([]);
+    const [filtered, setFiltered] = useState<Department[]>([]);
+    const [query, setQuery] = useState('');
+    const [employees, setEmployees] = useState<Employee[]>([]);
+    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [isViewModalVisible, setIsViewModalVisible] = useState(false);
+    const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
+    const [viewingDepartment, setViewingDepartment] = useState<Department | null>(null);
+    const [departmentEmployees, setDepartmentEmployees] = useState<Employee[]>([]);
+    const [form] = Form.useForm();
+
+    useEffect(() => {
+        loadData();
+    }, []);
+
+    // Keresési logika
+    const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    useEffect(() => {
+        const q = normalize(query);
+        if (!q) { setFiltered(departments); return; }
+        const next = departments.filter(dept => {
+            const hay = [
+                dept.name || '',
+                dept.description || '',
+                (dept.manager_names || []).join(' ') || ''
+            ].join(' \u0001 ');
+            return normalize(hay).includes(q);
+        });
+        setFiltered(next);
+    }, [query, departments]);
+
+    const loadData = async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const [departmentsResponse, employeesResponse] = await Promise.all([
+                hrService.getDepartments(),
+                hrService.getEmployees()
+            ]);
+
+            // Handle paginated response
+            const departmentsData = departmentsResponse.results || departmentsResponse;
+            const employeesData = employeesResponse.results || employeesResponse;
+
+            const deptList = Array.isArray(departmentsData) ? departmentsData : [];
+            setDepartments(deptList);
+            setFiltered(deptList);
+            setEmployees(Array.isArray(employeesData) ? employeesData : []);
+        } catch (err) {
+            console.error('Error loading data:', err);
+            setError('Hiba történt az adatok betöltése során');
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const showCreateModal = () => {
+        setEditingDepartment(null);
+        form.resetFields();
+        setIsModalVisible(true);
+    };
+
+    const showEditModal = (department: Department) => {
+        setEditingDepartment(department);
+        form.setFieldsValue({
+            name: department.name,
+            description: department.description || '',
+            managers: department.managers || [],
+            budget: department.budget || 0
+        });
+        setIsModalVisible(true);
+    };
+
+    const showViewModal = async (department: Department) => {
+        setViewingDepartment(department);
+
+        // Betöltjük az osztály tagjait
+        try {
+            const departmentEmployees = employees.filter(emp =>
+                emp.department_names && emp.department_names.includes(department.name)
+            );
+            setDepartmentEmployees(departmentEmployees);
+        } catch (err) {
+            console.error('Error loading department employees:', err);
+            setDepartmentEmployees([]);
+        }
+
+        setIsViewModalVisible(true);
+    };
+
+    const handleSubmit = async (values: any) => {
+        try {
+            if (editingDepartment) {
+                await hrService.updateDepartment(editingDepartment.id, values);
+                message.success('Osztály sikeresen frissítve!');
+            } else {
+                await hrService.createDepartment(values);
+                message.success('Osztály sikeresen létrehozva!');
+            }
+            setIsModalVisible(false);
+            form.resetFields();
+            loadData();
+        } catch (err) {
+            console.error('Error saving department:', err);
+            message.error('Hiba történt az osztály mentése során');
+        }
+    };
+
+    const handleDelete = async (id: number) => {
+        try {
+            await hrService.deleteDepartment(id);
+            message.success('Osztály sikeresen törölve!');
+            loadData();
+        } catch (err) {
+            console.error('Error deleting department:', err);
+            message.error('Hiba történt az osztály törlése során');
+        }
+    };
+
+    const columns = [
+        {
+            title: 'Név',
+            dataIndex: 'name',
+            key: 'name',
+            sorter: (a: Department, b: Department) => a.name.localeCompare(b.name),
+            width: 200,
+        },
+        {
+            title: 'Leírás',
+            dataIndex: 'description',
+            key: 'description',
+            render: (description: string) => description ? (
+                <span title={description}>
+                    {description.length > 50 ? `${description.substring(0, 50)}...` : description}
+                </span>
+            ) : '-',
+            width: 250,
+        },
+        {
+            title: 'Vezető(k)',
+            dataIndex: 'manager_names',
+            key: 'manager_names',
+            render: (managerNames: string[]) => managerNames && managerNames.length > 0 ? (
+                <Space size={[0, 8]} wrap>
+                    {managerNames.map((name, index) => (
+                        <Tag key={index} color="blue" icon={<UserOutlined />}>
+                            {name}
+                        </Tag>
+                    ))}
+                </Space>
+            ) : '-',
+            width: 200,
+        },
+        {
+            title: 'Költségvetés',
+            dataIndex: 'budget',
+            key: 'budget',
+            render: (budget: number) => budget ? `${budget.toLocaleString('hu-HU')} Ft` : '-',
+            sorter: (a: Department, b: Department) => a.budget - b.budget,
+            width: 120,
+        },
+        {
+            title: 'Tagok száma',
+            key: 'employee_count',
+            render: (record: Department) => {
+                const count = employees.filter(emp =>
+                    emp.department_names && emp.department_names.includes(record.name)
+                ).length;
+                return <Tag color="green">{count} fő</Tag>;
+            },
+            sorter: (a: Department, b: Department) => {
+                const countA = employees.filter(emp =>
+                    emp.department_names && emp.department_names.includes(a.name)
+                ).length;
+                const countB = employees.filter(emp =>
+                    emp.department_names && emp.department_names.includes(b.name)
+                ).length;
+                return countA - countB;
+            },
+            width: 100,
+        },
+        {
+            title: 'Műveletek',
+            key: 'actions',
+            width: 120,
+            fixed: 'right' as const,
+            render: (record: Department) => (
+                <Space size="small">
+                    <Tooltip title="Megtekintés">
+                        <Button
+                            icon={<EyeOutlined />}
+                            size="small"
+                            onClick={() => showViewModal(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Szerkesztés">
+                        <Button
+                            icon={<EditOutlined />}
+                            size="small"
+                            onClick={() => showEditModal(record)}
+                        />
+                    </Tooltip>
+                    <Popconfirm
+                        title="Biztosan törölni szeretné ezt az osztályt?"
+                        onConfirm={() => handleDelete(record.id)}
+                        okText="Igen"
+                        cancelText="Nem"
+                    >
+                        <Tooltip title="Törlés">
+                            <Button
+                                icon={<DeleteOutlined />}
+                                size="small"
+                                danger
+                            />
+                        </Tooltip>
+                    </Popconfirm>
+                </Space>
+            ),
+        },
+    ];
+
+    if (loading) {
+        return <Spin size="large" style={{ display: 'block', margin: '50px auto' }} />;
+    }
+
+    return (
+        <div>
+            <Card
+                title="Osztályok kezelése"
+                extra={
+                    <Button
+                        type="primary"
+                        icon={<PlusOutlined />}
+                        onClick={showCreateModal}
+                    >
+                        Új osztály
+                    </Button>
+                }
+            >
+                {error && (
+                    <Alert
+                        message="Hiba"
+                        description={error}
+                        type="error"
+                        showIcon
+                        style={{ marginBottom: 16 }}
+                    />
+                )}
+
+                <Input
+                    placeholder="Keresés (név, leírás, vezető)..."
+                    prefix={<SearchOutlined />}
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    style={{ marginBottom: 16 }}
+                    allowClear
+                />
+
+                <Table
+                    columns={columns}
+                    dataSource={filtered}
+                    rowKey="id"
+                    pagination={{
+                        pageSize: 10,
+                        showSizeChanger: true,
+                        pageSizeOptions: ['10', '20', '50'],
+                        showQuickJumper: true,
+                        showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} osztály`,
+                    }}
+                    scroll={{ x: 1000 }}
+                    size="small"
+                    onRow={(record) => ({
+                        onDoubleClick: () => showEditModal(record),
+                        style: { cursor: 'pointer' }
+                    })}
+                />
+            </Card>
+
+            {/* Létrehozás/Szerkesztés Modal */}
+            <Modal
+                title={editingDepartment ? 'Osztály szerkesztése' : 'Új osztály létrehozása'}
+                open={isModalVisible}
+                onCancel={() => {
+                    setIsModalVisible(false);
+                    form.resetFields();
+                }}
+                footer={null}
+                width={600}
+            >
+                <Form
+                    form={form}
+                    layout="vertical"
+                    onFinish={handleSubmit}
+                >
+                    <Form.Item
+                        name="name"
+                        label="Osztály neve"
+                        rules={[{ required: true, message: 'Kérjük, adja meg az osztály nevét!' }]}
+                    >
+                        <Input placeholder="Pl. IT osztály" />
+                    </Form.Item>
+
+                    <Form.Item
+                        name="description"
+                        label="Leírás"
+                    >
+                        <TextArea
+                            rows={3}
+                            placeholder="Osztály leírása, feladatai..."
+                        />
+                    </Form.Item>
+
+                    <Form.Item
+        name="managers"
+                        label="Vezetők"
+                    >
+                        <Select
+                            mode="multiple"
+                            placeholder="Válasszon vezető(ke)t"
+                            allowClear
+                            showSearch
+                            optionFilterProp="children"
+                            filterOption={(input, option) =>
+                                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+                            }
+                        >
+                            {employees.map((employee) => (
+                                <Option key={employee.id} value={employee.id}>
+                                    {employee.full_name} ({employee.employee_id})
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+
+                    <Form.Item
+                        name="budget"
+                        label="Költségvetés (Ft)"
+                    >
+                        <Input
+                            type="number"
+                            placeholder="0"
+                            min={0}
+                            step={1000}
+                        />
+                    </Form.Item>
+
+                    <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
+                        <Space>
+                            <Button onClick={() => setIsModalVisible(false)}>
+                                Mégse
+                            </Button>
+                            <Button type="primary" htmlType="submit">
+                                {editingDepartment ? 'Frissítés' : 'Létrehozás'}
+                            </Button>
+                        </Space>
+                    </Form.Item>
+                </Form>
+            </Modal>
+
+            {/* Megtekintés Modal */}
+            <Modal
+                title="Osztály részletei"
+                open={isViewModalVisible}
+                onCancel={() => setIsViewModalVisible(false)}
+                footer={[
+                    <Button key="close" onClick={() => setIsViewModalVisible(false)}>
+                        Bezárás
+                    </Button>
+                ]}
+                width={800}
+            >
+                {viewingDepartment && (
+                    <div>
+                        <Descriptions bordered column={1} style={{ marginBottom: 24 }}>
+                            <Descriptions.Item label="Osztály neve">
+                                {viewingDepartment.name}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Leírás">
+                                {viewingDepartment.description || '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Vezető(k)">
+                                {viewingDepartment.manager_names && viewingDepartment.manager_names.length > 0 ? (
+                                    <Space size={[0, 8]} wrap>
+                                        {viewingDepartment.manager_names.map((name, index) => (
+                                            <Tag key={index} color="blue" icon={<UserOutlined />}>
+                                                {name}
+                                            </Tag>
+                                        ))}
+                                    </Space>
+                                ) : '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Költségvetés">
+                                {viewingDepartment.budget ? `${viewingDepartment.budget.toLocaleString('hu-HU')} Ft` : '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Létrehozva">
+                                {new Date(viewingDepartment.created_at).toLocaleString('hu-HU')}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Módosítva">
+                                {new Date(viewingDepartment.updated_at).toLocaleString('hu-HU')}
+                            </Descriptions.Item>
+                        </Descriptions>
+
+                        <h4>Osztály tagjai ({departmentEmployees.length} fő)</h4>
+                        {departmentEmployees.length > 0 ? (
+                            <Table
+                                dataSource={departmentEmployees}
+                                columns={[
+                                    {
+                                        title: 'ID',
+                                        dataIndex: 'employee_id',
+                                        key: 'employee_id',
+                                        width: 100,
+                                    },
+                                    {
+                                        title: 'Név',
+                                        dataIndex: 'full_name',
+                                        key: 'full_name',
+                                    },
+                                    {
+                                        title: 'Pozíció',
+                                        dataIndex: 'position_name',
+                                        key: 'position_name',
+                                        render: (position: string) => position || '-',
+                                    },
+                                ]}
+                                rowKey="id"
+                                pagination={false}
+                                size="small"
+                            />
+                        ) : (
+                            <p style={{ color: '#999', fontStyle: 'italic' }}>
+                                Nincsenek tagok ebben az osztályban.
+                            </p>
+                        )}
+                    </div>
+                )}
+            </Modal>
+        </div>
+    );
+};
+
+export default Departments;

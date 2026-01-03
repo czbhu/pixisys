@@ -1,0 +1,172 @@
+Íme egy átfogó, menüről‑menüre haladó leírás a rendszer funkcióiról – benne a kisebb kényelmi apróságokkal is.
+
+Áttekintés
+- Cél: vállalati számlázás NAV-integrációval, több cég és számlatömb támogatással.
+- Frontend: React + react-hook-form + react-query + styled-components.
+- Backend: Django REST Framework, NAV API segédszolgáltatásokkal.
+- Összekötés: JSON REST API-k a services/api.js-ben, egységes hibakezeléssel és toast értesítésekkel.
+
+Főmenü
+- Dashboard: gyors áttekintő (hely, hogy statisztikák megjelenjenek).
+- Invoices (Számlák): lista + új/szerkesztés.
+- Customers (Ügyfelek): lista + új/szerkesztés.
+- Contacts (Kapcsolattartók): lista + új/szerkesztés.
+- Reports (Riportok): riport felület (bővíthető).
+- Settings (Beállítások): cégek, felhasználók, számlatömbök, NAV-konfigurációk, ÁFA típusok.
+
+Invoices
+- Lista
+  - Számlák listázása és keresés (kódszinten támogatott; UI bővíthető).
+  - NAV-státusz lekérés és beküldés API-k (kódszinten: submit_to_nav, nav_status).
+- Új/Szerkesztés űrlap
+  - Fejléc
+    - Cím: „Új számla”/„Számla szerkesztése”.
+    - Vissza gomb, Nyomtatási kép (Print), Mentés/Frissítés.
+  - Cég és számlatömb (új számlán)
+    - Cég: kereshető select (ReactSelect).
+    - Számlatömb: kiválasztás cég szerint szűrve.
+    - Számlaszám előnézet: „Előnézet — a végleges számlaszám mentéskor képződik.” (backend preview API).
+    - Cég elsődleges bankszámla doboz: megjeleníti bank nevét, számlaszámot, IBAN-t, SWIFT/BIC kódot (ha van).
+    - Számla megjelenési forma öröklése a tömbből (ELECTRONIC/PAPER/EDI).
+  - Ügyfél és dátumok
+    - Ügyfél: kereshető, ékezet-inszenzitív select (név + adószám alapján), Új ügyfél létrehozható és visszaadódik a selectionnel.
+    - Dátumok: Kibocsátás, Esedékesség, Teljesítés – mind datepicker.
+    - Esedékesség: fizetési mód és vevő „esedékesség napok” alapján automatikusan számolódik (átutalás esetén).
+    - Teljesítés alapból a kibocsátás napjára áll, ha üres.
+  - Pénzügyi adatok
+    - Számla típusa: SIMPLIFIED/NORMAL/AGGREGATE/ADVANCE/FINAL/CORRECTION.
+    - Rendelésszám/hivatkozás mező.
+    - Teljességi jelző (nem egyszerűsített számlán).
+    - Fizetési mód: kötelező mező.
+    - Pénznem: kereshető select (HUF/EUR/USD/...), HUF-on kívül automatikusan betölti az árfolyamot (utility API).
+    - Árfolyam kézi megadása is engedélyezett.
+    - Megjegyzések mező.
+  - Tételek
+    - Új tétel hozzáadása zöld gombbal. Alapértelmezett: mennyiség=1, nettó egységár=0, ÁFA=27%, mértékegység=db.
+    - Név/Leírás: nagyobb mező, kényelmes szerkesztéshez.
+    - Termékkód oszlop egyszerűsített számlán.
+    - Mennyiség: decimális, azonnali újraszámítás (nettó/bruttó).
+    - Mértékegység: CreatableSelect, gyakori készlet (db, l, mm, cm, m, m2, m3, g, kg, t), saját érték felvétele.
+    - ÁFA kiválasztó (két mód):
+      - Ha van törzs (ÁFA típusok): kereshető ReactSelect, csak kódot mutat (pl. AAM, TAM, 27), Top 5 csoport a lista tetején.
+        - Top 5: használat alapján tanul (helyi tárolás), első indításkor 27, AAM, TAM, 5, 0.
+        - „ÁFA %” fejlécben „?” ikon: magyarázó modal (Case érték, Áfa tv. hivatkozás, Magyarázat/példa) – AAM, TAM, KBAET, KBAUK, EAM, NAM, ATK, EUFAD37, EUFADE, EUE, HO, REFUNDABLE_VAT, NONREFUNDABLE_VAT.
+        - Nem százalékos típus választásakor ÁFA indok mező jelenik meg.
+        - Százalékos típusnál a százalék automatikus beállítása (pl. 27%).
+      - Ha nincs törzs: fix opciók (27/18/5/0).
+    - Nettó egységár / Bruttó egységár: kölcsönösen számolnak egymásból az ÁFA kulcs alapján (beviteli normalizálás, „,” → „.”).
+    - Típus / Kód típusa / Kód értéke (normál számlán): termék-szolgáltatás jelző és termékkód adatok (VTSZ/SZJ/KN/Other).
+    - Nettó/ÁFA/Bruttó összeg: automatikus számítás, kézi felülírhatóság (kényelmi reset: bármely változáskor a kézi összegmezők ürülnek, hogy ismét a számolt érték látszódjon).
+    - Műveletek: tétel törlése (ha több tétel van), tétel duplikálása.
+  - Összesítés
+    - Nettó/ÁFA/Bruttó összesen – 2 tizedessel, „hu-HU” formázással.
+    - ÁFA részletező: kulcsonként bontott nettó‑ÁFA‑bruttó és összes sor.
+  - Kényelmi funkciók
+    - Alapértelmezett ÁFA: 27% (új tételeknél és induláskor a tételeken „27” kód beállítása, ha elérhető).
+    - „?” ÁFA-súgó a táblázat fejlécben.
+    - Előnézet számlaszám generálás mentés előtt.
+    - Vevő-választó ékezet nélküli kereséssel.
+    - Deviza árfolyam automatikus letöltése.
+    - Piszkozat mentés (csak frissítésnél megőrzés): új számla esetén a böngésző frissítése után visszaáll, de ha elnavigálsz, törlődik. Mentéskor törlődik.
+    - A szerver oldali validációs hibákból a legrelevánsabb mezőre fókuszál, oda gördít, és toast hibaüzenet jelenik meg.
+    - Nyomtatási kép gomb.
+  - Hozzárendelés a céghez
+    - Számlatömb esetén a cég automatikusan beáll.
+    - Ha nincs számlatömb megadva, cég kiválasztása kötelező (backend validáció).
+  - NAV integráció (backend)
+    - Beküldés NAV-hoz (submit_to_nav), NAV státusz lekérdezése (nav_status) támogatott API-k.
+
+Customers (Ügyfelek)
+- Lista
+  - Keresés (név, adószám, e-mail), lapozás.
+  - „Debug info” eltávolítva a UI-ról.
+  - Törlés megerősítéssel.
+- Új/Szerkesztés
+  - Alapadatok: név, rövid név, adószám (8 számjegy), címadatok (utca, közterület típusa, házszám, épület, lépcsőház, emelet, ajtó), város, irányítószám, ország, e-mail, telefon, EU adószám, stb.
+  - Vevő adóalanyisága: kapcsoló (DOMESTIC / PRIVATE_PERSON / OTHER), magyarázó súgó leírás, és logikai mezők állítása (pl. is_hungarian_taxpayer).
+  - NAV adószám lekérdezés gomb: visszajelzések (siker/figyelmeztetés/hiba), automatikus újrapróbálás (retry).
+  - Duplikált adószám védelem (409): felülírási lehetőség konfirmációval.
+  - Esedékesség napok (payment_due_days): új számlán a fizetési mód alapján figyelembe vesszük.
+  - Bankszámlák:
+    - Több sor felvehető, elsődleges jelölhető (a többiek automatikusan nem elsődlegesek).
+    - Automatikus lekérdezés (stub) elérhető szerkesztésnél.
+  - Piszkozat mentés (csak frissítésnél megőrzés): új ügyfélnél frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+
+Contacts (Kapcsolattartók)
+- Új/Szerkesztés
+  - Kapcsolat ügyfélhez: kereshető, ékezet-inszenzitív select (név, adószám, e-mail).
+  - Adatok: név, beosztás, osztály, kontakt típus (elsődleges/számlázási/technikai/értékesítési/támogatási/egyéb), e-mail, telefon, mobil, fax, megjegyzések, aktív/elsődleges jelölők.
+  - Piszkozat mentés (csak frissítésnél megőrzés): új kapcsolattartónál frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+
+Companies (Cégek)
+- Új/Szerkesztés
+  - Választható meglévő ügyfél (kereshető listából) új cég alapjául – adatok átemelhetők.
+  - Alapadatok: név, rövid név, adószám, teljes adószám, cím, város, irányítószám, ország, e-mail, telefon, aktív.
+  - Piszkozat mentés (csak frissítésnél megőrzés): új cégnél frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+
+Invoice Blocks (Számlatömbök)
+- Új/Szerkesztés
+  - Cég kijelölése, tömb neve, előtag, kezdő sorszám, aktív, megjelenési forma.
+  - NAV konfiguráció hozzárendelése a kiválasztott cég konfigurációi közül.
+  - Sorszámozás formátum magyarázat (Előtag + Év + Növekvő sorszám).
+  - Piszkozat mentés (csak frissítésnél megőrzés): új tömbnél frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+  - Külön API-k:
+    - Következő számlaszám előnézete (változás rögzítése nélkül).
+    - Következő számlaszám generálása a backendben.
+
+Company NAV Configurations (Cég NAV-konfigurációk)
+- Új/Szerkesztés
+  - Cég, név, API URL, tesztkörnyezet jelölő, bejelentkezési adatok, kulcsok (sign/exchange), adószám.
+  - Szoftver adatok: azonosító, név, működés, főverzió; fejlesztő adatai (név, kapcsolat, országkód, adószám).
+  - Aktív / Alapértelmezett jelölők.
+  - „Kapcsolat tesztelése” gomb szerkesztésnél.
+  - Piszkozat mentés (csak frissítésnél megőrzés): új konfigurációnál frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+
+VAT Types (ÁFA típusok) – Beállítások
+- Törzsadat karbantartás
+  - Oszlopok: Kód, Név, Kategória (Százalékos / Adómentes / Fordított adózás / Különbözeti ÁFA / Egyéb), Százalék, Aktív, Sorrend.
+  - Hozzáadás/módosítás/törlés a táblában.
+  - Tömeges felvitel: szöveges import (CSV/„;”/tab): „code;name;category;percentage”.
+- Használat a számla tételsorban
+  - Kereshető kódlista (csak kód látszik), Top 5 a lista tetején (használat alapján).
+  - Nem százalékos típusnál 0% ÁFA és „ÁFA indok” mező jelenik meg.
+
+System Users (Rendszer felhasználók)
+- Új/Szerkesztés
+  - Keresztnév, vezetéknév, e-mail, jelszó (csak új), aktív.
+  - Cégek hozzárendelése: többes kijelölés.
+  - Piszkozat mentés (csak frissítésnél megőrzés): új felhasználónál frissítés után visszaáll, elnavigáláskor törlődik. Mentés/frissítés után törlődik.
+
+Settings (Beállítások) lap
+- Kártyák:
+  - Cégek: karbantartás.
+  - Felhasználók: karbantartás.
+  - Számlatömbök: karbantartás.
+  - NAV konfigurációk: karbantartás.
+  - ÁFA típusok: karbantartás (kódtörzs), tömeges import.
+
+Kereső és bevitel kényelmi funkciói
+- Ékezetinszenzitív keresés: Ügyfél-választás és több select mező.
+- Pénznem váltás: automatikus árfolyam lekérés (nem HUF esetén).
+- Számformátum-normalizálás: decimális bevitel „,” → „.”.
+- Összegmezők kézi felülírása esetén automatikus visszaállás: releváns mező változásakor a kézzel beírt bruttó/nettó összeg ürül, és a számolt érték látszik.
+- Tétel duplikálás gomb: gyors adatbevitelhez.
+- Hozzáadott tétel alapértelmezések: 27% ÁFA, „db” mértékegység, mennyiség 1.
+- Kijelölt cég megjegyzése: localStorage-be mentve, új számlán alapértelmezetten felkínáljuk.
+
+Hibakezelés és validáció
+- Backend validációk:
+  - Ügyfél/cég/számlatömb azonosító ellenőrzés (érthető hibaüzenettel).
+  - Kötelező mezők hiányánál mezőszintű hibák.
+- Frontend:
+  - A szerver által visszaadott első releváns hibára fókuszál és odagördül.
+  - Tételhiba esetén a tételek szekcióra görget.
+  - Toast értesítések siker/hiba esetén.
+
+Adatmentés (Piszkozat) szabályai
+- Új rekordoknál: csak frissítésnél tartja meg a böngésző (refresh után visszatölt), elnavigáláskor törli. Mentés/frissítés után mindig törli.
+  - Érintett űrlapok: Számla (új), Ügyfél (új), Kapcsolattartó (új), Cég (új), Számlatömb (új), NAV konfig (új), Rendszerfelhasználó (új).
+
+Megjegyzés
+- Igény szerint készíthető képernyőképes felhasználói útmutató (pl. „első számla kiállítása”), valamint admin-útmutató (törzsadatok előkészítése, NAV kapcsolat tesztelése).
+

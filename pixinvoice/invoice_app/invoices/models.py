@@ -1,0 +1,991 @@
+from django.db import models
+from django.contrib.auth.models import User
+from django.core.validators import RegexValidator
+from django.contrib.auth.hashers import make_password, check_password
+import uuid
+
+
+class Customer(models.Model):
+    """Customer model for storing customer information"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, verbose_name="Customer Name")
+    short_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Short Name")
+    tax_number = models.CharField(
+        max_length=20, 
+        validators=[RegexValidator(r'^\d{8}$', 'Tax number must be 8 digits')],
+        verbose_name="Tax Number"
+    )
+    full_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Full Tax Number")
+    address = models.TextField(blank=True, null=True, verbose_name="Address")
+    street_name = models.CharField(max_length=200, blank=True, null=True, verbose_name="Street Name")
+    public_place_category = models.CharField(max_length=50, blank=True, null=True, verbose_name="Public Place Category")
+    street_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="Street Number")
+    building = models.CharField(max_length=20, blank=True, null=True, verbose_name="Building")
+    staircase = models.CharField(max_length=20, blank=True, null=True, verbose_name="Staircase")
+    floor = models.CharField(max_length=20, blank=True, null=True, verbose_name="Floor")
+    door = models.CharField(max_length=20, blank=True, null=True, verbose_name="Door")
+    city = models.CharField(max_length=100, verbose_name="City")
+    postal_code = models.CharField(max_length=10, verbose_name="Postal Code")
+    country = models.CharField(max_length=100, default="Hungary", verbose_name="Country")
+    email = models.EmailField(blank=True, null=True, verbose_name="Email")
+    phone = models.CharField(max_length=20, blank=True, null=True, verbose_name="Phone")
+    vat_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="VAT Code")
+    county_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="County Code")
+    vat_group_id = models.CharField(max_length=50, blank=True, null=True, verbose_name="VAT Group ID")
+    vat_group_member_tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="VAT Group Member Tax Number")
+    VAT_STATUS_CHOICES = [
+        ('DOMESTIC', 'Magyar adószámos'),
+        ('PRIVATE_PERSON', 'Magánszemély'),
+        ('OTHER', 'Egyéb')
+    ]
+    vat_status = models.CharField(max_length=20, choices=VAT_STATUS_CHOICES, default='DOMESTIC', verbose_name="Vevő adóalanyisága")
+    is_hungarian_taxpayer = models.BooleanField(default=True, verbose_name="Hungarian Taxpayer")
+    eu_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="EU Tax Number")
+    payment_due_days = models.PositiveIntegerField(default=8, verbose_name="Payment Due Days")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Customer"
+        verbose_name_plural = "Customers"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.tax_number})"
+
+
+class CustomerBankAccount(models.Model):
+    """Bank account details for a customer"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='bank_accounts', verbose_name="Customer")
+    bank_name = models.CharField(max_length=150, blank=True, null=True, verbose_name="Bank Name")
+    account_number = models.CharField(max_length=64, blank=True, null=True, verbose_name="Bank Account Number")
+    iban = models.CharField(max_length=34, blank=True, null=True, verbose_name="IBAN")
+    swift_bic = models.CharField(max_length=11, blank=True, null=True, verbose_name="SWIFT/BIC")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
+    is_primary = models.BooleanField(default=False, verbose_name="Primary")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Customer Bank Account"
+        verbose_name_plural = "Customer Bank Accounts"
+        ordering = ['-is_primary', 'bank_name']
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.iban or self.account_number or 'N/A'}"
+
+
+class Company(models.Model):
+    """Company model for multi-company invoicing"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=200, verbose_name="Company Name")
+    short_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Short Name")
+    tax_number = models.CharField(
+        max_length=20, 
+        validators=[RegexValidator(r'^\d{8}$', 'Tax number must be 8 digits')],
+        verbose_name="Tax Number"
+    )
+    full_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Full Tax Number")
+    vat_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="VAT Code")
+    county_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="County Code")
+    eu_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="EU Tax Number")
+    vat_group_id = models.CharField(max_length=50, blank=True, null=True, verbose_name="VAT Group ID")
+    vat_group_member_tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="VAT Group Member Tax Number")
+    address = models.TextField(blank=True, null=True, verbose_name="Address")
+    street_name = models.CharField(max_length=200, blank=True, null=True, verbose_name="Street Name")
+    public_place_category = models.CharField(max_length=50, blank=True, null=True, verbose_name="Public Place Category")
+    street_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="Street Number")
+    building = models.CharField(max_length=20, blank=True, null=True, verbose_name="Building")
+    staircase = models.CharField(max_length=20, blank=True, null=True, verbose_name="Staircase")
+    floor = models.CharField(max_length=20, blank=True, null=True, verbose_name="Floor")
+    door = models.CharField(max_length=20, blank=True, null=True, verbose_name="Door")
+    city = models.CharField(max_length=100, verbose_name="City")
+    postal_code = models.CharField(max_length=10, verbose_name="Postal Code")
+    country = models.CharField(max_length=100, default="Hungary", verbose_name="Country")
+    email = models.EmailField(blank=True, null=True, verbose_name="Email")
+    phone = models.CharField(max_length=20, blank=True, null=True, verbose_name="Phone")
+    xml_logging_enabled = models.BooleanField(default=True, verbose_name="XML log mentés engedélyezve")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    api_key = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name="API-kulcs")
+
+    def save(self, *args, **kwargs):
+        import secrets
+        if not self.api_key:
+            self.api_key = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company"
+        verbose_name_plural = "Companies"
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.tax_number})"
+
+
+class IncomingSyncState(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='incoming_sync_state')
+    last_refreshed_at = models.DateTimeField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Incoming Sync State"
+        verbose_name_plural = "Incoming Sync States"
+
+    def __str__(self):
+        return f"IncomingSyncState({self.company.name}) @ {self.last_refreshed_at}"
+
+
+class IncomingInvoiceDigest(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_digests')
+    invoice_number = models.CharField(max_length=100)
+    invoice_operation = models.CharField(max_length=20, blank=True, null=True)
+    invoice_category = models.CharField(max_length=20, blank=True, null=True)
+    invoice_issue_date = models.DateField(blank=True, null=True)
+    invoice_delivery_date = models.DateField(blank=True, null=True)
+    supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    supplier_name = models.CharField(max_length=300, blank=True, null=True)
+    customer_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    customer_name = models.CharField(max_length=300, blank=True, null=True)
+    payment_method = models.CharField(max_length=30, blank=True, null=True)
+    payment_date = models.DateField(blank=True, null=True)
+    invoice_appearance = models.CharField(max_length=30, blank=True, null=True)
+    currency = models.CharField(max_length=10, blank=True, null=True)
+    invoice_net_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
+    invoice_vat_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
+    transaction_id = models.CharField(max_length=50, blank=True, null=True)
+    index = models.IntegerField(blank=True, null=True)
+    original_invoice_number = models.CharField(max_length=100, blank=True, null=True)
+    modification_index = models.IntegerField(blank=True, null=True)
+    ins_date = models.DateTimeField(blank=True, null=True)
+    completeness_indicator = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Incoming Invoice Digest"
+        verbose_name_plural = "Incoming Invoice Digests"
+        indexes = [
+            models.Index(fields=['company', 'invoice_issue_date']),
+            models.Index(fields=['company', 'ins_date']),
+        ]
+        unique_together = (('company', 'invoice_number', 'transaction_id'),)
+
+    def __str__(self):
+        return f"{self.company.short_name or self.company.name} - {self.invoice_number}"
+
+
+class IncomingInvoiceData(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_datas')
+    invoice_number = models.CharField(max_length=100)
+    supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    transaction_id = models.CharField(max_length=50, blank=True, null=True)
+    xml_text = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Incoming Invoice Data"
+        verbose_name_plural = "Incoming Invoice Datas"
+        indexes = [
+            models.Index(fields=['company', 'invoice_number']),
+            models.Index(fields=['company', 'supplier_tax_number']),
+        ]
+        unique_together = (('company', 'invoice_number', 'supplier_tax_number'),)
+
+    def __str__(self):
+        return f"{self.company.short_name or self.company.name} - {self.invoice_number} (full)"
+
+
+def incoming_upload_path(instance, filename: str) -> str:
+    import os
+    base = 'incoming'
+    comp = str(getattr(instance.company, 'id', 'unknown'))
+    inv = (instance.invoice_number or 'misc').replace('/', '_')
+    safe_name = os.path.basename(filename or '')
+    return f"{base}/{comp}/{inv}/{safe_name}"
+
+
+class IncomingDocument(models.Model):
+    TYPE_CHOICES = [
+        ('IMAGE', 'Számlakép'),
+        ('OTHER', 'Egyéb'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_documents')
+    invoice_number = models.CharField(max_length=100)
+    supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='IMAGE')
+    file = models.FileField(upload_to=incoming_upload_path)
+    original_name = models.CharField(max_length=255, blank=True, null=True)
+    content_type = models.CharField(max_length=100, blank=True, null=True)
+    size = models.PositiveIntegerField(default=0)
+    comment = models.CharField(max_length=500, blank=True, null=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['company', 'invoice_number']),
+            models.Index(fields=['company', 'supplier_tax_number']),
+        ]
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"Doc {self.invoice_number} - {self.original_name or self.file.name}"
+
+
+class CompanyEmailSettings(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='email_settings')
+    # SMTP
+    smtp_host = models.CharField(max_length=200, blank=True, null=True)
+    smtp_port = models.PositiveIntegerField(default=587)
+    smtp_user = models.CharField(max_length=200, blank=True, null=True)
+    smtp_password = models.CharField(max_length=500, blank=True, null=True)
+    smtp_use_tls = models.BooleanField(default=True)
+    smtp_from = models.EmailField(blank=True, null=True)
+    # IMAP Sent copy
+    imap_host = models.CharField(max_length=200, blank=True, null=True)
+    imap_user = models.CharField(max_length=200, blank=True, null=True)
+    imap_password = models.CharField(max_length=500, blank=True, null=True)
+    imap_port = models.PositiveIntegerField(default=993)
+    imap_sent_folder = models.CharField(max_length=200, blank=True, null=True, default='Sent')
+    # Templates
+    default_subject_template = models.CharField(max_length=200, blank=True, null=True, default='Számla {invoice_number}')
+    default_body_template = models.TextField(blank=True, null=True, default='Tisztelt {customer_name}!\n\nKüldjük a(z) {invoice_number} számú számlát PDF csatolmányként.\n\nÜdvözlettel,\n{company_name}')
+    subject_template_en = models.CharField(max_length=200, blank=True, null=True, default='Invoice {invoice_number}')
+    body_template_en = models.TextField(blank=True, null=True, default='Dear {customer_name},\n\nPlease find attached invoice {invoice_number}.\n\nBest regards,\n{company_name}')
+    default_sender_name = models.CharField(max_length=200, blank=True, null=True)
+    default_sender_phone = models.CharField(max_length=50, blank=True, null=True)
+    # Desktop email client (Thunderbird) integration
+    use_thunderbird = models.BooleanField(default=False)
+    thunderbird_path = models.CharField(max_length=500, blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Company Email Settings'
+        verbose_name_plural = 'Company Email Settings'
+
+    def __str__(self):
+        return f"Email settings for {self.company.name}"
+
+
+class CompanyBankAccount(models.Model):
+    """Bank account details for a company (supplier)"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_accounts', verbose_name="Company")
+    bank_name = models.CharField(max_length=150, blank=True, null=True, verbose_name="Bank Name")
+    account_number = models.CharField(max_length=64, blank=True, null=True, verbose_name="Bank Account Number")
+    iban = models.CharField(max_length=34, blank=True, null=True, verbose_name="IBAN")
+    swift_bic = models.CharField(max_length=11, blank=True, null=True, verbose_name="SWIFT/BIC")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
+    is_primary = models.BooleanField(default=False, verbose_name="Primary")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company Bank Account"
+        verbose_name_plural = "Company Bank Accounts"
+        ordering = ['-is_primary', 'bank_name']
+
+    def __str__(self):
+        return f"{self.company.name} - {self.iban or self.account_number or 'N/A'}"
+
+
+class InvoiceItem(models.Model):
+    """Invoice item model for storing line items"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    description = models.CharField(max_length=500, verbose_name="Description")
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Quantity")
+    unit_price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Unit Price")
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=27.0, verbose_name="VAT Rate (%)")
+    # Detailed VAT handling
+    # Optional reference to VAT type master data (e.g., AAM, TAM, EAM, 27%, 5%, etc.)
+    vat_type = models.ForeignKey('VATType', on_delete=models.SET_NULL, null=True, blank=True, related_name='items', verbose_name="VAT Type")
+    vat_reason = models.CharField(max_length=255, blank=True, null=True, verbose_name="VAT Reason/Note")
+    unit_of_measure = models.CharField(max_length=20, default='PIECE', verbose_name="Unit of Measure")
+    NATURE_CHOICES = [
+        ('PRODUCT', 'Termék'),
+        ('SERVICE', 'Szolgáltatás'),
+        ('OTHER', 'Egyéb'),
+    ]
+    nature_indicator = models.CharField(max_length=20, choices=NATURE_CHOICES, default='PRODUCT', verbose_name="Line Nature")
+    PRODUCT_CODE_CAT_CHOICES = [
+        ('VTSZ', 'VTSZ'),
+        ('SZJ', 'SZJ'),
+        ('KN', 'KN'),
+        ('OTHER', 'Other'),
+    ]
+    product_code_category = models.CharField(max_length=20, choices=PRODUCT_CODE_CAT_CHOICES, blank=True, null=True, verbose_name="Product Code Category")
+    product_code_value = models.CharField(max_length=50, blank=True, null=True, verbose_name="Product Code Value")
+    deletion_code = models.CharField(max_length=50, blank=True, null=True, verbose_name="Deletion Code")
+    note = models.CharField(max_length=500, blank=True, null=True, verbose_name="Item Note")
+    # Chain references for corrections/storno
+    original_line_number = models.PositiveIntegerField(blank=True, null=True, verbose_name="Original Line Number")
+    LINE_OPERATION_CHOICES = [
+        ('CREATE', 'CREATE'),
+        ('MODIFY', 'MODIFY'),
+        ('DELETE', 'DELETE'),
+    ]
+    line_operation = models.CharField(max_length=10, choices=LINE_OPERATION_CHOICES, blank=True, null=True, verbose_name="Line Operation")
+    
+    @property
+    def net_amount(self):
+        return self.quantity * self.unit_price
+    
+    @property
+    def vat_amount(self):
+        return self.net_amount * (self.vat_rate / 100)
+    
+    @property
+    def gross_amount(self):
+        return self.net_amount + self.vat_amount
+
+    class Meta:
+        verbose_name = "Invoice Item"
+        verbose_name_plural = "Invoice Items"
+
+    def __str__(self):
+        return f"{self.description} - {self.quantity} x {self.unit_price}"
+
+
+class Invoice(models.Model):
+    """Main invoice model"""
+    INVOICE_STATUS_CHOICES = [
+        ('draft', 'Draft'),
+        ('sent', 'Sent'),
+        ('partially_paid', 'Partially Paid'),
+        ('paid', 'Paid'),
+        ('cancelled', 'Cancelled'),
+        ('submitted_to_nav', 'Submitted to NAV'),
+        ('nav_processed', 'NAV Processed'),
+        ('nav_rejected', 'NAV Rejected'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    invoice_number = models.CharField(max_length=50, unique=True, verbose_name="Invoice Number")
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='invoices', verbose_name="Company")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, verbose_name="Customer")
+    items = models.ManyToManyField(InvoiceItem, verbose_name="Invoice Items")
+    invoice_block = models.ForeignKey('InvoiceBlock', on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices', verbose_name="Invoice Block")
+    
+    # Invoice dates
+    issue_date = models.DateField(verbose_name="Issue Date")
+    due_date = models.DateField(verbose_name="Due Date")
+    delivery_date = models.DateField(blank=True, null=True, verbose_name="Delivery Date")
+    
+    # Financial information
+    currency = models.CharField(max_length=3, default="HUF", verbose_name="Currency")
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, default=1.0, verbose_name="Exchange Rate")
+    PAYMENT_METHOD_CHOICES = [
+        ('transfer', 'Átutalás'),
+        ('cash', 'Készpénz'),
+        ('card', 'Bankkártya'),
+        ('voucher', 'Utalvány'),
+        ('cod', 'Utánvét'),
+        ('other', 'Egyéb'),
+    ]
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='transfer', verbose_name="Fizetési mód")
+    
+    # Status and NAV integration
+    status = models.CharField(max_length=20, choices=INVOICE_STATUS_CHOICES, default='draft', verbose_name="Status")
+    nav_transaction_id = models.CharField(max_length=100, blank=True, null=True, verbose_name="NAV Transaction ID")
+    nav_submission_date = models.DateTimeField(blank=True, null=True, verbose_name="NAV Submission Date")
+    nav_response = models.TextField(blank=True, null=True, verbose_name="NAV Response")
+    
+    # Additional information
+    notes = models.TextField(blank=True, null=True, verbose_name="Notes")
+    # NAV-specific details
+    INVOICE_CATEGORY_CHOICES = [
+        ('NORMAL', 'Normál'),
+        ('SIMPLIFIED', 'Egyszerűsített'),
+        ('AGGREGATE', 'Gyűjtőszámla'),
+        ('ADVANCE', 'Előlegszámla'),
+        ('FINAL', 'Végszámla'),
+        ('CORRECTION', 'Helyesbítő'),
+    ]
+    invoice_category = models.CharField(max_length=20, choices=INVOICE_CATEGORY_CHOICES, default='NORMAL', verbose_name="Invoice Category")
+    APPEARANCE_CHOICES = [
+        ('PAPER', 'Papír'),
+        ('ELECTRONIC', 'Elektronikus'),
+        ('EDI', 'EDI'),
+    ]
+    invoice_appearance = models.CharField(max_length=20, choices=APPEARANCE_CHOICES, default='ELECTRONIC', verbose_name="Invoice Appearance")
+    payment_date = models.DateField(blank=True, null=True, verbose_name="Payment Date")
+    amount_paid = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Amount Paid")
+    completeness_indicator = models.BooleanField(default=False, verbose_name="Completeness Indicator")
+    order_reference = models.CharField(max_length=200, blank=True, null=True, verbose_name="Order Reference")
+    # Chain references for corrections/storno
+    original_invoice = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='modifications', verbose_name="Original Invoice")
+    original_invoice_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Original Invoice Number")
+    modification_index = models.PositiveIntegerField(blank=True, null=True, verbose_name="Modification Index")
+    modify_without_master = models.BooleanField(default=False, verbose_name="Modify Without Master")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name="Created By")
+    print_snapshot = models.JSONField(blank=True, null=True, verbose_name="Print Snapshot")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Invoice"
+        verbose_name_plural = "Invoices"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Invoice {self.invoice_number} - {self.customer.name}"
+
+    @property
+    def total_net_amount(self):
+        return sum(item.net_amount for item in self.items.all())
+
+    @property
+    def total_vat_amount(self):
+        return sum(item.vat_amount for item in self.items.all())
+
+    @property
+    def total_gross_amount(self):
+        return sum(item.gross_amount for item in self.items.all())
+
+    @property
+    def outstanding_gross_amount(self):
+        try:
+            return max(self.total_gross_amount - self.amount_paid, 0)
+        except Exception:
+            return 0
+
+
+class BankStatement(models.Model):
+    """Bank statement header for grouping payments."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_statements', verbose_name="Company")
+    bank_account = models.ForeignKey(CompanyBankAccount, on_delete=models.SET_NULL, null=True, blank=True, related_name='bank_statements', verbose_name="Bank Account")
+    statement_date = models.DateField(verbose_name="Statement Date")
+    sequence_number = models.CharField(max_length=50, verbose_name="Sequence Number")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
+    note = models.TextField(blank=True, null=True, verbose_name="Note")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Created By")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Bank Statement"
+        verbose_name_plural = "Bank Statements"
+        ordering = ['-statement_date', '-created_at']
+
+    def __str__(self):
+        return f"Bank statement {self.sequence_number} - {self.statement_date}"
+
+    @property
+    def total_amount(self):
+        return sum(item.amount for item in self.items.all())
+
+
+class BankStatementItem(models.Model):
+    """Bank statement item that references one invoice payment."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    bank_statement = models.ForeignKey(BankStatement, on_delete=models.CASCADE, related_name='items', verbose_name="Bank Statement")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='bank_statement_items', verbose_name="Customer")
+    invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True, related_name='bank_statement_items', verbose_name="Invoice")
+    amount = models.DecimalField(max_digits=14, decimal_places=2, verbose_name="Amount")
+    note = models.CharField(max_length=500, blank=True, null=True, verbose_name="Note")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Bank Statement Item"
+        verbose_name_plural = "Bank Statement Items"
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.amount} ({self.invoice and self.invoice.invoice_number or 'no invoice'})"
+
+
+class ProformaInvoice(models.Model):
+    """Pro forma invoice (Díjbekérő) model."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    proforma_number = models.CharField(max_length=32, unique=True, verbose_name="Díjbekérő száma")
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='proformas', verbose_name="Company")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='proformas', verbose_name="Customer")
+    items = models.ManyToManyField(InvoiceItem, related_name='proformas', verbose_name="Items")
+    issue_date = models.DateField(verbose_name="Issue Date")
+    due_date = models.DateField(verbose_name="Due Date")
+    delivery_date = models.DateField(blank=True, null=True, verbose_name="Delivery Date")
+    currency = models.CharField(max_length=3, default="HUF", verbose_name="Currency")
+    payment_method = models.CharField(max_length=20, choices=Invoice.PAYMENT_METHOD_CHOICES, default='transfer', verbose_name="Fizetési mód")
+    notes = models.TextField(blank=True, null=True, verbose_name="Notes")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, verbose_name="Created By")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Proforma Invoice"
+        verbose_name_plural = "Proforma Invoices"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Proforma {self.proforma_number} - {self.customer.name}"
+
+    @property
+    def total_net_amount(self):
+        return sum(item.net_amount for item in self.items.all())
+
+    @property
+    def total_vat_amount(self):
+        return sum(item.vat_amount for item in self.items.all())
+
+    @property
+    def total_gross_amount(self):
+        return sum(item.gross_amount for item in self.items.all())
+
+
+class AdvanceAllocation(models.Model):
+    """Allocation of an advance invoice amount to a final invoice."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    advance_invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='advance_allocations_as_advance')
+    final_invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='advance_allocations_as_final')
+    amount = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Advance Allocation"
+        verbose_name_plural = "Advance Allocations"
+
+
+class NAVConfiguration(models.Model):
+    """NAV API configuration model"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, verbose_name="Configuration Name")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    
+    # API Configuration
+    api_url = models.URLField(verbose_name="API URL")
+    is_test_environment = models.BooleanField(default=True, verbose_name="Test Environment")
+    
+    # User credentials
+    login = models.CharField(max_length=100, verbose_name="Login")
+    password = models.CharField(max_length=200, verbose_name="Password")
+    tax_number = models.CharField(max_length=20, verbose_name="Tax Number")
+    sign_key = models.CharField(max_length=100, verbose_name="Sign Key")
+    exchange_key = models.CharField(max_length=100, verbose_name="Exchange Key")
+    
+    # Software information
+    software_id = models.CharField(max_length=50, verbose_name="Software ID")
+    software_name = models.CharField(max_length=100, verbose_name="Software Name")
+    software_operation = models.CharField(max_length=50, default="ONLINE_SERVICE", verbose_name="Software Operation")
+    software_main_version = models.CharField(max_length=20, verbose_name="Software Main Version")
+    software_dev_name = models.CharField(max_length=100, verbose_name="Software Developer Name")
+    software_dev_contact = models.CharField(max_length=200, verbose_name="Software Developer Contact")
+    software_dev_country_code = models.CharField(max_length=2, default="HU", verbose_name="Software Developer Country Code")
+    software_dev_tax_number = models.CharField(max_length=20, verbose_name="Software Developer Tax Number")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "NAV Configuration"
+        verbose_name_plural = "NAV Configurations"
+
+    def __str__(self):
+        return f"{self.name} ({'Test' if self.is_test_environment else 'Production'})"
+
+
+class Contact(models.Model):
+    """Contact person model for customers"""
+    CONTACT_TYPES = [
+        ('primary', 'Elsődleges'),
+        ('billing', 'Számlázási'),
+        ('technical', 'Technikai'),
+        ('sales', 'Értékesítési'),
+        ('support', 'Támogatási'),
+        ('other', 'Egyéb'),
+    ]
+    
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='contacts', verbose_name="Ügyfél")
+    
+    # Alapadatok
+    first_name = models.CharField(max_length=100, verbose_name="Keresztnév")
+    last_name = models.CharField(max_length=100, verbose_name="Vezetéknév")
+    position = models.CharField(max_length=100, blank=True, null=True, verbose_name="Pozíció")
+    department = models.CharField(max_length=100, blank=True, null=True, verbose_name="Osztály")
+    contact_type = models.CharField(max_length=20, choices=CONTACT_TYPES, default='primary', verbose_name="Kapcsolattartó típusa")
+    
+    # Kapcsolattartási adatok
+    email = models.EmailField(blank=True, null=True, verbose_name="E-mail")
+    phone = models.CharField(max_length=20, blank=True, null=True, verbose_name="Telefon")
+    mobile = models.CharField(max_length=20, blank=True, null=True, verbose_name="Mobil")
+    fax = models.CharField(max_length=20, blank=True, null=True, verbose_name="Fax")
+    
+    # További információk
+    notes = models.TextField(blank=True, null=True, verbose_name="Megjegyzések")
+    is_primary = models.BooleanField(default=False, verbose_name="Elsődleges kapcsolattartó")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Kapcsolattartó"
+        verbose_name_plural = "Kapcsolattartók"
+        ordering = ['-is_primary', 'last_name', 'first_name']
+
+    def __str__(self):
+        return f"{self.last_name} {self.first_name} ({self.customer.name})"
+    
+    @property
+    def full_name(self):
+        return f"{self.last_name} {self.first_name}"
+
+
+class SystemUser(models.Model):
+    """System user model for multi-company access"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    first_name = models.CharField(max_length=100, verbose_name="First Name")
+    last_name = models.CharField(max_length=100, verbose_name="Last Name")
+    email = models.EmailField(unique=True, verbose_name="Email")
+    password_hash = models.CharField(max_length=255, verbose_name="Password Hash")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    companies = models.ManyToManyField(Company, related_name='users', verbose_name="Companies")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "System User"
+        verbose_name_plural = "System Users"
+        ordering = ['last_name', 'first_name']
+
+    def __str__(self):
+        return f"{self.last_name} {self.first_name} ({self.email})"
+    
+    @property
+    def full_name(self):
+        return f"{self.last_name} {self.first_name}"
+
+    def set_password(self, raw_password):
+        self.password_hash = make_password(raw_password)
+        self.save()
+
+    def check_password(self, raw_password):
+        return check_password(raw_password, self.password_hash)
+
+
+class InvoiceBlock(models.Model):
+    """Invoice block model for invoice number generation"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='invoice_blocks', verbose_name="Company")
+    name = models.CharField(max_length=100, verbose_name="Block Name")
+    prefix = models.CharField(max_length=20, verbose_name="Prefix")
+    start_number = models.PositiveIntegerField(default=1, verbose_name="Start Number")
+    current_number = models.PositiveIntegerField(default=1, verbose_name="Current Number")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    APPEARANCE_CHOICES = [
+        ('PAPER', 'Papír'),
+        ('ELECTRONIC', 'Elektronikus'),
+        ('EDI', 'EDI'),
+    ]
+    invoice_appearance = models.CharField(max_length=20, choices=APPEARANCE_CHOICES, default='ELECTRONIC', verbose_name="Invoice Appearance")
+    # Optional NAV configuration bound to this block
+    nav_configuration = models.ForeignKey(
+        'CompanyNAVConfiguration',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invoice_blocks',
+        verbose_name="NAV Configuration"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Invoice Block"
+        verbose_name_plural = "Invoice Blocks"
+        ordering = ['company', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.prefix}) - {self.company.name}"
+
+    def get_next_invoice_number(self):
+        """Generate next invoice number in format: [PREFIX][YEAR][NUMBER]"""
+        from datetime import datetime
+        year = datetime.now().year
+        invoice_number = f"{self.prefix}{year}{self.current_number:06d}"
+        self.current_number += 1
+        self.save()
+        return invoice_number
+
+    @property
+    def invoice_count(self):
+        """Count of invoices in this block"""
+        return self.invoices.count()
+
+    @property
+    def cancelled_count(self):
+        """Count of cancelled invoices in this block"""
+        return self.invoices.filter(status='cancelled').count()
+
+    @property
+    def total_net_amount(self):
+        """Total net amount in this block"""
+        total = 0
+        for invoice in self.invoices.all():
+            total += invoice.total_net_amount
+        return total
+
+    @property
+    def total_vat_amount(self):
+        """Total VAT amount in this block"""
+        total = 0
+        for invoice in self.invoices.all():
+            total += invoice.total_vat_amount
+        return total
+
+
+class CompanyNAVConfiguration(models.Model):
+    """Company-specific NAV configuration"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='nav_configurations', verbose_name="Company")
+    name = models.CharField(max_length=100, verbose_name="Configuration Name")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    is_default = models.BooleanField(default=False, verbose_name="Default")
+    
+    # API Configuration
+    api_url = models.URLField(verbose_name="API URL")
+    is_test_environment = models.BooleanField(default=True, verbose_name="Test Environment")
+    
+    # User credentials
+    login = models.CharField(max_length=100, verbose_name="Login")
+    password = models.CharField(max_length=200, verbose_name="Password")
+    tax_number = models.CharField(max_length=20, verbose_name="Tax Number")
+    sign_key = models.CharField(max_length=100, verbose_name="Sign Key")
+    exchange_key = models.CharField(max_length=100, verbose_name="Exchange Key")
+    
+    # Software information
+    software_id = models.CharField(max_length=50, verbose_name="Software ID")
+    software_name = models.CharField(max_length=100, verbose_name="Software Name")
+    software_operation = models.CharField(max_length=50, default="ONLINE_SERVICE", verbose_name="Software Operation")
+    software_main_version = models.CharField(max_length=20, verbose_name="Software Main Version")
+    software_dev_name = models.CharField(max_length=100, verbose_name="Software Developer Name")
+    software_dev_contact = models.CharField(max_length=200, verbose_name="Software Developer Contact")
+    software_dev_country_code = models.CharField(max_length=2, default="HU", verbose_name="Software Developer Country Code")
+    software_dev_tax_number = models.CharField(max_length=20, verbose_name="Software Developer Tax Number")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Company NAV Configuration"
+        verbose_name_plural = "Company NAV Configurations"
+        ordering = ['company', 'name']
+
+    def __str__(self):
+        return f"{self.name} - {self.company.name} ({'Test' if self.is_test_environment else 'Production'})"
+
+
+class APIAccessRule(models.Model):
+    """Per-company API access control with optional invoice block overrides."""
+    SCOPE_ALL = 'ALL'
+    SCOPE_NAV_COMPANY_QUERY = 'nav.companyQuery'
+    SCOPE_CUSTOMER_SYNC = 'customer.sync'
+    SCOPE_CONTACT_SYNC = 'contact.sync'
+    SCOPE_INVOICE_SEND = 'invoice.send'
+
+    SCOPE_CHOICES = [
+        (SCOPE_ALL, 'All access'),
+        (SCOPE_NAV_COMPANY_QUERY, 'NAV céglekérdezés'),
+        (SCOPE_CUSTOMER_SYNC, 'Ügyfél szinkronizálás'),
+        (SCOPE_CONTACT_SYNC, 'Kapcsolattartó szinkronizálás'),
+        (SCOPE_INVOICE_SEND, 'Számla küldés'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='api_access_rules', verbose_name='Company')
+    invoice_block = models.ForeignKey('InvoiceBlock', on_delete=models.CASCADE, null=True, blank=True, related_name='api_access_rules', verbose_name='Invoice Block')
+    scope = models.CharField(max_length=64, choices=SCOPE_CHOICES)
+    allowed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'API Access Rule'
+        verbose_name_plural = 'API Access Rules'
+        constraints = [
+            # Uniqueness for company-level rules (invoice_block is NULL)
+            models.UniqueConstraint(fields=['company', 'scope'], name='unique_api_access_company_scope', condition=models.Q(invoice_block__isnull=True)),
+            # Uniqueness for invoice-block level rules
+            models.UniqueConstraint(fields=['company', 'invoice_block', 'scope'], name='unique_api_access_block_scope', condition=models.Q(invoice_block__isnull=False)),
+        ]
+
+    def __str__(self):
+        lvl = 'company' if self.invoice_block_id is None else f'block:{self.invoice_block_id}'
+        return f"APIAccessRule({self.company_id}, {lvl}, {self.scope}={self.allowed})"
+
+    @classmethod
+    def has_access(cls, company, scope: str, invoice_block=None) -> bool:
+        """Return True if access is allowed for given company/scope.
+        Precedence:
+          - If there are any rules for the given invoice_block, those act as overrides (only listed scopes are allowed for that block).
+          - Else, fall back to company-level: allow if ALL is allowed or the scope is allowed.
+        """
+        try:
+            if invoice_block is not None:
+                # Use overrides if exist for this block
+                exists_for_block = cls.objects.filter(company=company, invoice_block=invoice_block).exists()
+                if exists_for_block:
+                    return cls.objects.filter(company=company, invoice_block=invoice_block, scope=scope, allowed=True).exists()
+
+            # Company level fallbacks
+            if scope != cls.SCOPE_ALL and cls.objects.filter(company=company, invoice_block__isnull=True, scope=cls.SCOPE_ALL, allowed=True).exists():
+                return True
+            return cls.objects.filter(company=company, invoice_block__isnull=True, scope=scope, allowed=True).exists()
+        except Exception:
+            return False
+
+
+class APIClient(models.Model):
+    """Named API credential per company for third-party integrations."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='api_clients', verbose_name='Company')
+    name = models.CharField(max_length=150, verbose_name='API kapcsolat neve')
+    api_key = models.CharField(max_length=64, unique=True, verbose_name='API-kulcs')
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'API Client'
+        verbose_name_plural = 'API Clients'
+        ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        import secrets
+        if not self.api_key:
+            self.api_key = secrets.token_urlsafe(32)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} - {self.company.name}"
+
+
+class APIClientAccessRule(models.Model):
+    """Per-API-client access rules, mirroring APIAccessRule but scoped to a credential."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    api_client = models.ForeignKey(APIClient, on_delete=models.CASCADE, related_name='access_rules', verbose_name='API Client')
+    invoice_block = models.ForeignKey('InvoiceBlock', on_delete=models.CASCADE, null=True, blank=True, related_name='api_client_access_rules', verbose_name='Invoice Block')
+    scope = models.CharField(max_length=64, choices=APIAccessRule.SCOPE_CHOICES)
+    allowed = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'API Client Access Rule'
+        verbose_name_plural = 'API Client Access Rules'
+        constraints = [
+            models.UniqueConstraint(fields=['api_client', 'scope'], name='unique_api_client_scope', condition=models.Q(invoice_block__isnull=True)),
+            models.UniqueConstraint(fields=['api_client', 'invoice_block', 'scope'], name='unique_api_client_block_scope', condition=models.Q(invoice_block__isnull=False)),
+        ]
+
+    def __str__(self):
+        lvl = 'client' if self.invoice_block_id is None else f'block:{self.invoice_block_id}'
+        return f"APIClientAccessRule({self.api_client_id}, {lvl}, {self.scope}={self.allowed})"
+
+    @classmethod
+    def has_access(cls, api_client, scope: str, invoice_block=None) -> bool:
+        try:
+            if invoice_block is not None:
+                exists_for_block = cls.objects.filter(api_client=api_client, invoice_block=invoice_block).exists()
+                if exists_for_block:
+                    return cls.objects.filter(api_client=api_client, invoice_block=invoice_block, scope=scope, allowed=True).exists()
+            if scope != APIAccessRule.SCOPE_ALL and cls.objects.filter(api_client=api_client, invoice_block__isnull=True, scope=APIAccessRule.SCOPE_ALL, allowed=True).exists():
+                return True
+            return cls.objects.filter(api_client=api_client, invoice_block__isnull=True, scope=scope, allowed=True).exists()
+        except Exception:
+            return False
+
+
+class VATType(models.Model):
+    """Master data for VAT types (NAV codes and percentage types)"""
+    CATEGORY_CHOICES = [
+        ('PERCENT', 'Százalékos'),
+        ('EXEMPT', 'Adómentes'),
+        ('REVERSE', 'Fordított adózás'),
+        ('MARGIN', 'Különbözeti ÁFA'),
+        ('OTHER', 'Egyéb'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    code = models.CharField(max_length=10, unique=True, verbose_name="Kód (NAV)")
+    name = models.CharField(max_length=100, verbose_name="Megnevezés")
+    category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='PERCENT', verbose_name="Kategória")
+    percentage = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True, verbose_name="Százalék")
+    description = models.TextField(blank=True, null=True, verbose_name="Leírás")
+    active = models.BooleanField(default=True, verbose_name="Aktív")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "ÁFA típus"
+        verbose_name_plural = "ÁFA típusok"
+        ordering = ['sort_order', 'name']
+
+    def __str__(self):
+        return f"{self.code} - {self.name}"
+
+
+class PaymentBatch(models.Model):
+    """Payment batch for grouping transfer payments of incoming invoices."""
+    STATUS_CHOICES = [
+        ('PENDING', 'Függő'),
+        ('EXPORTED', 'Exportálva'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='payment_batches', verbose_name='Company')
+    name = models.CharField(max_length=100, verbose_name='Batch Name')
+    bank_account = models.ForeignKey(CompanyBankAccount, on_delete=models.SET_NULL, null=True, blank=True, related_name='payment_batches', verbose_name='Bank Account')
+    currency = models.CharField(max_length=3, default='HUF', verbose_name='Currency')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING', verbose_name='Status')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='Created By')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Payment Batch'
+        verbose_name_plural = 'Payment Batches'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"PaymentBatch {self.name} ({self.company.name})"
+
+    @property
+    def item_count(self):
+        return self.items.count()
+
+
+class PaymentBatchItem(models.Model):
+    """Item in a payment batch referencing an incoming invoice digest."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    batch = models.ForeignKey(PaymentBatch, on_delete=models.CASCADE, related_name='items')
+    invoice_number = models.CharField(max_length=100)
+    supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
+    supplier_name = models.CharField(max_length=300, blank=True, null=True)
+    amount_gross = models.DecimalField(max_digits=18, decimal_places=2)
+    currency = models.CharField(max_length=10, default='HUF')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Payment Batch Item'
+        verbose_name_plural = 'Payment Batch Items'
+        indexes = [
+            models.Index(fields=['invoice_number']),
+            models.Index(fields=['supplier_tax_number']),
+        ]
+        unique_together = (('batch', 'invoice_number', 'supplier_tax_number'),)
+
+    def __str__(self):
+        return f"{self.invoice_number} - {self.amount_gross} {self.currency}"

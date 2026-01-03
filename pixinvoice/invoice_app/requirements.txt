@@ -1,0 +1,13 @@
+Django==4.2.7
+djangorestframework==3.14.0
+django-cors-headers==4.3.1
+requests==2.31.0
+python-decouple==3.8
+Pillow==10.1.0
+django-extensions==3.2.3
+lxml==4.9.3
+xmltodict==0.13.0
+pycryptodome==3.19.0
+reportlab==4.0.4
+WeasyPrint==53.3
+gunicorn==21.2.0

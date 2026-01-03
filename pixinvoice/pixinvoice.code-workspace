@@ -1,0 +1,11 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"chatgpt.commentCodeLensEnabled": true,
+		"CodeGPT.apiKey": "OpenAI"
+	}
+}

@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"workbench.editor.enablePreview": true,
+		"workbench.editor.enablePreviewFromQuickOpen": true,
+		"workbench.editor.closeOnFileDelete": true,
+		"workbench.editor.revealIfOpen": true,
+		"workbench.editor.limit.tabs.enabled": true,
+		"workbench.editor.limit.value": 5,
+		"workbench.editor.limit.perEditorGroup": true
+	}
+}

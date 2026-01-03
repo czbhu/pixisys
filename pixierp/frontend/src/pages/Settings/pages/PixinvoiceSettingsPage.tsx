@@ -1,0 +1,205 @@
+import React, { useEffect, useMemo, useState } from 'react';
+import { Card, Form, Input, Button, Space, Alert, Table, Switch, Typography, message, Modal } from 'antd';
+import { settingsService } from '../../../services/settingsService';
+
+const { Text } = Typography;
+
+interface PixinvoiceConfig {
+  id?: number;
+  name: string;
+  base_url: string;
+  company_id?: string;
+  api_key?: string;
+  is_active: boolean;
+  created_at?: string;
+  updated_at?: string;
+}
+
+const PixinvoiceSettingsPage: React.FC = () => {
+  const [form] = Form.useForm<PixinvoiceConfig>();
+  const [items, setItems] = useState<PixinvoiceConfig[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [testingId, setTestingId] = useState<number | null>(null);
+  const [testResult, setTestResult] = useState<any>(null);
+  const [lookupOpen, setLookupOpen] = useState(false);
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupTax, setLookupTax] = useState('');
+  const [lookupData, setLookupData] = useState<any>(null);
+
+  const activeItem = useMemo(() => items.find(i => i.is_active) || items[0], [items]);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const list = await settingsService.getPixinvoiceConfigs();
+      setItems(list);
+      if (list.length) {
+        const it = list.find((i:any) => i.is_active) || list[0];
+        form.setFieldsValue({
+          id: it.id,
+          name: it.name,
+          base_url: it.base_url,
+          company_id: (it as any).company_id,
+          is_active: it.is_active,
+          api_key: '',
+        } as any);
+      } else {
+        form.resetFields();
+        form.setFieldsValue({ name: 'Alapértelmezett', base_url: 'http://localhost:4001/api/', company_id: '', is_active: true });
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const onSave = async () => {
+    const values = await form.validateFields();
+    try {
+      if (values.id) {
+        await settingsService.updatePixinvoiceConfig(values.id, values);
+        message.success('Beállítás frissítve');
+      } else {
+        await settingsService.createPixinvoiceConfig(values);
+        message.success('Beállítás létrehozva');
+      }
+      await load();
+    } catch (e:any) {
+      message.error(e?.response?.data?.error || e.message || 'Mentési hiba');
+    }
+  };
+
+  const onTest = async (id?: number) => {
+    const cfgId = id || form.getFieldValue('id');
+    if (!cfgId) { message.warning('Előbb mentsd a beállítást'); return; }
+    setTestingId(cfgId);
+    setTestResult(null);
+    try {
+      const res = await settingsService.testPixinvoiceConnection(cfgId);
+      setTestResult(res);
+    } catch (e:any) {
+      setTestResult({ ok: false, error: e?.response?.data?.error || e.message });
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  const onLookup = async () => {
+    if (!lookupTax?.trim()) { message.warning('Adj meg egy adószámot'); return; }
+    setLookupLoading(true);
+    setLookupData(null);
+    try {
+      const res = await settingsService.lookupTaxpayer(lookupTax.trim());
+      setLookupData(res);
+    } catch (e:any) {
+      setLookupData({ success: false, error: e?.response?.data?.error || e.message });
+    } finally {
+      setLookupLoading(false);
+    }
+  };
+
+  return (
+    <Card title="PIXINVOICE beállítások">
+      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+        <Form form={form} layout="vertical" initialValues={{ is_active: true }}>
+          <Form.Item name="id" hidden><Input /></Form.Item>
+          <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Név kötelező' }]}>
+            <Input placeholder="Alapértelmezett" />
+          </Form.Item>
+          <Form.Item label="API alap URL" name="base_url" rules={[{ required: true, message: 'URL kötelező' }]}>
+            <Input placeholder="http://localhost:4001/api/" />
+          </Form.Item>
+          <Form.Item label="Cég azonosító (company_id)" name="company_id" tooltip="Opcionális. Ha nincs megadva, a PixInvoice API a kulcs jogosultságai alapján listáz.">
+            <Input placeholder="<cég UUID> (opcionális)" />
+          </Form.Item>
+          <Form.Item label="API kulcs" name="api_key" tooltip="Csak íráskor használjuk, az értéket nem listázzuk vissza.">
+            <Input.Password placeholder="••••••••" />
+          </Form.Item>
+          <Form.Item label="Aktív" name="is_active" valuePropName="checked">
+            <Switch />
+          </Form.Item>
+          <Space>
+            <Button type="primary" onClick={onSave}>Mentés</Button>
+            <Button onClick={() => onTest() } loading={!!testingId}>Kapcsolat teszt</Button>
+            <Button onClick={() => { setLookupOpen(true); setLookupTax(''); setLookupData(null); }}>NAV céglekérdezés</Button>
+          </Space>
+        </Form>
+
+        {testResult && (
+          testResult.ok ? (
+            <Alert type="success" message="Kapcsolat rendben" description={<pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(testResult, null, 2)}</pre>} />
+          ) : (
+            <Alert
+              type="error"
+              message="Teszt sikertelen"
+              description={
+                <div>
+                  {testResult.base && (
+                    <div>Nem elérhető az API host: <Text code>{testResult.base}</Text></div>
+                  )}
+                  <div style={{ marginTop: 8 }}>{testResult.hint || testResult.error}</div>
+                </div>
+              }
+            />
+          )
+        )}
+
+        <div>
+          <Text strong>Elmentett konfigurációk</Text>
+          <Table
+            rowKey="id"
+            dataSource={items}
+            loading={loading}
+            pagination={false}
+            columns={[
+              { title: 'Név', dataIndex: 'name' },
+              { title: 'Alap URL', dataIndex: 'base_url' },
+              { title: 'Cég azonosító', dataIndex: 'company_id' as any },
+              { title: 'Aktív', dataIndex: 'is_active', render: (v:boolean) => v ? 'Igen' : 'Nem' },
+              { title: 'Műveletek', render: (_:any, rec:PixinvoiceConfig) => (
+                <Space>
+                  <Button onClick={() => { form.setFieldsValue({ ...rec, api_key: '' }); setTestResult(null); }}>Szerkesztés</Button>
+                  <Button onClick={() => onTest(rec.id)} loading={testingId === rec.id}>Teszt</Button>
+                  {!rec.is_active && (
+                    <Button onClick={async () => {
+                      try {
+                        await settingsService.patchPixinvoiceConfig(rec.id!, { is_active: true });
+                        message.success('Aktiválva');
+                        await load();
+                      } catch {
+                        message.error('Aktiválás sikertelen');
+                      }
+                    }}>Aktiválás</Button>
+                  )}
+                </Space>
+              )}
+            ]}
+          />
+        </div>
+
+        <Modal
+          title="NAV céglekérdezés (adószám)"
+          open={lookupOpen}
+          onCancel={() => setLookupOpen(false)}
+          onOk={onLookup}
+          okText="Lekérdezés"
+          confirmLoading={lookupLoading}
+        >
+          <Space direction="vertical" style={{ width: '100%' }}>
+            <Input placeholder="Adószám" value={lookupTax} onChange={(e) => setLookupTax(e.target.value)} />
+            {lookupData && (
+              lookupData.success ? (
+                <Alert type="success" message="Sikeres lekérdezés" description={<pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(lookupData.data, null, 2)}</pre>} />
+              ) : (
+                <Alert type="error" message="Hiba a lekérdezésben" description={lookupData.error} />
+              )
+            )}
+          </Space>
+        </Modal>
+      </Space>
+    </Card>
+  );
+};
+
+export default PixinvoiceSettingsPage;

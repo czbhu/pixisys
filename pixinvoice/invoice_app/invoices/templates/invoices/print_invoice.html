@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="hu">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { font-family: DejaVu Sans, Arial, Helvetica, sans-serif; font-size: 12px; }
+    .header { display:flex; justify-content: space-between; margin-bottom: 16px; }
+    .title { font-weight: bold; font-size: 18px; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border: 1px solid #ddd; padding: 6px; vertical-align: top; word-wrap: break-word; overflow-wrap: anywhere; }
+    th { background: #f0f0f0; text-align: left; }
+    .col-desc { width: 46%; }
+    .col-qty { width: 10%; text-align: right; }
+    .col-net { width: 14%; text-align: right; }
+    .col-vat { width: 14%; text-align: right; }
+    .col-gross { width: 16%; text-align: right; }
+  .truncate { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; line-clamp: 4; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div>
+      <div class="title">Számla / Invoice</div>
+      <div>{{ invoice.invoice_number }}</div>
+      {% if bilingual %}<div style="margin-top:4px; color:#666;">This document is bilingual for convenience.</div>{% endif %}
+    </div>
+    <div>
+      <div><strong>Kibocsátás:</strong> {{ invoice.issue_date }}</div>
+      <div><strong>Teljesítés:</strong> {{ invoice.delivery_date }}</div>
+      <div><strong>Esedékesség:</strong> {{ invoice.due_date }}</div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap: 20px; margin-bottom: 12px;">
+    <div style="flex:1;">
+      <div><strong>Eladó / Seller</strong></div>
+      <div>{{ invoice.company.name }}</div>
+      <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}, {{ invoice.company.street_name }} {{ invoice.company.street_number }}</div>
+      <div>Adószám: {{ invoice.company.tax_number }}</div>
+      {% if invoice.company.eu_tax_number %}<div>EU VAT: {{ invoice.company.eu_tax_number }}</div>{% endif %}
+    </div>
+    <div style="flex:1;">
+      <div><strong>Vevő / Buyer</strong></div>
+      <div>{{ invoice.customer.name }}</div>
+      <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}, {{ invoice.customer.street_name }} {{ invoice.customer.street_number }}</div>
+      <div>Adószám: {{ invoice.customer.tax_number }}</div>
+      {% if invoice.customer.eu_tax_number %}<div>EU VAT: {{ invoice.customer.eu_tax_number }}</div>{% endif %}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="col-desc">Tétel / Item</th>
+        <th class="col-qty">Menny. / Qty</th>
+        <th class="col-net">Nettó / Net</th>
+        <th class="col-vat">ÁFA / VAT</th>
+        <th class="col-gross">Bruttó / Gross</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for it in invoice.items.all %}
+      <tr>
+        <td class="truncate">{{ it.description }}</td>
+        <td class="col-qty">{{ it.quantity }}</td>
+        <td class="col-net">{{ it.net_amount }} {{ invoice.currency }}</td>
+        <td class="col-vat">{{ it.vat_amount }} {{ invoice.currency }}</td>
+        <td class="col-gross">{{ it.gross_amount }} {{ invoice.currency }}</td>
+      </tr>
+      {% endfor %}
+      <tr>
+        <td colspan="3" style="text-align:right"><strong>Összesen / Total</strong></td>
+        <td class="col-vat"><strong>{{ invoice.total_vat_amount }} {{ invoice.currency }}</strong></td>
+        <td class="col-gross"><strong>{{ invoice.total_gross_amount }} {{ invoice.currency }}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>

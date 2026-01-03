@@ -1,0 +1,137 @@
+.App {
+  text-align: center;
+}
+
+.App-logo {
+  height: 40vmin;
+  pointer-events: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .App-logo {
+    animation: App-logo-spin infinite 20s linear;
+  }
+}
+
+.App-header {
+  background-color: #282c34;
+  padding: 20px;
+  color: white;
+}
+
+.App-link {
+  color: #61dafb;
+}
+
+@keyframes App-logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Custom styles for ERP */
+.erp-layout {
+  min-height: 100vh;
+}
+
+.erp-sidebar {
+  background: #001529;
+}
+
+.erp-header {
+  background: #fff;
+  padding: 0 24px;
+  box-shadow: 0 1px 4px rgba(0, 21, 41, .08);
+}
+
+.erp-content {
+  margin: 24px 16px;
+  padding: 24px;
+  background: #fff;
+  min-height: 280px;
+}
+
+.erp-card {
+  margin-bottom: 16px;
+}
+
+.erp-stat-card {
+  text-align: center;
+  padding: 20px;
+}
+
+.erp-stat-number {
+  font-size: 24px;
+  font-weight: bold;
+  color: #1890ff;
+}
+
+.erp-stat-label {
+  color: #666;
+  margin-top: 8px;
+}
+
+/* Status row colors for manufacturing products */
+.status-row-default {
+  background-color: #f5f5f5 !important;
+}
+
+.status-row-blue {
+  background-color: #e6f7ff !important;
+}
+
+.status-row-cyan {
+  background-color: #e6fffb !important;
+}
+
+.status-row-green {
+  background-color: #f6ffed !important;
+}
+
+.status-row-orange {
+  background-color: #fff7e6 !important;
+}
+
+.status-row-purple {
+  background-color: #f9f0ff !important;
+}
+
+.status-row-red {
+  background-color: #fff2f0 !important;
+}
+
+.status-row-magenta {
+  background-color: #fff0f6 !important;
+}
+
+.status-row-lime {
+  background-color: #fcffe6 !important;
+}
+
+.status-row-gold {
+  background-color: #fffbe6 !important;
+}
+
+.status-row-geekblue {
+  background-color: #f0f5ff !important;
+}
+
+.status-row-volcano {
+  background-color: #fff2e8 !important;
+}
+
+.status-row-success {
+  background-color: #f6ffed !important;
+}
+
+/* Responsive design */
+@media (max-width: 768px) {
+  .erp-content {
+    margin: 16px 8px;
+    padding: 16px;
+  }
+}
