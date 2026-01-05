@@ -22,18 +22,12 @@ def validate_eu_tax_number(value):
 
 class Company(models.Model):
     """Cég modell"""
-    COMPANY_TYPE_CHOICES = [
-        ('customer', 'Ügyfél'),
-        ('supplier', 'Beszállító'),
-    ]
     
     name = models.CharField(max_length=200, verbose_name="Cégnév")
-    company_type = models.CharField(
-        max_length=20,
-        choices=COMPANY_TYPE_CHOICES,
-        default='customer',
-        verbose_name="Típus"
-    )
+    
+    # Többszörös szerep támogatás
+    is_customer = models.BooleanField(default=True, verbose_name="Ügyfél")
+    is_supplier = models.BooleanField(default=False, verbose_name="Beszállító")
     
     # Adószám mezők - egyik sem kötelező
     tax_number = models.CharField(

@@ -1,5 +1,6 @@
-import React, { useMemo } from 'react';
-import { Card, Table, Space, Button, Popconfirm, message } from 'antd';
+import React, { useMemo, useState } from 'react';
+import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image } from 'antd';
+import { FileOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 
 interface Item {
@@ -7,6 +8,8 @@ interface Item {
   item_type: 'product' | 'manufacturing' | 'service';
   product_code?: string;
   product_name?: string;
+  material_code?: string;
+  material_name?: string;
   manufacturing_product_name?: string;
   service_name?: string;
   description?: string;
@@ -30,6 +33,9 @@ interface ItemsTableProps {
 }
 
 export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF' }) => {
+  const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
+  const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
+  
   const deleteItem = async (record: any) => {
     try {
       if (onDeleteItem) {
@@ -79,8 +85,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     }
   };
   const columns: any[] = [
-    { title: 'Cikkszám', key: 'code', render: (r: any) => r.product_code || '-' },
-    { title: 'Név', key: 'name', render: (r: any) => r.product_name || r.manufacturing_product_name || r.service_name },
+    { title: 'Cikkszám', key: 'code', render: (r: any) => r.material_code || r.product_code || '-' },
+    { title: 'Név', key: 'name', render: (r: any) => r.material_name || r.product_name || r.manufacturing_product_name || r.service_name },
     { title: 'Leírás', dataIndex: 'description', key: 'description' },
     { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity' },
     { title: 'Egység', dataIndex: 'unit', key: 'unit' },
@@ -98,13 +104,6 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       const unit = r.unit || 'db';
       return `${Math.round(discounted)} (${Math.round(perUnit)}/${unit})`;
     } },
-    { title: 'ÁFA %', dataIndex: 'vat_rate', key: 'vat_rate' },
-    { title: 'Bruttó összesen', key: 'gross_total', render: (r: any) => {
-      const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : Number(r.net_total || 0);
-      const vatRate = Number(r.vat_rate || 0);
-      const gross = discounted * (1 + vatRate / 100);
-      return Math.round(gross);
-    } },
   ];
 
   if (onEditItem || quoteRequestId || onDeleteItem || onCopyItem) {
@@ -117,6 +116,20 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerkesztés</Button>
           ) : null}
           <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>
+          {record.attachments && record.attachments.length > 0 && (
+            <Tooltip title={`Csatolmányok (${record.attachments.length})`}>
+              <Button 
+                icon={<FileOutlined />} 
+                size="small" 
+                onClick={() => {
+                  setSelectedAttachments(record.attachments || []);
+                  setAttachmentsModalOpen(true);
+                }}
+              >
+                ({record.attachments.length})
+              </Button>
+            </Tooltip>
+          )}
           {(quoteRequestId || onDeleteItem) ? (
             <Popconfirm title="Biztos törlöd?" onConfirm={() => deleteItem(record)}>
               <Button danger size="small">Törlés</Button>
@@ -157,21 +170,87 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
   return (
     <Card size="small" title="Tételek">
       <Table columns={columns} dataSource={items || []} rowKey="id" pagination={false} />
-      <div style={{ marginTop: 12 }}>
-        <div><strong>Összesen nettó (listaár):</strong> {totals.net.toFixed(2)}</div>
-        <div><strong>Összesen nettó kedvezménnyel:</strong> {totals.netDiscounted.toFixed(2)}</div>
-        <div><strong>Kedvezmény:</strong> {(totals.net - totals.netDiscounted).toFixed(2)}</div>
-        <div><strong>Összesen ÁFA:</strong> {totals.vat.toFixed(2)}</div>
-        <div><strong>Összesen bruttó:</strong> {totals.gross.toFixed(2)}</div>
-        <div><strong>Pénznem:</strong> {currency}</div>
-        <div style={{ marginTop: 8 }}>
-          <strong>ÁFA bontás:</strong>
-          {Array.from(totals.byVat.entries()).map(([rate, s]) => (
-            <div key={rate}>ÁFA {rate}%: nettó {s.net.toFixed(2)} | ÁFA {s.vat.toFixed(2)} | bruttó {s.gross.toFixed(2)}</div>
-          ))}
-        </div>
+      <div style={{ marginTop: 12, textAlign: 'right' }}>
+        <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
+        <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
       </div>
-
+      
+      <Modal
+        title="Tétel csatolmányok"
+        open={attachmentsModalOpen}
+        onCancel={() => setAttachmentsModalOpen(false)}
+        footer={null}
+        width={800}
+      >
+        <Table
+          dataSource={selectedAttachments}
+          rowKey="id"
+          pagination={false}
+          columns={[
+            {
+              title: 'Fájlnév',
+              dataIndex: 'file_name',
+              key: 'file_name',
+              render: (text: string, record: any) => {
+                const fileUrl = record.file_url || record.file;
+                const fileName = text || record.file?.split('/').pop() || 'Fájl';
+                const isImage = /\.(jpg|jpeg|png|gif|bmp|webp)$/i.test(fileName);
+                
+                if (isImage) {
+                  return (
+                    <Tooltip 
+                      title={
+                        <Image 
+                          src={fileUrl} 
+                          alt={fileName}
+                          preview={false}
+                          style={{ maxWidth: 300, maxHeight: 300 }}
+                        />
+                      }
+                      placement="right"
+                    >
+                      <a href={fileUrl} target="_blank" rel="noopener noreferrer">
+                        {fileName}
+                      </a>
+                    </Tooltip>
+                  );
+                }
+                
+                return (
+                  <a href={fileUrl} target="_blank" rel="noopener noreferrer">
+                    {fileName}
+                  </a>
+                );
+              },
+            },
+            {
+              title: 'Megjegyzés',
+              dataIndex: 'remark',
+              key: 'remark',
+            },
+            {
+              title: 'Feltöltve',
+              dataIndex: 'created_at',
+              key: 'created_at',
+              render: (date: string) => date ? new Date(date).toLocaleString('hu-HU') : '',
+            },
+            {
+              title: 'Műveletek',
+              key: 'actions',
+              render: (record: any) => (
+                <Button 
+                  type="link" 
+                  href={record.file_url || record.file} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                >
+                  Letöltés
+                </Button>
+              ),
+            },
+          ]}
+        />
+      </Modal>
     </Card>
   );
 };

@@ -18,12 +18,25 @@ class CompanyViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
     
     def get_queryset(self):
-        """Cég queryset szűrése company_type alapján"""
+        """Cég queryset szűrése is_customer és is_supplier alapján"""
         queryset = Company.objects.all()
-        company_type = self.request.query_params.get('company_type')
         
-        if company_type:
-            queryset = queryset.filter(company_type=company_type)
+        # Szűrés ügyfél vagy beszállító szerepre
+        is_customer = self.request.query_params.get('is_customer')
+        is_supplier = self.request.query_params.get('is_supplier')
+        
+        if is_customer is not None:
+            queryset = queryset.filter(is_customer=is_customer.lower() == 'true')
+        
+        if is_supplier is not None:
+            queryset = queryset.filter(is_supplier=is_supplier.lower() == 'true')
+        
+        # Backward compatibility - company_type paraméter támogatása
+        company_type = self.request.query_params.get('company_type')
+        if company_type == 'customer':
+            queryset = queryset.filter(is_customer=True)
+        elif company_type == 'supplier':
+            queryset = queryset.filter(is_supplier=True)
         
         return queryset
     

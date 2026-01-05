@@ -3,9 +3,12 @@ from rest_framework.routers import DefaultRouter
 from . import views
 
 router = DefaultRouter()
+router.register(r'companies', views.CompanyViewSet, basename='company')
+router.register(r'bank-accounts', views.BankAccountViewSet, basename='bank-account')
 router.register(r'pixinvoice-configs', views.PixinvoiceConfigViewSet, basename='pixinvoice-config')
 router.register(r'backup-configs', views.BackupConfigurationViewSet, basename='backup-config')
 router.register(r'backup-files', views.BackupFileViewSet, basename='backup-file')
+router.register(r'user-preferences', views.UserPreferenceViewSet, basename='user-preference')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

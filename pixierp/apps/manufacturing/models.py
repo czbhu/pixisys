@@ -413,7 +413,7 @@ class Service(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='default_services',
         verbose_name="Alapértelmezett beszállító",
         help_text="Ez a beszállító lesz használva a kalkulációban"
@@ -780,7 +780,7 @@ class ServiceSupplierPrice(models.Model):
     supplier = models.ForeignKey(
         'crm.Company',
         on_delete=models.CASCADE,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='service_prices',
         verbose_name="Beszállító"
     )
@@ -915,7 +915,7 @@ class ServiceCostItem(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='service_cost_items',
         verbose_name="Beszállító",
         help_text="Null = belső gyártás"

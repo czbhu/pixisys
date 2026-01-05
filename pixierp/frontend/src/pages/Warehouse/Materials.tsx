@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -11,6 +11,8 @@ interface Material {
   name: string;
   code: string;
   description: string;
+  is_material: boolean;
+  is_product: boolean;
   unit: string;
   unit_display: string;
   calculation_basis: string;
@@ -162,6 +164,8 @@ const Materials: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [isInternalProduction, setIsInternalProduction] = useState(false);
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
+  const [searchText, setSearchText] = useState<string>('');
+  const [filterType, setFilterType] = useState<string>('all');
   
   // Súly számítás terület súlyból vagy fajsúlyból
   const calculateWeightFromDimensions = () => {
@@ -346,6 +350,11 @@ const Materials: React.FC = () => {
     fetchWarehouses();
   }, []);
 
+  // Újratöltés szűrő vagy keresés változásakor
+  useEffect(() => {
+    fetchMaterials();
+  }, [filterType, searchText]);
+
   // Update informational price when default supplier changes
   useEffect(() => {
     const updateInformationalPrice = async () => {
@@ -380,11 +389,27 @@ const Materials: React.FC = () => {
   const fetchMaterials = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/warehouse/materials/');
+      let url = '/warehouse/materials/';
+      const params = new URLSearchParams();
+      
+      if (filterType !== 'all') {
+        params.append('filter_type', filterType);
+      }
+      
+      if (searchText) {
+        params.append('search', searchText);
+      }
+      
+      const queryString = params.toString();
+      if (queryString) {
+        url += '?' + queryString;
+      }
+      
+      const response = await api.get(url);
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       setMaterials(data);
     } catch (error) {
-      message.error('Hiba a alapanyagok betöltésekor');
+      message.error('Hiba az alapanyagok/termékek betöltésekor');
       console.error(error);
     } finally {
       setLoading(false);
@@ -393,7 +418,7 @@ const Materials: React.FC = () => {
 
   const fetchSuppliers = async () => {
     try {
-      const response = await api.get('/crm/companies/?company_type=supplier');
+      const response = await api.get('/crm/companies/?is_supplier=true');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       // Sort alphabetically by name
       const sorted = data.sort((a: Supplier, b: Supplier) => a.name.localeCompare(b.name, 'hu'));
@@ -578,12 +603,16 @@ const Materials: React.FC = () => {
         values.default_supplier = externalSuppliers[0].id;
       }
       
+      // Ha nincs beállítva, alapértelmezés szerint mindkét checkbox be van pipálva
+      if (values.is_material === undefined) values.is_material = true;
+      if (values.is_product === undefined) values.is_product = true;
+      
       if (editingMaterial) {
         await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
-        message.success('Alapanyag frissítve');
+        message.success('Alapanyag/Termék frissítve');
       } else {
         await api.post('/warehouse/materials/', values);
-        message.success('Alapanyag létrehozva');
+        message.success('Alapanyag/Termék létrehozva');
       }
       setModalVisible(false);
       fetchMaterials();
@@ -603,14 +632,18 @@ const Materials: React.FC = () => {
         values.default_supplier = externalSuppliers[0].id;
       }
       
+      // Ha nincs beállítva, alapértelmezés szerint mindkét checkbox be van pipálva
+      if (values.is_material === undefined) values.is_material = true;
+      if (values.is_product === undefined) values.is_product = true;
+      
       if (editingMaterial) {
         const response = await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
-        message.success('Alapanyag mentve');
+        message.success('Alapanyag/Termék mentve');
         // Frissítjük az editingMaterial-t az új adatokkal
         setEditingMaterial(response.data);
       } else {
         const response = await api.post('/warehouse/materials/', values);
-        message.success('Alapanyag létrehozva');
+        message.success('Alapanyag/Termék létrehozva');
         // Átváltunk szerkesztési módba
         setEditingMaterial(response.data);
         form.setFieldsValue(response.data);
@@ -986,9 +1019,20 @@ const Materials: React.FC = () => {
       width: 100,
     },
     {
-      title: 'Alapanyag neve',
+      title: 'Név',
       dataIndex: 'name',
       key: 'name',
+    },
+    {
+      title: 'Típus',
+      key: 'type',
+      width: 200,
+      render: (record: Material) => (
+        <Space>
+          {record.is_material && <Tag color="blue">Alapanyag</Tag>}
+          {record.is_product && <Tag color="green">Termék</Tag>}
+        </Space>
+      ),
     },
     {
       title: 'Gyűjtő',
@@ -999,7 +1043,7 @@ const Materials: React.FC = () => {
         groupName ? <Tag color="purple">{groupName}</Tag> : '-',
     },
     {
-      title: 'Típus',
+      title: 'Formátum',
       dataIndex: 'material_format',
       key: 'material_format',
       width: 150,
@@ -1130,11 +1174,30 @@ const Materials: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2>Alapanyagok</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-          Új alapanyag
-        </Button>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2>Alapanyagok/Termékek</h2>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <Input
+            placeholder="Keresés név, kód vagy leírás alapján..."
+            prefix={<SearchOutlined />}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            style={{ width: 300 }}
+            allowClear
+          />
+          <Select
+            value={filterType}
+            onChange={setFilterType}
+            style={{ width: 150 }}
+          >
+            <Option value="all">Mind</Option>
+            <Option value="materials">Alapanyagok</Option>
+            <Option value="products">Termékek</Option>
+          </Select>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+            Új elem
+          </Button>
+        </div>
       </div>
 
       <Table
@@ -1146,7 +1209,7 @@ const Materials: React.FC = () => {
       />
 
       <Modal
-        title={editingMaterial ? 'Alapanyag szerkesztése' : 'Új alapanyag'}
+        title={editingMaterial ? 'Alapanyag/Termék szerkesztése' : 'Új alapanyag/termék'}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
         onOk={() => form.submit()}
@@ -1180,6 +1243,8 @@ const Materials: React.FC = () => {
               initialValues={{
                 currency: 'HUF',
                 is_active: true,
+                is_material: true,
+                is_product: true,
                 unit: 'db',
                 unit_cost_price: 0,
                 markup_percentage: 35,
@@ -1189,7 +1254,7 @@ const Materials: React.FC = () => {
             >
               <Form.Item
                 name="name"
-                label="Alapanyag neve"
+                label="Név"
                 rules={[{ required: true, message: 'Kötelező mező' }]}
               >
                 <Input />
@@ -1202,6 +1267,24 @@ const Materials: React.FC = () => {
               >
                 <Input />
               </Form.Item>
+
+              <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                <Form.Item
+                  name="is_material"
+                  valuePropName="checked"
+                  style={{ marginBottom: 0 }}
+                >
+                  <Checkbox>Alapanyag (gyártáshoz használható)</Checkbox>
+                </Form.Item>
+
+                <Form.Item
+                  name="is_product"
+                  valuePropName="checked"
+                  style={{ marginBottom: 0 }}
+                >
+                  <Checkbox>Termék (értékesíthető)</Checkbox>
+                </Form.Item>
+              </div>
 
               <Form.Item name="description" label="Leírás">
                 <Input.TextArea rows={3} />
@@ -1270,11 +1353,8 @@ const Materials: React.FC = () => {
                       label={
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           Szélesség
-                          <Form.Item name="width_fixed" valuePropName="checked" style={{ margin: 0, display: 'inline-block' }} noStyle>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 'normal', cursor: 'pointer' }}>
-                              <input type="checkbox" onChange={(e) => form.setFieldsValue({ width_fixed: e.target.checked })} />
-                              <span>FIX</span>
-                            </label>
+                          <Form.Item name="width_fixed" valuePropName="checked" style={{ margin: 0 }} noStyle>
+                            <Checkbox style={{ fontSize: 11, fontWeight: 'normal' }}>FIX</Checkbox>
                           </Form.Item>
                         </span>
                       }
@@ -1292,11 +1372,8 @@ const Materials: React.FC = () => {
                       label={
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           Hosszúság
-                          <Form.Item name="length_fixed" valuePropName="checked" style={{ margin: 0, display: 'inline-block' }} noStyle>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 'normal', cursor: 'pointer' }}>
-                              <input type="checkbox" onChange={(e) => form.setFieldsValue({ length_fixed: e.target.checked })} />
-                              <span>FIX</span>
-                            </label>
+                          <Form.Item name="length_fixed" valuePropName="checked" style={{ margin: 0 }} noStyle>
+                            <Checkbox style={{ fontSize: 11, fontWeight: 'normal' }}>FIX</Checkbox>
                           </Form.Item>
                         </span>
                       }
@@ -1314,11 +1391,8 @@ const Materials: React.FC = () => {
                       label={
                         <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           Magasság
-                          <Form.Item name="height_fixed" valuePropName="checked" style={{ margin: 0, display: 'inline-block' }} noStyle>
-                            <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 'normal', cursor: 'pointer' }}>
-                              <input type="checkbox" onChange={(e) => form.setFieldsValue({ height_fixed: e.target.checked })} />
-                              <span>FIX</span>
-                            </label>
+                          <Form.Item name="height_fixed" valuePropName="checked" style={{ margin: 0 }} noStyle>
+                            <Checkbox style={{ fontSize: 11, fontWeight: 'normal' }}>FIX</Checkbox>
                           </Form.Item>
                         </span>
                       }
@@ -1762,6 +1836,7 @@ const Materials: React.FC = () => {
                 dataSource={stocks}
                 rowKey="id"
                 pagination={false}
+                scroll={{ x: 900 }}
                 summary={(pageData) => {
                   const totalQuantity = pageData.reduce((sum, stock) => sum + Number(stock.quantity), 0);
                   const totalValue = pageData.reduce((sum, stock) => sum + Number(stock.total_value), 0);

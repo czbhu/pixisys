@@ -1,6 +1,10 @@
-import React from 'react';
-import { Modal, Form, Input, InputNumber, message } from 'antd';
-import { salesService } from '../../services/salesService';
+import React, { useEffect, useState } from 'react';
+import { Modal, Form, Input, InputNumber, message, Checkbox, Select, Tabs, Button } from 'antd';
+import { EditOutlined } from '@ant-design/icons';
+import api from '../../services/api';
+import { warehouseService } from '../../services/warehouseService';
+
+const { Option } = Select;
 
 interface Props {
   open: boolean;
@@ -10,45 +14,228 @@ interface Props {
 
 const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
   const [form] = Form.useForm();
-  const [submitting, setSubmitting] = React.useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [companies, setCompanies] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (open) {
+      loadData();
+      form.setFieldsValue({ 
+        material_format: 'piece',
+        currency: 'HUF',
+        is_active: true,
+        is_material: false,
+        is_product: true,
+        unit: 'db',
+        unit_cost_price: 0,
+        markup_percentage: 35,
+        unit_selling_price: 0,
+        is_internal_production: false,
+      });
+    }
+  }, [open]);
+
+  const loadData = async () => {
+    try {
+      const companiesRes = await api.get('/crm/companies/?is_supplier=true');
+      setCompanies(companiesRes.data.results || companiesRes.data || []);
+    } catch (e) {
+      console.error('Hiba az adatok betöltésekor', e);
+    }
+  };
 
   const handleOk = async () => {
     try {
-      const v = await form.validateFields();
+      const values = await form.validateFields();
       setSubmitting(true);
-      const created = await salesService.createProduct({
-        name: v.name,
-        description: v.description || '',
-        unit: v.unit || 'db',
-        base_price: v.base_price || 0,
-        is_active: true,
+      const created = await warehouseService.createMaterial({
+        ...values,
+        is_product: true,
       });
       message.success('Termék létrehozva');
       onCreated(created);
       form.resetFields();
-    } catch (e) {
-      // handled by form or API
+      onCancel();
+    } catch (e: any) {
+      if (e?.errorFields) {
+        message.error('Kérlek töltsd ki a kötelező mezőket');
+      } else {
+        message.error('Hiba történt a termék létrehozásakor');
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
+  const calculateMarkup = () => {
+    const cost = form.getFieldValue('unit_cost_price');
+    const selling = form.getFieldValue('unit_selling_price');
+    if (cost && cost > 0 && selling) {
+      const markup = ((selling - cost) / cost) * 100;
+      form.setFieldsValue({ markup_percentage: Math.round(markup * 100) / 100 });
+    }
+  };
+
+  const calculateSellingPrice = () => {
+    const cost = form.getFieldValue('unit_cost_price');
+    const markup = form.getFieldValue('markup_percentage');
+    if (cost && markup !== undefined) {
+      const selling = cost * (1 + markup / 100);
+      form.setFieldsValue({ unit_selling_price: Math.round(selling * 100) / 100 });
+    }
+  };
+
   return (
-    <Modal open={open} onCancel={onCancel} onOk={handleOk} confirmLoading={submitting} title="Új termék" destroyOnHidden>
-      <Form layout="vertical" form={form}>
-        <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Név kötelező' }]}>
-          <Input />
-        </Form.Item>
-        <Form.Item label="Egység" name="unit">
-          <Input placeholder="db" />
-        </Form.Item>
-        <Form.Item label="Nettó ár" name="base_price">
-          <InputNumber min={0} style={{ width: '100%' }} />
-        </Form.Item>
-        <Form.Item label="Leírás" name="description">
-          <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} />
-        </Form.Item>
-      </Form>
+    <Modal 
+      open={open} 
+      onCancel={onCancel} 
+      onOk={handleOk} 
+      confirmLoading={submitting} 
+      title="Új termék" 
+      width={800}
+      destroyOnHidden
+    >
+      <Tabs 
+        defaultActiveKey="1"
+        items={[
+          {
+            key: '1',
+            label: 'Alapadatok',
+            children: (
+              <Form
+                form={form}
+                layout="vertical"
+              >
+                <Form.Item
+                  name="name"
+                  label="Név"
+                  rules={[{ required: true, message: 'Kötelező mező' }]}
+                >
+                  <Input />
+                </Form.Item>
+
+                <Form.Item
+                  name="code"
+                  label="Kód"
+                  rules={[{ required: true, message: 'Kötelező mező' }]}
+                >
+                  <Input />
+                </Form.Item>
+
+                <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                  <Form.Item
+                    name="is_material"
+                    valuePropName="checked"
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Checkbox>Alapanyag (gyártáshoz használható)</Checkbox>
+                  </Form.Item>
+
+                  <Form.Item
+                    name="is_product"
+                    valuePropName="checked"
+                    style={{ marginBottom: 0 }}
+                  >
+                    <Checkbox>Termék (értékesíthető)</Checkbox>
+                  </Form.Item>
+                </div>
+
+                <Form.Item name="description" label="Leírás">
+                  <Input.TextArea rows={3} />
+                </Form.Item>
+
+                <Form.Item
+                  name="material_format"
+                  label="Típus"
+                  rules={[{ required: true, message: 'Kötelező mező' }]}
+                >
+                  <Select>
+                    <Option value="piece">Darab</Option>
+                    <Option value="sheet">Táblás/Íves</Option>
+                    <Option value="roll">Tekercses</Option>
+                    <Option value="linear">Folyóméter alapú</Option>
+                    <Option value="weight">Súly alapú</Option>
+                    <Option value="liter">Liter alapú</Option>
+                  </Select>
+                </Form.Item>
+
+                <Form.Item name="unit" label="Mértékegység">
+                  <Select>
+                    <Option value="db">db (darab)</Option>
+                    <Option value="m">m (méter)</Option>
+                    <Option value="m2">m² (négyzetméter)</Option>
+                    <Option value="kg">kg (kilogramm)</Option>
+                    <Option value="liter">liter</Option>
+                  </Select>
+                </Form.Item>
+              </Form>
+            )
+          },
+          {
+            key: '2',
+            label: 'Beszállítók és árak',
+            children: (
+              <Form form={form} layout="vertical">
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                  <Form.Item name="unit_cost_price" label="Bekerülési ár">
+                    <InputNumber 
+                      style={{ width: '100%' }} 
+                      min={0} 
+                      precision={2}
+                      onChange={calculateMarkup}
+                    />
+                  </Form.Item>
+                  <Form.Item name="markup_percentage" label="Haszonkulcs (%)">
+                    <InputNumber 
+                      style={{ width: '100%' }} 
+                      min={0} 
+                      precision={2}
+                      onChange={calculateSellingPrice}
+                    />
+                  </Form.Item>
+                </div>
+
+                <Form.Item name="unit_selling_price" label="Eladási ár">
+                  <InputNumber 
+                    style={{ width: '100%' }} 
+                    min={0} 
+                    precision={2}
+                    onChange={calculateMarkup}
+                  />
+                </Form.Item>
+
+                <Form.Item name="currency" label="Pénznem">
+                  <Select>
+                    <Option value="HUF">HUF</Option>
+                    <Option value="EUR">EUR</Option>
+                    <Option value="USD">USD</Option>
+                  </Select>
+                </Form.Item>
+
+                <Form.Item name="default_supplier" label="Alapértelmezett beszállító">
+                  <Select
+                    allowClear
+                    showSearch
+                    placeholder="Válassz beszállítót"
+                    optionFilterProp="children"
+                    filterOption={(input, option) =>
+                      (option?.children as unknown as string)
+                        .toLowerCase()
+                        .includes(input.toLowerCase())
+                    }
+                  >
+                    {companies.map((company) => (
+                      <Option key={company.id} value={company.id}>
+                        {company.name}
+                      </Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Form>
+            )
+          }
+        ]}
+      />
     </Modal>
   );
 };

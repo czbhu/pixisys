@@ -101,7 +101,8 @@ const Companies: React.FC = () => {
         form.resetFields();
         form.setFieldsValue({ 
             country: 'Magyarország',
-            company_type: 'customer'
+            is_customer: true,
+            is_supplier: false
         });
         setIsModalVisible(true);
     };
@@ -121,7 +122,8 @@ const Companies: React.FC = () => {
             street_type: company.street_type || 'utca',
             house_number: company.house_number || '',
             address: company.address || '',
-            company_type: company.company_type || 'customer'
+            is_customer: company.is_customer !== undefined ? company.is_customer : true,
+            is_supplier: company.is_supplier !== undefined ? company.is_supplier : false
         });
         setIsModalVisible(true);
     };
@@ -200,14 +202,14 @@ const Companies: React.FC = () => {
         },
         {
             title: 'Típus',
-            dataIndex: 'company_type',
             key: 'company_type',
-            render: (type: string) => (
-                <Tag color={type === 'customer' ? 'blue' : 'green'}>
-                    {type === 'customer' ? 'Ügyfél' : 'Beszállító'}
-                </Tag>
+            render: (record: any) => (
+                <Space>
+                    {record.is_customer && <Tag color="blue">Ügyfél</Tag>}
+                    {record.is_supplier && <Tag color="green">Beszállító</Tag>}
+                    {!record.is_customer && !record.is_supplier && <Tag>Nincs szerepkör</Tag>}
+                </Space>
             ),
-            sorter: (a: any, b: any) => a.company_type.localeCompare(b.company_type),
         },
         {
             title: 'Adószám',
@@ -267,7 +269,9 @@ const Companies: React.FC = () => {
             (company.group_tax_number && company.group_tax_number.includes(searchQuery)) ||
             (company.eu_tax_number && company.eu_tax_number.includes(searchQuery));
         
-        const matchesType = typeFilter === 'all' || company.company_type === typeFilter;
+        const matchesType = typeFilter === 'all' || 
+            (typeFilter === 'customer' && company.is_customer) ||
+            (typeFilter === 'supplier' && company.is_supplier);
         
         return matchesSearch && matchesType;
     });
@@ -357,15 +361,23 @@ const Companies: React.FC = () => {
                             </Form.Item>
                         </Col>
                         <Col span={8}>
-                            <Form.Item
-                                name="company_type"
-                                label="Típus"
-                                rules={[{ required: true, message: 'Kérjük, válassza ki a típust!' }]}
-                            >
-                                <Select>
-                                    <Option value="customer">Ügyfél</Option>
-                                    <Option value="supplier">Beszállító</Option>
-                                </Select>
+                            <Form.Item label="Szerepkörök">
+                                <Space direction="vertical">
+                                    <Form.Item
+                                        name="is_customer"
+                                        valuePropName="checked"
+                                        noStyle
+                                    >
+                                        <Checkbox>Ügyfél</Checkbox>
+                                    </Form.Item>
+                                    <Form.Item
+                                        name="is_supplier"
+                                        valuePropName="checked"
+                                        noStyle
+                                    >
+                                        <Checkbox>Beszállító</Checkbox>
+                                    </Form.Item>
+                                </Space>
                             </Form.Item>
                         </Col>
                     </Row>
@@ -771,10 +783,12 @@ const Companies: React.FC = () => {
                 {viewingCompany && (
                     <Descriptions column={1} bordered>
                         <Descriptions.Item label="Cégnév">{viewingCompany.name}</Descriptions.Item>
-                        <Descriptions.Item label="Típus">
-                            <Tag color={viewingCompany.company_type === 'customer' ? 'blue' : 'green'}>
-                                {viewingCompany.company_type === 'customer' ? 'Ügyfél' : 'Beszállító'}
-                            </Tag>
+                        <Descriptions.Item label="Szerepkörök">
+                            <Space>
+                                {viewingCompany.is_customer && <Tag color="blue">Ügyfél</Tag>}
+                                {viewingCompany.is_supplier && <Tag color="green">Beszállító</Tag>}
+                                {!viewingCompany.is_customer && !viewingCompany.is_supplier && <Tag>Nincs szerepkör</Tag>}
+                            </Space>
                         </Descriptions.Item>
                         {viewingCompany.tax_number && (
                             <Descriptions.Item label="Adószám">

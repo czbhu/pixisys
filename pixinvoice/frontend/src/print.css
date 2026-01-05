@@ -1,0 +1,215 @@
+/* Screen vs print visibility */
+
+.print-only {
+  display: none;
+}
+
+@media print {
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+
+  html, body {
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Hide everything except printable invoice */
+  body * {
+    visibility: hidden !important;
+  }
+  .print-invoice, .print-invoice * {
+    visibility: visible !important;
+  }
+  .print-invoice {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  .no-print {
+    display: none !important;
+  }
+
+  .print-only {
+    display: block !important;
+  }
+}
+
+/* Invoice layout */
+.print-invoice {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+  color: #000;
+}
+
+.print-invoice .inv-container {
+  width: 210mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 0;
+  background: #fff;
+}
+
+.print-invoice .inv-header {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6mm;
+  align-items: start;
+  margin-bottom: 6mm;
+}
+
+.print-invoice .inv-seller {
+  max-width: 120mm;
+  font-size: 11pt;
+  line-height: 1.35;
+}
+
+.print-invoice .inv-seller-name {
+  font-weight: 700;
+  font-size: 13pt;
+  margin-bottom: 2mm;
+}
+
+.print-invoice .inv-top-right { display: grid; gap: 3mm; }
+.print-invoice .inv-meta { font-size: 10.5pt; }
+.print-invoice .inv-meta .inv-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0,1fr));
+  gap: 2mm 6mm;
+}
+.print-invoice .muted { color: #555; font-size: 9pt; }
+
+.print-invoice .inv-title {
+  font-size: 18pt;
+  font-weight: 700;
+  margin-bottom: 2mm;
+}
+
+.print-invoice .inv-number {
+  font-weight: 600;
+  margin-bottom: 2mm;
+}
+
+.print-invoice .inv-buyer-sm { font-size: 10.5pt; }
+
+.print-invoice .inv-block-title {
+  font-weight: 700;
+  margin-bottom: 2mm;
+}
+
+.print-invoice .inv-buyer-name {
+  font-weight: 600;
+}
+
+.print-invoice .inv-items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+  table-layout: fixed;
+}
+
+.print-invoice .inv-items thead { display: table-header-group; }
+.print-invoice .inv-items tr { page-break-inside: avoid; }
+
+.print-invoice .inv-items th,
+.print-invoice .inv-items td {
+  border: 1px solid #000;
+  padding: 1.2mm 1mm;
+  vertical-align: top;
+}
+
+.print-invoice .inv-items thead th { font-size: 8.5pt; font-weight: 600; }
+
+.print-invoice .inv-items th {
+  font-weight: 700;
+}
+
+.print-invoice .inv-items td.num,
+.print-invoice .inv-items th.num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.print-invoice .inv-items td.cen,
+.print-invoice .inv-items th.cen {
+  text-align: center;
+}
+
+/* Column width hints for print items table */
+.print-invoice .col-desc { width: 42%; word-break: break-word; }
+.print-invoice .col-qty { width: 6%; }
+.print-invoice .col-unit { width: 6%; }
+.print-invoice .col-unitnet { width: 11%; }
+.print-invoice .col-vatrate { width: 5%; }
+.print-invoice .col-net { width: 10%; }
+.print-invoice .col-vat { width: 10%; }
+.print-invoice .col-gross { width: 10%; }
+
+/* Prevent number columns from wrapping badly */
+.print-invoice .num { white-space: nowrap; }
+
+.print-invoice .inv-summary {
+  margin-top: 4mm;
+  margin-left: auto;
+  width: 75mm;
+  font-size: 10.5pt;
+}
+
+.print-invoice .inv-sum-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 2mm 0;
+  border-bottom: 1px solid #000;
+}
+
+.print-invoice .inv-sum-row.total {
+  font-weight: 700;
+}
+
+.print-invoice .inv-notes {
+  margin-top: 4mm;
+  font-size: 9.5pt;
+}
+
+.print-invoice .inv-footer {
+  margin-top: 8mm;
+  font-size: 9pt;
+}
+
+.print-invoice .inv-fineprint {
+  color: #000;
+  margin-top: 2mm;
+}
+
+/* Highlighted amount and deadline */
+.print-invoice .inv-highlight {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 2mm;
+}
+.print-invoice .inv-amount .label {
+  display: inline-block;
+  font-weight: 700;
+  margin-right: 4mm;
+}
+.print-invoice .inv-amount .value {
+  font-weight: 800;
+  font-size: 16pt;
+}
+.print-invoice .inv-deadline .date-pill {
+  display: inline-block;
+  border: 1px solid #000;
+  padding: 1mm 3mm;
+  border-radius: 3mm;
+  margin-left: 3mm;
+  font-weight: 600;
+}
+
+.print-invoice .inv-gross-total {
+  font-weight: 800;
+}
+
+.print-invoice .inv-items td { word-break: break-word; }

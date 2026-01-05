@@ -1,0 +1,372 @@
+import React, { useCallback, useEffect, useState } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker } from 'antd';
+import { ItemsTable } from '../../components/Sales/ItemsTable';
+import type { UploadFile } from 'antd/es/upload/interface';
+import dayjs from 'dayjs';
+import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined } from '@ant-design/icons';
+import axios from 'axios';
+import { salesService } from '../../services/salesService';
+import { useAuth } from '../../contexts/AuthContext';
+
+const { TextArea } = Input;
+
+const CustomerOrderDetail: React.FC = () => {
+  const { id } = useParams();
+  const navigate = useNavigate();
+  const { user } = useAuth();
+  const [loading, setLoading] = useState(true);
+  const [order, setOrder] = useState<any>();
+  const [formBasic] = Form.useForm();
+  const [orderFiles, setOrderFiles] = useState<UploadFile<any>[]>([]);
+  const [filePreviewOpen, setFilePreviewOpen] = useState(false);
+  const [filePreviewTitle, setFilePreviewTitle] = useState('');
+  const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
+  const [takeoverConfirmOpen, setTakeoverConfirmOpen] = useState(false);
+  const [allUsers, setAllUsers] = useState<Array<{ id: number; name: string }>>([]);
+  const [inviteUserId, setInviteUserId] = useState<number | null>(null);
+
+  const load = useCallback(async () => {
+    if (!id) return;
+    setLoading(true);
+    try {
+      const token = localStorage.getItem('access_token');
+      const axiosConfig = {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      };
+      const response = await axios.get(`http://localhost:8003/api/v1/sales/customer-orders/${id}/`, axiosConfig);
+      const orderData = response.data;
+      setOrder(orderData);
+      
+      const rfq = orderData.quote_request;
+      try {
+        const createdByName = orderData.created_by_name || rfq?.created_by_name || rfq?.requested_by_name || '';
+        formBasic.setFieldsValue({
+          number: orderData.order_number,
+          created_by_name: createdByName,
+          issue_date: rfq?.issue_date ? dayjs(rfq.issue_date) : null,
+          deadline: rfq?.deadline ? dayjs(rfq.deadline) : null,
+          company_id: rfq?.company?.name || '',
+          contact_ids: rfq?.contact_names || '',
+          title: rfq?.title || '',
+          project_id: orderData.project_name || rfq?.project?.name || '',
+          description: rfq?.description || '',
+          internal_description: rfq?.internal_description || '',
+          currency_code: rfq?.currency_code || 'HUF',
+        });
+      } catch {}
+      try {
+        const atts = rfq?.attachments || [];
+        setOrderFiles(atts.map((a: any) => ({ uid: String(a.id), name: a.file?.split('/').pop() || `#${a.id}`, status: 'done', url: a.file_url || a.file, response: a })));
+      } catch {}
+    } catch (error: any) {
+      message.error(error?.response?.data?.detail || 'Hiba a megrendelés betöltésekor');
+    } finally {
+      setLoading(false);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const us = await salesService.listUsers();
+        setAllUsers(us as any);
+      } catch {}
+    })();
+  }, []);
+
+  const handleStatusChange = async (action: string) => {
+    try {
+      const token = localStorage.getItem('access_token');
+      const axiosConfig = {
+        headers: {
+          Authorization: `Bearer ${token}`
+        }
+      };
+      await axios.post(`http://localhost:8003/api/v1/sales/customer-orders/${id}/${action}/`, {}, axiosConfig);
+      message.success('Státusz frissítve');
+      load();
+    } catch (error: any) {
+      message.error(error?.response?.data?.error || 'Hiba történt a művelet során');
+    }
+  };
+
+  const statusTag = (status: string) => {
+    const statusMap: any = {
+      new: { color: 'blue', text: 'Új' },
+      confirmed: { color: 'green', text: 'Megerősítve' },
+      in_production: { color: 'orange', text: 'Gyártásban' },
+      ready: { color: 'purple', text: 'Kész' },
+      in_delivery: { color: 'cyan', text: 'Szállítás alatt' },
+      delivered: { color: 'success', text: 'Kiszállítva' },
+      cancelled: { color: 'red', text: 'Törölve' },
+    };
+    const config = statusMap[status] || { color: 'default', text: status };
+    return <Tag color={config.color}>{config.text}</Tag>;
+  };
+
+  if (loading) {
+    return (
+      <div style={{ padding: 24, textAlign: 'center' }}>
+        <Form form={formBasic} style={{ display: 'none' }} />
+        <Spin />
+      </div>
+    );
+  }
+
+  if (!order) return null;
+  
+  const rfq = order.quote_request || {};
+
+  return (
+    <div>
+      <Card title={<Space>
+        <Button icon={<LeftOutlined />} onClick={() => navigate('/sales/customer-orders')}>Vissza</Button>
+        <span>Megrendelés {order.order_number}</span>
+      </Space>} extra={<Space>
+        {order.status === 'new' && (
+          <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('confirm')}>
+            Megerősítés
+          </Button>
+        )}
+        {order.status === 'confirmed' && (
+          <Button type="primary" icon={<RocketOutlined />} onClick={() => handleStatusChange('start_production')}>
+            Gyártás indítása
+          </Button>
+        )}
+        {order.status === 'in_production' && (
+          <Button type="primary" icon={<CheckOutlined />} onClick={() => handleStatusChange('mark_ready')}>
+            Készre jelölés
+          </Button>
+        )}
+        {order.status === 'ready' && (
+          <Button type="primary" icon={<CarOutlined />} onClick={() => handleStatusChange('start_delivery')}>
+            Szállítás indítása
+          </Button>
+        )}
+        {order.status === 'in_delivery' && (
+          <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('mark_delivered')}>
+            Kiszállítva jelölés
+          </Button>
+        )}
+      </Space>}>
+        <div style={{ marginBottom: 8 }}>
+          <Space>
+            {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}
+          </Space>
+        </div>
+        <Form layout="vertical" form={formBasic}>
+          <Row gutter={12}>
+            <Col span={6}>
+              <Form.Item label="Megrendelés száma" name="number">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item label="Rögzítette" name="created_by_name">
+                <Input readOnly />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item label="Keltezés" name="issue_date">
+                <DatePicker style={{ width: '100%' }} disabled />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item label="Határidő" name="deadline">
+                <DatePicker style={{ width: '100%' }} disabled />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item label="Cég" name="company_id">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+            <Col span={16}>
+              <Form.Item label="Kapcsolattartók" name="contact_ids">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={14}>
+              <Form.Item label="Megnevezés" name="title">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+            <Col span={10}>
+              <Form.Item label="Projekt" name="project_id">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Leírás" name="description">
+                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item label="Belső leírás" name="internal_description">
+                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item label="Pénznem" name="currency_code">
+                <Input disabled />
+              </Form.Item>
+            </Col>
+            <Col span={16} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
+              <div style={{ flex: 1 }} />
+              <div style={{ alignSelf: 'flex-end' }}>{statusTag(order.status)}</div>
+            </Col>
+          </Row>
+        </Form>
+
+        {/* Assignment controls */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+          <div style={{ color: '#555' }}>
+            {rfq?.owner_name ? (<span><strong>Felelős:</strong> {rfq.owner_name} </span>) : (<span><strong>Felelős:</strong> - </span>)}
+            {rfq?.assignee_names ? (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> {rfq.assignee_names}</span>) : (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> -</span>)}
+            {Array.isArray(rfq?.invitations_pending) && (rfq.invitations_pending.length > 0) ? (
+              <span style={{ marginLeft: 12, color: '#888' }}>
+                <strong>Meghívottak:</strong> {rfq.invitations_pending.map((i: any) => i.invitee_name).join(', ')}
+              </span>
+            ) : null}
+          </div>
+          <Space>
+            <Button icon={<UserAddOutlined />} onClick={async () => {
+              if (!rfq?.id) return;
+              try { await salesService.takeQuoteRequest(rfq.id); message.success('Hozzárendelve (ide vele)'); load(); }
+              catch { message.error('Nem sikerült'); }
+            }}>Ide vele</Button>
+            {(() => {
+              const assignees: number[] = (rfq?.assignees || []) as number[];
+              const isMeAssigned = user?.id ? assignees.includes(user.id) : false;
+              const onToggle = async () => {
+                if (!rfq?.id) return;
+                try {
+                  if (isMeAssigned) {
+                    await salesService.leaveQuoteRequest(rfq.id);
+                    message.success('Kiszálltál');
+                  } else {
+                    await salesService.joinQuoteRequest(rfq.id);
+                    message.success('Beszálltál');
+                  }
+                  load();
+                } catch {
+                  message.error('Nem sikerült');
+                }
+              };
+              return (
+                <Button onClick={onToggle}>{isMeAssigned ? 'Kiszállok' : 'Beszállok'}</Button>
+              );
+            })()}
+            <Button icon={<UserSwitchOutlined />} onClick={() => setTakeoverConfirmOpen(true)}>Átveszem</Button>
+            <Select
+              showSearch
+              allowClear
+              placeholder="Munkatárs meghívása"
+              optionFilterProp="label"
+              style={{ minWidth: 240 }}
+              value={inviteUserId as any}
+              onChange={(val) => setInviteUserId(val || null)}
+            >
+              {allUsers.map((u) => (
+                <Select.Option key={u.id} value={u.id} label={u.name}>{u.name}</Select.Option>
+              ))}
+            </Select>
+            <Button disabled={!inviteUserId} onClick={async () => {
+              if (!inviteUserId || !rfq?.id) return;
+              try { await salesService.inviteUserToRfq(rfq.id, inviteUserId); message.success('Meghívó elküldve'); setInviteUserId(null); load(); }
+              catch { message.error('Nem sikerült meghívni'); }
+            }}>Meghívás</Button>
+          </Space>
+        </div>
+
+        <Divider />
+
+        <ItemsTable
+          items={order.items || []}
+          onRefresh={load}
+          quoteRequestId={rfq?.id ? Number(rfq.id) : undefined}
+          currency={rfq?.currency_code || 'HUF'}
+        />
+
+        <Divider />
+
+        <Card size="small" title="Ajánlat csatolmányok">
+          <List
+            size="small"
+            bordered
+            dataSource={(orderFiles || [])}
+            locale={{ emptyText: 'Nincs csatolmány' }}
+            renderItem={(f: UploadFile & { response?: any }) => (
+              <List.Item>
+                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                  <Space>
+                    <Button type="link" style={{ padding: 0 }} onClick={() => {
+                      const url = f.url;
+                      if (url) {
+                        setFilePreviewUrl(url);
+                        setFilePreviewTitle(f.name);
+                        setFilePreviewOpen(true);
+                      }
+                    }}>{f.name}</Button>
+                    <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
+                  </Space>
+                  <Space>
+                    <span style={{ color: '#666' }}>{f.response?.remark || ''}</span>
+                  </Space>
+                </Space>
+              </List.Item>
+            )}
+          />
+        </Card>
+
+        <Modal
+          title={filePreviewTitle}
+          open={filePreviewOpen}
+          onCancel={() => {
+            setFilePreviewOpen(false);
+            setFilePreviewUrl(null);
+            setFilePreviewTitle('');
+          }}
+          footer={null}
+          width={900}
+        >
+          {filePreviewUrl ? (
+            filePreviewUrl.match(/\.pdf($|\?)/i) ? (
+              <iframe title="preview" src={filePreviewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
+            ) : (
+              <img alt={filePreviewTitle} src={filePreviewUrl} style={{ maxWidth: '100%', maxHeight: '70vh' }} />
+            )
+          ) : (
+            <div>Nincs előnézet</div>
+          )}
+        </Modal>
+
+        <Divider />
+
+      </Card>
+      <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {
+        if (!rfq?.id) return;
+        try { await salesService.takeoverQuoteRequest(rfq.id); message.success('Átvetted'); setTakeoverConfirmOpen(false); load(); } catch { message.error('Nem sikerült átvenni'); }
+      }}>
+        Biztosan átveszed? Mindenki más lekerül a feladatról és csak te maradsz.
+      </Modal>
+    </div>
+  );
+};
+
+export default CustomerOrderDetail;

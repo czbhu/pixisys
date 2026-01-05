@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import { Layout, ConfigProvider } from 'antd';
+import { Layout, ConfigProvider, Drawer } from 'antd';
 import huHU from 'antd/locale/hu_HU';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
@@ -17,6 +17,8 @@ import OrdersModule from './pages/Orders/OrdersModule';
 import WarehouseModule from './pages/Warehouse/WarehouseModule';
 import POSModule from './pages/POS/POSModule';
 import SettingsModule from './pages/Settings/SettingsModule';
+import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
+import PublicDelivery from './pages/Public/PublicDelivery';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import './App.css';
@@ -26,6 +28,22 @@ const { Content } = Layout;
 function AppContent() {
   const { user, loading } = useAuth();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
+  const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
+
+  useEffect(() => {
+    const checkMobile = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) {
+        setMobileMenuVisible(false);
+      }
+    };
+
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
 
   if (loading) {
     return <div>Loading...</div>;
@@ -37,6 +55,8 @@ function AppContent() {
         <Route path="/login" element={<Login />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
+        <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
+        <Route path="/public/delivery/:token" element={<PublicDelivery />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -44,20 +64,45 @@ function AppContent() {
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
-      <Sidebar 
-        collapsed={sidebarCollapsed} 
-        onCollapse={setSidebarCollapsed}
-      />
+      {isMobile ? (
+        <Drawer
+          placement="left"
+          onClose={() => setMobileMenuVisible(false)}
+          open={mobileMenuVisible}
+          bodyStyle={{ padding: 0 }}
+          width={250}
+        >
+          <Sidebar 
+            collapsed={false}
+            onCollapse={() => {}}
+          />
+        </Drawer>
+      ) : (
+        <Sidebar 
+          collapsed={sidebarCollapsed} 
+          onCollapse={setSidebarCollapsed}
+        />
+      )}
       <Layout style={{ 
-        marginLeft: sidebarCollapsed ? 80 : 200,
+        marginLeft: isMobile ? 0 : (sidebarCollapsed ? 80 : 200),
         transition: 'margin-left 0.2s'
       }}>
-        <Header />
-        <Content style={{ margin: '24px 16px', padding: 24, background: '#fff' }}>
+        <Header 
+          onMenuClick={() => setMobileMenuVisible(true)}
+          isMobile={isMobile}
+        />
+        <Content style={{ 
+          margin: isMobile ? '16px 8px' : '24px 16px', 
+          padding: isMobile ? 12 : 24, 
+          background: '#fff',
+          minHeight: 280
+        }}>
           <Routes>
             <Route path="/login" element={<Navigate to="/dashboard" replace />} />
             <Route path="/" element={<Navigate to="/dashboard" replace />} />
             <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
+            <Route path="/public/delivery/:token" element={<PublicDelivery />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />
             <Route path="/manufacturing/*" element={<ManufacturingModule />} />

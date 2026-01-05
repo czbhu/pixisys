@@ -13,7 +13,10 @@ import {
     message,
     Tag,
     Popconfirm,
-    Descriptions
+    Descriptions,
+    Checkbox,
+    Row,
+    Col
 } from 'antd';
 import {
     PlusOutlined,
@@ -75,7 +78,12 @@ const Contacts: React.FC = () => {
 
     const handleCreateContact = async (values: any) => {
         try {
-            await crmService.createContact(values);
+            // Convert "maganszemely" to null for company field
+            const payload = {
+                ...values,
+                company: values.company === 'maganszemely' ? null : values.company
+            };
+            await crmService.createContact(payload);
             message.success('Kapcsolattartó sikeresen létrehozva');
             setIsModalVisible(false);
             form.resetFields();
@@ -87,7 +95,12 @@ const Contacts: React.FC = () => {
 
     const handleUpdateContact = async (id: number, values: any) => {
         try {
-            await crmService.updateContact(id, values);
+            // Convert "maganszemely" to null for company field
+            const payload = {
+                ...values,
+                company: values.company === 'maganszemely' ? null : values.company
+            };
+            await crmService.updateContact(id, payload);
             message.success('Kapcsolattartó sikeresen frissítve');
             setIsModalVisible(false);
             form.resetFields();
@@ -337,43 +350,53 @@ const Contacts: React.FC = () => {
                         <Input />
                     </Form.Item>
 
-                    <Form.Item
-                        name="company"
-                        label="Cég"
-                        initialValue="maganszemely"
-                    >
-                        <Space.Compact style={{ width: '100%' }}>
-                            <Select
-                                style={{ width: 'calc(100% - 110px)' }}
-                                placeholder="Válasszon céget"
-                                allowClear
-                                showSearch
-                                optionFilterProp="children"
-                                filterOption={(input, option) =>
-                                    (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                                }
+                    <Row gutter={8}>
+                        <Col flex="auto">
+                            <Form.Item
+                                name="company"
+                                label="Cég"
+                                initialValue="maganszemely"
                             >
-                                <Option value="maganszemely">Magánszemély</Option>
-                                {companies.map((company) => (
-                                    <Option key={company.id} value={company.id}>
-                                        {company.name}
-                                    </Option>
-                                ))}
-                            </Select>
-                            <Button
-                                type="default"
-                                onClick={() => {
-                                    setCreatingCompanyForContact(true);
-                                    setSelectedCountry('Magyarország');
-                                    companyForm.resetFields();
-                                    companyForm.setFieldsValue({ country: 'Magyarország', company_type: 'customer' });
-                                    setIsCompanyModalVisible(true);
-                                }}
-                            >
-                                Új cég
-                            </Button>
-                        </Space.Compact>
-                    </Form.Item>
+                                <Select
+                                    placeholder="Válasszon céget"
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="children"
+                                    filterOption={(input, option) =>
+                                        (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+                                    }
+                                >
+                                    <Option value="maganszemely">Magánszemély</Option>
+                                    {companies.map((company) => (
+                                        <Option key={company.id} value={company.id}>
+                                            {company.name}
+                                        </Option>
+                                    ))}
+                                </Select>
+                            </Form.Item>
+                        </Col>
+                        <Col flex="110px">
+                            <Form.Item label=" ">
+                                <Button
+                                    type="default"
+                                    onClick={() => {
+                                        setCreatingCompanyForContact(true);
+                                        setSelectedCountry('Magyarország');
+                                        companyForm.resetFields();
+                                        companyForm.setFieldsValue({ 
+                                            country: 'Magyarország', 
+                                            is_customer: true,
+                                            is_supplier: false
+                                        });
+                                        setIsCompanyModalVisible(true);
+                                    }}
+                                    style={{ width: '100%' }}
+                                >
+                                    Új cég
+                                </Button>
+                            </Form.Item>
+                        </Col>
+                    </Row>
 
                     <Form.Item
                         name="position"
@@ -401,7 +424,7 @@ const Contacts: React.FC = () => {
                 }}
                 width={800}
                 footer={null}
-                destroyOnClose
+                destroyOnHidden
             >
                 <Form
                     form={companyForm}
@@ -491,16 +514,23 @@ const Contacts: React.FC = () => {
                             </Button>
                         </Space.Compact>
                     </Form.Item>
-                    <Form.Item
-                        name="company_type"
-                        label="Típus"
-                        initialValue="customer"
-                        rules={[{ required: true, message: 'Kérjük, válassza ki a típust!' }]}
-                    >
-                        <Select>
-                            <Option value="customer">Ügyfél</Option>
-                            <Option value="supplier">Beszállító</Option>
-                        </Select>
+                    <Form.Item label="Szerepkörök">
+                        <Space direction="vertical">
+                            <Form.Item
+                                name="is_customer"
+                                valuePropName="checked"
+                                noStyle
+                            >
+                                <Checkbox>Ügyfél</Checkbox>
+                            </Form.Item>
+                            <Form.Item
+                                name="is_supplier"
+                                valuePropName="checked"
+                                noStyle
+                            >
+                                <Checkbox>Beszállító</Checkbox>
+                            </Form.Item>
+                        </Space>
                     </Form.Item>
                     <Form.Item
                         name="country"

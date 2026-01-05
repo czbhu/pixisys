@@ -10,19 +10,24 @@ import RFQs from './RFQs';
 import RFQDetail from './RFQDetail';
 import MyInvitations from './MyInvitations';
 import QuoteDetail from './QuoteDetail';
+import CustomerOrders from './CustomerOrders';
+import CustomerOrderDetail from './CustomerOrderDetail';
+import Invoicing from './Invoicing';
 
 const SalesModule = () => {
   return (
     <Routes>
       <Route path="/" element={<Navigate to="/sales/rfqs" replace />} />
-      <Route path="/demands" element={<Demands />} />
-    <Route path="/rfqs" element={<RFQs />} />
-  <Route path="/rfqs/:id" element={<RFQDetail />} />
-  <Route path="/quotes/:id" element={<QuoteDetail />} />
+      <Route path="/rfqs" element={<RFQs />} />
+      <Route path="/rfqs/:id" element={<RFQDetail />} />
+      <Route path="/quotes/:id" element={<QuoteDetail />} />
       <Route path="/orders" element={<Orders />} />
       <Route path="/orders/:id" element={<OrderDetail />} />
       <Route path="/orders/:id/edit" element={<OrderForm />} />
-  <Route path="/invitations" element={<MyInvitations />} />
+      <Route path="/customer-orders" element={<CustomerOrders />} />
+      <Route path="/customer-orders/:id" element={<CustomerOrderDetail />} />
+      <Route path="/invoicing" element={<Invoicing />} />
+      <Route path="/invitations" element={<MyInvitations />} />
       <Route path="/projects" element={<Projects />} />
       <Route path="/forecasts" element={<Forecasts />} />
     </Routes>
@@ -30,5 +35,3 @@ const SalesModule = () => {
 };
 
 export default SalesModule;
-
-

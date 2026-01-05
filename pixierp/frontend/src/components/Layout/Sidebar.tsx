@@ -33,6 +33,36 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
 
   const [inviteCount, setInviteCount] = useState<number>(0);
 
+  // Calculate selected menu key based on current path
+  const getSelectedKey = () => {
+    const path = location.pathname;
+    // Check for exact match first
+    const allMenuKeys = [
+      '/dashboard',
+      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
+      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders',
+      '/manufacturing/projects', '/manufacturing/products', '/manufacturing/product-classes', '/manufacturing/services',
+      '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
+      '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
+      '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities',
+      '/orders/orders', '/orders/returns',
+      '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
+      '/pos/transactions', '/pos/products', '/pos/inventory',
+      '/settings/access-control', '/settings/companies', '/settings/email-server', '/settings/email-templates', '/settings/signatures'
+    ];
+    
+    // Find the longest matching prefix
+    let bestMatch = '/dashboard';
+    let maxLength = 0;
+    for (const key of allMenuKeys) {
+      if (path.startsWith(key) && key.length > maxLength) {
+        bestMatch = key;
+        maxLength = key.length;
+      }
+    }
+    return bestMatch;
+  };
+
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
@@ -111,16 +141,16 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       label: 'Értékesítés',
       children: [
         {
-          key: '/sales/demands',
-          label: 'Ajánlatkérő',
-        },
-        {
           key: '/sales/rfqs',
           label: 'Árajánlatok',
         },
         {
-          key: '/sales/orders',
+          key: '/sales/customer-orders',
           label: 'Megrendelések',
+        },
+        {
+          key: '/sales/invoicing',
+          label: 'Számlázás',
         },
         {
           key: '/sales/invitations',
@@ -259,7 +289,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       children: [
         {
           key: '/warehouse/materials',
-          label: 'Alapanyagok',
+          label: 'Alapanyagok/Termékek',
         },
         {
           key: '/warehouse/inventory',
@@ -320,6 +350,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       label: 'Beállítások',
       children: [
         { key: '/settings/access-control', label: 'Beléptető rendszer' },
+        { key: '/settings/companies', label: 'Alap adatok' },
         { key: '/settings/email-server', label: 'E-mail szerver' },
         { key: '/settings/email-templates', label: 'E-mail sablonok' },
         { key: '/settings/signatures', label: 'Aláírások' },
@@ -414,7 +445,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
         <Menu
           theme="dark"
           mode="inline"
-          selectedKeys={[location.pathname]}
+          selectedKeys={[getSelectedKey()]}
           defaultOpenKeys={['/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings']}
           items={itemsWithLinks}
         />

@@ -19,6 +19,7 @@ const { TextArea } = Input;
 const RFQDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [rfq, setRfq] = useState<any>();
   // removed unused local product/service lists
@@ -41,7 +42,6 @@ const RFQDetail: React.FC = () => {
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
   const [takeoverConfirmOpen, setTakeoverConfirmOpen] = useState(false);
-  const { user } = useAuth();
   const [allUsers, setAllUsers] = useState<Array<{ id: number; name: string }>>([]);
   const [inviteUserId, setInviteUserId] = useState<number | null>(null);
   const [isCompanyModalVisible, setIsCompanyModalVisible] = useState(false);
@@ -63,7 +63,8 @@ const RFQDetail: React.FC = () => {
         manufacturingService.getCurrencies(),
       ]);
       setRfq(rfqRes);
-      setCompanies((compRes as any).results ?? compRes);
+      const allCompanies = (compRes as any).results ?? compRes;
+      setCompanies((allCompanies as any[]).filter((c: any) => c.is_customer));
       setCurrencyList(currRes as any);
       if (rfqRes?.company?.id) {
         try {
@@ -77,15 +78,16 @@ const RFQDetail: React.FC = () => {
         const computedDemandTitle = (!rfqRes.title && (rfqRes.items || []).length === 0)
           ? `Ajánlat ${rfqRes.number || rfqRes.request_number}`
           : rfqRes.title;
+        const createdByName = rfqRes.created_by_name || rfqRes.requested_by_name || (user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '');
         formBasic.setFieldsValue({
           number: rfqRes.number || rfqRes.request_number,
-          created_by_name: rfqRes.created_by_name || rfqRes.requested_by_name || '',
+          created_by_name: createdByName,
           issue_date: rfqRes.issue_date ? dayjs(rfqRes.issue_date) : null,
           deadline: rfqRes.deadline ? dayjs(rfqRes.deadline) : null,
           company_id: rfqRes.company?.id,
           contact_ids: (rfqRes.contacts || []).map((c: any) => c.id),
           title: computedDemandTitle,
-          project_id: rfqRes.project?.id,
+          project_id: rfqRes.project?.id || rfqRes.project,
           description: rfqRes.description,
           internal_description: rfqRes.internal_description,
           currency_code: rfqRes.currency_code || 'HUF',
@@ -203,7 +205,19 @@ const RFQDetail: React.FC = () => {
     const qid = Number(id);
     let createdItem: any = null;
     if (payload.item_type === 'product') {
-      createdItem = await salesService.addRfqProductItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount);
+      // Send material_id instead of product_id for warehouse materials
+      createdItem = await salesService.addRfqProductItem(
+        qid, 
+        payload.ref_id,  // This is used as product_id in the old system
+        payload.quantity, 
+        payload.description || '', 
+        payload.unit, 
+        payload.net_unit_price, 
+        payload.vat_rate, 
+        (payload as any).discount_percent, 
+        (payload as any).discount_amount,
+        payload.ref_id  // Send as material_id too
+      );
     } else if (payload.item_type === 'manufacturing') {
       createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount);
     } else {
@@ -350,6 +364,7 @@ const RFQDetail: React.FC = () => {
           </Space>
         </div>
         <Form layout="vertical" form={formBasic} onFinish={async (v) => {
+          console.log('[RFQDetail] Form submitted with values:', v);
           try {
             // Company required for new quote and demand on save
             const companyId = v.company_id ?? rfq.company?.id;
@@ -360,6 +375,7 @@ const RFQDetail: React.FC = () => {
             const autoTitle = (!v.title || !String(v.title).trim())
               ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
               : String(v.title).trim();
+            console.log('[RFQDetail] Sending update_basic with project_id:', v.project_id);
             await salesService.updateQuoteRequestBasic(Number(id), {
               title: autoTitle,
               description: v.description,
@@ -373,7 +389,8 @@ const RFQDetail: React.FC = () => {
             });
             message.success('Mentve');
             load();
-          } catch {
+          } catch (err) {
+            console.error('[RFQDetail] Save failed:', err);
             message.error('Mentés sikertelen');
           }
         }}>
@@ -401,40 +418,47 @@ const RFQDetail: React.FC = () => {
           </Row>
           <Row gutter={12}>
             <Col span={8}>
-              <Form.Item label="Cég" name="company_id">
-                <Space.Compact style={{ width: '100%' }}>
-                  <Select
-                    showSearch
-                    optionFilterProp="label"
-                    placeholder="Válassz céget"
-                    style={{ width: 'calc(100% - 40px)' }}
-                    onChange={async (val) => {
-                      try {
-                        const list = await crmService.getContactsByCompany(val);
-                        setContacts((list as any).results ?? list);
-                        formBasic.setFieldValue('contact_ids', []);
-                      } catch {}
-                    }}
-                  >
-                    {(companies || []).map((c: any) => (
-                      <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                    ))}
-                  </Select>
-                  <Button
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                      setSelectedCountry('Magyarország');
-                      companyForm.resetFields();
-                      companyForm.setFieldsValue({ 
-                        country: 'Magyarország',
-                        company_type: 'customer'
-                      });
-                      setIsCompanyModalVisible(true);
-                    }}
-                    title="Új cég"
-                  />
-                </Space.Compact>
-              </Form.Item>
+              <Row gutter={4}>
+                <Col flex="auto">
+                  <Form.Item label="Cég" name="company_id">
+                    <Select
+                      showSearch
+                      optionFilterProp="label"
+                      placeholder="Válassz céget"
+                      onChange={async (val) => {
+                        try {
+                          const list = await crmService.getContactsByCompany(val);
+                          setContacts((list as any).results ?? list);
+                          formBasic.setFieldValue('contact_ids', []);
+                        } catch {}
+                      }}
+                    >
+                      {(companies || []).map((c: any) => (
+                        <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col flex="40px">
+                  <Form.Item label=" ">
+                    <Button
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        setSelectedCountry('Magyarország');
+                        companyForm.resetFields();
+                        companyForm.setFieldsValue({ 
+                          country: 'Magyarország',
+                          is_customer: true,
+                          is_supplier: false
+                        });
+                        setIsCompanyModalVisible(true);
+                      }}
+                      title="Új cég"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
             </Col>
             <Col span={16}>
               <Form.Item label="Kapcsolattartók" name="contact_ids">
@@ -691,59 +715,6 @@ const RFQDetail: React.FC = () => {
 
         <Divider />
 
-        <Card size="small" title="Tétel csatolmányok">
-          <List
-            dataSource={(rfq.items || [])}
-            rowKey={(it: any) => it.id}
-            renderItem={(it: any) => (
-              <List.Item key={it.id} style={{ display: 'block' }}>
-                <div style={{ fontWeight: 600, marginBottom: 6 }}>
-                  {(it.product_name || it.manufacturing_product_name || it.service_name || 'Tétel')} – ID #{it.id}
-                </div>
-                <List
-                  size="small"
-                  bordered
-                  dataSource={(it.attachments || [])}
-                  locale={{ emptyText: 'Nincs csatolmány' }}
-                  renderItem={(att: any) => (
-                    <List.Item style={{ width: '100%' }}>
-                      <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                        <Space>
-                          <Button type="link" style={{ padding: 0 }} onClick={() => {
-                            const url = att.file_url || att.file;
-                            if (url) {
-                              setFilePreviewUrl(url);
-                              setFilePreviewTitle(att.file?.split('/').pop() || `#${att.id}`);
-                              setFilePreviewOpen(true);
-                            }
-                          }}>{att.file?.split('/').pop() || `#${att.id}`}</Button>
-                          <span style={{ color: '#888' }}>{new Date(att.created_at).toLocaleString('hu-HU')}</span>
-                        </Space>
-                        <Space>
-                          <Input
-                            defaultValue={att.remark || ''}
-                            placeholder="Megjegyzés"
-                            style={{ width: 260 }}
-                            onBlur={async (e) => {
-                              const val = e.target.value;
-                              if ((att.remark || '') === val) return;
-                              try {
-                                await salesService.updateQuoteRequestItemAttachmentRemark(it.id, att.id, val);
-                                message.success('Megjegyzés mentve');
-                              } catch (err) {
-                                message.error('Nem sikerült menteni a megjegyzést');
-                              }
-                            }}
-                          />
-                        </Space>
-                      </Space>
-                    </List.Item>
-                  )}
-                />
-              </List.Item>
-            )}
-          />
-        </Card>
       </Card>
       <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {
         try { await salesService.takeoverQuoteRequest(Number(id)); message.success('Átvetted'); setTakeoverConfirmOpen(false); load(); } catch { message.error('Nem sikerült átvenni'); }
@@ -872,15 +843,23 @@ const RFQDetail: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={8}>
-              <Form.Item
-                name="company_type"
-                label="Típus"
-                rules={[{ required: true, message: 'Kérjük, válassza ki a típust!' }]}
-              >
-                <Select>
-                  <Select.Option value="customer">Ügyfél</Select.Option>
-                  <Select.Option value="supplier">Beszállító</Select.Option>
-                </Select>
+              <Form.Item label="Szerepkörök">
+                <Space direction="vertical">
+                  <Form.Item
+                    name="is_customer"
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>Ügyfél</Checkbox>
+                  </Form.Item>
+                  <Form.Item
+                    name="is_supplier"
+                    valuePropName="checked"
+                    noStyle
+                  >
+                    <Checkbox>Beszállító</Checkbox>
+                  </Form.Item>
+                </Space>
               </Form.Item>
             </Col>
           </Row>

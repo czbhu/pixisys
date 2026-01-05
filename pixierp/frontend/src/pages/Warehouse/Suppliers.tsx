@@ -84,7 +84,7 @@ const Suppliers: React.FC = () => {
     const loadCompanies = async () => {
         try {
             const response = await crmService.getCompanies();
-            const supplierCompanies = (response.results || response).filter((company: any) => company.company_type === 'supplier');
+            const supplierCompanies = (response.results || response).filter((company: any) => company.is_supplier);
             setCompanies(supplierCompanies);
         } catch (error) {
             console.error('Error loading companies:', error);

@@ -53,6 +53,8 @@ class QuoteRequest(models.Model):
         ('accepted', 'Elfogadva'),
         ('rejected', 'Elutasítva'),
         ('expired', 'Lejárt'),
+        ('archived', 'Archív'),
+        ('ordered', 'Megrendelve'),
     ]
     
     # Új mezők az árajánlathoz
@@ -67,10 +69,11 @@ class QuoteRequest(models.Model):
     request_number = models.CharField(max_length=50, unique=True, verbose_name="Kérés szám", blank=True)
     title = models.CharField(max_length=200, verbose_name="Cím")
     description = models.TextField(verbose_name="Leírás")
+    internal_description = models.TextField(blank=True, verbose_name="Belső leírás")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
     # requested_by helyett created_by használatos
     requested_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="Kérte", related_name='requested_quotes', null=True, blank=True)
-    deadline = models.DateField(verbose_name="Határidő")
+    deadline = models.DateField(verbose_name="Határidő", null=True, blank=True)
     project = models.ForeignKey('manufacturing.Project', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Projekt")
     from apps.core.models import Currency
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Pénznem")
@@ -79,6 +82,8 @@ class QuoteRequest(models.Model):
     # Publikus megrendelő link token
     public_token = models.CharField(max_length=64, blank=True, null=True, unique=True)
     public_expires_at = models.DateTimeField(blank=True, null=True)
+    # Részlegesen megrendelhető
+    partial_order_allowed = models.BooleanField(default=True, verbose_name="Részlegesen megrendelhető")
     # Soft delete flag for demands/quotes
     is_deleted = models.BooleanField(default=False, verbose_name="Törölt")
     # Assignment tracking (who handles this RFQ/demand)
@@ -93,17 +98,101 @@ class QuoteRequest(models.Model):
 
     def __str__(self):
         return f"{self.request_number} - {self.title}"
+    
+    def check_and_update_status(self):
+        """Ellenőrzi és frissíti az archív státuszt a határidő alapján"""
+        from django.utils import timezone
+        if self.deadline and timezone.now().date() > self.deadline and self.status not in ['ordered', 'archived']:
+            self.status = 'archived'
+            self.save(update_fields=['status'])
+            return True
+        return False
+
+
+class CustomerOrder(models.Model):
+    """Ügyfél megrendelés"""
+    STATUS_CHOICES = [
+        ('new', 'Új'),
+        ('confirmed', 'Megerősítve'),
+        ('in_production', 'Gyártásban'),
+        ('ready', 'Kész'),
+        ('in_delivery', 'Szállítás alatt'),
+        ('delivered', 'Kiszállítva'),
+        ('cancelled', 'Törölve'),
+    ]
+    
+    quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, related_name='customer_orders', verbose_name="Árajánlat")
+    order_number = models.CharField(max_length=50, unique=True, verbose_name="Megrendelés szám")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
+    order_date = models.DateTimeField(auto_now_add=True, verbose_name="Megrendelés dátuma")
+    confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="Megerősítve")
+    production_started_at = models.DateTimeField(null=True, blank=True, verbose_name="Gyártás kezdete")
+    ready_at = models.DateTimeField(null=True, blank=True, verbose_name="Kész")
+    delivery_started_at = models.DateTimeField(null=True, blank=True, verbose_name="Szállítás kezdete")
+    delivered_at = models.DateTimeField(null=True, blank=True, verbose_name="Kiszállítva")
+    notes = models.TextField(blank=True, default='', verbose_name="Megjegyzések")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    # Publikus szállítólevél link
+    public_delivery_token = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name="Publikus szállítás token")
+    public_delivery_expires_at = models.DateTimeField(blank=True, null=True, verbose_name="Publikus szállítás link lejár")
+    delivery_notes = models.TextField(blank=True, default='', verbose_name="Szállítási megjegyzések")
+    delivery_confirmed = models.BooleanField(default=False, verbose_name="Szállítólevél visszaigazolva")
+    delivery_confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="Visszaigazolás ideje")
+    show_prices = models.BooleanField(default=True, verbose_name="Árak láthatóak a szállítólevélen")
+    invoice_number = models.CharField(max_length=100, blank=True, null=True, verbose_name="Számla szám")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Ügyfél megrendelés"
+        verbose_name_plural = "Ügyfél megrendelések"
+        ordering = ['-created_at', '-id']
+
+    def __str__(self):
+        return f"{self.order_number} - {self.quote_request.title}"
+    
+    def check_auto_delivery(self):
+        """48 óra után automatikusan kiszállítva"""
+        from django.utils import timezone
+        from datetime import timedelta
+        if self.status == 'in_delivery' and self.delivery_started_at:
+            if timezone.now() > self.delivery_started_at + timedelta(hours=48):
+                self.status = 'delivered'
+                self.delivered_at = timezone.now()
+                self.save(update_fields=['status', 'delivered_at'])
+                return True
+        return False
+
+
+class CustomerOrderItem(models.Model):
+    """Megrendelés tételek"""
+    customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='items', verbose_name="Megrendelés")
+    quote_item = models.ForeignKey('QuoteRequestItem', on_delete=models.CASCADE, verbose_name="Ajánlat tétel")
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Mennyiség")
+    unit = models.CharField(max_length=20, verbose_name="Egység")
+    net_unit_price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Nettó egységár")
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=27, verbose_name="ÁFA %")
+    discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Kedvezmény %")
+    description = models.TextField(blank=True, default='', verbose_name="Leírás")
+
+    class Meta:
+        verbose_name = "Megrendelés tétel"
+        verbose_name_plural = "Megrendelés tételek"
+
+    def __str__(self):
+        return f"{self.customer_order.order_number} - {self.description[:50]}"
+
 
 class Quote(models.Model):
-    """Ajánlat"""
+    """Árajánlat"""
     STATUS_CHOICES = [
         ('draft', 'Vázlat'),
         ('sent', 'Elküldve'),
         ('accepted', 'Elfogadva'),
-        ('partially_accepted', 'Részben elfogadva'),
         ('rejected', 'Elutasítva'),
         ('expired', 'Lejárt'),
     ]
+
     
     quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, verbose_name="Ajánlat kérés")
     quote_number = models.CharField(max_length=50, unique=True, verbose_name="Ajánlat szám")
@@ -134,6 +223,7 @@ class QuoteRequestItem(models.Model):
     quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, related_name='items', verbose_name="Ajánlatkérés")
     item_type = models.CharField(max_length=20, choices=ITEM_TYPE_CHOICES, verbose_name="Tétel típusa")
     product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Termék")
+    material = models.ForeignKey('warehouse.Material', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Alapanyag/Termék", related_name='quote_items')
     manufacturing_product = models.ForeignKey('manufacturing.ManufacturingProduct', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Gyártási termék")
     service = models.ForeignKey('sales.Service', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Szolgáltatás")
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1, verbose_name="Mennyiség")
@@ -156,8 +246,10 @@ class QuoteRequestItem(models.Model):
     def __str__(self):
         ref = (
             self.product.name if self.product else (
-                self.manufacturing_product.name if self.manufacturing_product else (
-                    self.service.name if self.service else '-'
+                self.material.name if self.material else (
+                    self.manufacturing_product.name if self.manufacturing_product else (
+                        self.service.name if self.service else '-'
+                    )
                 )
             )
         )

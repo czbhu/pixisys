@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, Service, QuoteLog,
-    QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation
+    QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
+    CustomerOrder, CustomerOrderItem
 )
 from apps.manufacturing.models import ManufacturingProduct, Project
 from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer
@@ -53,6 +54,9 @@ class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
 
 class QuoteRequestItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True)
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
     manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
     service_name = serializers.CharField(source='service.name', read_only=True)
     net_unit_price = serializers.DecimalField(max_digits=12, decimal_places=2)
@@ -93,13 +97,18 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_public_order_url(self, obj):
-        request = self.context.get('request')
+        from django.conf import settings
         if not obj.public_token:
             return None
-        path = f"/api/v1/sales/quote-requests/public/{obj.public_token}/order/"
-        if request:
-            return request.build_absolute_uri(path)
-        return path
+        # Use FRONTEND_BASE_URL if configured, otherwise fallback to request URL
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
+        if not frontend_url:
+            request = self.context.get('request')
+            if request:
+                frontend_url = f"{request.scheme}://{request.get_host()}"
+            else:
+                return None
+        return f"{frontend_url}/public/quote/{obj.public_token}/order"
 
     def get_contact_names(self, obj):
         try:
@@ -209,3 +218,176 @@ class ForecastSerializer(serializers.ModelSerializer):
     class Meta:
         model = Forecast
         fields = '__all__'
+
+
+class CustomerOrderItemSerializer(serializers.ModelSerializer):
+    quote_item = QuoteRequestItemSerializer(read_only=True)
+    # Flatten nested quote_item fields for easier access
+    product_name = serializers.SerializerMethodField()
+    product_code = serializers.SerializerMethodField()
+    material_name = serializers.SerializerMethodField()
+    material_code = serializers.SerializerMethodField()
+    manufacturing_product_name = serializers.SerializerMethodField()
+    service_name = serializers.SerializerMethodField()
+    item_type = serializers.SerializerMethodField()
+    attachments = serializers.SerializerMethodField()
+    # Price calculations
+    net_total = serializers.SerializerMethodField()
+    discounted_net_total = serializers.SerializerMethodField()
+    gross_total = serializers.SerializerMethodField()
+    discounted_gross_total = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CustomerOrderItem
+        fields = '__all__'
+        read_only_fields = ['id']
+    
+    def get_net_total(self, obj):
+        """Calculate net total: quantity * net_unit_price"""
+        return float(obj.quantity * obj.net_unit_price)
+    
+    def get_discounted_net_total(self, obj):
+        """Calculate discounted net total"""
+        net_total = obj.quantity * obj.net_unit_price
+        discount = net_total * (obj.discount_percent / 100)
+        return float(net_total - discount)
+    
+    def get_gross_total(self, obj):
+        """Calculate gross total with VAT"""
+        net_total = obj.quantity * obj.net_unit_price
+        return float(net_total * (1 + obj.vat_rate / 100))
+    
+    def get_discounted_gross_total(self, obj):
+        """Calculate discounted gross total with VAT"""
+        net_total = obj.quantity * obj.net_unit_price
+        discount = net_total * (obj.discount_percent / 100)
+        discounted_net = net_total - discount
+        return float(discounted_net * (1 + obj.vat_rate / 100))
+    
+    def get_product_name(self, obj):
+        return obj.quote_item.product.name if obj.quote_item and obj.quote_item.product else None
+    
+    def get_product_code(self, obj):
+        # Product doesn't have a code field, return None
+        return None
+    
+    def get_material_name(self, obj):
+        return obj.quote_item.material.name if obj.quote_item and obj.quote_item.material else None
+    
+    def get_material_code(self, obj):
+        return obj.quote_item.material.code if obj.quote_item and obj.quote_item.material else None
+    
+    def get_manufacturing_product_name(self, obj):
+        return obj.quote_item.manufacturing_product.name if obj.quote_item and obj.quote_item.manufacturing_product else None
+    
+    def get_service_name(self, obj):
+        return obj.quote_item.service.name if obj.quote_item and obj.quote_item.service else None
+    
+    def get_item_type(self, obj):
+        return obj.quote_item.item_type if obj.quote_item else None
+    
+    def get_attachments(self, obj):
+        """Get attachments from the related quote_item"""
+        if obj.quote_item:
+            return QuoteRequestItemAttachmentSerializer(obj.quote_item.attachments.all(), many=True).data
+        return []
+
+
+class CustomerOrderSerializer(serializers.ModelSerializer):
+    items = CustomerOrderItemSerializer(many=True, read_only=True)
+    quote_request = QuoteRequestSerializer(read_only=True)
+    quote_request_id = serializers.SerializerMethodField()
+    total_amount = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    quote_request_title = serializers.SerializerMethodField()
+    project_id = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    contact_names = serializers.SerializerMethodField()
+    contact_email = serializers.SerializerMethodField()
+    deadline = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = CustomerOrder
+        fields = [
+            'id', 'quote_request', 'quote_request_id', 'quote_request_title', 'customer_name',
+            'order_number', 'status', 'order_date', 'total_amount',
+            'project_id', 'project_name', 'created_by_name',
+            'contact_names', 'contact_email', 'deadline',
+            'confirmed_at', 'production_started_at', 'ready_at',
+            'delivery_started_at', 'delivered_at',
+            'notes', 'created_by', 'created_at', 'updated_at', 'items',
+            'invoice_number'
+        ]
+    
+    def get_total_amount(self, obj):
+        """Calculate total amount from items"""
+        total = 0
+        for item in obj.items.all():
+            net = item.net_unit_price * item.quantity
+            discount = net * (item.discount_percent / 100)
+            net_discounted = net - discount
+            gross = net_discounted * (1 + item.vat_rate / 100)
+            total += gross
+        return round(total, 2)
+    
+    def get_customer_name(self, obj):
+        if not obj.quote_request:
+            return ''
+        # Try company first (new), then customer (old) for backward compatibility
+        if obj.quote_request.company:
+            return obj.quote_request.company.name
+        elif obj.quote_request.customer:
+            return obj.quote_request.customer.name
+        return ''
+    
+    def get_quote_request_id(self, obj):
+        """Get quote_request ID for navigation"""
+        return obj.quote_request.id if obj.quote_request else None
+    
+    def get_quote_request_title(self, obj):
+        return obj.quote_request.title if obj.quote_request else ''
+    
+    def get_project_id(self, obj):
+        return obj.quote_request.project_id if obj.quote_request else None
+    
+    def get_project_name(self, obj):
+        if obj.quote_request and obj.quote_request.project:
+            return obj.quote_request.project.name
+        return None
+    
+    def get_created_by_name(self, obj):
+        """Get created_by name from CustomerOrder.created_by, fallback to quote_request creator"""
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        # Fallback to quote_request creator
+        if obj.quote_request:
+            if obj.quote_request.created_by:
+                return obj.quote_request.created_by.get_full_name() or obj.quote_request.created_by.username
+            elif obj.quote_request.requested_by:
+                return obj.quote_request.requested_by.get_full_name() or obj.quote_request.requested_by.username
+        return ''
+    
+    def get_contact_names(self, obj):
+        """Get contact names from quote_request"""
+        if obj.quote_request:
+            try:
+                return ", ".join([c.name for c in obj.quote_request.contacts.all()])
+            except Exception:
+                return ''
+        return ''
+    
+    def get_contact_email(self, obj):
+        """Get first contact email from quote_request for delivery notifications"""
+        if obj.quote_request:
+            try:
+                first_contact = obj.quote_request.contacts.first()
+                return first_contact.email if first_contact else ''
+            except Exception:
+                return ''
+        return ''
+    
+    def get_deadline(self, obj):
+        """Get deadline from quote_request"""
+        return obj.quote_request.deadline if obj.quote_request else None
+

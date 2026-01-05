@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload } from 'antd';
 import { UploadOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
+import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import ProductEditorModal from '../Editors/ProductEditorModal';
@@ -43,6 +45,7 @@ const { Search } = Input;
 const defaultVat = 27;
 
 export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues }) => {
+  const navigate = useNavigate();
   const [activeKey, setActiveKey] = useState<ItemType>(defaultType);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -106,20 +109,22 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const loadData = async () => {
     try {
       setLoading(true);
+      // Load warehouse materials with is_product=true filter for products
       const [prodRes, manuRes, svcRes, topProd, topManu, topSvc] = await Promise.all([
-        salesService.getProducts(),
+        api.get('/warehouse/materials/?filter_type=products').then(r => r.data),
         manufacturingService.getProducts(),
         salesService.getServices(),
         salesService.getTopProducts().catch(() => []),
         salesService.getTopManufacturingProducts().catch(() => []),
         salesService.getTopServices().catch(() => []),
       ]);
-      setProducts(prodRes.results ?? prodRes);
+      const productsData = prodRes.results ?? prodRes;
+      setProducts(productsData);
       setManuProducts((manuRes as any));
       setServices(svcRes.results ?? svcRes);
       setTop({ product: topProd as any[], manufacturing: topManu as any[], service: topSvc as any[] });
     } catch (e) {
-      // Surface later via UI
+      console.error('Error loading data:', e);
     } finally {
       setLoading(false);
     }
@@ -129,7 +134,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     const q = search.trim().toLowerCase();
     const filterFn = (r: any, fields: string[]) => {
       if (!q) return true;
-      return fields.some((f) => String(r[f] ?? '').toLowerCase().includes(q));
+      const matches = fields.some((f) => {
+        const val = r[f];
+        if (val === null || val === undefined) return false;
+        const strVal = String(val).toLowerCase();
+        const result = strVal.includes(q);
+        return result;
+      });
+      return matches;
     };
     const mergeTopFront = (arr: any[], tops: any[], idKey: string = 'id') => {
       if (!tops || !tops.length || q) return arr;

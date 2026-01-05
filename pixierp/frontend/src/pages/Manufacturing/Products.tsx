@@ -53,7 +53,6 @@ const STATUS_COLORS: { [key: string]: string } = {
 };
 
 const Products: React.FC = () => {
-    console.log('🚀 Products component loaded - UPDATED VERSION with exchange rate button!');
     const [products, setProducts] = useState<ManufacturingProduct[]>([]);
     const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
@@ -756,8 +755,6 @@ const Products: React.FC = () => {
                                     showSearch
                                     optionFilterProp="children"
                                     filterOption={(input, option) => {
-                                        console.log('🔍 SEARCH DEBUG - Input:', input, 'Option:', option);
-
                                         // A teljes szöveg a children-ben van: "Kapcsolattartó név - Cég név"
                                         // De mivel ez React elem, a szöveget másképp kell kinyerni
                                         const contactName = option?.value as string; // Kapcsolattartó neve
@@ -770,11 +767,7 @@ const Products: React.FC = () => {
                                         // Teljes keresési szöveg: kapcsolattartó név + cég név
                                         const fullSearchText = `${contactName} ${companyName}`;
 
-                                        console.log('🔍 SEARCH DEBUG - Contact name:', contactName, 'Company name:', companyName);
-                                        console.log('🔍 SEARCH DEBUG - Full search text:', fullSearchText);
-
                                         if (!fullSearchText || typeof fullSearchText !== 'string') {
-                                            console.log('🔍 SEARCH DEBUG - Full search text is not string, returning false');
                                             return false;
                                         }
 
@@ -790,9 +783,7 @@ const Products: React.FC = () => {
                                         const normalizedInput = normalizeText(input);
                                         const normalizedSearchText = normalizeText(fullSearchText);
 
-                                        console.log('🔍 SEARCH DEBUG - Normalized input:', normalizedInput, 'Normalized search text:', normalizedSearchText);
                                         const result = normalizedSearchText.includes(normalizedInput);
-                                        console.log('🔍 SEARCH DEBUG - Result:', result);
                                         return result;
                                     }}
                                 >

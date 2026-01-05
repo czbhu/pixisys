@@ -43,11 +43,16 @@ class MaterialSerializer(serializers.ModelSerializer):
     internal_production_department_name = serializers.CharField(
         source='internal_production_department.name', read_only=True
     )
+    base_price = serializers.SerializerMethodField()
+    
+    def get_base_price(self, obj):
+        """Return unit_selling_price as base_price for compatibility with product selector"""
+        return obj.unit_selling_price
     
     class Meta:
         model = Material
         fields = [
-            'id', 'name', 'code', 'description', 
+            'id', 'is_material', 'is_product', 'name', 'code', 'description', 
             'material_type', 'material_type_name',
             'material_group', 'material_group_name',
             'unit', 'min_stock_level', 'width', 'length', 'height', 'dimension_unit',
@@ -56,7 +61,7 @@ class MaterialSerializer(serializers.ModelSerializer):
             'yield_percentage',
             'area_weight', 'area_weight_unit', 'specific_weight', 'specific_weight_unit',
             'weight', 'weight_unit', 'volume_liter',
-            'unit_cost_price', 'markup_percentage', 'unit_selling_price',
+            'unit_cost_price', 'markup_percentage', 'unit_selling_price', 'base_price',
             'currency', 'default_supplier', 'default_supplier_name',
             'is_internal_production', 'internal_production_department',
             'internal_production_department_name', 'internal_production_cost',

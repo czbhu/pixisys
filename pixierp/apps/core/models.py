@@ -8,22 +8,31 @@ from django.core.validators import MinValueValidator
 
 class Company(models.Model):
     """Company information"""
-    name = models.CharField(max_length=200)
-    tax_number = models.CharField(max_length=20, unique=True)
-    address = models.TextField()
-    phone = models.CharField(max_length=20)
-    email = models.EmailField()
-    website = models.URLField(blank=True, null=True)
-    logo = models.ImageField(upload_to='company/logos/', blank=True, null=True)
+    name = models.CharField(max_length=200, verbose_name="Cégnév")
+    tax_number = models.CharField(max_length=20, unique=True, verbose_name="Adószám")
+    eu_tax_number = models.CharField(max_length=20, blank=True, default='', verbose_name="EU adószám")
+    address = models.TextField(verbose_name="Cím")
+    phone = models.CharField(max_length=20, blank=True, default='', verbose_name="Telefon")
+    email = models.EmailField(verbose_name="E-mail")
+    website = models.URLField(blank=True, null=True, verbose_name="Weboldal")
+    logo = models.ImageField(upload_to='company/logos/', blank=True, null=True, verbose_name="Logó")
+    is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        verbose_name_plural = "Companies"
+        verbose_name = "Cég"
+        verbose_name_plural = "Cégek"
         db_table = 'companies'
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        # Ha ez az alapértelmezett, akkor a többi nem lehet
+        if self.is_default:
+            Company.objects.filter(is_default=True).exclude(id=self.id).update(is_default=False)
+        super().save(*args, **kwargs)
 
 
 class Currency(models.Model):
@@ -55,6 +64,38 @@ class Currency(models.Model):
         # Ha ez az alapértelmezett, akkor a többi nem lehet
         if self.is_default:
             Currency.objects.filter(is_default=True).update(is_default=False)
+        super().save(*args, **kwargs)
+
+
+class BankAccount(models.Model):
+    """Bank account information for a company"""
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_accounts', verbose_name="Cég")
+    currency = models.ForeignKey(Currency, on_delete=models.PROTECT, verbose_name="Deviza")
+    account_number = models.CharField(max_length=50, verbose_name="Bankszámlaszám")
+    bank_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Bank neve")
+    swift = models.CharField(max_length=11, blank=True, default='', verbose_name="SWIFT/BIC kód")
+    iban = models.CharField(max_length=34, blank=True, default='', verbose_name="IBAN")
+    is_primary = models.BooleanField(default=False, verbose_name="Elsődleges")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = "Bankszámla"
+        verbose_name_plural = "Bankszámlák"
+        ordering = ['-is_primary', 'currency__code']
+        unique_together = ['company', 'account_number']
+
+    def __str__(self):
+        return f"{self.company.name} - {self.currency.code}: {self.account_number}"
+
+    def save(self, *args, **kwargs):
+        # Ha ez az elsődleges számla ehhez a céghez és devizához, akkor a többi nem lehet
+        if self.is_primary:
+            BankAccount.objects.filter(
+                company=self.company, 
+                currency=self.currency, 
+                is_primary=True
+            ).exclude(id=self.id).update(is_primary=False)
         super().save(*args, **kwargs)
 
 
@@ -105,6 +146,8 @@ class EmailTemplate(models.Model):
     name = models.CharField(max_length=150)
     subject_template = models.TextField()
     body_template = models.TextField(help_text='HTML vagy szöveges sablon')
+    default_cc = models.TextField(blank=True, default='', help_text='Alapértelmezett CC címzettek (vesszővel elválasztva)')
+    default_reply_to = models.EmailField(blank=True, default='', help_text='Alapértelmezett Reply-To cím')
     is_html = models.BooleanField(default=True)
     description = models.TextField(blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
@@ -135,12 +178,28 @@ class SignatureTemplate(models.Model):
         return self.name
 
 
+class UserPreference(models.Model):
+    """User személyes beállítások"""
+    user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='preferences')
+    default_signature = models.ForeignKey(SignatureTemplate, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='Alapértelmezett aláírás')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Felhasználó beállítás'
+        verbose_name_plural = 'Felhasználó beállítások'
+
+    def __str__(self):
+        return f"{self.user.username} beállítások"
+
+
 class PixinvoiceConfig(models.Model):
     """PIXINVOICE API konfiguráció (NAV lekérdezés, ügyfél szinkron, számlázás)"""
     name = models.CharField(max_length=100, default='Alapértelmezett')
     base_url = models.URLField(default='http://localhost:4001/api/')
     api_key = models.CharField(max_length=255, blank=True, default='')
     company_id = models.CharField(max_length=64, blank=True, default='')
+    default_invoice_series_id = models.CharField(max_length=64, blank=True, default='', verbose_name='Alapértelmezett számlatömb')
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

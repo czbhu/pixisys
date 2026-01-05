@@ -6,6 +6,8 @@ import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
 import { manufacturingService, Currency as MCurrency } from '../../services/manufacturingService';
+import { settingsService } from '../../services/settingsService';
+import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
@@ -14,6 +16,7 @@ const { TextArea } = Input;
 
 const RFQs: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
@@ -43,6 +46,10 @@ const RFQs: React.FC = () => {
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
   const [partialLoading, setPartialLoading] = useState(false);
+  const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
+  const [signatures, setSignatures] = useState<any[]>([]);
+  const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
+  const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
 
   useEffect(() => {
     loadData();
@@ -59,7 +66,7 @@ const RFQs: React.FC = () => {
       ]);
     const rfqRaw = (rfqRes.results ?? rfqRes) as any[];
     const rfqList = (rfqRaw || []).filter(r => (r.items || []).length > 0);
-      const compList = (compRes.results ?? compRes) as any[];
+      const compList = ((compRes.results ?? compRes) as any[]).filter((c: any) => c.is_customer);
     setRfqs(rfqList);
     setFiltered(rfqList);
       setCompanies(compList);
@@ -74,20 +81,32 @@ const RFQs: React.FC = () => {
 
   const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   useEffect(() => {
+    let filtered = rfqs || [];
+    
+    // Státusz szűrés
+    if (statusFilter === 'all_except_archived') {
+      filtered = filtered.filter(r => r.status !== 'archived');
+    } else if (statusFilter !== 'all') {
+      filtered = filtered.filter(r => r.status === statusFilter);
+    }
+    
+    // Szöveges keresés
     const q = normalize(query);
-    if (!q) { setFiltered(rfqs); return; }
-    const next = (rfqs || []).filter(r => {
-      const hay = [
-        r.number || r.request_number || '',
-        r.title || '',
-        r.company?.name || r.company_name || '',
-        r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '),
-        (r.items || []).map((it: any) => it.product?.name || it.manufacturing_product?.name || it.service?.name || it.description || '').join(' '),
-      ].join(' \u0001 ');
-      return normalize(hay).includes(q);
-    });
-    setFiltered(next);
-  }, [query, rfqs]);
+    if (q) {
+      filtered = filtered.filter(r => {
+        const hay = [
+          r.number || r.request_number || '',
+          r.title || '',
+          r.company?.name || r.company_name || '',
+          r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '),
+          (r.items || []).map((it: any) => it.product?.name || it.manufacturing_product?.name || it.service?.name || it.description || '').join(' '),
+        ].join(' \u0001 ');
+        return normalize(hay).includes(q);
+      });
+    }
+    
+    setFiltered(filtered);
+  }, [query, rfqs, statusFilter]);
 
   const statusTag = (status: string) => {
     const color = {
@@ -97,6 +116,8 @@ const RFQs: React.FC = () => {
       accepted: 'green',
       rejected: 'red',
       expired: 'default',
+      archived: 'default',
+      ordered: 'purple',
     } as Record<string, any>;
     const text = {
       new: 'Új',
@@ -105,6 +126,8 @@ const RFQs: React.FC = () => {
       accepted: 'Elfogadva',
       rejected: 'Elutasítva',
       expired: 'Lejárt',
+      archived: 'Archív',
+      ordered: 'Megrendelve',
     } as Record<string, string>;
     return <Tag color={color[status] || 'default'}>{text[status] || status}</Tag>;
   };
@@ -124,7 +147,89 @@ const RFQs: React.FC = () => {
             <Button icon={<EditOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
           <Tooltip title="Kiküldés e-mailben">
-            <Button icon={<SendOutlined />} size="small" onClick={() => { setSendOpenId(record.id); setSendPreview(null); sendForm.setFieldsValue({ template_key: 'rfq_send' }); }} />
+            <Button icon={<SendOutlined />} size="small" onClick={async () => {
+              setSendOpenId(record.id);
+              setSendPreview(null);
+              
+              // Load email templates and signatures
+              let templates: any[] = [];
+              let sigs: any[] = [];
+              try {
+                const [templatesRes, sigsRes] = await Promise.all([
+                  settingsService.getEmailTemplates(),
+                  settingsService.getSignatures()
+                ]);
+                templates = Array.isArray(templatesRes) ? templatesRes : (templatesRes?.results ?? []);
+                sigs = Array.isArray(sigsRes) ? sigsRes : (sigsRes?.results ?? []);
+                setEmailTemplates(templates);
+                setSignatures(sigs);
+              } catch {}
+              
+              // Auto-fill contact emails
+              const contactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
+              
+              // Load user preferences for default signature
+              let signatureKey = '';
+              try {
+                const prefs = await settingsService.getUserPreferences();
+                if (prefs && prefs.default_signature_key) {
+                  signatureKey = prefs.default_signature_key;
+                }
+              } catch (err) {
+                // Ignore errors - user may not have preferences set
+              }
+              
+              // If no default signature set, use the first available one
+              if (!signatureKey && sigs.length > 0) {
+                signatureKey = sigs[0].key;
+              }
+              
+              // Load default template and populate subject, body, cc, reply_to
+              const defaultTemplate = templates.find((t: any) => t.key === 'rfq_send');
+              let subject = '';
+              let body = '';
+              let cc = '';
+              let replyTo = '';
+              
+              if (defaultTemplate) {
+                // Build context for template variables
+                subject = defaultTemplate.subject_template || '';
+                body = defaultTemplate.body_template || '';
+                cc = defaultTemplate.default_cc || '';
+                replyTo = defaultTemplate.default_reply_to || '';
+                
+                // Replace variables
+                const contactNames = (record.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+                subject = subject.replace('{rfq_number}', record.number || record.request_number || '');
+                subject = subject.replace('{rfq_title}', record.title || '');
+                subject = subject.replace('{company_name}', record.company?.name || '');
+                subject = subject.replace('{contact_names}', contactNames);
+                
+                body = body.replace('{rfq_number}', record.number || record.request_number || '');
+                body = body.replace('{rfq_title}', record.title || '');
+                body = body.replace('{company_name}', record.company?.name || '');
+                body = body.replace('{contact_names}', contactNames);
+                body = body.replace('{public_order_url}', record.public_order_url || '');
+              }
+              
+              // Append signature to body if signature is selected
+              if (signatureKey) {
+                const signature = sigs.find((s: any) => s.key === signatureKey);
+                if (signature && signature.body_html) {
+                  body = body + '\n\n' + signature.body_html;
+                }
+              }
+              
+              sendForm.setFieldsValue({ 
+                template_key: 'rfq_send',
+                to: contactEmails || '',
+                cc: cc,
+                reply_to: replyTo,
+                signature_key: signatureKey,
+                subject: subject,
+                body: body
+              });
+            }} />
           </Tooltip>
           {record.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
@@ -152,9 +257,12 @@ const RFQs: React.FC = () => {
               try {
                 const res = await salesService.orderAllFromRfq(record.id);
                 message.success(`Megrendelés létrehozva: ${res.order_number}`);
+                loadData();
+                // Navigálás a megrendelésekhez
+                setTimeout(() => navigate('/sales/customer-orders'), 1000);
               } catch (e: any) {
                 message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
-              } finally { loadData(); }
+              }
             }}>Rendel (összes)</Button>
           </Tooltip>
           <Tooltip title="Részleges megrendelés">
@@ -178,6 +286,7 @@ const RFQs: React.FC = () => {
         description: computedDescription,
         issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
         deadline: values.deadline.format('YYYY-MM-DD'),
+        partial_order_allowed: partialOrderAllowed,
       } as any;
       const created = await salesService.createQuoteRequest(createPayload);
       // Immediately enrich basic fields that serializer would reject on create
@@ -204,7 +313,7 @@ const RFQs: React.FC = () => {
       if (newItems.length) {
         for (const it of newItems) {
           if (it.item_type === 'product') {
-            const createdItem = await salesService.addRfqProductItem(created.id, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+            const createdItem = await salesService.addRfqProductItem(created.id, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
             if (createdItem?.id && it.files?.length) {
               for (const f of it.files) {
                 const key = (f as any)?.uid || (f as any)?.name;
@@ -246,12 +355,9 @@ const RFQs: React.FC = () => {
   };
 
   const openCreate = async () => {
-    try {
-      const profile = await (await import('../../services/authService')).authService.getProfile();
-      setCurrentUserName(profile?.name || profile?.username || '');
-    } catch {
-      setCurrentUserName('');
-    }
+    // Automatikus kitöltés az aktuális felhasználóval
+    const userName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
+    setCurrentUserName(userName);
     const today = dayjs();
     const nn = await salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD'));
     setNextNumber(nn.number);
@@ -300,12 +406,26 @@ const RFQs: React.FC = () => {
         title="Árajánlatok"
         extra={
           <Space>
+            <Select
+              value={statusFilter}
+              onChange={(value) => setStatusFilter(value)}
+              style={{ width: 220 }}
+            >
+              <Select.Option value="all">Mind</Select.Option>
+              <Select.Option value="all_except_archived">Mind (kivéve archív)</Select.Option>
+              <Select.Option value="new">Új</Select.Option>
+              <Select.Option value="quoted">Árazva</Select.Option>
+              <Select.Option value="rejected">Elutasítva</Select.Option>
+              <Select.Option value="accepted">Elfogadva</Select.Option>
+              <Select.Option value="archived">Archív</Select.Option>
+            </Select>
             <Input allowClear prefix={<SearchOutlined />} placeholder="Gyors kereső…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 280 }} />
             <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új árajánlat</Button>
           </Space>
         }
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
+        
         <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} />
       </Card>
       <Modal title="Ajánlat kiküldése e-mailen" open={!!sendOpenId} onOk={async () => {
@@ -320,17 +440,105 @@ const RFQs: React.FC = () => {
         }
       }} onCancel={() => setSendOpenId(null)}>
         <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }}>
-          <Form.Item label="Címzettek" name="to" rules={[{ required: true }]}>
+          <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}>
             <Input placeholder="email1@example.com, email2@example.com" />
           </Form.Item>
-          <Form.Item label="Másolat" name="cc">
+          <Form.Item label="Másolat (CC)" name="cc">
             <Input placeholder="cc@example.com" />
           </Form.Item>
-          <Form.Item label="Sablon kulcs" name="template_key">
-            <Input placeholder="rfq_send" />
+          <Form.Item label="Válaszcím (Reply-To)" name="reply_to">
+            <Input placeholder="reply@example.com" />
           </Form.Item>
-          <Form.Item label="Aláírás kulcs" name="signature_key">
-            <Input placeholder="default" />
+          <Form.Item label="Email sablon" name="template_key" rules={[{ required: true, message: 'Válassz sablont' }]}>
+            <Select 
+              placeholder="Válassz email sablont" 
+              showSearch 
+              optionFilterProp="label"
+              onChange={async (templateKey: string) => {
+                // Load and set subject, body, cc and reply_to from template
+                const template = emailTemplates.find((t: any) => t.key === templateKey);
+                if (template) {
+                  // Get current RFQ data to build context
+                  const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+                  if (rec) {
+                    let subject = template.subject_template || '';
+                    let body = template.body_template || '';
+                    const cc = template.default_cc || '';
+                    const replyTo = template.default_reply_to || '';
+                    
+                    // Build contact names
+                    const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+                    
+                    // Replace variables in subject
+                    subject = subject.replace('{rfq_number}', rec.number || rec.request_number || '');
+                    subject = subject.replace('{rfq_title}', rec.title || '');
+                    subject = subject.replace('{company_name}', rec.company?.name || '');
+                    subject = subject.replace('{contact_names}', contactNames);
+                    
+                    // Replace variables in body
+                    body = body.replace('{rfq_number}', rec.number || rec.request_number || '');
+                    body = body.replace('{rfq_title}', rec.title || '');
+                    body = body.replace('{company_name}', rec.company?.name || '');
+                    body = body.replace('{contact_names}', contactNames);
+                    body = body.replace('{public_order_url}', rec.public_order_url || '');
+                    
+                    sendForm.setFieldsValue({ subject, body, cc, reply_to: replyTo });
+                  }
+                }
+              }}
+            >
+              {emailTemplates.map((tpl: any) => (
+                <Select.Option key={tpl.key} value={tpl.key} label={tpl.name}>
+                  {tpl.name} ({tpl.key})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+          <Form.Item label="Aláírás" name="signature_key">
+            <Select 
+              placeholder="Válassz aláírást" 
+              allowClear 
+              showSearch 
+              optionFilterProp="label"
+              onChange={(sigKey: string) => {
+                // Update body with new signature
+                const currentBody = sendForm.getFieldValue('body') || '';
+                const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+                if (!rec) return;
+                
+                // Remove old signature from body (everything after last occurrence of signature delimiter)
+                let bodyWithoutSig = currentBody;
+                const template = emailTemplates.find((t: any) => t.key === sendForm.getFieldValue('template_key'));
+                if (template && template.body_template) {
+                  // Try to find where template body ends
+                  const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+                  let templateBody = template.body_template || '';
+                  templateBody = templateBody.replace('{rfq_number}', rec.number || rec.request_number || '');
+                  templateBody = templateBody.replace('{rfq_title}', rec.title || '');
+                  templateBody = templateBody.replace('{company_name}', rec.company?.name || '');
+                  templateBody = templateBody.replace('{contact_names}', contactNames);
+                  templateBody = templateBody.replace('{public_order_url}', rec.public_order_url || '');
+                  bodyWithoutSig = templateBody;
+                }
+                
+                // Add new signature
+                let newBody = bodyWithoutSig;
+                if (sigKey) {
+                  const signature = signatures.find((s: any) => s.key === sigKey);
+                  if (signature && signature.body_html) {
+                    newBody = bodyWithoutSig + '\n\n' + signature.body_html;
+                  }
+                }
+                
+                sendForm.setFieldsValue({ body: newBody });
+              }}
+            >
+              {signatures.map((sig: any) => (
+                <Select.Option key={sig.key} value={sig.key} label={sig.name}>
+                  {sig.name} ({sig.key})
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item label="Tárgy" name="subject">
             <Input placeholder="E-mail tárgya" onChange={async () => {
@@ -393,6 +601,8 @@ const RFQs: React.FC = () => {
             setPartialOrderOpenId(null);
             setPartialSelection([]);
             loadData();
+            // Navigálás a megrendelésekhez
+            setTimeout(() => navigate('/sales/customer-orders'), 1000);
           } catch (e: any) {
             message.error(e?.response?.data?.error || 'Hiba a részleges megrendelésnél');
           } finally { setPartialLoading(false); }
@@ -469,7 +679,7 @@ const RFQs: React.FC = () => {
                 <Select showSearch optionFilterProp="label" placeholder="Válassz céget" onChange={async (val) => {
                   const list = await crmService.getContactsByCompany(val);
                   setContacts(list.results ?? list);
-                  form.setFieldValue('contact_ids', []);
+                  form.setFieldsValue({ contact_ids: [] });
                 }}>
                   {companies.map((c: any) => (
                     <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
@@ -479,11 +689,35 @@ const RFQs: React.FC = () => {
             </Col>
             <Col span={16}>
               <Form.Item label="Kapcsolattartók" name="contact_ids">
-                <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder="Válassz kapcsolattartókat">
-                  {contacts.map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                  ))}
-                </Select>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Select 
+                    mode="multiple" 
+                    allowClear 
+                    showSearch 
+                    optionFilterProp="label" 
+                    placeholder="Válassz kapcsolattartókat"
+                    style={{ width: 'calc(100% - 150px)' }}
+                  >
+                    {contacts.map((p: any) => (
+                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                    ))}
+                  </Select>
+                  <Button 
+                    type="default"
+                    onClick={async () => {
+                      const companyId = form.getFieldValue('company_id');
+                      if (companyId) {
+                        const list = await crmService.getContactsByCompany(companyId);
+                        setContacts(list.results ?? list);
+                        message.success('Kapcsolattartók frissítve');
+                      } else {
+                        message.warning('Először válassz céget');
+                      }
+                    }}
+                  >
+                    Frissítés
+                  </Button>
+                </Space.Compact>
               </Form.Item>
             </Col>
           </Row>
@@ -596,7 +830,15 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <div style={{ marginBottom: 12 }}>Tétel hozzáadása:</div>
+          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <span>Tétel hozzáadása:</span>
+            <Checkbox 
+              checked={partialOrderAllowed}
+              onChange={(e) => setPartialOrderAllowed(e.target.checked)}
+            >
+              Részlegesen megrendelhető
+            </Checkbox>
+          </div>
           <Space>
             <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
             <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>

@@ -114,12 +114,26 @@ class Material(models.Model):
         ('third', '1/3, 1/2 és egész'),
     ]
     
+    is_material = models.BooleanField(
+        default=True,
+        verbose_name="Alapanyag",
+        help_text="Gyártáshoz használható alapanyag"
+    )
+    
+    is_product = models.BooleanField(
+        default=False,
+        verbose_name="Termék",
+        help_text="Értékesíthető termék"
+    )
+    
     name = models.CharField(max_length=200, verbose_name="Alapanyag neve")
     code = models.CharField(max_length=50, unique=True, verbose_name="Kód")
     description = models.TextField(blank=True, verbose_name="Leírás")
     material_type = models.ForeignKey(
         MaterialType, 
-        on_delete=models.CASCADE, 
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
         verbose_name="Típus"
     )
     material_group = models.ForeignKey(
@@ -347,7 +361,7 @@ class Material(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='default_materials',
         verbose_name="Alapértelmezett beszállító",
         help_text="Ez a beszállító lesz használva a kalkulációban"
@@ -583,7 +597,7 @@ class MaterialCostItem(models.Model):
         on_delete=models.CASCADE,
         null=True,
         blank=True,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='material_cost_items',
         verbose_name="Beszállító",
         help_text="Null = belső gyártás"
@@ -818,7 +832,7 @@ class MaterialReceipt(models.Model):
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='material_receipts',
         verbose_name="Beszállító"
     )
@@ -1258,7 +1272,7 @@ class SupplierInvoice(models.Model):
     supplier = models.ForeignKey(
         Company,
         on_delete=models.PROTECT,
-        limit_choices_to={'company_type': 'supplier'},
+        limit_choices_to={'is_supplier': True},
         related_name='supplier_invoices',
         verbose_name="Beszállító"
     )

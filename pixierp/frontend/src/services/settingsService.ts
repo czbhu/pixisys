@@ -65,8 +65,20 @@ export const settingsService = {
     const r = await api.post('/pixinvoice/test-connection/', { id });
     return r.data;
   },
+  async getPixinvoiceInvoiceSeries(id: number) {
+    const r = await api.get(`/core/pixinvoice-configs/${id}/invoice_series/`);
+    return r.data;
+  },
   async lookupTaxpayer(taxNumber: string) {
     const r = await api.post('/finance/pixinvoice/lookup-taxpayer/', { tax_number: taxNumber });
+    return r.data;
+  },
+  async getUserPreferences() {
+    const r = await api.get('/core/user-preferences/me/');
+    return r.data;
+  },
+  async updateUserPreferences(data: any) {
+    const r = await api.patch('/core/user-preferences/me/', data);
     return r.data;
   },
 };

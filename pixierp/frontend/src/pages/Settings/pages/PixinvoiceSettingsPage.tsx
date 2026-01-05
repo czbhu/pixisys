@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Form, Input, Button, Space, Alert, Table, Switch, Typography, message, Modal } from 'antd';
+import { Card, Form, Input, Button, Space, Alert, Table, Switch, Typography, message, Modal, Select } from 'antd';
 import { settingsService } from '../../../services/settingsService';
 
 const { Text } = Typography;
@@ -10,6 +10,7 @@ interface PixinvoiceConfig {
   base_url: string;
   company_id?: string;
   api_key?: string;
+  default_invoice_series_id?: string;
   is_active: boolean;
   created_at?: string;
   updated_at?: string;
@@ -25,6 +26,8 @@ const PixinvoiceSettingsPage: React.FC = () => {
   const [lookupLoading, setLookupLoading] = useState(false);
   const [lookupTax, setLookupTax] = useState('');
   const [lookupData, setLookupData] = useState<any>(null);
+  const [invoiceSeries, setInvoiceSeries] = useState<any[]>([]);
+  const [seriesLoading, setSeriesLoading] = useState(false);
 
   const activeItem = useMemo(() => items.find(i => i.is_active) || items[0], [items]);
 
@@ -40,6 +43,7 @@ const PixinvoiceSettingsPage: React.FC = () => {
           name: it.name,
           base_url: it.base_url,
           company_id: (it as any).company_id,
+          default_invoice_series_id: (it as any).default_invoice_series_id,
           is_active: it.is_active,
           api_key: '',
         } as any);
@@ -53,6 +57,27 @@ const PixinvoiceSettingsPage: React.FC = () => {
   };
 
   useEffect(() => { load(); }, []);
+
+  const loadInvoiceSeries = async (configId: number) => {
+    setSeriesLoading(true);
+    try {
+      const res = await settingsService.getPixinvoiceInvoiceSeries(configId);
+      if (res.ok && res.series) {
+        setInvoiceSeries(res.series || []);
+        if (res.series.length > 0) {
+          message.success(`${res.series.length} számlatömb betöltve`);
+        } else {
+          message.warning('Nincs elérhető számlatömb');
+        }
+      } else {
+        message.error(res.error || 'Hiba a számlatömbök lekérdezésekor');
+      }
+    } catch (e: any) {
+      message.error('Hiba: ' + (e.response?.data?.error || e.message));
+    } finally {
+      setSeriesLoading(false);
+    }
+  };
 
   const onSave = async () => {
     const values = await form.validateFields();
@@ -111,10 +136,37 @@ const PixinvoiceSettingsPage: React.FC = () => {
             <Input placeholder="http://localhost:4001/api/" />
           </Form.Item>
           <Form.Item label="Cég azonosító (company_id)" name="company_id" tooltip="Opcionális. Ha nincs megadva, a PixInvoice API a kulcs jogosultságai alapján listáz.">
-            <Input placeholder="<cég UUID> (opcionális)" />
+            <Input 
+              placeholder="<cég UUID> (opcionális)" 
+              onChange={(e) => {
+                const configId = form.getFieldValue('id');
+                if (configId && e.target.value) {
+                  loadInvoiceSeries(configId);
+                }
+              }}
+            />
           </Form.Item>
           <Form.Item label="API kulcs" name="api_key" tooltip="Csak íráskor használjuk, az értéket nem listázzuk vissza.">
             <Input.Password placeholder="••••••••" />
+          </Form.Item>
+          <Form.Item 
+            label="Alapértelmezett számlatömb" 
+            name="default_invoice_series_id" 
+            tooltip="A számlatömb amit használni szeretnél a számlázáshoz"
+          >
+            <Select 
+              placeholder="-- Nincs kiválasztva --"
+              loading={seriesLoading}
+              disabled={seriesLoading || invoiceSeries.length === 0}
+              notFoundContent={seriesLoading ? "Betöltés..." : "Nincs elérhető számlatömb"}
+              style={{ width: '100%' }}
+            >
+              {invoiceSeries.map((series: any) => (
+                <Select.Option key={series.id} value={series.id}>
+                  {series.company_name} - {series.name} ({series.prefix}) - Következő: {series.current_number}
+                </Select.Option>
+              ))}
+            </Select>
           </Form.Item>
           <Form.Item label="Aktív" name="is_active" valuePropName="checked">
             <Switch />
@@ -122,6 +174,19 @@ const PixinvoiceSettingsPage: React.FC = () => {
           <Space>
             <Button type="primary" onClick={onSave}>Mentés</Button>
             <Button onClick={() => onTest() } loading={!!testingId}>Kapcsolat teszt</Button>
+            <Button 
+              onClick={() => {
+                const configId = form.getFieldValue('id');
+                if (configId) {
+                  loadInvoiceSeries(configId);
+                } else {
+                  message.warning('Először mentse el a konfigurációt');
+                }
+              }}
+              loading={seriesLoading}
+            >
+              Számlatömbök betöltése
+            </Button>
             <Button onClick={() => { setLookupOpen(true); setLookupTax(''); setLookupData(null); }}>NAV céglekérdezés</Button>
           </Space>
         </Form>

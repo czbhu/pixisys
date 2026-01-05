@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Company, EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile
+from .models import Company, BankAccount, EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile, UserPreference
 
 User = get_user_model()
 
@@ -10,10 +10,24 @@ class UserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined']
         read_only_fields = ['id', 'date_joined']
 
+
+class BankAccountSerializer(serializers.ModelSerializer):
+    currency_code = serializers.CharField(source='currency.code', read_only=True)
+    currency_symbol = serializers.CharField(source='currency.symbol', read_only=True)
+    
+    class Meta:
+        model = BankAccount
+        fields = ['id', 'company', 'currency', 'currency_code', 'currency_symbol', 'account_number', 'bank_name', 'swift', 'iban', 'is_primary', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class CompanySerializer(serializers.ModelSerializer):
+    bank_accounts = BankAccountSerializer(many=True, read_only=True)
+    
     class Meta:
         model = Company
-        fields = '__all__'
+        fields = ['id', 'name', 'tax_number', 'eu_tax_number', 'address', 'phone', 'email', 'website', 'logo', 'is_default', 'bank_accounts', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
 
 
 class EmailServerConfigSerializer(serializers.ModelSerializer):
@@ -66,3 +80,19 @@ class BackupFileSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return 'Rendszer'
+
+
+class UserPreferenceSerializer(serializers.ModelSerializer):
+    default_signature_name = serializers.SerializerMethodField()
+    default_signature_key = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserPreference
+        fields = ['id', 'user', 'default_signature', 'default_signature_name', 'default_signature_key']
+        read_only_fields = ['id', 'user']
+    
+    def get_default_signature_name(self, obj):
+        return obj.default_signature.name if obj.default_signature else None
+    
+    def get_default_signature_key(self, obj):
+        return obj.default_signature.key if obj.default_signature else None

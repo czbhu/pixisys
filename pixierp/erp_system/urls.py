@@ -2,9 +2,10 @@
 URL configuration for erp_system project.
 """
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from django.conf import settings
 from django.conf.urls.static import static
+from django.views.static import serve
 from rest_framework import routers
 from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet
 from django.http import JsonResponse
@@ -47,7 +48,7 @@ urlpatterns = [
     # Regular routes
     path('admin/', admin.site.urls),
     path('api/v1/', include(router.urls)),
-    path('api/v1/auth/', include('apps.core.urls')),
+    path('api/v1/', include('apps.core.urls')),
     path('api/v1/hr/', include('apps.hr.urls')),
     path('api/v1/sales/', include('apps.sales.urls')),
     path('api/v1/manufacturing/', include('apps.manufacturing.urls')),
@@ -56,10 +57,13 @@ urlpatterns = [
     path('api/v1/orders/', include('apps.orders.urls')),
     path('api/v1/pos/', include('apps.pos.urls')),
     path('api/v1/warehouse/', include('apps.warehouse.urls')),
-    path('api/v1/', include('apps.core.urls')),
 ]
 
-# Serve media files in development
-if settings.DEBUG:
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files (always for development/testing with Daphne)
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', serve, {
+        'document_root': settings.MEDIA_ROOT,
+    }),
+]
+if settings.STATIC_ROOT:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)

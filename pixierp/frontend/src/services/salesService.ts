@@ -279,9 +279,11 @@ export const salesService = {
         vat_rate?: number,
         discount_percent?: number,
         discount_amount?: number,
+        material_id?: number,
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_product_item/`, {
             product_id: productId,
+            material_id: material_id,
             quantity,
             description,
             unit,

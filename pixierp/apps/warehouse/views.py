@@ -55,17 +55,25 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
 
 
 class MaterialViewSet(viewsets.ModelViewSet):
-    """Alapanyagok kezelése"""
+    """Alapanyagok/Termékek kezelése"""
     queryset = Material.objects.all()
     serializer_class = MaterialSerializer
     
     def get_queryset(self):
         queryset = Material.objects.all()
         material_type = self.request.query_params.get('material_type', None)
+        filter_type = self.request.query_params.get('filter_type', None)
         search = self.request.query_params.get('search', None)
         
         if material_type:
             queryset = queryset.filter(material_type_id=material_type)
+        
+        # Szűrés típus szerint: materials, products, vagy mind
+        if filter_type == 'materials':
+            queryset = queryset.filter(is_material=True)
+        elif filter_type == 'products':
+            queryset = queryset.filter(is_product=True)
+        # Ha 'all' vagy nincs megadva, akkor mindent mutat
         
         if search:
             queryset = queryset.filter(

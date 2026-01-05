@@ -236,3 +236,7 @@ LOGGING = {
 
 # Create logs directory
 os.makedirs(BASE_DIR / 'logs', exist_ok=True)
+
+# PixInvoice API Integration
+PIXINVOICE_API_URL = config('PIXINVOICE_API_URL', default='http://localhost:4001/api')
+PIXINVOICE_API_KEY = config('PIXINVOICE_API_KEY', default='1BWHPB8nNcJIC1c6tr8Wln8F3Rl4OUFK4biEoqtCNl4')

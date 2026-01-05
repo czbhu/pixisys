@@ -21,15 +21,18 @@ from django.core.management import call_command
 from django.http import HttpResponse
 from .serializers import (
     UserSerializer,
+    CompanySerializer,
+    BankAccountSerializer,
     EmailServerConfigSerializer,
     EmailTemplateSerializer,
     SignatureTemplateSerializer,
     PixinvoiceConfigSerializer,
     BackupConfigurationSerializer,
     BackupFileSerializer,
+    UserPreferenceSerializer,
 )
 from rest_framework import viewsets
-from .models import EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile
+from .models import Company, BankAccount, EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile, UserPreference
 import traceback
 import requests
 import json
@@ -38,6 +41,45 @@ from io import StringIO
 
 
 User = get_user_model()
+
+
+class CompanyViewSet(viewsets.ModelViewSet):
+    """ViewSet for Company management"""
+    queryset = Company.objects.all()
+    serializer_class = CompanySerializer
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        """Set this company as default"""
+        company = self.get_object()
+        company.is_default = True
+        company.save()
+        return Response({'status': 'Company set as default'})
+
+
+class BankAccountViewSet(viewsets.ModelViewSet):
+    """ViewSet for BankAccount management"""
+    queryset = BankAccount.objects.all()
+    serializer_class = BankAccountSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        """Filter by company if company_id is provided"""
+        queryset = super().get_queryset()
+        company_id = self.request.query_params.get('company_id')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
+        return queryset
+    
+    @action(detail=True, methods=['post'])
+    def set_primary(self, request, pk=None):
+        """Set this bank account as primary for its currency"""
+        account = self.get_object()
+        account.is_primary = True
+        account.save()
+        return Response({'status': 'Bank account set as primary'})
+
 
 class HealthCheckView(APIView):
     """Health check view"""
@@ -408,6 +450,33 @@ class SignatureTemplateViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
+class UserPreferenceViewSet(viewsets.ModelViewSet):
+    serializer_class = UserPreferenceSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        # Only allow users to access their own preferences
+        return UserPreference.objects.filter(user=self.request.user)
+    
+    def perform_create(self, serializer):
+        # Ensure the preference is created for the current user
+        serializer.save(user=self.request.user)
+    
+    @action(detail=False, methods=['get', 'put', 'patch'])
+    def me(self, request):
+        """Get or update current user's preferences"""
+        preference, created = UserPreference.objects.get_or_create(user=request.user)
+        
+        if request.method == 'GET':
+            serializer = self.get_serializer(preference)
+            return Response(serializer.data)
+        else:
+            serializer = self.get_serializer(preference, data=request.data, partial=True)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data)
+
+
 class PixinvoiceConfigViewSet(viewsets.ModelViewSet):
     queryset = PixinvoiceConfig.objects.all()
     serializer_class = PixinvoiceConfigSerializer
@@ -465,6 +534,38 @@ class PixinvoiceConfigViewSet(viewsets.ModelViewSet):
             elif 'timed out' in err:
                 tip = 'Időtúllépés. Lehet hálózati elérés vagy tűzfal probléma, illetve az endpoint lassú.'
             return Response({'ok': False, 'base': base, 'error': err, 'hint': tip}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['get'])
+    def invoice_series(self, request, pk=None):
+        """Get invoice blocks from PixInvoice using API key"""
+        import requests
+        
+        cfg = self.get_object()
+        headers = {'X-Api-Key': cfg.api_key, 'Accept': 'application/json'}
+        base = cfg.base_url.rstrip('/')
+        
+        try:
+            # Get all invoice blocks accessible with this API key
+            blocks_response = requests.get(
+                f"{base}/invoice-blocks/",
+                headers=headers,
+                timeout=15
+            )
+            
+            if blocks_response.status_code in (401, 403):
+                return Response({'ok': False, 'error': 'Érvénytelen API kulcs'})
+            
+            blocks_response.raise_for_status()
+            blocks_data = blocks_response.json()
+            
+            all_series = blocks_data.get('results', [])
+            
+            if not all_series:
+                return Response({'ok': False, 'error': 'Nincs elérhető számlatömb ezzel az API kulccsal'})
+            
+            return Response({'ok': True, 'series': all_series})
+        except Exception as e:
+            return Response({'ok': False, 'error': str(e)})
 
 
 @api_view(['GET'])

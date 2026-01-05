@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Button, Modal, Form, Input, Switch, message } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, Switch, message, Alert, Typography } from 'antd';
 import { settingsService } from '../../../services/settingsService';
+
+const { Text } = Typography;
 
 const EmailTemplatesPage: React.FC = () => {
   const [list, setList] = useState<any[]>([]);
@@ -38,11 +40,31 @@ const EmailTemplatesPage: React.FC = () => {
     <Card title="E-mail sablonok" extra={<Button onClick={() => { setEditing(null); form.resetFields(); setOpen(true); }}>Új</Button>}>
   <Table rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
       <Modal title={editing ? 'Sablon szerkesztése' : 'Új sablon'} open={open} onOk={onSave} onCancel={() => setOpen(false)} width={800}>
+        <Alert
+          message="Rendelkezésre álló változók"
+          description={
+            <div>
+              <Text code>{'{rfq_number}'}</Text> - Árajánlat száma<br />
+              <Text code>{'{rfq_title}'}</Text> - Árajánlat címe<br />
+              <Text code>{'{company_name}'}</Text> - Cég neve<br />
+              <Text code>{'{contact_names}'}</Text> - Kapcsolattartók nevei (vagy "Ügyfelünk" ha nincs)<br />
+              <Text code>{'{public_order_url}'}</Text> - Nyilvános megrendelő link
+            </div>
+          }
+          type="info"
+          style={{ marginBottom: 16 }}
+        />
         <Form layout="vertical" form={form}>
           <Form.Item label="Kulcs" name="key" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="Név" name="name" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="Tárgy sablon" name="subject_template" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="Törzs sablon" name="body_template" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item>
+          <Form.Item label="Alapértelmezett CC" name="default_cc" help="Email címek vesszővel elválasztva">
+            <Input placeholder="email1@example.com, email2@example.com" />
+          </Form.Item>
+          <Form.Item label="Alapértelmezett Reply-To" name="default_reply_to" help="Válaszcím">
+            <Input placeholder="reply@example.com" />
+          </Form.Item>
           <Form.Item label="HTML formátum" name="is_html" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item label="Leírás" name="description"><Input.TextArea rows={3} /></Form.Item>
         </Form>

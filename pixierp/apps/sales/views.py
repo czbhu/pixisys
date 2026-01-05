@@ -7,12 +7,13 @@ from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
-    Order, OrderItem, Lead, Opportunity, Forecast
+    Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem
 )
 from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
     QuoteSerializer, QuoteItemSerializer, OrderSerializer, OrderItemSerializer,
-    LeadSerializer, OpportunitySerializer, ForecastSerializer
+    LeadSerializer, OpportunitySerializer, ForecastSerializer,
+    CustomerOrderSerializer, CustomerOrderItemSerializer
 )
 from apps.manufacturing.models import ManufacturingProduct, Project
 from apps.manufacturing.serializers import ManufacturingProductSerializer
@@ -28,6 +29,7 @@ import secrets
 from decimal import Decimal, InvalidOperation
 from django.contrib.auth import get_user_model
 from django.db import transaction
+from django.conf import settings
 
 
 def _bump_search_stat(item_type: str, ref_id: int):
@@ -55,9 +57,24 @@ class ManufacturingProductViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
 
 class QuoteRequestViewSet(viewsets.ModelViewSet):
-    queryset = QuoteRequest.objects.all()
     serializer_class = QuoteRequestSerializer
     permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        """Alapértelmezetten csak a nem törölt árajánlatok"""
+        return QuoteRequest.objects.filter(is_deleted=False)
+
+    def list(self, request, *args, **kwargs):
+        """List árajánlatok, automatikusan frissítve az archív státuszt"""
+        # Frissítjük az archív státuszt a lejárt árajánlatoknál
+        from django.utils import timezone
+        QuoteRequest.objects.filter(
+            deadline__lt=timezone.now().date()
+        ).exclude(
+            status__in=['archived', 'ordered']
+        ).update(status='archived')
+        
+        return super().list(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         # Új ajánlat száma: yyyymmdd + növekvő sorszám
@@ -177,6 +194,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
     def add_product_item(self, request, pk=None):
         qr = self.get_object()
         product_id = request.data.get('product_id')
+        material_id = request.data.get('material_id')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -184,11 +202,25 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         vat_rate = request.data.get('vat_rate') or 27
         discount_percent = request.data.get('discount_percent') or 0
         discount_amount = request.data.get('discount_amount') or 0
-        if not product_id:
-            return Response({'error': 'product_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        product = get_object_or_404(Product, id=product_id)
-        if net_unit_price_raw in (None, "", "0"):
-            net_unit_price_raw = product.base_price or 0
+        
+        product = None
+        material = None
+        product_name = ''
+        
+        if material_id:
+            from apps.warehouse.models import Material
+            material = get_object_or_404(Material, id=material_id)
+            product_name = material.name
+            if net_unit_price_raw in (None, "", "0"):
+                net_unit_price_raw = material.unit_selling_price or 0
+        elif product_id:
+            product = get_object_or_404(Product, id=product_id)
+            product_name = product.name
+            if net_unit_price_raw in (None, "", "0"):
+                net_unit_price_raw = product.base_price or 0
+        else:
+            return Response({'error': 'product_id vagy material_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
         try:
             net_unit_price = Decimal(str(net_unit_price_raw))
         except Exception:
@@ -201,6 +233,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             quote_request=qr,
             item_type='product',
             product=product,
+            material=material,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -209,8 +242,11 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             discount_amount=discount_amount,
             description=description
         )
-        _bump_search_stat('product', product.id)
-        QuoteLog.objects.create(quote=qr, user=request.user, action=f'Termék hozzáadva: {product.name}')
+        if material:
+            _bump_search_stat('product', material.id)
+        elif product:
+            _bump_search_stat('product', product.id)
+        QuoteLog.objects.create(quote=qr, user=request.user, action=f'Termék hozzáadva: {product_name}')
         return Response(QuoteRequestItemSerializer(item, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -397,6 +433,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         qr = self.get_object()
         to = request.data.get('to')
         cc = request.data.get('cc', '')
+        reply_to = request.data.get('reply_to', '')
         template_key = request.data.get('template_key', 'rfq_send')
         signature_key = request.data.get('signature_key')
         extra_context = request.data.get('context', {}) or {}
@@ -412,6 +449,12 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         tpl = EmailTemplate.objects.filter(key=template_key).first()
         if not tpl:
             return Response({'error': 'Hiányzó email sablon'}, status=400)
+        
+        # Use user's default signature if not specified
+        if not signature_key:
+            if hasattr(request.user, 'preferences') and request.user.preferences and request.user.preferences.default_signature:
+                signature_key = request.user.preferences.default_signature.key
+        
         sig = SignatureTemplate.objects.filter(key=signature_key).first() if signature_key else None
 
         # Ensure there is a public token for link rendering
@@ -419,12 +462,17 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
         # Render simple templates using format
-        public_url = request.build_absolute_uri(f"/api/v1/sales/quote-requests/public/{qr.public_token}/order/")
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+        
+        # Build contact names for personalized greeting
+        contact_names = ', '.join([c.name for c in qr.contacts.all()]) if qr.contacts.exists() else 'Ügyfelünk'
+        
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
             'company_name': qr.company.name if qr.company else '',
             'public_order_url': public_url,
+            'contact_names': contact_names,
             **extra_context,
         }
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
@@ -446,6 +494,8 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             msg['To'] = to
             if cc:
                 msg['Cc'] = cc
+            if reply_to:
+                msg['Reply-To'] = reply_to
             subtype = 'html' if tpl.is_html else 'plain'
             msg.attach(MIMEText(body, subtype, 'utf-8'))
             mime_bytes = msg.as_bytes()
@@ -455,6 +505,8 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             msg['To'] = to
             if cc:
                 msg['Cc'] = cc
+            if reply_to:
+                msg['Reply-To'] = reply_to
             msg.set_content(body)
             mime_bytes = msg.as_bytes()
 
@@ -520,7 +572,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
-        public_url = request.build_absolute_uri(f"/api/v1/sales/quote-requests/public/{qr.public_token}/order/")
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
@@ -576,13 +628,23 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
                 qr.company = CrmCompany.objects.get(id=company_id)
             except CrmCompany.DoesNotExist:
                 pass
-        project_id = data.get('project_id') or data.get('project')
-        if project_id:
-            try:
-                from apps.manufacturing.models import Project
-                qr.project = Project.objects.get(id=project_id)
-            except Exception:
-                pass
+        # Project - check if 'project_id' or 'project' is in data (even if None/null)
+        if 'project_id' in data or 'project' in data:
+            project_id = data.get('project_id') or data.get('project')
+            print(f"[DEBUG] Project update: project_id from request = {project_id}")
+            if project_id:
+                try:
+                    from apps.manufacturing.models import Project
+                    qr.project = Project.objects.get(id=project_id)
+                    print(f"[DEBUG] Project set to: {qr.project.name}")
+                except Exception as e:
+                    print(f"[DEBUG] Project set failed: {e}")
+                    pass
+            else:
+                qr.project = None
+                print(f"[DEBUG] Project cleared (set to None)")
+        else:
+            print(f"[DEBUG] No project_id in request data")
         # Currency by code or id
         curr_code = data.get('currency_code') or data.get('currencyCode')
         curr_id = data.get('currency')
@@ -632,6 +694,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
             customer=src.customer,
             title=src.title,
             description=src.description,
+            internal_description=src.internal_description,
             status='new',
             requested_by=request.user if request.user.is_authenticated else src.requested_by,
             deadline=src.deadline,
@@ -649,12 +712,27 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         if not dst.public_token:
             dst.public_token = secrets.token_hex(20)
             dst.save(update_fields=['public_token'])
+        
+        # copy quote-level attachments
+        from apps.sales.models import QuoteRequestAttachment
+        for att in src.attachments.all():
+            try:
+                QuoteRequestAttachment.objects.create(
+                    quote_request=dst,
+                    file=att.file,
+                    remark=att.remark,
+                    uploaded_by=request.user if request.user.is_authenticated else att.uploaded_by,
+                )
+            except Exception:
+                pass
+        
         # copy items
         for it in src.items.all():
-            QuoteRequestItem.objects.create(
+            new_item = QuoteRequestItem.objects.create(
                 quote_request=dst,
                 item_type=it.item_type,
                 product=it.product,
+                material=it.material,
                 manufacturing_product=it.manufacturing_product,
                 service=it.service,
                 quantity=it.quantity,
@@ -665,11 +743,23 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
                 discount_amount=it.discount_amount,
                 description=it.description,
             )
+            # copy item-level attachments
+            from apps.sales.models import QuoteRequestItemAttachment
+            for item_att in it.attachments.all():
+                try:
+                    QuoteRequestItemAttachment.objects.create(
+                        quote_item=new_item,
+                        file=item_att.file,
+                        remark=item_att.remark,
+                        uploaded_by=request.user if request.user.is_authenticated else item_att.uploaded_by,
+                    )
+                except Exception:
+                    pass
         try:
             QuoteLog.objects.create(quote=dst, user=request.user if request.user.is_authenticated else None, action=f'Árajánlat másolva forrásból: {src.number or src.request_number}')
         except Exception:
             pass
-        return Response({'id': dst.id, 'number': dst.number}, status=201)
+        return Response(QuoteRequestSerializer(dst, context={'request': request}).data, status=201)
 
     @action(detail=False, methods=['post'])
     def create_demand(self, request):
@@ -951,8 +1041,12 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def order_all(self, request, pk=None):
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"order_all called for RFQ {pk}")
         qr = self.get_object()
         items = list(qr.items.all())
+        logger.info(f"Creating order with {len(items)} items")
         return self._create_order_from_items(request, qr, items, set_status='ordered')
 
     @action(detail=True, methods=['post'])
@@ -967,91 +1061,64 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
         return self._create_order_from_items(request, qr, items, set_status='partially_ordered')
 
     def _create_order_from_items(self, request, qr, items, set_status: str):
-        from .models import Quote, QuoteItem, Product, Order, OrderItem
-        # Ensure a Quote exists to satisfy Order.quote FK
-        quote = Quote.objects.filter(quote_request=qr).first()
-        if not quote:
-            quote_number = f"Q{timezone.now().strftime('%Y%m%d')}-{Quote.objects.count() + 1:04d}"
-            creator = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
-            if not creator:
-                # pick any staff user as fallback
-                from django.contrib.auth import get_user_model
-                User = get_user_model()
-                creator = User.objects.filter(is_staff=True).first() or User.objects.first()
-            quote = Quote.objects.create(
-                quote_request=qr,
-                quote_number=quote_number,
-                valid_until=timezone.now().date() + timezone.timedelta(days=30),
-                created_by=creator,
-                status='accepted'
-            )
-        # Create Order header
-        order_number = f"O{timezone.now().strftime('%Y%m%d')}-{Order.objects.count() + 1:04d}"
-        creator = request.user if getattr(request, 'user', None) and request.user.is_authenticated else quote.created_by
-        order = Order.objects.create(
-            quote=quote,
+        from .models import CustomerOrder, CustomerOrderItem
+        
+        # Generate order number in Oyyyymmddxxxx format
+        today = timezone.now()
+        date_prefix = today.strftime('%Y%m%d')
+        today_orders_count = CustomerOrder.objects.filter(
+            created_at__date=today.date()
+        ).count()
+        order_number = f"O{date_prefix}{today_orders_count + 1:04d}"
+        
+        # Create CustomerOrder
+        order = CustomerOrder.objects.create(
+            quote_request=qr,
             order_number=order_number,
-            delivery_date=qr.deadline or timezone.now().date(),
-            created_by=creator,
-            status='confirmed'
+            status='new',
+            created_by=request.user if request.user.is_authenticated else None
         )
+        
+        # Create CustomerOrderItems
         created_items = []
         for it in items:
-            # Map RFQ item to a Product
-            product = None
-            unit = (it.unit or 'db')
-            unit_price = (it.net_unit_price or 0)
+            unit = it.unit or 'db'
+            net_unit_price = it.net_unit_price or 0
+            vat_rate = it.vat_rate or 27
+            discount_percent = it.discount_percent or 0
             description = it.description or ''
-            if it.item_type == 'product' and it.product_id:
-                product = it.product
-                if not unit_price:
-                    unit_price = product.base_price
-            elif it.item_type == 'service' and it.service_id:
-                svc = it.service
-                product = Product.objects.filter(name=svc.name).first()
-                if not product:
-                    product = Product.objects.create(
-                        name=svc.name,
-                        description=svc.description or '',
-                        unit=svc.unit or 'óra',
-                        base_price=svc.base_price or 0,
-                        is_active=True,
-                    )
-                if not unit_price:
-                    unit_price = svc.base_price or 0
-                unit = it.unit or svc.unit or 'óra'
-            elif it.item_type == 'manufacturing' and it.manufacturing_product_id:
-                mp = it.manufacturing_product
-                product = Product.objects.filter(name=mp.name).first()
-                if not product:
-                    product = Product.objects.create(
-                        name=mp.name,
-                        description=getattr(mp, 'description', '') or '',
-                        unit=it.unit or 'db',
-                        base_price=it.net_unit_price or 0,
-                        is_active=True,
-                    )
-            else:
-                continue
-            oi = OrderItem.objects.create(
-                order=order,
-                product=product,
+            
+            customer_order_item = CustomerOrderItem.objects.create(
+                customer_order=order,
+                quote_item=it,
                 quantity=it.quantity or 1,
-                unit_price=unit_price or 0,
-                description=description,
+                unit=unit,
+                net_unit_price=net_unit_price,
+                vat_rate=vat_rate,
+                discount_percent=discount_percent,
+                description=description
             )
-            created_items.append(oi.id)
-        order.total_amount = sum(item.total_price for item in order.items.all())
-        order.save(update_fields=['total_amount'])
+            created_items.append(customer_order_item.id)
+        
         # Update RFQ status
         old_status = qr.status
         qr.status = set_status
         qr.save(update_fields=['status'])
+        
         try:
-            QuoteLog.objects.create(quote=qr, user=request.user if request.user.is_authenticated else None, action=f'Rendelés létrehozva: {order.order_number}; státusz: {old_status} → {set_status}')
+            QuoteLog.objects.create(
+                quote=qr, 
+                user=request.user if request.user.is_authenticated else None, 
+                action=f'Rendelés létrehozva: {order.order_number}; státusz: {old_status} → {set_status}'
+            )
         except Exception:
             pass
-        return Response({'order_id': order.id, 'order_number': order.order_number, 'items': created_items}, status=status.HTTP_201_CREATED)
+        
+        return Response({
+            'order_id': order.id, 
+            'order_number': order.order_number, 
+            'items': created_items
+        }, status=status.HTTP_201_CREATED)
 
 @api_view(['GET'])
 @permission_classes([AllowAny])
@@ -1059,13 +1126,127 @@ def public_order_view(request, token: str):
     qr = get_object_or_404(QuoteRequest, public_token=token)
     if qr.public_expires_at and timezone.now() > qr.public_expires_at:
         return Response({'error': 'Link lejárt'}, status=410)
+    
+    # Megrendelő adatok
+    customer_data = None
+    if qr.company:
+        customer_data = {
+            'name': qr.company.name,
+            'tax_number': qr.company.tax_number or '',
+            'address': qr.company.address or '',
+            'city': qr.company.city or '',
+            'postal_code': qr.company.postal_code or '',
+            'country': qr.company.country or 'Magyarország',
+        }
+    elif qr.customer:
+        customer_data = {
+            'name': qr.customer.name,
+            'tax_number': getattr(qr.customer, 'tax_number', ''),
+            'address': getattr(qr.customer, 'address', ''),
+            'city': getattr(qr.customer, 'city', ''),
+            'postal_code': getattr(qr.customer, 'postal_code', ''),
+            'country': getattr(qr.customer, 'country', 'Magyarország'),
+        }
+    
+    # Szállító adatok (alapértelmezett cég az Alap adatok beállításokból)
+    from apps.core.models import Company
+    supplier_data = {
+        'name': 'PixiSys Kft.',
+        'tax_number': '12345678-1-23',
+        'eu_tax_number': '',
+        'address': 'Fő utca 1.',
+        'phone': '',
+        'email': '',
+        'website': '',
+    }
+    
+    # Try to get default company
+    try:
+        default_company = Company.objects.filter(is_default=True).first()
+        if default_company:
+            supplier_data = {
+                'name': default_company.name,
+                'tax_number': default_company.tax_number,
+                'eu_tax_number': default_company.eu_tax_number or '',
+                'address': default_company.address,
+                'phone': default_company.phone or '',
+                'email': default_company.email,
+                'website': default_company.website or '',
+            }
+    except Exception as e:
+        # Fallback to default values if Company model is not available
+        pass
+    
     return Response({
         'id': qr.id,
         'number': qr.number or qr.request_number,
         'title': qr.title,
+        'description': qr.description,
         'status': qr.status,
+        'issue_date': qr.issue_date,
+        'customer': customer_data,
+        'supplier': supplier_data,
         'items': QuoteRequestItemSerializer(qr.items.all(), many=True, context={'request': request}).data,
     })
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def public_submit_order(request, token: str):
+    """Publikus megrendelés beküldése"""
+    qr = get_object_or_404(QuoteRequest, public_token=token)
+    if qr.public_expires_at and timezone.now() > qr.public_expires_at:
+        return Response({'error': 'Link lejárt'}, status=410)
+    
+    items_data = request.data.get('items', [])
+    if not items_data:
+        return Response({'error': 'Nincs megrendelendő tétel'}, status=400)
+    
+    # Ellenőrizzük, hogy az összes tétel létezik-e
+    item_ids = [item['item_id'] for item in items_data]
+    valid_items = qr.items.filter(id__in=item_ids)
+    if valid_items.count() != len(item_ids):
+        return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
+    
+    # Értesítés küldése emailben
+    from django.core.mail import send_mail
+    from django.conf import settings
+    
+    order_details = []
+    for item_data in items_data:
+        item = qr.items.get(id=item_data['item_id'])
+        quantity = item_data['quantity']
+        order_details.append(f"- {item.description or item.product.name if item.product else 'Tétel'}: {quantity} {item.unit}")
+    
+    email_body = f"""
+Új megrendelés érkezett az alábbi árajánlathoz:
+
+Árajánlat száma: {qr.number or qr.request_number}
+Cím: {qr.title}
+
+Megrendelt tételek:
+{chr(10).join(order_details)}
+
+A megrendelést a publikus linken keresztül küldték be.
+"""
+    
+    try:
+        send_mail(
+            subject=f'Új megrendelés: {qr.number or qr.request_number}',
+            message=email_body,
+            from_email=settings.DEFAULT_FROM_EMAIL,
+            recipient_list=[qr.created_by.email] if qr.created_by and qr.created_by.email else ['admin@pixisys.eu'],
+            fail_silently=False,
+        )
+    except Exception as e:
+        # Log the error but don't fail the request
+        pass
+    
+    # Státusz frissítés - megrendelve és archív
+    qr.status = 'archived'
+    qr.save(update_fields=['status'])
+    
+    return Response({'success': True, 'message': 'Megrendelés sikeresen rögzítve'})
 
     @action(detail=True, methods=['post'])
     def create_quote(self, request, pk=None):
@@ -1112,7 +1293,10 @@ def public_order_view(request, token: str):
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
-        public_url = request.build_absolute_uri(f"/api/v1/sales/quote-requests/public/{qr.public_token}/order/")
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
+        if not frontend_url:
+            frontend_url = f"{request.scheme}://{request.get_host()}"
+        public_url = f"{frontend_url}/public/quote/{qr.public_token}/order"
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
@@ -1336,4 +1520,991 @@ class OpportunityViewSet(viewsets.ModelViewSet):
 class ForecastViewSet(viewsets.ModelViewSet):
     queryset = Forecast.objects.all()
     serializer_class = ForecastSerializer
+
+
+class CustomerOrderViewSet(viewsets.ModelViewSet):
+    queryset = CustomerOrder.objects.all()
+    serializer_class = CustomerOrderSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def create(self, request, *args, **kwargs):
+        """Megrendelés létrehozása árajánlatból"""
+        quote_request_id = request.data.get('quote_request_id')
+        items_data = request.data.get('items', [])
+        
+        if not quote_request_id:
+            return Response({'error': 'quote_request_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            quote_request = QuoteRequest.objects.get(id=quote_request_id)
+        except QuoteRequest.DoesNotExist:
+            return Response({'error': 'Árajánlat nem található'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Megrendelésszám generálás
+        today = timezone.now().date()
+        date_str = today.strftime('%Y%m%d')
+        last_order = CustomerOrder.objects.filter(
+            order_number__startswith=f'O{date_str}'
+        ).order_by('-order_number').first()
+        
+        if last_order:
+            last_seq = int(last_order.order_number[-4:])
+            new_seq = last_seq + 1
+        else:
+            new_seq = 1
+        
+        order_number = f'O{date_str}{new_seq:04d}'
+        
+        with transaction.atomic():
+            # Megrendelés létrehozása
+            order = CustomerOrder.objects.create(
+                quote_request=quote_request,
+                order_number=order_number,
+                notes=request.data.get('notes', ''),
+                created_by=request.user if request.user.is_authenticated else None
+            )
+            
+            # Tételek létrehozása
+            for item_data in items_data:
+                quote_item_id = item_data.get('quote_item_id')
+                quantity = item_data.get('quantity')
+                
+                if not quote_item_id or not quantity:
+                    continue
+                
+                try:
+                    quote_item = QuoteRequestItem.objects.get(id=quote_item_id, quote_request=quote_request)
+                    CustomerOrderItem.objects.create(
+                        customer_order=order,
+                        quote_item=quote_item,
+                        quantity=quantity,
+                        unit=quote_item.unit,
+                        net_unit_price=quote_item.net_unit_price or 0,
+                        vat_rate=quote_item.vat_rate or 27,
+                        discount_percent=quote_item.discount_percent or 0,
+                        description=quote_item.description
+                    )
+                except QuoteRequestItem.DoesNotExist:
+                    pass
+            
+            # Árajánlat státusz frissítése
+            quote_request.status = 'ordered'
+            quote_request.save(update_fields=['status'])
+        
+        serializer = self.get_serializer(order)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+    
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        """Megrendelés megerősítése"""
+        order = self.get_object()
+        if order.status != 'new':
+            return Response({'error': 'Csak új megrendelés erősíthető meg'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        order.status = 'confirmed'
+        order.confirmed_at = timezone.now()
+        order.save()
+        return Response(self.get_serializer(order).data)
+    
+    @action(detail=True, methods=['post'])
+    def start_production(self, request, pk=None):
+        """Gyártás indítása"""
+        order = self.get_object()
+        if order.status != 'confirmed':
+            return Response({'error': 'Csak megerősített megrendelés indítható gyártásba'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        order.status = 'in_production'
+        order.production_started_at = timezone.now()
+        order.save()
+        return Response(self.get_serializer(order).data)
+    
+    @action(detail=True, methods=['post'])
+    def mark_ready(self, request, pk=None):
+        """Gyártás befejezése - timestamp szerkeszthető"""
+        order = self.get_object()
+        if order.status != 'in_production':
+            return Response({'error': 'Csak gyártásban lévő megrendelés jelölhető késznek'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Parse timestamp if provided
+        timestamp_str = request.data.get('timestamp')
+        if timestamp_str:
+            try:
+                from datetime import datetime
+                ready_at = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                ready_at = timezone.make_aware(ready_at) if timezone.is_naive(ready_at) else ready_at
+            except Exception:
+                ready_at = timezone.now()
+        else:
+            ready_at = timezone.now()
+        
+        order.status = 'ready'
+        order.ready_at = ready_at
+        order.save()
+        return Response(self.get_serializer(order).data)
+    
+    @action(detail=True, methods=['post'])
+    def start_delivery(self, request, pk=None):
+        """Szállítás indítása vagy email újraküldése - publikus link és e-mail generálás"""
+        import secrets
+        from datetime import timedelta
+        from django.core.mail import send_mail
+        from django.template.loader import render_to_string
+        from django.conf import settings
+        
+        order = self.get_object()
+        
+        # Ellenőrizzük, hogy kész vagy már szállítás alatt van-e
+        if order.status not in ['ready', 'in_delivery']:
+            return Response({'error': 'Csak kész vagy szállítás alatt lévő megrendeléshez küldhető szállítási email'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Ha még nincs token vagy lejárt, generálunk újat
+        regenerate_token = False
+        if not order.public_delivery_token:
+            regenerate_token = True
+        elif order.public_delivery_expires_at and timezone.now() > order.public_delivery_expires_at:
+            regenerate_token = True
+        
+        if regenerate_token:
+            order.public_delivery_token = secrets.token_hex(20)
+            order.public_delivery_expires_at = timezone.now() + timedelta(days=30)
+        
+        # Csak akkor váltunk in_delivery státuszra, ha még ready-ben van
+        if order.status == 'ready':
+            order.status = 'in_delivery'
+            order.delivery_started_at = timezone.now()
+        
+        # Show prices parameter from request (default: True)
+        show_prices = request.data.get('show_prices', True)
+        order.show_prices = show_prices
+        
+        order.save()
+        
+        # Build public delivery URL
+        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+        delivery_url = f"{frontend_url}/public/delivery/{order.public_delivery_token}"
+        
+        # Get recipient email from request or use quote_request contact
+        recipient_email = request.data.get('recipient_email')
+        if not recipient_email and order.quote_request.contacts.exists():
+            recipient_email = order.quote_request.contacts.first().email
+        
+        # Send email if recipient exists
+        email_sent = False
+        if recipient_email:
+            try:
+                context = {
+                    'order': order,
+                    'delivery_url': delivery_url,
+                    'company_name': order.quote_request.company.name if order.quote_request.company else (order.quote_request.customer.name if order.quote_request.customer else 'Ügyfél'),
+                }
+                html_message = render_to_string('emails/delivery_notification.html', context)
+                
+                send_mail(
+                    subject=f'Szállítás megkezdődött - {order.order_number}',
+                    message=f'A megrendelés szállítása megkezdődött. Szállítólevél megtekintése: {delivery_url}',
+                    from_email=settings.DEFAULT_FROM_EMAIL,
+                    recipient_list=[recipient_email],
+                    html_message=html_message,
+                    fail_silently=True,
+                )
+                email_sent = True
+            except Exception as e:
+                print(f"Email küldési hiba: {e}")
+        
+        return Response({
+            'order': self.get_serializer(order).data,
+            'delivery_url': delivery_url,
+            'email_sent': email_sent,
+            'message': 'Email újraküldve' if order.status == 'in_delivery' and order.delivery_started_at else 'Szállítás elindítva'
+        })
+    
+    @action(detail=True, methods=['post'])
+    def mark_delivered(self, request, pk=None):
+        """Kiszállítva jelölés - timestamp szerkeszthető"""
+        order = self.get_object()
+        if order.status != 'in_delivery':
+            return Response({'error': 'Csak szállítás alatt lévő megrendelés jelölhető kiszállítottnak'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Parse timestamp if provided
+        timestamp_str = request.data.get('timestamp')
+        if timestamp_str:
+            try:
+                from datetime import datetime
+                delivered_at = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+                delivered_at = timezone.make_aware(delivered_at) if timezone.is_naive(delivered_at) else delivered_at
+            except Exception:
+                delivered_at = timezone.now()
+        else:
+            delivered_at = timezone.now()
+        
+        order.status = 'delivered'
+        order.delivered_at = delivered_at
+        order.save()
+        return Response(self.get_serializer(order).data)
+    
+    @action(detail=True, methods=['get'])
+    def work_sheet(self, request, pk=None):
+        """Munkalap PDF generálás - duplikált A4 oldal"""
+        from django.http import HttpResponse
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import cm
+        from io import BytesIO
+        
+        order = self.get_object()
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        
+        # Hungarian font support
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        try:
+            pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+            font_name = 'DejaVu'
+        except:
+            font_name = 'Helvetica'
+        
+        rfq = order.quote_request
+        
+        # Get contact names from quote request
+        contact_names = ''
+        if rfq and rfq.contacts.exists():
+            contact_names = ', '.join([c.name for c in rfq.contacts.all()[:2]])
+        
+        # Get project name from quote request
+        project_name = rfq.project_name if rfq and hasattr(rfq, 'project_name') and rfq.project_name else '-'
+        
+        def draw_section(start_y, include_internal_desc=False):
+            """Draw one section of the worksheet"""
+            y = start_y
+            p.setFont(font_name, 12)
+            p.drawString(2*cm, y, f"MUNKALAP - {order.order_number}")
+            
+            y -= 0.8*cm
+            p.setFont(font_name, 10)
+            
+            # Basic info
+            p.drawString(2*cm, y, f"Ügyfél: {rfq.company.name if rfq and rfq.company else ''}")
+            y -= 0.6*cm
+            
+            # Contact info
+            p.drawString(2*cm, y, f"Kapcsolattartó: {contact_names}")
+            y -= 0.6*cm
+            
+            p.drawString(2*cm, y, f"Megnevezés: {rfq.title if rfq else ''}")
+            y -= 0.6*cm
+            
+            p.drawString(2*cm, y, f"Projekt: {project_name}")
+            y -= 0.6*cm
+            
+            # Description
+            desc_text = rfq.description if rfq and rfq.description else ''
+            if desc_text:
+                p.drawString(2*cm, y, f"Leírás: {desc_text[:60]}")
+                y -= 0.6*cm
+            
+            # Internal description (only in second section)
+            if include_internal_desc:
+                int_desc = rfq.internal_description if rfq and rfq.internal_description else ''
+                if int_desc:
+                    p.drawString(2*cm, y, f"Belső leírás: {int_desc[:60]}")
+                    y -= 0.6*cm
+            
+            # Items
+            y -= 0.4*cm
+            p.setFont(font_name, 9)
+            for item in order.items.all():
+                quote_item = item.quote_item
+                
+                # Get item details
+                item_name = ''
+                item_code = ''
+                item_description = ''
+                
+                if quote_item.product:
+                    item_name = quote_item.product.name
+                    item_code = quote_item.product.code
+                    item_description = quote_item.product.description or ''
+                elif quote_item.material:
+                    item_name = quote_item.material.name
+                    item_code = quote_item.material.code
+                    item_description = quote_item.material.description or ''
+                elif quote_item.manufacturing_product:
+                    item_name = quote_item.manufacturing_product.name
+                    item_code = quote_item.manufacturing_product.code or ''
+                    item_description = quote_item.manufacturing_product.description or ''
+                elif quote_item.service:
+                    item_name = quote_item.service.name
+                    item_code = quote_item.service.code or ''
+                    item_description = quote_item.service.description or ''
+                
+                # Draw item info
+                p.drawString(2*cm, y, f"Cikkszám: {item_code}")
+                y -= 0.5*cm
+                p.drawString(2*cm, y, f"Név: {item_name[:50]}")
+                y -= 0.5*cm
+                if item_description:
+                    p.drawString(2*cm, y, f"Leírás: {item_description[:60]}")
+                    y -= 0.5*cm
+                p.drawString(2*cm, y, f"Mennyiség: {float(item.quantity)} {quote_item.unit}")
+                y -= 0.7*cm
+            
+            return y
+        
+        # Top section (first 1/3 of page)
+        start_y = height - 2*cm
+        end_y = draw_section(start_y, include_internal_desc=False)
+        
+        # Dashed line separator right below the top section (centered, 15cm long)
+        y_separator = end_y - 0.5*cm
+        line_length = 15*cm
+        line_start = (width - line_length) / 2
+        line_end = line_start + line_length
+        
+        # Draw dashed line
+        p.setDash(6, 3)  # 6 points on, 3 points off
+        p.line(line_start, y_separator, line_end, y_separator)
+        p.setDash()  # Reset to solid line
+        
+        # Bottom section starts right after the dashed line
+        start_y_bottom = y_separator - 0.5*cm
+        draw_section(start_y_bottom, include_internal_desc=True)
+        
+        p.save()
+        buffer.seek(0)
+        
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="munkalap_{order.order_number}.pdf"'
+        return response
+    
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        """Megrendelés törlése"""
+        order = self.get_object()
+        if order.status == 'delivered':
+            return Response({'error': 'Kiszállított megrendelés nem törölhető'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        order.status = 'cancelled'
+        order.save()
+        return Response(self.get_serializer(order).data)
+    
+    @action(detail=False, methods=['get'])
+    def invoiceable(self, request):
+        """Get orders ready for invoicing (ready, in_delivery, delivered status)"""
+        orders = self.queryset.filter(status__in=['ready', 'in_delivery', 'delivered'])
+        serializer = self.get_serializer(orders, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['patch'])
+    def update_invoice_number(self, request, pk=None):
+        """Update invoice number for an order"""
+        order = self.get_object()
+        invoice_number = request.data.get('invoice_number')
+        if invoice_number:
+            order.invoice_number = invoice_number
+            order.save()
+            return Response(self.get_serializer(order).data)
+        return Response({'error': 'Számla szám kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    @action(detail=False, methods=['post'])
+    def create_invoices(self, request):
+        """Create invoices in PixInvoice for selected orders"""
+        import requests
+        from decimal import Decimal
+        from django.conf import settings
+        import logging
+        from datetime import date, timedelta
+        import traceback
+        
+        logger = logging.getLogger(__name__)
+        
+        order_ids = request.data.get('order_ids', [])
+        if not order_ids:
+            return Response({'error': 'Nem lett megrendelés kiválasztva'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        orders = self.queryset.filter(id__in=order_ids)
+        if not orders.exists():
+            return Response({'error': 'Nem található megrendelés'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Group orders by company
+        from collections import defaultdict
+        grouped_orders = defaultdict(list)
+        for order in orders:
+            if order.quote_request and order.quote_request.company:
+                company_id = order.quote_request.company.id
+                grouped_orders[company_id].append(order)
+        
+        # PixInvoice API settings from Django settings
+        PIXINVOICE_API_URL = settings.PIXINVOICE_API_URL
+        PIXINVOICE_API_KEY = settings.PIXINVOICE_API_KEY
+        
+        invoices_created = 0
+        errors = []
+        
+        for company_id, company_orders in grouped_orders.items():
+            try:
+                company = company_orders[0].quote_request.company
+                
+                # Prepare invoice data
+                invoice_items = []
+                for order in company_orders:
+                    for item in order.items.all():
+                        quote_item = item.quote_item
+                        
+                        # Get item name
+                        item_name = ''
+                        if quote_item.product:
+                            item_name = quote_item.product.name
+                        elif quote_item.material:
+                            item_name = quote_item.material.name
+                        elif quote_item.manufacturing_product:
+                            item_name = quote_item.manufacturing_product.name
+                        elif quote_item.service:
+                            item_name = quote_item.service.name
+                        
+                        # Calculate prices
+                        net_total = item.quantity * item.net_unit_price
+                        discount = net_total * (item.discount_percent / Decimal('100'))
+                        net_discounted = net_total - discount
+                        
+                        invoice_items.append({
+                            'name': f"{item_name} (Megr: {order.order_number})",
+                            'quantity': float(item.quantity),
+                            'unit_price': float(item.net_unit_price),
+                            'vat_rate': float(item.vat_rate),
+                            'net_amount': float(net_discounted),
+                        })
+                
+                # Call PixInvoice API to create invoice
+                # Build address from postal_code and city if available
+                address = ''
+                if company.postal_code and company.city:
+                    address = f"{company.postal_code} {company.city}"
+                elif company.address:
+                    address = company.address
+                
+                from datetime import date, timedelta
+                
+                # Prepare invoice items with required fields
+                formatted_items = []
+                for item in invoice_items:
+                    formatted_items.append({
+                        'description': item['name'],
+                        'quantity': item['quantity'],
+                        'unit_price': item['unit_price'],
+                        'vat_rate': item['vat_rate'],
+                        'net_amount': item['net_amount'],
+                    })
+                
+                # First, create or get customer in PixInvoice
+                customer_data = {
+                    'name': company.name,
+                    'tax_number': company.tax_number[:8] if company.tax_number and len(company.tax_number) >= 8 else '00000000',
+                    'city': company.city or 'Budapest',
+                    'postal_code': company.postal_code or '1000',
+                }
+                
+                customer_response = requests.post(
+                    f'{PIXINVOICE_API_URL}/customers/',
+                    headers={'X-Api-Key': PIXINVOICE_API_KEY},
+                    json=customer_data
+                )
+                
+                # Handle customer creation or duplicate
+                if customer_response.status_code in [200, 201]:
+                    customer_id = customer_response.json().get('id')
+                elif customer_response.status_code in [400, 409]:
+                    # Check if it's a duplicate customer error
+                    response_data = customer_response.json()
+                    if response_data.get('error') == 'duplicate_tax_number' and 'existing_customer' in response_data:
+                        # Use existing customer
+                        customer_id = response_data['existing_customer']['id']
+                        logger.info(f"Using existing customer {customer_id} for {company.name}")
+                    else:
+                        errors.append(f"{company.name}: Failed to create customer - {customer_response.text}")
+                        continue
+                else:
+                    errors.append(f"{company.name}: Failed to create customer - HTTP {customer_response.status_code}: {customer_response.text}")
+                    continue
+                
+                # Get company ID from PixInvoice (the billing company)
+                companies_response = requests.get(
+                    f'{PIXINVOICE_API_URL}/companies/',
+                    headers={'X-Api-Key': PIXINVOICE_API_KEY}
+                )
+                
+                if companies_response.status_code != 200:
+                    errors.append(f"{company.name}: Failed to get companies - HTTP {companies_response.status_code}")
+                    continue
+                
+                companies_data = companies_response.json()
+                if not companies_data.get('results'):
+                    errors.append(f"{company.name}: No companies found in PixInvoice")
+                    continue
+                
+                # Use the first company as the billing company
+                company_id_pixinvoice = companies_data['results'][0]['id']
+                
+                # Generate invoice number from order numbers
+                # Format: ERP-YYYYMMDD-XXXXX where XXXXX is the first order number
+                invoice_number = f"ERP-{date.today().strftime('%Y%m%d')}-{company_orders[0].order_number}"
+                
+                # Prepare payload for PixInvoice
+                invoice_payload = {
+                    'company_id': company_id_pixinvoice,
+                    'customer_id': customer_id,
+                    'invoice_number': invoice_number,
+                    'items': formatted_items,
+                    'issue_date': date.today().isoformat(),
+                    'due_date': (date.today() + timedelta(days=8)).isoformat(),
+                    'payment_method': 'transfer',
+                    'notes': f"ERP megrendelések: {', '.join([o.order_number for o in company_orders])}",
+                }
+                
+                response = requests.post(
+                    f'{PIXINVOICE_API_URL}/invoices/',
+                    headers={'X-Api-Key': PIXINVOICE_API_KEY},
+                    json=invoice_payload
+                )
+                
+                if response.status_code == 201:
+                    invoice_data = response.json()
+                    invoice_number = invoice_data.get('invoice_number')
+                    
+                    # Update order invoice numbers
+                    for order in company_orders:
+                        order.invoice_number = invoice_number
+                        order.save()
+                    
+                    invoices_created += 1
+                else:
+                    error_msg = f"{company.name}: HTTP {response.status_code} - {response.text}"
+                    logger.error(f"PixInvoice API error: {error_msg}")
+                    errors.append(error_msg)
+            
+            except Exception as e:
+                tb = traceback.format_exc()
+                # Safely get company name
+                try:
+                    company_name = company.name if 'company' in locals() else f"Company ID {company_id}"
+                except:
+                    company_name = f"Company ID {company_id}"
+                
+                error_msg = f"{company_name}: {str(e)}"
+                logger.error(f"Error creating invoice for {company_name}: {tb}")
+                
+                # Write to dedicated error file
+                try:
+                    with open('/tmp/erp_invoice_errors.log', 'a') as f:
+                        f.write(f"\n{'='*80}\n")
+                        f.write(f"Time: {date.today().isoformat()} - Company: {company_name}\n")
+                        f.write(tb)
+                        f.write(f"\n{'='*80}\n")
+                except Exception as write_error:
+                    logger.error(f"Failed to write to error log: {write_error}")
+                
+                errors.append(error_msg)
+
+        
+        if invoices_created > 0:
+            return Response({
+                'success': True,
+                'invoices_created': invoices_created,
+                'errors': errors if errors else None,
+            })
+        else:
+            return Response({
+                'success': False,
+                'message': 'Nem sikerült számlát létrehozni',
+                'errors': errors,
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class CustomerOrderItemViewSet(viewsets.ModelViewSet):
+    queryset = CustomerOrderItem.objects.all()
+    serializer_class = CustomerOrderItemSerializer
+    permission_classes = [IsAuthenticated]
+
     permission_classes = [AllowAny]
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_delivery_view(request, token: str):
+    """
+    Publikus szállítólevél megtekintése token alapján
+    Nem igényel bejelentkezést
+    """
+    try:
+        order = CustomerOrder.objects.select_related(
+            'quote_request', 
+            'quote_request__company', 
+            'quote_request__customer'
+        ).prefetch_related(
+            'items__quote_item__product',
+            'items__quote_item__material',
+            'items__quote_item__manufacturing_product',
+            'items__quote_item__service'
+        ).get(public_delivery_token=token)
+    except CustomerOrder.DoesNotExist:
+        return Response({'error': 'Érvénytelen vagy lejárt link'}, status=404)
+    
+    # Check expiration
+    if order.public_delivery_expires_at and timezone.now() > order.public_delivery_expires_at:
+        return Response({'error': 'A link lejárt'}, status=410)
+    
+    # Build response data
+    quote_request = order.quote_request
+    customer_name = ''
+    if quote_request.company:
+        customer_name = quote_request.company.name
+    elif quote_request.customer:
+        customer_name = quote_request.customer.name
+    
+    items_data = []
+    for item in order.items.all():
+        quote_item = item.quote_item
+        
+        # Determine item type and name
+        item_name = ''
+        item_code = ''
+        if quote_item.product:
+            item_name = quote_item.product.name
+            item_code = quote_item.product.code
+        elif quote_item.material:
+            item_name = quote_item.material.name
+            item_code = quote_item.material.code
+        elif quote_item.manufacturing_product:
+            item_name = quote_item.manufacturing_product.name
+            item_code = quote_item.manufacturing_product.code or ''
+        elif quote_item.service:
+            item_name = quote_item.service.name
+            item_code = quote_item.service.code or ''
+        
+        # Calculate prices (convert to Decimal for precision)
+        from decimal import Decimal
+        net_total = item.quantity * item.net_unit_price
+        discount = net_total * (item.discount_percent / Decimal('100'))
+        discounted_net = net_total - discount
+        gross_total = discounted_net * (Decimal('1') + item.vat_rate / Decimal('100'))
+        
+        items_data.append({
+            'id': item.id,
+            'item_code': item_code,
+            'item_name': item_name,
+            'quantity': float(item.quantity),
+            'unit': quote_item.unit,
+            'net_unit_price': float(item.net_unit_price),
+            'discount_percent': float(item.discount_percent),
+            'vat_rate': float(item.vat_rate),
+            'net_total': float(net_total),
+            'discounted_net_total': float(discounted_net),
+            'gross_total': float(gross_total),
+        })
+    
+    response_data = {
+        'order_number': order.order_number,
+        'customer_name': customer_name,
+        'title': quote_request.title if quote_request else '',
+        'description': quote_request.description if quote_request else '',
+        'delivery_started_at': order.delivery_started_at.isoformat() if order.delivery_started_at else None,
+        'delivery_confirmed': order.delivery_confirmed,
+        'delivery_notes': order.delivery_notes,
+        'show_prices': getattr(order, 'show_prices', True),
+        'items': items_data,
+        'contacts': [
+            {'name': c.name, 'email': c.email, 'phone': c.phone}
+            for c in quote_request.contacts.all()
+        ] if quote_request else [],
+    }
+    
+    return Response(response_data)
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def public_delivery_pdf(request, token: str):
+    """
+    Szállítólevél PDF generálás publikus token alapján
+    Nem igényel bejelentkezést
+    """
+    from django.http import HttpResponse
+    from reportlab.lib.pagesizes import A4
+    from reportlab.pdfgen import canvas
+    from reportlab.lib.units import cm
+    from io import BytesIO
+    from decimal import Decimal
+    
+    try:
+        order = CustomerOrder.objects.select_related(
+            'quote_request',
+            'quote_request__company',
+            'quote_request__customer'
+        ).prefetch_related(
+            'items__quote_item__product',
+            'items__quote_item__material',
+            'items__quote_item__manufacturing_product',
+            'items__quote_item__service',
+            'quote_request__contacts'
+        ).get(public_delivery_token=token)
+    except CustomerOrder.DoesNotExist:
+        return HttpResponse('Érvénytelen vagy lejárt link', status=404)
+    
+    # Check expiration
+    if order.public_delivery_expires_at and timezone.now() > order.public_delivery_expires_at:
+        return HttpResponse('A link lejárt', status=410)
+    
+    buffer = BytesIO()
+    p = canvas.Canvas(buffer, pagesize=A4)
+    width, height = A4
+    
+    # Font setup
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    try:
+        pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+        font_name = 'DejaVu'
+    except:
+        font_name = 'Helvetica'
+    
+    # Header - Title and dates
+    y = height - 2*cm
+    p.setFont(font_name, 18)
+    p.drawString(2*cm, y, "SZÁLLÍTÓLEVÉL")
+    
+    # Order number on the right
+    p.setFont(font_name, 9)
+    p.drawString(width - 8*cm, y + 0.3*cm, "Megrendelés szám:")
+    p.setFont(font_name, 11)
+    p.drawString(width - 8*cm, y - 0.2*cm, f"{order.order_number}")
+    
+    y -= 0.9*cm
+    p.setFont(font_name, 9)
+    if order.delivery_started_at:
+        p.drawString(width - 8*cm, y, f"Szállítás: {order.delivery_started_at.strftime('%Y-%m-%d')}")
+        y -= 0.5*cm
+    
+    if order.delivery_confirmed:
+        p.drawString(width - 8*cm, y, f"Visszaigazolva: {order.delivery_confirmed_at.strftime('%Y-%m-%d') if order.delivery_confirmed_at else 'Igen'}")
+    
+    # Supplier and Customer info side by side
+    y = height - 4*cm
+    p.setFont(font_name, 11)
+    
+    # Get quote_request reference
+    quote_request = order.quote_request
+    
+    # Left column - Supplier (Szallito)
+    y_left = y
+    p.drawString(2*cm, y_left, "SZÁLLÍTÓ:")
+    y_left -= 0.6*cm
+    p.setFont(font_name, 9)
+    
+    # Try to get supplier info from quote_request's company or use placeholder
+    supplier_name = "Cég Neve"
+    supplier_address = ""
+    supplier_tax = ""
+    
+    # If we have a quote_request with company, use that as supplier
+    if quote_request and quote_request.company:
+        supplier_name = quote_request.company.name
+        if hasattr(quote_request.company, 'postal_code') and hasattr(quote_request.company, 'city'):
+            if quote_request.company.postal_code and quote_request.company.city:
+                supplier_address = f"{quote_request.company.postal_code} {quote_request.company.city}"
+        if hasattr(quote_request.company, 'tax_number') and quote_request.company.tax_number:
+            supplier_tax = quote_request.company.tax_number
+    
+    p.drawString(2*cm, y_left, supplier_name)
+    y_left -= 0.5*cm
+    if supplier_address:
+        p.drawString(2*cm, y_left, supplier_address)
+        y_left -= 0.5*cm
+    if supplier_tax:
+        p.drawString(2*cm, y_left, f"Adószám: {supplier_tax}")
+    
+    # Right column - Customer (Megrendelo)
+    y_right = y
+    p.setFont(font_name, 11)
+    p.drawString(11*cm, y_right, "MEGRENDELŐ:")
+    y_right -= 0.6*cm
+    p.setFont(font_name, 9)
+    
+    if quote_request:
+        if quote_request.company:
+            p.drawString(11*cm, y_right, quote_request.company.name)
+            y_right -= 0.5*cm
+            # Address from company
+            address_parts = []
+            if hasattr(quote_request.company, 'postal_code') and quote_request.company.postal_code:
+                address_parts.append(quote_request.company.postal_code)
+            if hasattr(quote_request.company, 'city') and quote_request.company.city:
+                address_parts.append(quote_request.company.city)
+            if address_parts:
+                p.drawString(11*cm, y_right, ', '.join(address_parts))
+                y_right -= 0.5*cm
+            if hasattr(quote_request.company, 'tax_number') and quote_request.company.tax_number:
+                p.drawString(11*cm, y_right, f"Adószám: {quote_request.company.tax_number}")
+                y_right -= 0.5*cm
+        elif quote_request.customer:
+            p.drawString(11*cm, y_right, quote_request.customer.name)
+            y_right -= 0.5*cm
+    
+    # Contacts
+    if quote_request and quote_request.contacts.exists():
+        y_right -= 0.2*cm
+        p.setFont(font_name, 8)
+        p.drawString(11*cm, y_right, "Kapcsolattartók:")
+        y_right -= 0.4*cm
+        for contact in quote_request.contacts.all()[:2]:  # Max 2 contacts
+            contact_info = contact.name
+            if contact.phone:
+                contact_info += f" - {contact.phone}"
+            p.drawString(11*cm, y_right, contact_info[:45])
+            y_right -= 0.35*cm
+    
+    # Move y to below both columns
+    y = min(y_left, y_right) - 0.5*cm
+    
+    # Title if exists
+    if quote_request and quote_request.title:
+        p.setFont(font_name, 10)
+        p.drawString(2*cm, y, f"Megnevezés: {quote_request.title}")
+        y -= 0.7*cm
+    
+    # Items table
+    y -= cm
+    p.setFont(font_name, 11)
+    p.drawString(2*cm, y, "SZÁLLÍTOTT TÉTELEK:")
+    y -= 0.7*cm
+    
+    # Table headers - conditional based on show_prices
+    show_prices = order.show_prices if hasattr(order, 'show_prices') else True
+    p.setFont(font_name, 9)
+    p.drawString(2*cm, y, "Cikkszám")
+    p.drawString(5*cm, y, "Megnevezés")
+    p.drawString(11*cm, y, "Mennyiség")
+    if show_prices:
+        p.drawString(13.5*cm, y, "Nettó egységár")
+        p.drawString(16.5*cm, y, "Nettó összesen")
+    y -= 0.5*cm
+    p.line(2*cm, y, width-2*cm, y)
+    y -= 0.5*cm
+    
+    # Items
+    total_net = Decimal('0')
+    total_gross = Decimal('0')
+    for item in order.items.all():
+        quote_item = item.quote_item
+        
+        # Get item name and code
+        item_name = ''
+        item_code = ''
+        if quote_item.product:
+            item_name = quote_item.product.name
+            item_code = quote_item.product.code
+        elif quote_item.material:
+            item_name = quote_item.material.name
+            item_code = quote_item.material.code
+        elif quote_item.manufacturing_product:
+            item_name = quote_item.manufacturing_product.name
+            item_code = quote_item.manufacturing_product.code or ''
+        elif quote_item.service:
+            item_name = quote_item.service.name
+            item_code = quote_item.service.code or ''
+        
+        # Calculate prices
+        net_total = item.quantity * item.net_unit_price
+        discount = net_total * (item.discount_percent / Decimal('100'))
+        discounted_net = net_total - discount
+        gross_total = discounted_net * (Decimal('1') + item.vat_rate / Decimal('100'))
+        total_net += discounted_net
+        total_gross += gross_total
+        
+        # Draw item row
+        p.drawString(2*cm, y, item_code[:15])
+        p.drawString(5*cm, y, item_name[:35])
+        p.drawString(11*cm, y, f"{float(item.quantity)} {quote_item.unit}")
+        if show_prices:
+            p.drawString(13.5*cm, y, f"{float(item.net_unit_price):,.0f} Ft")
+            p.drawString(16.5*cm, y, f"{float(discounted_net):,.0f} Ft")
+        y -= 0.5*cm
+        
+        if y < 6*cm:
+            p.showPage()
+            y = height - 2*cm
+            p.setFont(font_name, 9)
+    
+    # Totals section - only if show_prices is True
+    if show_prices:
+        y -= 0.3*cm
+        p.line(13.5*cm, y, width-2*cm, y)
+        y -= 0.6*cm
+        
+        p.setFont(font_name, 11)
+        p.drawString(13*cm, y, "Összesen (nettó):")
+        p.drawRightString(width-2*cm, y, f"{float(total_net):,.0f} Ft")
+    
+    # Notes
+    if order.delivery_notes:
+        y -= 1.5*cm
+        p.setFont(font_name, 10)
+        p.drawString(2*cm, y, "Megjegyzés:")
+        y -= 0.5*cm
+        p.setFont(font_name, 9)
+        # Split notes into lines
+        note_lines = order.delivery_notes.split('\n')
+        for line in note_lines[:5]:  # Max 5 lines
+            p.drawString(2*cm, y, line[:80])
+            y -= 0.4*cm
+    
+    # Footer
+    p.setFont(font_name, 8)
+    p.drawString(2*cm, 1.5*cm, f"Generálva: {timezone.now().strftime('%Y-%m-%d %H:%M')}")
+    
+    p.save()
+    buffer.seek(0)
+    
+    response = HttpResponse(buffer, content_type='application/pdf')
+    response['Content-Disposition'] = f'inline; filename="szallitolevel_{order.order_number}.pdf"'
+    return response
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def confirm_delivery(request, token: str):
+    """
+    Szállítólevél visszaigazolása publikus token alapján
+    Nem igényel bejelentkezést
+    """
+    try:
+        order = CustomerOrder.objects.get(public_delivery_token=token)
+    except CustomerOrder.DoesNotExist:
+        return Response({'error': 'Érvénytelen vagy lejárt link'}, status=404)
+    
+    # Check expiration
+    if order.public_delivery_expires_at and timezone.now() > order.public_delivery_expires_at:
+        return Response({'error': 'A link lejárt'}, status=410)
+    
+    # Check if already confirmed
+    if order.delivery_confirmed:
+        return Response({'error': 'A szállítólevél már visszaigazolásra került'}, status=400)
+    
+    # Get confirmed items and notes from request
+    confirmed_items = request.data.get('confirmed_items', [])
+    notes = request.data.get('notes', '')
+    
+    # Mark as confirmed
+    order.delivery_confirmed = True
+    order.delivery_confirmed_at = timezone.now()
+    order.delivery_notes = notes
+    order.save()
+    
+    # Optionally: send notification email to internal team
+    # ... (implement if needed)
+    
+    return Response({
+        'success': True,
+        'message': 'Szállítólevél sikeresen visszaigazolva',
+        'confirmed_at': order.delivery_confirmed_at.isoformat()
+    })

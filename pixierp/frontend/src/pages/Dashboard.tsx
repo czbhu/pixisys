@@ -213,20 +213,21 @@ const Dashboard = () => {
             <Row gutter={[16, 16]}>
                 {/* Recent Orders */}
                 <Col xs={24} lg={16}>
-                    <Card title="Legutóbbi megrendelések" style={{ height: 400 }}>
+                    <Card title="Legutóbbi megrendelések">
                         <Table
                             dataSource={recentOrders}
                             columns={columns}
                             pagination={false}
                             size="small"
                             rowKey="id"
+                            scroll={{ x: 800 }}
                         />
                     </Card>
                 </Col>
 
                 {/* Quick Stats */}
                 <Col xs={24} lg={8}>
-                    <Card title="Gyors statisztikák" style={{ height: 400 }}>
+                    <Card title="Gyors statisztikák">
                         <div style={{ marginBottom: 24 }}>
                             <div style={{ marginBottom: 8 }}>
                                 <span>Eladási progress</span>

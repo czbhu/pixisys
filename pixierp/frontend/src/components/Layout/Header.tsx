@@ -1,12 +1,17 @@
 import React from 'react';
 import { Layout, Dropdown, Avatar, Button, Space } from 'antd';
-import { UserOutlined, LogoutOutlined, SettingOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, SettingOutlined, MenuOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
 const { Header: AntHeader } = Layout;
 
-const Header = () => {
+interface HeaderProps {
+    onMenuClick?: () => void;
+    isMobile?: boolean;
+}
+
+const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false }) => {
     const { user, logout } = useAuth();
     const navigate = useNavigate();
 
@@ -51,19 +56,33 @@ const Header = () => {
 
     return (
         <AntHeader style={{
-            padding: '0 24px',
+            padding: isMobile ? '0 12px' : '0 24px',
             background: '#fff',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
             boxShadow: '0 1px 4px rgba(0,21,41,.08)'
         }}>
-            <div>
-                <h2 style={{ margin: 0, color: '#1890ff' }}>PixiERP Dashboard</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+                {isMobile && (
+                    <Button 
+                        type="text" 
+                        icon={<MenuOutlined />} 
+                        onClick={onMenuClick}
+                        style={{ fontSize: 18 }}
+                    />
+                )}
+                <h2 style={{ 
+                    margin: 0, 
+                    color: '#1890ff',
+                    fontSize: isMobile ? 16 : 20 
+                }}>
+                    {isMobile ? 'PixiERP' : 'PixiERP Dashboard'}
+                </h2>
             </div>
 
             <Space>
-                <span>Üdvözöljük, {user?.first_name || user?.username}!</span>
+                {!isMobile && <span>Üdvözöljük, {user?.first_name || user?.username}!</span>}
                 <Dropdown
                     menu={{
                         items: userMenuItems,
@@ -74,7 +93,7 @@ const Header = () => {
                 >
                     <Button type="text" style={{ padding: 0 }}>
                         <Avatar
-                            size="small"
+                            size={isMobile ? "small" : "default"}
                             icon={<UserOutlined />}
                             style={{ backgroundColor: '#1890ff' }}
                         />
