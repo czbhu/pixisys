@@ -420,6 +420,16 @@ screen -r pixisys
 
 ---
 
+## 📚 További Dokumentáció
+
+- **[README.md](README.md)** - Teljes projekt áttekintés
+- **[INSTALL.md](INSTALL.md)** - Részletes telepítési útmutató
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** - 🔄 **Production frissítési útmutató**
+- **[pixierp/README.md](pixierp/README.md)** - PixiERP dokumentáció
+- **[pixinvoice/README.md](pixinvoice/README.md)** - PixInvoice dokumentáció
+
+---
+
 **Készítve ❤️-vel a Pixi Systems csapata által**
 
 **Verzió**: 1.0.0  

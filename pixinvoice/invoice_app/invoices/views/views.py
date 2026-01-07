@@ -56,7 +56,7 @@ from django.shortcuts import get_object_or_404
 from django.db import models
 from django.db.models import Q
 from django.utils import timezone
-from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument
+from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile
 from invoices.serializers import (
     CustomerSerializer, InvoiceSerializer, InvoiceCreateSerializer,
     InvoiceItemSerializer, NAVConfigurationSerializer, ContactSerializer, ContactCreateSerializer,
@@ -64,7 +64,7 @@ from invoices.serializers import (
     CustomerBankAccountSerializer, CompanyBankAccountSerializer, VATTypeSerializer, BankStatementSerializer,
     ProformaSerializer, ProformaCreateSerializer
 )
-from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer
+from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer
 from invoices.nav_service import NAVService
 import logging
 import time
@@ -5116,3 +5116,304 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         qs = PaymentBatch.objects.filter(company_id=company_id, status='PENDING').order_by('-created_at')
         return Response(PaymentBatchSerializer(qs, many=True).data)
+
+
+# Backup Management Views
+class BackupConfigurationViewSet(viewsets.ModelViewSet):
+    """ViewSet for backup configurations"""
+    queryset = BackupConfiguration.objects.all()
+    serializer_class = BackupConfigurationSerializer
+    permission_classes = []  # API kulcs alapú autentikáció van használatban
+
+
+class BackupFileViewSet(viewsets.ModelViewSet):
+    """ViewSet for backup files"""
+    queryset = BackupFile.objects.all()
+    serializer_class = BackupFileSerializer
+    permission_classes = []  # API kulcs alapú autentikáció van használatban
+    http_method_names = ['get', 'post', 'delete']
+    
+    @action(detail=False, methods=['post'])
+    def create_backup(self, request):
+        """Create a manual backup using pg_dump for PostgreSQL"""
+        import os
+        import subprocess
+        from django.conf import settings
+        
+        try:
+            # Create backups directory if not exists
+            backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            # Generate filename
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            filename = f'manual_backup_{timestamp}.sql'
+            filepath = os.path.join(backup_dir, filename)
+            
+            # Get database configuration
+            db_config = settings.DATABASES['default']
+            db_name = db_config['NAME']
+            db_user = db_config['USER']
+            db_host = db_config.get('HOST', 'localhost')
+            db_port = db_config.get('PORT', '5432')
+            db_password = db_config.get('PASSWORD', '')
+            
+            # Set environment variable for password
+            env = os.environ.copy()
+            if db_password:
+                env['PGPASSWORD'] = db_password
+            
+            # Run pg_dump
+            cmd = [
+                'pg_dump',
+                '-h', db_host,
+                '-p', str(db_port),
+                '-U', db_user,
+                '-F', 'c',  # Custom format (compressed)
+                '-f', filepath,
+                db_name
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            
+            # Get file size
+            file_size = os.path.getsize(filepath)
+            
+            # Create backup record (no user authentication in PixInvoice)
+            backup = BackupFile.objects.create(
+                filename=filename,
+                filepath=filepath,
+                file_size=file_size,
+                created_by=None,  # PixInvoice doesn't use Django user auth
+                is_manual=True
+            )
+            
+            serializer = self.get_serializer(backup)
+            return Response({
+                'message': 'Backup sikeresen létrehozva',
+                'backup': serializer.data
+            })
+        except subprocess.CalledProcessError as e:
+            return Response({
+                'error': f'pg_dump hiba: {e.stderr}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Hiba a backup létrehozása során: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def upload_backup(self, request):
+        """Upload a backup file for restoration"""
+        import os
+        from django.conf import settings
+        
+        try:
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return Response({
+                    'error': 'Nincs fájl feltöltve'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate file extension
+            if not uploaded_file.name.endswith('.sql'):
+                return Response({
+                    'error': 'Csak .sql kiterjesztésű fájlok tölthetők fel'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create backups directory if not exists
+            backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            # Generate unique filename
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            original_name = uploaded_file.name.rsplit('.', 1)[0]
+            filename = f'uploaded_{original_name}_{timestamp}.sql'
+            filepath = os.path.join(backup_dir, filename)
+            
+            # Save uploaded file
+            with open(filepath, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            # Get file size
+            file_size = os.path.getsize(filepath)
+            
+            # Create backup record
+            backup = BackupFile.objects.create(
+                filename=filename,
+                filepath=filepath,
+                file_size=file_size,
+                created_by=None,
+                is_manual=True
+            )
+            
+            serializer = self.get_serializer(backup)
+            return Response({
+                'message': 'Backup fájl sikeresen feltöltve',
+                'backup': serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Hiba a feltöltés során: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        """Download a backup file"""
+        import os
+        from django.http import HttpResponse
+        
+        try:
+            backup = self.get_object()
+            
+            if not os.path.exists(backup.filepath):
+                return Response({
+                    'error': 'A backup fájl nem található'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            with open(backup.filepath, 'rb') as f:
+                response = HttpResponse(f.read(), content_type='application/octet-stream')
+                response['Content-Disposition'] = f'attachment; filename="{backup.filename}"'
+                return response
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a letöltés során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=True, methods=['post'])
+    def restore(self, request, pk=None):
+        """Restore from a backup file using pg_restore for PostgreSQL"""
+        import os
+        import subprocess
+        from django.conf import settings
+        
+        try:
+            backup = self.get_object()
+            
+            if not os.path.exists(backup.filepath):
+                return Response({
+                    'error': 'A backup fájl nem található'
+                }, status=status.HTTP_404_NOT_FOUND)
+            
+            # Get database configuration
+            db_config = settings.DATABASES['default']
+            db_name = db_config['NAME']
+            db_user = db_config['USER']
+            db_host = db_config.get('HOST', 'localhost')
+            db_port = db_config.get('PORT', '5432')
+            db_password = db_config.get('PASSWORD', '')
+            
+            # Set environment variable for password
+            env = os.environ.copy()
+            if db_password:
+                env['PGPASSWORD'] = db_password
+            
+            # First, create a safety backup of current database
+            safety_backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            safety_filename = f'before_restore_{timestamp}.sql'
+            safety_filepath = os.path.join(safety_backup_dir, safety_filename)
+            
+            subprocess.run(
+                [
+                    'pg_dump',
+                    '-h', db_host,
+                    '-p', str(db_port),
+                    '-U', db_user,
+                    '-F', 'c',
+                    '-f', safety_filepath,
+                    db_name
+                ],
+                env=env,
+                check=True,
+                capture_output=True
+            )
+            
+            # Drop and recreate database (requires superuser or database owner)
+            # Alternative: use --clean --if-exists with pg_restore
+            cmd = [
+                'pg_restore',
+                '-h', db_host,
+                '-p', str(db_port),
+                '-U', db_user,
+                '-d', db_name,
+                '--clean',  # Drop existing objects before recreating
+                '--if-exists',  # Don't error on missing objects
+                backup.filepath
+            ]
+            
+            result = subprocess.run(
+                cmd,
+                env=env,
+                capture_output=True,
+                text=True
+            )
+            
+            # pg_restore may return warnings (non-zero exit) but still succeed
+            # Check stderr for actual errors
+            if result.returncode != 0 and 'ERROR' in result.stderr:
+                return Response({
+                    'error': f'pg_restore hiba: {result.stderr}',
+                    'safety_backup': safety_filepath
+                }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            
+            return Response({
+                'message': 'Adatbázis sikeresen visszaállítva. Kérjük jelentkezzen be újra.',
+                'safety_backup': safety_filepath,
+                'warnings': result.stderr if result.stderr else None
+            })
+        except subprocess.CalledProcessError as e:
+            return Response({
+                'error': f'Hiba a visszaállítás során: {e.stderr}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Hiba a visszaállítás során: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['post'])
+    def cleanup_old_backups(self, request):
+        """Clean up old backups based on retention policy"""
+        import os
+        from datetime import timedelta
+        
+        try:
+            deleted_count = 0
+            configs = BackupConfiguration.objects.filter(is_active=True)
+            
+            for config in configs:
+                cutoff_date = timezone.now() - timedelta(days=config.retention_days)
+                old_backups = BackupFile.objects.filter(
+                    configuration=config,
+                    created_at__lt=cutoff_date,
+                    is_manual=False
+                )
+                
+                for backup in old_backups:
+                    if os.path.exists(backup.filepath):
+                        os.remove(backup.filepath)
+                    backup.delete()
+                    deleted_count += 1
+            
+            return Response({
+                'message': f'{deleted_count} régi backup törölve',
+                'deleted_count': deleted_count
+            })
+        except Exception as e:
+            return Response({
+                'error': f'Hiba a tisztítás során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

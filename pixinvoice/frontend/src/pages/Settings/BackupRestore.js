@@ -14,6 +14,7 @@ import {
   InputNumber,
   Switch,
   Alert,
+  Typography,
   Upload,
 } from 'antd';
 import {
@@ -23,47 +24,22 @@ import {
   PlusOutlined,
   SettingOutlined,
   ClockCircleOutlined,
-  UploadOutlined,
   DatabaseOutlined,
+  UploadOutlined,
 } from '@ant-design/icons';
-import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import { formatDistanceToNow } from 'date-fns';
 import { hu } from 'date-fns/locale';
 
-interface BackupFile {
-  id: number;
-  configuration: number | null;
-  configuration_name: string;
-  filename: string;
-  filepath: string;
-  file_size: number;
-  file_size_mb: number;
-  created_at: string;
-  created_by: number | null;
-  created_by_name: string;
-  is_manual: boolean;
-}
+const { Title } = Typography;
 
-interface BackupConfiguration {
-  id: number;
-  name: string;
-  interval: string;
-  interval_display: string;
-  retention_days: number;
-  is_active: boolean;
-  last_backup: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-const BackupPage: React.FC = () => {
-  const [backups, setBackups] = useState<BackupFile[]>([]);
-  const [configs, setConfigs] = useState<BackupConfiguration[]>([]);
+const BackupRestore = () => {
+  const [backups, setBackups] = useState([]);
+  const [configs, setConfigs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [uploadModalVisible, setUploadModalVisible] = useState(false);
   const [configModalVisible, setConfigModalVisible] = useState(false);
-  const [editingConfig, setEditingConfig] = useState<BackupConfiguration | null>(null);
+  const [editingConfig, setEditingConfig] = useState(null);
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -74,7 +50,7 @@ const BackupPage: React.FC = () => {
   const fetchBackups = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/backup-files/');
+      const response = await api.get('/api/backup-files/');
       const data = response.data.results || response.data;
       setBackups(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -88,7 +64,7 @@ const BackupPage: React.FC = () => {
 
   const fetchConfigs = async () => {
     try {
-      const response = await api.get('/backup-configs/');
+      const response = await api.get('/api/backup-configs/');
       const data = response.data.results || response.data;
       setConfigs(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -100,10 +76,10 @@ const BackupPage: React.FC = () => {
   const handleCreateBackup = async () => {
     setLoading(true);
     try {
-      const response = await api.post('/backup-files/create_backup/');
+      const response = await api.post('/api/backup-files/create_backup/');
       message.success(response.data.message);
       fetchBackups();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Hiba a backup létrehozásakor:', error);
       message.error(error.response?.data?.error || 'Nem sikerült létrehozni a backup-ot');
     } finally {
@@ -111,12 +87,12 @@ const BackupPage: React.FC = () => {
     }
   };
 
-  const handleUploadBackup = async (file: File | Blob | string) => {
+  const handleUploadBackup = async (file) => {
     const formData = new FormData();
-    formData.append('file', file as Blob);
+    formData.append('file', file);
     
     try {
-      const response = await api.post('/backup-files/upload_backup/', formData, {
+      const response = await api.post('/api/backup-files/upload_backup/', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
         },
@@ -124,7 +100,7 @@ const BackupPage: React.FC = () => {
       message.success(response.data.message);
       setUploadModalVisible(false);
       fetchBackups();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Hiba a feltöltéskor:', error);
       message.error(error.response?.data?.error || 'Nem sikerült feltölteni a backup fájlt');
     }
@@ -132,9 +108,9 @@ const BackupPage: React.FC = () => {
     return false; // Prevent default upload behavior
   };
 
-  const handleDownload = async (backup: BackupFile) => {
+  const handleDownload = async (backup) => {
     try {
-      const response = await api.get(`/backup-files/${backup.id}/download/`, {
+      const response = await api.get(`/api/backup-files/${backup.id}/download/`, {
         responseType: 'blob',
       });
       
@@ -153,13 +129,13 @@ const BackupPage: React.FC = () => {
     }
   };
 
-  const handleRestore = async (backup: BackupFile) => {
+  const handleRestore = async (backup) => {
     Modal.confirm({
       title: 'Adatbázis visszaállítása',
       content: (
         <div>
           <Alert
-            message="Figyelem!"
+            title="Figyelem!"
             description="A visszaállítás felülírja a jelenlegi adatbázist. A művelet előtt automatikusan készül egy mentés a jelenlegi állapotról."
             type="warning"
             showIcon
@@ -175,7 +151,7 @@ const BackupPage: React.FC = () => {
       cancelText: 'Mégse',
       onOk: async () => {
         try {
-          const response = await api.post(`/backup-files/${backup.id}/restore/`);
+          const response = await api.post(`/api/backup-files/${backup.id}/restore/`);
           message.success(response.data.message);
           
           // Logout and redirect to login
@@ -183,7 +159,7 @@ const BackupPage: React.FC = () => {
             localStorage.clear();
             window.location.href = '/login';
           }, 2000);
-        } catch (error: any) {
+        } catch (error) {
           console.error('Hiba a visszaállításkor:', error);
           message.error(error.response?.data?.error || 'Nem sikerült visszaállítani az adatbázist');
         }
@@ -191,9 +167,9 @@ const BackupPage: React.FC = () => {
     });
   };
 
-  const handleDelete = async (id: number) => {
+  const handleDelete = async (id) => {
     try {
-      await api.delete(`/backup-files/${id}/`);
+      await api.delete(`/api/backup-files/${id}/`);
       message.success('Backup törölve');
       fetchBackups();
     } catch (error) {
@@ -204,16 +180,16 @@ const BackupPage: React.FC = () => {
 
   const handleCleanupOldBackups = async () => {
     try {
-      const response = await api.post('/backup-files/cleanup_old_backups/');
+      const response = await api.post('/api/backup-files/cleanup_old_backups/');
       message.success(response.data.message);
       fetchBackups();
-    } catch (error: any) {
+    } catch (error) {
       console.error('Hiba a tisztításkor:', error);
       message.error(error.response?.data?.error || 'Nem sikerült törölni a régi backup-okat');
     }
   };
 
-  const showConfigModal = (config?: BackupConfiguration) => {
+  const showConfigModal = (config = null) => {
     if (config) {
       setEditingConfig(config);
       form.setFieldsValue(config);
@@ -224,13 +200,13 @@ const BackupPage: React.FC = () => {
     setConfigModalVisible(true);
   };
 
-  const handleConfigSubmit = async (values: any) => {
+  const handleConfigSubmit = async (values) => {
     try {
       if (editingConfig) {
-        await api.put(`/backup-configs/${editingConfig.id}/`, values);
+        await api.put(`/api/backup-configs/${editingConfig.id}/`, values);
         message.success('Konfiguráció frissítve');
       } else {
-        await api.post('/backup-configs/', values);
+        await api.post('/api/backup-configs/', values);
         message.success('Konfiguráció létrehozva');
       }
       setConfigModalVisible(false);
@@ -242,7 +218,7 @@ const BackupPage: React.FC = () => {
     }
   };
 
-  const columns: ColumnsType<BackupFile> = [
+  const backupColumns = [
     {
       title: 'Fájlnév',
       dataIndex: 'filename',
@@ -253,7 +229,7 @@ const BackupPage: React.FC = () => {
       title: 'Típus',
       dataIndex: 'is_manual',
       key: 'type',
-      render: (is_manual: boolean, record) => (
+      render: (is_manual, record) => (
         <Space>
           {is_manual ? (
             <Tag color="blue">Manuális</Tag>
@@ -272,7 +248,7 @@ const BackupPage: React.FC = () => {
       title: 'Létrehozva',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (date: string) => (
+      render: (date) => (
         <span title={new Date(date).toLocaleString('hu-HU')}>
           {formatDistanceToNow(new Date(date), { addSuffix: true, locale: hu })}
         </span>
@@ -289,7 +265,7 @@ const BackupPage: React.FC = () => {
       title: 'Méret',
       dataIndex: 'file_size_mb',
       key: 'file_size_mb',
-      render: (size: number) => `${size} MB`,
+      render: (size) => `${size} MB`,
       sorter: (a, b) => a.file_size - b.file_size,
     },
     {
@@ -325,7 +301,7 @@ const BackupPage: React.FC = () => {
     },
   ];
 
-  const configColumns: ColumnsType<BackupConfiguration> = [
+  const configColumns = [
     {
       title: 'Név',
       dataIndex: 'name',
@@ -340,13 +316,13 @@ const BackupPage: React.FC = () => {
       title: 'Megőrzés (nap)',
       dataIndex: 'retention_days',
       key: 'retention_days',
-      render: (days: number) => `${days} nap`,
+      render: (days) => `${days} nap`,
     },
     {
       title: 'Utolsó mentés',
       dataIndex: 'last_backup',
       key: 'last_backup',
-      render: (date: string | null) =>
+      render: (date) =>
         date ? (
           <span title={new Date(date).toLocaleString('hu-HU')}>
             {formatDistanceToNow(new Date(date), { addSuffix: true, locale: hu })}
@@ -359,7 +335,7 @@ const BackupPage: React.FC = () => {
       title: 'Állapot',
       dataIndex: 'is_active',
       key: 'is_active',
-      render: (is_active: boolean) =>
+      render: (is_active) =>
         is_active ? <Tag color="success">Aktív</Tag> : <Tag>Inaktív</Tag>,
     },
     {
@@ -378,7 +354,11 @@ const BackupPage: React.FC = () => {
   ];
 
   return (
-    <div>
+    <div style={{ padding: '24px' }}>
+      <Title level={2}>
+        <DatabaseOutlined /> Backup és Visszaállítás
+      </Title>
+
       <Card
         title="Automatikus Backup Konfigurációk"
         extra={
@@ -432,14 +412,14 @@ const BackupPage: React.FC = () => {
         }
       >
         <Alert
-          message="Fontos információ"
+          title="Fontos információ"
           description="Az automatikus backup-ok a rendszer cron job-ja alapján készülnek. A megőrzési időn túli backup-ok automatikusan törlődnek."
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
         />
         <Table
-          columns={columns}
+          columns={backupColumns}
           dataSource={backups}
           rowKey="id"
           loading={loading}
@@ -514,15 +494,15 @@ const BackupPage: React.FC = () => {
         footer={null}
       >
         <Alert
-          message="Információ"
-          description="Csak SQLite adatbázis fájlok (.sqlite3) tölthetők fel. A feltöltött backup azonnal visszaállítható lesz."
+          title="Információ"
+          description="Csak PostgreSQL pg_dump által létrehozott .sql fájlok tölthetők fel. A feltöltött backup azonnal visszaállítható lesz."
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
         />
         <Upload.Dragger
           name="file"
-          accept=".sqlite3"
+          accept=".sql"
           maxCount={1}
           beforeUpload={handleUploadBackup}
           showUploadList={true}
@@ -532,7 +512,7 @@ const BackupPage: React.FC = () => {
           </p>
           <p className="ant-upload-text">Kattintson vagy húzza ide a backup fájlt</p>
           <p className="ant-upload-hint">
-            Támogatott formátum: .sqlite3 (SQLite adatbázis)
+            Támogatott formátum: .sql (PostgreSQL dump)
           </p>
         </Upload.Dragger>
       </Modal>
@@ -540,4 +520,4 @@ const BackupPage: React.FC = () => {
   );
 };
 
-export default BackupPage;
+export default BackupRestore;

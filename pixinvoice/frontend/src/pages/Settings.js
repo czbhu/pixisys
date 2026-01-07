@@ -5,7 +5,8 @@ import {
   Users, 
   FileText, 
   Settings as SettingsIcon,
-  ChevronRight 
+  ChevronRight,
+  Database 
 } from 'lucide-react';
 import styled from 'styled-components';
 
@@ -138,9 +139,9 @@ const Settings = () => {
     },
     {
       path: '/settings/backup',
-      icon: SettingsIcon,
-      title: 'Backup / Visszaállítás',
-      description: 'Adatok exportálása és importálása cégenként, választható adatkörökkel'
+      icon: Database,
+      title: 'Backup - Visszaállítás',
+      description: 'Adatbázis mentés, visszaállítás és automatikus backup beállítások'
     }
   ];
 

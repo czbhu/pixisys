@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from invoices.views.views import (
     CustomerViewSet, InvoiceViewSet, InvoiceItemViewSet, NAVConfigurationViewSet, ContactViewSet,
     CompanyViewSet, SystemUserViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
-    CompanyEmailSettingsViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet
+    CompanyEmailSettingsViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
+    BackupConfigurationViewSet, BackupFileViewSet
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
 from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view
@@ -28,6 +29,8 @@ router.register(r'proformas', ProformaViewSet)
 router.register(r'payment-batches', PaymentBatchViewSet)
 router.register(r'api-clients', APIClientViewSet, basename='api-client')
 router.register(r'incoming-documents', IncomingDocumentViewSet)
+router.register(r'backup-configs', BackupConfigurationViewSet, basename='backup-config')
+router.register(r'backup-files', BackupFileViewSet, basename='backup-file')
 
 urlpatterns = [
     path('api/auth/login/', login_view, name='login'),

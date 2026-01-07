@@ -34,7 +34,7 @@ import BankStatements from './pages/BankStatements';
 import BankStatementForm from './pages/BankStatementForm';
 import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
-import BackupRestore from './pages/BackupRestore';
+import BackupRestore from './pages/Settings/BackupRestore';
 import ApiAccess from './pages/ApiAccess';
 
 const queryClient = new QueryClient({

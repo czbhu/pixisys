@@ -12,6 +12,8 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  timeout: 30000, // 30 másodperces timeout
+  timeoutErrorMessage: 'A kérés túllépte az időkorlátot (30s)',
 });
 
 // Add CSRF token to requests
@@ -30,6 +32,38 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// Response interceptor - automatikus újrapróbálkozás hálózati hibáknál
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config;
+
+    // Ha nincs válasz (hálózati hiba, timeout), próbáljuk újra max 2x
+    if (!error.response && !config._retry) {
+      config._retry = (config._retry || 0) + 1;
+      
+      if (config._retry <= 2) {
+        console.log(`Újrapróbálás (${config._retry}/2)...`);
+        // Várunk egy kicsit mielőtt újrapróbálnánk (exponenciális backoff)
+        await new Promise(resolve => setTimeout(resolve, 1000 * config._retry));
+        return api(config);
+      }
+    }
+
+    // Ha 403 Forbidden és van apiKey, akkor lehet hogy lejárt a session
+    if (error.response?.status === 403) {
+      const apiKey = localStorage.getItem('apiKey');
+      if (apiKey && window.location.pathname !== '/login') {
+        console.warn('Session lejárt vagy érvénytelen API kulcs');
+        // Opcionálisan: átirányítás login oldalra
+        // window.location.href = '/login';
+      }
+    }
+
+    return Promise.reject(error);
+  }
+);
 
 // API endpoints
 export const invoiceAPI = {

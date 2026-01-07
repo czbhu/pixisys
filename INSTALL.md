@@ -881,6 +881,16 @@ sudo journalctl -u pixierp-backend -f
 
 ---
 
+## 📚 További Dokumentáció
+
+- [README.md](README.md) - Projekt áttekintés
+- [QUICKSTART.md](QUICKSTART.md) - Gyors telepítés
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Production frissítési útmutató
+- [pixierp/README.md](pixierp/README.md) - PixiERP dokumentáció
+- [pixinvoice/README.md](pixinvoice/README.md) - PixInvoice dokumentáció
+
+---
+
 ## Támogatás
 
 - **Email**: support@pixisys.eu

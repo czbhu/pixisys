@@ -51,7 +51,8 @@ cd pixisys
 
 - 📖 **[QUICKSTART.md](QUICKSTART.md)** - Gyors kezdés, 1 perces telepítés
 - 📚 **[INSTALL.md](INSTALL.md)** - Teljes telepítési útmutató, production beállítások
-- 🔧 **[pixierp/README.md](pixierp/README.md)** - PixiERP részletes dokumentáció
+- � **[DEPLOYMENT.md](DEPLOYMENT.md)** - Production frissítési útmutató
+- �🔧 **[pixierp/README.md](pixierp/README.md)** - PixiERP részletes dokumentáció
 - 💼 **[pixinvoice/README.md](pixinvoice/README.md)** - PixInvoice részletes dokumentáció
 
 ---
@@ -444,6 +445,7 @@ Changelog:
 
 ### Dokumentáció
 - [QUICKSTART.md](QUICKSTART.md) - Gyors kezdés
+- [DEPLOYMENT.md](DEPLOYMENT.md) - Production frissítés
 - [INSTALL.md](INSTALL.md) - Telepítési útmutató
 - [pixierp/README.md](pixierp/README.md) - PixiERP dokumentáció
 - [pixinvoice/README.md](pixinvoice/README.md) - PixInvoice dokumentáció

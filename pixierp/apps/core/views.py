@@ -680,6 +680,65 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 'error': f'Hiba a backup létrehozása során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
+    @action(detail=False, methods=['post'])
+    def upload_backup(self, request):
+        """Upload a backup file for restoration"""
+        import os
+        from django.conf import settings
+        
+        try:
+            uploaded_file = request.FILES.get('file')
+            if not uploaded_file:
+                return Response({
+                    'error': 'Nincs fájl feltöltve'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Validate file extension
+            if not uploaded_file.name.endswith('.sqlite3'):
+                return Response({
+                    'error': 'Csak .sqlite3 kiterjesztésű fájlok tölthetők fel'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Create backups directory if not exists
+            backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+            
+            # Generate unique filename
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+            original_name = uploaded_file.name.rsplit('.', 1)[0]
+            filename = f'uploaded_{original_name}_{timestamp}.sqlite3'
+            filepath = os.path.join(backup_dir, filename)
+            
+            # Save uploaded file
+            with open(filepath, 'wb+') as destination:
+                for chunk in uploaded_file.chunks():
+                    destination.write(chunk)
+            
+            # Get file size
+            file_size = os.path.getsize(filepath)
+            
+            # Create backup record
+            backup = BackupFile.objects.create(
+                filename=filename,
+                filepath=filepath,
+                file_size=file_size,
+                created_by=request.user,
+                is_manual=True
+            )
+            
+            serializer = self.get_serializer(backup)
+            return Response({
+                'message': 'Backup fájl sikeresen feltöltve',
+                'backup': serializer.data
+            }, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            import traceback
+            return Response({
+                'error': f'Hiba a feltöltés során: {str(e)}',
+                'traceback': traceback.format_exc()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
     @action(detail=True, methods=['get'])
     def download(self, request, pk=None):
         """Download a backup file"""

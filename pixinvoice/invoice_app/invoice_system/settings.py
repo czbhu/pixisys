@@ -228,13 +228,22 @@ if EMAIL_USE_TLS and EMAIL_USE_SSL:
     else:
         EMAIL_USE_SSL = False
 
+# Session settings
+SESSION_COOKIE_AGE = 60 * 60 * 8  # 8 óra (másodpercben)
+SESSION_SAVE_EVERY_REQUEST = True  # Minden kérésnél frissíti a session timeout-ot
+SESSION_EXPIRE_AT_BROWSER_CLOSE = False
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+
 # JWT settings
 from datetime import timedelta
 
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),  # 8 óra (korábban 60 perc volt)
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),  # 7 nap (korábban 1 nap volt)
     'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'UPDATE_LAST_LOGIN': True,
 }
 
 # --- Logging configuration ---
