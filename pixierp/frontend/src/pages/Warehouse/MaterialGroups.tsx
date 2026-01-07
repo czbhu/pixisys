@@ -32,7 +32,7 @@ interface MaterialGroup {
   created_by_name?: string;
 }
 
-const API_URL = 'http://192.168.5.25:8003/api/v1/warehouse';
+const API_URL = 'http://192.168.5.61:8003/api/v1/warehouse';
 
 const MaterialGroups: React.FC = () => {
   const [groups, setGroups] = useState<MaterialGroup[]>([]);

@@ -31,7 +31,7 @@ class Migration(migrations.Migration):
             name='VATType',
             fields=[
                 ('id', models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False, serialize=False)),
-                ('code', models.CharField(max_length=10, unique=True, verbose_name='Kód (NAV)')),
+                ('code', models.CharField(max_length=30, unique=True, verbose_name='Kód (NAV)')),
                 ('name', models.CharField(max_length=100, verbose_name='Megnevezés')),
                 ('category', models.CharField(max_length=20, choices=[('PERCENT', 'Százalékos'), ('EXEMPT', 'Adómentes'), ('REVERSE', 'Fordított adózás'), ('MARGIN', 'Különbözeti ÁFA'), ('OTHER', 'Egyéb')], default='PERCENT', verbose_name='Kategória')),
                 ('percentage', models.DecimalField(blank=True, null=True, max_digits=5, decimal_places=2, verbose_name='Százalék')),

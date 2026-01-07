@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const DEFAULT_DEV_API_BASE_URL = 'http://localhost:4001';
+const DEFAULT_DEV_API_BASE_URL = 'http://192.168.5.61:4001';
 const DEFAULT_PROD_API_BASE_URL = '';
 
 const API_BASE_URL =

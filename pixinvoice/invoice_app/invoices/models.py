@@ -918,7 +918,7 @@ class VATType(models.Model):
     ]
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    code = models.CharField(max_length=10, unique=True, verbose_name="Kód (NAV)")
+    code = models.CharField(max_length=30, unique=True, verbose_name="Kód (NAV)")
     name = models.CharField(max_length=100, verbose_name="Megnevezés")
     category = models.CharField(max_length=20, choices=CATEGORY_CHOICES, default='PERCENT', verbose_name="Kategória")
     percentage = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True, verbose_name="Százalék")

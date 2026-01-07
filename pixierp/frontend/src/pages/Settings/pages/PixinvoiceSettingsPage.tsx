@@ -28,6 +28,7 @@ const PixinvoiceSettingsPage: React.FC = () => {
   const [lookupData, setLookupData] = useState<any>(null);
   const [invoiceSeries, setInvoiceSeries] = useState<any[]>([]);
   const [seriesLoading, setSeriesLoading] = useState(false);
+  const [seriesCache, setSeriesCache] = useState<Record<number, any[]>>({});
 
   const activeItem = useMemo(() => items.find(i => i.is_active) || items[0], [items]);
 
@@ -36,6 +37,23 @@ const PixinvoiceSettingsPage: React.FC = () => {
     try {
       const list = await settingsService.getPixinvoiceConfigs();
       setItems(list);
+      
+      // Load invoice series for all configs with default_invoice_series_id
+      const newSeriesCache: Record<number, any[]> = {};
+      for (const config of list) {
+        if (config.id && config.default_invoice_series_id) {
+          try {
+            const res = await settingsService.getPixinvoiceInvoiceSeries(config.id);
+            if (res.ok && res.series) {
+              newSeriesCache[config.id] = res.series;
+            }
+          } catch (e) {
+            // Silently fail for individual configs
+          }
+        }
+      }
+      setSeriesCache(newSeriesCache);
+      
       if (list.length) {
         const it = list.find((i:any) => i.is_active) || list[0];
         form.setFieldsValue({
@@ -64,6 +82,8 @@ const PixinvoiceSettingsPage: React.FC = () => {
       const res = await settingsService.getPixinvoiceInvoiceSeries(configId);
       if (res.ok && res.series) {
         setInvoiceSeries(res.series || []);
+        // Update cache
+        setSeriesCache(prev => ({ ...prev, [configId]: res.series || [] }));
         if (res.series.length > 0) {
           message.success(`${res.series.length} számlatömb betöltve`);
         } else {
@@ -221,7 +241,25 @@ const PixinvoiceSettingsPage: React.FC = () => {
               { title: 'Név', dataIndex: 'name' },
               { title: 'Alap URL', dataIndex: 'base_url' },
               { title: 'Cég azonosító', dataIndex: 'company_id' as any },
-              { title: 'Aktív', dataIndex: 'is_active', render: (v:boolean) => v ? 'Igen' : 'Nem' },
+              { 
+                title: 'Alapért. számlatömb', 
+                dataIndex: 'default_invoice_series_id' as any,
+                render: (value: string, rec: PixinvoiceConfig) => {
+                  if (!value) return '-';
+                  const series = seriesCache[rec.id!];
+                  if (!series) return value; // Show ID if series not loaded
+                  const selectedSeries = series.find((s: any) => s.id === value);
+                  if (selectedSeries) {
+                    return `${selectedSeries.name} (${selectedSeries.prefix}-${selectedSeries.current_number})`;
+                  }
+                  return value;
+                }
+              },
+              { 
+                title: 'Alapértelmezett', 
+                dataIndex: 'is_active', 
+                render: (v:boolean) => v ? <Text strong style={{ color: '#52c41a' }}>Igen</Text> : 'Nem' 
+              },
               { title: 'Műveletek', render: (_:any, rec:PixinvoiceConfig) => (
                 <Space>
                   <Button onClick={() => { form.setFieldsValue({ ...rec, api_key: '' }); setTestResult(null); }}>Szerkesztés</Button>

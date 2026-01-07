@@ -132,7 +132,7 @@ interface InvoiceItem {
   notes?: string;
 }
 
-const API_URL = 'http://192.168.5.25:8003/api/v1/warehouse';
+const API_URL = 'http://192.168.5.61:8003/api/v1/warehouse';
 
 const SupplierInvoices: React.FC = () => {
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([]);
@@ -194,7 +194,7 @@ const SupplierInvoices: React.FC = () => {
 
   const loadSuppliers = async () => {
     try {
-      const response = await axios.get('http://192.168.5.25:8003/api/v1/crm/companies/?is_supplier=true', axiosConfig);
+      const response = await axios.get('http://192.168.5.61:8003/api/v1/crm/companies/?is_supplier=true', axiosConfig);
       setSuppliers(response.data.results || response.data);
     } catch (error) {
       console.error('Hiba beszállítók betöltésekor:', error);
@@ -986,7 +986,7 @@ const SupplierInvoices: React.FC = () => {
                             size="small"
                             cover={
                               <Image
-                                src={`http://192.168.5.25:8003/media/${imagePath}`}
+                                src={`http://192.168.5.61:8003/media/${imagePath}`}
                                 alt={`Számla kép ${index + 1}`}
                                 style={{ objectFit: 'cover', height: '150px' }}
                               />

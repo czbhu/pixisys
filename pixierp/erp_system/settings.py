@@ -20,7 +20,7 @@ def _split_csv(value: str):
 
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS',
-    default='localhost,127.0.0.1,0.0.0.0,erp.pixisys.eu,te.pixisys.eu',
+    default='localhost,127.0.0.1,0.0.0.0,192.168.5.61,erp.pixisys.eu,te.pixisys.eu',
     cast=_split_csv,
 )
 
@@ -100,8 +100,12 @@ CHANNEL_LAYERS = {
 # Database
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': config('DB_NAME', default='pixierp_db'),
+        'USER': config('DB_USER', default='pixierp_user'),
+        'PASSWORD': config('DB_PASSWORD', default='pixierp2026'),
+        'HOST': config('DB_HOST', default='localhost'),
+        'PORT': config('DB_PORT', default='5432'),
     }
 }
 
@@ -164,7 +168,7 @@ REST_FRAMEWORK = {
 # CORS settings
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000,https://erp.pixisys.eu,http://erp.pixisys.eu',
+    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu',
     cast=_split_csv,
 )
 
@@ -172,7 +176,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='https://erp.pixisys.eu,http://erp.pixisys.eu',
+    default='http://192.168.5.61:3000,http://192.168.5.61:8003,https://erp.pixisys.eu,http://erp.pixisys.eu',
     cast=_split_csv,
 )
 
