@@ -423,6 +423,8 @@ class Invoice(models.Model):
     amount_paid = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Amount Paid")
     completeness_indicator = models.BooleanField(default=False, verbose_name="Completeness Indicator")
     order_reference = models.CharField(max_length=200, blank=True, null=True, verbose_name="Order Reference")
+    # ERP integration
+    erp_order_ids = models.JSONField(blank=True, null=True, verbose_name="ERP Order IDs", help_text="List of ERP order IDs associated with this invoice")
     # Chain references for corrections/storno
     original_invoice = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='modifications', verbose_name="Original Invoice")
     original_invoice_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Original Invoice Number")

@@ -573,6 +573,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             inv = Invoice.objects.get(id=pk)
         except Invoice.DoesNotExist:
             return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+        
+        # Ne lehessen sztornó számláról sztornót készíteni
+        if inv.notes and ('sztornó' in inv.notes.lower() or 'sztorno' in inv.notes.lower()):
+            return Response(
+                {'error': 'Nem készíthető sztornó számla egy sztornó számláról.'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
         from django.db import transaction
         created_ids = []
         with transaction.atomic():

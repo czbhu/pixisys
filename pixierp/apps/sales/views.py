@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, permissions
 from django.db import models
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -1896,16 +1896,20 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(orders, many=True)
         return Response(serializer.data)
     
-    @action(detail=True, methods=['patch'])
+    @action(detail=True, methods=['patch', 'post'], permission_classes=[permissions.AllowAny])
     def update_invoice_number(self, request, pk=None):
-        """Update invoice number for an order"""
+        """Update invoice number for an order (public endpoint for PixInvoice callback)"""
         order = self.get_object()
+        
+        # Check if invoice_number is in request data (even if None)
+        if 'invoice_number' not in request.data:
+            return Response({'error': 'invoice_number mező kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
         invoice_number = request.data.get('invoice_number')
-        if invoice_number:
-            order.invoice_number = invoice_number
-            order.save()
-            return Response(self.get_serializer(order).data)
-        return Response({'error': 'Számla szám kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        # Allow None/null to clear the invoice number (for storno)
+        order.invoice_number = invoice_number
+        order.save()
+        return Response(self.get_serializer(order).data)
     
     @action(detail=False, methods=['post'])
     def create_invoices(self, request):

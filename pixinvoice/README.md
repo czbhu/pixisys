@@ -21,6 +21,33 @@ Modern számlázó alkalmazás React frontenddel és Django backenddel, NAV Onli
 
 ## Telepítés és futtatás
 
+### Gyors telepítés automatikus scripttel
+
+```bash
+# Futtasd a telepítő scriptet
+./install.sh
+```
+
+Ez a script automatikusan:
+- Ellenőrzi a rendszerkövetelményeket
+- Létrehozza a PostgreSQL adatbázist
+- Telepíti a Python és Node.js függőségeket
+- Konfigurálja a környezeti változókat
+- Futtatja az adatbázis migrációkat
+- Létrehoz egy admin felhasználót
+
+### Részletes telepítési útmutató
+
+A részletes, lépésről-lépésre telepítési útmutatóért lásd: [INSTALL.md](INSTALL.md)
+
+Ez tartalmazza:
+- Teljes rendszerkövetelmények
+- Manuális telepítési lépések
+- Termelési (production) környezet beállítása
+- Nginx és Gunicorn konfiguráció
+- SSL/HTTPS beállítás
+- Hibaelhárítás
+
 ### Előfeltételek
 - Python 3.8+
 - Node.js 16+

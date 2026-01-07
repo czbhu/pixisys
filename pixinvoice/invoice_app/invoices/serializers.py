@@ -494,7 +494,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'status', 'nav_transaction_id',
             'nav_submission_date', 'nav_response', 'notes', 'created_by',
             'created_at', 'updated_at', 'total_net_amount', 'total_vat_amount',
-            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used'
+            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used', 'erp_order_ids'
         ]
 
     def create(self, validated_data):
@@ -549,6 +549,8 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
     modify_without_master = serializers.BooleanField(required=False)
     # Optional: advance invoices to tie for FINAL invoice
     advance_invoice_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+    # ERP integration
+    erp_order_ids = serializers.ListField(child=serializers.IntegerField(), required=False, allow_null=True)
 
     class Meta:
         model = Invoice
@@ -558,7 +560,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             'payment_method', 'invoice_category', 'invoice_appearance', 'payment_date', 'completeness_indicator', 'order_reference',
             'notes', 'invoice_block_id', 'company_id',
             'original_invoice_id', 'original_invoice_number', 'modification_index', 'modify_without_master',
-            'advance_invoice_ids'
+            'advance_invoice_ids', 'erp_order_ids'
         ]
         extra_kwargs = {
             'invoice_number': {'required': False},

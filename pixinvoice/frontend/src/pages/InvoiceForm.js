@@ -676,6 +676,12 @@ const InvoiceForm = () => {
           if (stornoFrom) {
             newItems = newItems.map(it => ({ ...it, quantity: (Number(it.quantity) || 0) * -1 }));
             setValue('notes', `Sztornó számla az alábbi számlára: ${base.invoice_number}`);
+            
+            // Store original invoice's ERP order IDs for clearing after storno save
+            if (base.erp_order_ids && Array.isArray(base.erp_order_ids) && base.erp_order_ids.length > 0) {
+              console.log('[STORNO] Storing original invoice ERP order IDs for clearing after save:', base.erp_order_ids);
+              erpOrderIdsRef.current = base.erp_order_ids;
+            }
           }
           if (correctFrom) {
             setValue('notes', `Helyesbítő számla az alábbi számlára: ${base.invoice_number}`);
@@ -691,6 +697,7 @@ const InvoiceForm = () => {
   const KEEP_FLAG_KEY = React.useMemo(() => `${DRAFT_KEY}__keep_on_refresh`, [DRAFT_KEY]);
   const hasDraftRef = React.useRef(false);
   const hasERPDataRef = React.useRef(false);
+  const erpOrderIdsRef = React.useRef([]); // Store ERP order IDs for callback
 
   // Load draft from localStorage on mount (skip for copy/correct/storno flows and ERP data)
   React.useEffect(() => {
@@ -829,6 +836,52 @@ const InvoiceForm = () => {
         } else {
           try { queryClient.invalidateQueries({ predicate: (q) => Array.isArray(q.queryKey) && q.queryKey[0] === 'invoices' }); } catch { queryClient.invalidateQueries('invoices'); }
           toast.success('Számla létrehozva');
+          
+          // Handle ERP order IDs callback
+          const createdInvoice = res?.data || {};
+          const invoiceNumber = createdInvoice.invoice_number;
+          const isStorno = stornoFrom && erpOrderIdsRef.current.length > 0;
+          
+          if (erpOrderIdsRef.current.length > 0) {
+            const invoiceNumToSend = isStorno ? null : invoiceNumber;
+            const actionMsg = isStorno ? 'Törlés' : 'Frissítés';
+            
+            console.log(`[ERP Callback] ${actionMsg} - invoice_number to ERP:`, invoiceNumToSend, 'for orders:', erpOrderIdsRef.current);
+            
+            // Call ERP API for each order
+            const updatePromises = erpOrderIdsRef.current.map(async (orderId) => {
+              try {
+                const response = await fetch(`http://192.168.5.61:8003/api/v1/sales/customer-orders/${orderId}/update_invoice_number/`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify({ invoice_number: invoiceNumToSend }),
+                });
+                
+                if (response.ok) {
+                  console.log(`[ERP Callback] Successfully updated order ${orderId}`);
+                } else {
+                  console.error(`[ERP Callback] Failed to update order ${orderId}:`, response.status);
+                }
+              } catch (error) {
+                console.error(`[ERP Callback] Error updating order ${orderId}:`, error);
+              }
+            });
+            
+            Promise.all(updatePromises).then(() => {
+              if (isStorno) {
+                toast.success('Sztornó számla létrehozva, eredeti megrendelések számlázhatók');
+              } else {
+                toast.success(`Számlaszám (${invoiceNumber}) visszaküldve az ERP-nek`);
+              }
+              erpOrderIdsRef.current = []; // Clear after successful callback
+            }).catch((err) => {
+              console.error('[ERP Callback] Error in callback:', err);
+              toast.warning('Számla létrehozva, de nem sikerült értesíteni az ERP-t');
+            });
+          }
+          
           try {
             const inv = res?.data || {};
             const st = inv.status;
@@ -1231,6 +1284,10 @@ const InvoiceForm = () => {
           invoiceData.advance_invoice_ids = ids;
         }
       }
+      // Include ERP order IDs if available
+      if (erpOrderIdsRef.current && erpOrderIdsRef.current.length > 0) {
+        invoiceData.erp_order_ids = erpOrderIdsRef.current;
+      }
       if (isEdit) updateInvoiceMutation.mutate(invoiceData); else createInvoiceMutation.mutate(invoiceData);
     }
   };
@@ -1364,6 +1421,12 @@ const InvoiceForm = () => {
       const erpData = sp.get('erp_data');
       if (!erpData) return;
       
+      // Prevent double loading
+      if (hasERPDataRef.current) {
+        console.log('[ERP] Data already loaded, skipping');
+        return;
+      }
+      
       console.log('[ERP] Found ERP data in URL');
       hasERPDataRef.current = true; // Mark that ERP data was loaded
       
@@ -1395,7 +1458,6 @@ const InvoiceForm = () => {
             if (customer) {
               console.log('[ERP] Customer found:', customer);
               setValue('customer_id', customer.id);
-              toast.success(`Ügyfél kiválasztva: ${customer.name}`);
             } else {
               console.log('[ERP] Customer NOT found with tax_number:', draft.customer.tax_number);
               console.log('[ERP] Will query NAV and create customer if needed');
@@ -1420,7 +1482,6 @@ const InvoiceForm = () => {
                   customerAPI.createCustomer(newCustomerData).then(createResp => {
                     console.log('[ERP] Customer created:', createResp.data);
                     setValue('customer_id', createResp.data.id);
-                    toast.success(`Ügyfél létrehozva NAV adatokból: ${createResp.data.name}`);
                   }).catch(createErr => {
                     console.error('[ERP] Error creating customer:', createErr);
                     toast.error('Hiba az ügyfél létrehozásakor');
@@ -1440,7 +1501,6 @@ const InvoiceForm = () => {
                   customerAPI.createCustomer(newCustomerData).then(createResp => {
                     console.log('[ERP] Customer created:', createResp.data);
                     setValue('customer_id', createResp.data.id);
-                    toast.success(`Ügyfél létrehozva: ${createResp.data.name}`);
                   }).catch(createErr => {
                     console.error('[ERP] Error creating customer:', createErr);
                     toast.error('Hiba az ügyfél létrehozásakor');
@@ -1461,7 +1521,6 @@ const InvoiceForm = () => {
                 customerAPI.createCustomer(newCustomerData).then(createResp => {
                   console.log('[ERP] Customer created:', createResp.data);
                   setValue('customer_id', createResp.data.id);
-                  toast.success(`Ügyfél létrehozva: ${createResp.data.name}`);
                 }).catch(createErr => {
                   console.error('[ERP] Error creating customer:', createErr);
                   toast.error('Hiba az ügyfél létrehozásakor');
@@ -1488,6 +1547,12 @@ const InvoiceForm = () => {
       if (draft.notes) {
         console.log('[ERP] Setting notes:', draft.notes);
         setValue('notes', draft.notes);
+      }
+      
+      // Store ERP order IDs for callback after invoice creation
+      if (draft.erp_order_ids && Array.isArray(draft.erp_order_ids)) {
+        console.log('[ERP] Storing order IDs for callback:', draft.erp_order_ids);
+        erpOrderIdsRef.current = draft.erp_order_ids;
       }
       
       toast.success('Adatok betöltve az ERP-ből');

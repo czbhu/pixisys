@@ -11,13 +11,16 @@ import {
   Filter,
   Download,
   Copy,
-  RotateCcw,
-  FileDiff
+  FileDiff,
+  Mail,
+  RefreshCw,
+  ArrowUp
 } from 'lucide-react';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
 import { invoiceAPI, emailSettingsAPI } from '../services/api';
 import EmailModal from '../components/EmailModal';
+import Modal from '../components/Modal';
 
 const InvoicesContainer = styled.div`
   background: white;
@@ -166,10 +169,17 @@ const IconButton = styled.button`
       case 'send': return '#27ae60';
       case 'view': return '#6c757d';
       case 'status': return '#8e44ad';
+      case 'copy': return '#2c3e50'; // sötétkék
+      case 'correct': return '#ff6b6b'; // világos piros
+      case 'storno': return '#c0392b'; // sötét piros
+      case 'nav': return '#27ae60'; // zöld
+      case 'email': return '#3498db'; // kék
       default: return '#f8f9fa';
     }
   }};
   color: white;
+  font-size: ${props => props.$fontSize || '16px'};
+  font-weight: ${props => props.$fontWeight || 'normal'};
 
   &:hover {
     opacity: 0.8;
@@ -240,6 +250,9 @@ const Invoices = () => {
   const [emailDefaults, setEmailDefaults] = useState({});
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [bulkMode, setBulkMode] = useState(false);
+  const [stornoModalOpen, setStornoModalOpen] = useState(false);
+  const [stornoInvoice, setStornoInvoice] = useState(null);
+  const [stornoProcessing, setStornoProcessing] = useState(false);
 
   // Keep company selection in sync with sidebar/localStorage
   React.useEffect(() => {
@@ -336,6 +349,54 @@ const Invoices = () => {
       }));
     } finally {
       setNavStatusLoading((s) => ({ ...s, [id]: false }));
+    }
+  };
+
+  const handleStornoConfirm = async () => {
+    if (!stornoInvoice) return;
+    
+    setStornoProcessing(true);
+    try {
+      let createdIds = [];
+      
+      if (stornoInvoice.invoice_category === 'ADVANCE') {
+        const { data } = await invoiceAPI.advanceUsage(stornoInvoice.id);
+        const finals = data?.results || [];
+        if (finals.length) {
+          // Cascade storno for advance invoices
+          const response = await invoiceAPI.cascadeStorno(stornoInvoice.id);
+          createdIds = response.data?.created_storno_ids || [];
+        } else {
+          const response = await invoiceAPI.storno(stornoInvoice.id);
+          createdIds = response.data?.created_storno_ids || [response.data?.id];
+        }
+      } else {
+        const response = await invoiceAPI.storno(stornoInvoice.id);
+        createdIds = response.data?.created_storno_ids || [response.data?.id];
+      }
+      
+      // Automatikusan NAV-hoz küldés minden létrehozott sztornó számláról
+      for (const id of createdIds) {
+        if (id) {
+          try {
+            await invoiceAPI.submitToNAV(id);
+          } catch (navErr) {
+            console.error('NAV submission error for invoice', id, navErr);
+            toast.error(`Hiba a NAV-hoz küldés során: ${id}`);
+          }
+        }
+      }
+      
+      toast.success('Sztornózás kész és elküldve a NAV-nak!');
+      setStornoModalOpen(false);
+      setStornoInvoice(null);
+      queryClient.invalidateQueries('invoices');
+    } catch (err) {
+      console.error(err);
+      const msg = err?.response?.data?.error || err?.message || 'Hiba történt a sztornózás során';
+      toast.error(msg);
+    } finally {
+      setStornoProcessing(false);
     }
   };
 
@@ -814,7 +875,7 @@ const Invoices = () => {
                       <Edit size={16} />
                     </IconButton>
                     <IconButton
-                      variant="status"
+                      variant="copy"
                       title="Új számla a meglévő alapján"
                       as={Link}
                       to={`/invoices/new?copy_from=${invoice.id}`}
@@ -822,66 +883,41 @@ const Invoices = () => {
                       <Copy size={16} />
                     </IconButton>
                     <IconButton
-                      variant="status"
+                      variant="correct"
                       title="Helyesbítő számla készítése"
                       as={Link}
                       to={`/invoices/new?correct_from=${invoice.id}`}
                     >
                       <FileDiff size={16} />
                     </IconButton>
-                    <IconButton
-                      variant="status"
-                      title="Sztornó számla készítése"
-                      onClick={async (e) => {
-                        e.preventDefault();
-                        try {
-                          if (invoice.invoice_category === 'ADVANCE') {
-                            const { data } = await invoiceAPI.advanceUsage(invoice.id);
-                            const finals = data?.results || [];
-                            if (finals.length) {
-                              const names = finals.map(f => `${f.invoice_number} (${new Date(f.issue_date).toLocaleDateString()})`).join(', ');
-                              const ok = window.confirm(`Ez az előleg már felhasználásra került a következő végszámlákon: ${names}. Biztosan szeretnéd sztornózni? A kapcsolódó végszámlák is sztornózásra kerülnek.`);
-                              if (!ok) return;
-                              await invoiceAPI.cascadeStorno(invoice.id);
-                              alert('Sztornózás kész. Az érintett számlák sztornó változatai létrejöttek.');
-                              window.location.reload();
-                              return;
-                            }
-                            await invoiceAPI.storno(invoice.id);
-                            alert('Sztornózás kész.');
-                            window.location.reload();
-                            return;
-                          } else {
-                            // If FINAL used advances, warn that the felhasználás will be visszavonva (de-allocation)
-                            if (Array.isArray(invoice.advances_used) && invoice.advances_used.length) {
-                              const names = invoice.advances_used.map(a => a.invoice_number).join(', ');
-                              const ok = window.confirm(`Ez a végszámla az alábbi előlegeket használta fel: ${names}. A sztornózás visszavonja ezeket a felhasználásokat, de az előleg számlák nem kerülnek sztornózásra. Folytatod?`);
-                              if (!ok) return;
-                            }
-                            await invoiceAPI.storno(invoice.id);
-                            alert('Sztornózás kész.');
-                            window.location.reload();
-                            return;
-                          }
-                        } catch (err) {
-                          console.error(err);
-                          alert('Hiba történt a sztornózás során.');
-                        }
-                      }}
-                    >
-                      <RotateCcw size={16} />
-                    </IconButton>
+                    {!isStorno(invoice) && (
+                      <IconButton
+                        variant="storno"
+                        title="Sztornó számla készítése"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setStornoInvoice(invoice);
+                          setStornoModalOpen(true);
+                        }}
+                      >
+                        <Trash2 size={16} />
+                      </IconButton>
+                    )}
                     {((!invoice.nav_transaction_id) || invoice.status === 'draft' || invoice.status === 'nav_rejected') && (
                       <IconButton
-                        variant="send"
+                        variant="nav"
                         title="NAV-nak küldés"
                         onClick={() => handleSubmitToNAV(invoice.id)}
+                        style={{ position: 'relative', fontSize: '10px', fontWeight: 'bold' }}
                       >
-                        <Send size={16} />
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                          <ArrowUp size={10} />
+                          <span style={{ fontSize: 8 }}>NAV</span>
+                        </div>
                       </IconButton>
                     )}
                     <IconButton
-                      variant="status"
+                      variant="nav"
                       title={['draft','nav_rejected'].includes(invoice.status) ? 'Újraküldés a NAV-nak' : 'NAV státusz lekérdezése'}
                       onClick={() => {
                         if (['draft','nav_rejected'].includes(invoice.status)) {
@@ -892,15 +928,19 @@ const Invoices = () => {
                           handleCheckNAVStatus(invoice.id);
                         }
                       }}
+                      style={{ position: 'relative', fontSize: '10px', fontWeight: 'bold' }}
                     >
-                      <Search size={16} />
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2 }}>
+                        <RefreshCw size={10} />
+                        <span style={{ fontSize: 8 }}>NAV</span>
+                      </div>
                     </IconButton>
                     <IconButton
-                      variant="status"
+                      variant="email"
                       title="Számla küldése e-mailben (PDF)"
                       onClick={() => openEmailModal(invoice)}
                     >
-                      <Send size={16} />
+                      <Mail size={16} />
                     </IconButton>
                     {/* Törlés letiltva: csak sztornó */}
                   </ActionButtons>
@@ -977,6 +1017,112 @@ const Invoices = () => {
         defaultUseThunderbird={emailDefaults.defaultUseThunderbird}
         defaultThunderbirdPath={emailDefaults.defaultThunderbirdPath}
       />
+    )}
+    {stornoModalOpen && stornoInvoice && (
+      <Modal
+        isOpen={stornoModalOpen}
+        title="Sztornó számla készítése"
+        onClose={() => !stornoProcessing && setStornoModalOpen(false)}
+        footer={
+          <>
+            <button
+              onClick={() => setStornoModalOpen(false)}
+              disabled={stornoProcessing}
+              style={{
+                padding: '8px 16px',
+                border: '1px solid #ddd',
+                borderRadius: 4,
+                background: '#fff',
+                cursor: stornoProcessing ? 'not-allowed' : 'pointer',
+                opacity: stornoProcessing ? 0.5 : 1,
+              }}
+            >
+              Mégse
+            </button>
+            <button
+              onClick={handleStornoConfirm}
+              disabled={stornoProcessing}
+              style={{
+                padding: '8px 16px',
+                border: 'none',
+                borderRadius: 4,
+                background: '#e74c3c',
+                color: '#fff',
+                fontWeight: 500,
+                cursor: stornoProcessing ? 'not-allowed' : 'pointer',
+                opacity: stornoProcessing ? 0.5 : 1,
+              }}
+            >
+              {stornoProcessing ? 'Feldolgozás...' : 'Igen, sztornózom'}
+            </button>
+          </>
+        }
+      >
+        <div style={{ fontSize: 15, lineHeight: 1.6 }}>
+          <p style={{ margin: '0 0 16px 0', fontWeight: 500 }}>
+            Biztosan sztornózni szeretnéd a következő számlát?
+          </p>
+          <div style={{ background: '#f8f9fa', padding: 12, borderRadius: 6, marginBottom: 16 }}>
+            <div><strong>Számlaszám:</strong> {stornoInvoice.invoice_number}</div>
+            <div><strong>Ügyfél:</strong> {stornoInvoice.customer?.name}</div>
+            <div><strong>Összeg:</strong> {formatCurrency(stornoInvoice.total_gross_amount)}</div>
+          </div>
+          
+          {/* Tételek táblázat */}
+          {Array.isArray(stornoInvoice.items) && stornoInvoice.items.length > 0 && (
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 600, marginBottom: 8, fontSize: 14 }}>Sztornózandó tételek:</div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ 
+                  width: '100%', 
+                  borderCollapse: 'collapse', 
+                  fontSize: 13,
+                  border: '1px solid #ddd'
+                }}>
+                  <thead>
+                    <tr style={{ background: '#f8f9fa' }}>
+                      <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Megnevezés</th>
+                      <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid #ddd' }}>Cikkszám</th>
+                      <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Mennyiség</th>
+                      <th style={{ padding: '8px', textAlign: 'center', borderBottom: '1px solid #ddd' }}>Egység</th>
+                      <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Nettó</th>
+                      <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid #ddd' }}>Nettó összesen</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stornoInvoice.items.map((item, idx) => (
+                      <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
+                        <td style={{ padding: '8px' }}>{item.description}</td>
+                        <td style={{ padding: '8px' }}>{item.product_code_value || '—'}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{item.quantity}</td>
+                        <td style={{ padding: '8px', textAlign: 'center' }}>{item.unit_of_measure || 'db'}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.unit_price)}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.net_amount)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+          
+          {stornoInvoice.invoice_category === 'ADVANCE' && (
+            <p style={{ color: '#e67e22', marginBottom: 12, fontSize: 14 }}>
+              <strong>Figyelem:</strong> Ez egy előleg számla. Ha már felhasználásra került végszámlákon, 
+              azok is sztornózásra kerülnek.
+            </p>
+          )}
+          {Array.isArray(stornoInvoice.advances_used) && stornoInvoice.advances_used.length > 0 && (
+            <p style={{ color: '#e67e22', marginBottom: 12, fontSize: 14 }}>
+              <strong>Figyelem:</strong> Ez a végszámla előlegeket használt fel. 
+              A sztornózás visszavonja ezeket a felhasználásokat.
+            </p>
+          )}
+          <p style={{ margin: '0', fontSize: 14, color: '#27ae60', fontWeight: 500 }}>
+            A sztornó számla létrehozása után automatikusan elküldésre kerül a NAV-hoz.
+          </p>
+        </div>
+      </Modal>
     )}
   </>
   );

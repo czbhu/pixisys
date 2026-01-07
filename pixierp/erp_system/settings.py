@@ -168,7 +168,7 @@ REST_FRAMEWORK = {
 # CORS settings
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu',
+    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu,http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000',
     cast=_split_csv,
 )
 

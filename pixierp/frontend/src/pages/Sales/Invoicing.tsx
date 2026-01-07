@@ -1,9 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Checkbox, message, Card } from 'antd';
+import { Table, Button, Checkbox, message, Card, Select, Tag } from 'antd';
 import { FileTextOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import axios from 'axios';
 import type { ColumnsType } from 'antd/es/table';
+
+const { Option } = Select;
+
+type InvoiceStatus = 'all' | 'to_invoice' | 'invoiced';
 
 interface InvoiceableOrder {
   id: number;
@@ -42,6 +46,7 @@ const Invoicing: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
+  const [statusFilter, setStatusFilter] = useState<InvoiceStatus>('to_invoice');
 
   const calculateNetTotal = (order: InvoiceableOrder): number => {
     let total = 0;
@@ -77,6 +82,11 @@ const Invoicing: React.FC = () => {
   };
 
   const handleRowClick = (record: InvoiceableOrder, index: number, event: React.MouseEvent) => {
+    // Don't allow selection of invoiced orders
+    if (record.invoice_number) {
+      return;
+    }
+    
     const recordId = record.id;
     
     if (event.shiftKey && lastSelectedIndex !== null) {
@@ -181,6 +191,7 @@ const Invoicing: React.FC = () => {
           },
           items: items,
           notes: `ERP megrendelések: ${companyOrders.map(o => o.order_number).join(', ')}`,
+          erp_order_ids: companyOrders.map(o => o.id), // Send order IDs for callback
         };
 
         // Encode data as base64 to pass in URL (sessionStorage doesn't work across different origins)
@@ -221,12 +232,25 @@ const Invoicing: React.FC = () => {
 
   const columns: ColumnsType<InvoiceableOrder> = [
     {
+      title: 'Státusz',
+      key: 'status',
+      width: 100,
+      render: (_, record) => (
+        record.invoice_number ? (
+          <Tag color="green">Számlázott</Tag>
+        ) : (
+          <Tag color="orange">Számlázandó</Tag>
+        )
+      ),
+    },
+    {
       title: 'Számlázandó',
       key: 'select',
       width: 100,
       render: (_, record, index) => (
         <Checkbox
           checked={selectedRowKeys.includes(record.id)}
+          disabled={!!record.invoice_number}
           onChange={(e) => {
             e.stopPropagation();
             handleRowClick(record, index, e.nativeEvent as any);
@@ -264,25 +288,13 @@ const Invoicing: React.FC = () => {
       title: 'Számla szám',
       dataIndex: 'invoice_number',
       key: 'invoice_number',
-      render: (invoiceNumber: string | null, record) => (
+      render: (invoiceNumber: string | null) => (
         <input
           type="text"
           value={invoiceNumber || ''}
-          onChange={(e) => {
-            const newValue = e.target.value;
-            setOrders(prevOrders =>
-              prevOrders.map(o =>
-                o.id === record.id ? { ...o, invoice_number: newValue } : o
-              )
-            );
-          }}
-          onBlur={(e) => {
-            if (e.target.value && e.target.value !== invoiceNumber) {
-              updateInvoiceNumber(record.id, e.target.value);
-            }
-          }}
-          style={{ width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: '4px' }}
-          placeholder="Számla szám"
+          disabled
+          style={{ width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: '4px', backgroundColor: '#f5f5f5', cursor: 'not-allowed' }}
+          placeholder="-"
         />
       ),
     },
@@ -305,30 +317,55 @@ const Invoicing: React.FC = () => {
     },
   ];
 
+  // Filter orders based on status
+  const filteredOrders = orders.filter(order => {
+    if (statusFilter === 'all') return true;
+    if (statusFilter === 'invoiced') return !!order.invoice_number;
+    if (statusFilter === 'to_invoice') return !order.invoice_number;
+    return true;
+  });
+
   return (
     <div style={{ padding: 24 }}>
       <Card
         title="Számlázás"
         extra={
-          <Button
-            type="primary"
-            icon={<FileTextOutlined />}
-            onClick={handleInvoice}
-            disabled={selectedRowKeys.length === 0}
-          >
-            Számlázás ({selectedRowKeys.length})
-          </Button>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+            <Select
+              value={statusFilter}
+              onChange={(value) => {
+                setStatusFilter(value);
+                setSelectedRowKeys([]); // Clear selection when filter changes
+              }}
+              style={{ width: 150 }}
+            >
+              <Option value="to_invoice">Számlázandó</Option>
+              <Option value="invoiced">Számlázott</Option>
+              <Option value="all">Mind</Option>
+            </Select>
+            <Button
+              type="primary"
+              icon={<FileTextOutlined />}
+              onClick={handleInvoice}
+              disabled={selectedRowKeys.length === 0}
+            >
+              Számlázás ({selectedRowKeys.length})
+            </Button>
+          </div>
         }
       >
         <Table
-          dataSource={orders}
+          dataSource={filteredOrders}
           columns={columns}
           rowKey="id"
           loading={loading}
           pagination={{ pageSize: 20 }}
           onRow={(record, index) => ({
             onClick: (event) => handleRowClick(record, index!, event),
-            style: { cursor: 'pointer' },
+            style: { 
+              cursor: record.invoice_number ? 'default' : 'pointer',
+              opacity: record.invoice_number ? 0.7 : 1,
+            },
           })}
         />
       </Card>
