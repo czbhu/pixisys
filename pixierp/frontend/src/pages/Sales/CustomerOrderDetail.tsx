@@ -5,7 +5,7 @@ import { ItemsTable } from '../../components/Sales/ItemsTable';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
 import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined } from '@ant-design/icons';
-import axios from 'axios';
+import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -30,13 +30,7 @@ const CustomerOrderDetail: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const token = localStorage.getItem('access_token');
-      const axiosConfig = {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      };
-      const response = await axios.get(`http://localhost:8003/api/v1/sales/customer-orders/${id}/`, axiosConfig);
+      const response = await api.get(`/sales/customer-orders/${id}/`);
       const orderData = response.data;
       setOrder(orderData);
       
@@ -83,13 +77,7 @@ const CustomerOrderDetail: React.FC = () => {
 
   const handleStatusChange = async (action: string) => {
     try {
-      const token = localStorage.getItem('access_token');
-      const axiosConfig = {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      };
-      await axios.post(`http://localhost:8003/api/v1/sales/customer-orders/${id}/${action}/`, {}, axiosConfig);
+      await api.post(`/sales/customer-orders/${id}/${action}/`, {});
       message.success('Státusz frissítve');
       load();
     } catch (error: any) {

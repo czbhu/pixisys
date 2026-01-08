@@ -4,7 +4,6 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import get_user_model
 from django.utils.crypto import get_random_string
-from django.core.mail import send_mail
 from django.conf import settings
 from datetime import datetime, date, timedelta
 from django.db.models import Min, Max, Q
@@ -40,6 +39,9 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def generate_password(self, request, pk=None):
         """Jelszó generálása és e-mail küldése"""
+        from django.core.mail import get_connection, EmailMultiAlternatives
+        from apps.core.models import EmailServerConfig
+        
         employee = self.get_object()
         
         # Új jelszó generálása
@@ -56,15 +58,69 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         
         # E-mail küldése (ha van SMTP konfigurálva)
         try:
-            send_mail(
-                subject='Új jelszó - PixiERP',
-                message=f'Az új jelszó: {new_password}',
-                from_email=settings.DEFAULT_FROM_EMAIL,
-                recipient_list=[user.email],
+            # EmailServerConfig használata - ugyanaz mint a teszt email
+            email_config = EmailServerConfig.objects.filter(is_active=True).first()
+            if not email_config:
+                return Response(
+                    {'message': 'Jelszó generálva, de nincs aktív email szerver konfiguráció'},
+                    status=status.HTTP_206_PARTIAL_CONTENT
+                )
+            
+            # SMTP kapcsolat létrehozása - explicit backend használattal
+            connection = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
+                host=email_config.smtp_host,
+                port=email_config.smtp_port,
+                username=email_config.smtp_username,
+                password=email_config.smtp_password,
+                use_tls=email_config.smtp_use_tls,
+                use_ssl=email_config.smtp_use_ssl,
                 fail_silently=False,
+                timeout=10,
             )
+            
+            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+            
+            html_content = f"""
+            <html>
+                <body>
+                    <h2>PixiERP - Új jelszó</h2>
+                    <p>Tisztelt {user.get_full_name() or user.username}!</p>
+                    <p>Az Ön új jelszava:</p>
+                    <p style="font-size: 18px; font-weight: bold; background: #f0f0f0; padding: 10px;">{new_password}</p>
+                    <p>Kérjük, jelentkezzen be a rendszerbe és változtassa meg ezt a jelszót egy saját, biztonságos jelszóra.</p>
+                    <hr>
+                    <p><small>Ez egy automatikusan generált üzenet a PixiERP rendszerből.</small></p>
+                </body>
+            </html>
+            """
+            
+            text_content = f"""
+PixiERP - Új jelszó
+
+Tisztelt {user.get_full_name() or user.username}!
+
+Az Ön új jelszava: {new_password}
+
+Kérjük, jelentkezzen be a rendszerbe és változtassa meg ezt a jelszót egy saját, biztonságos jelszóra.
+
+---
+Ez egy automatikusan generált üzenet a PixiERP rendszerből.
+            """
+            
+            msg = EmailMultiAlternatives(
+                subject='Új jelszó - PixiERP',
+                body=text_content,
+                from_email=from_email,
+                to=[user.email],
+                connection=connection
+            )
+            msg.attach_alternative(html_content, "text/html")
+            msg.send()
+            
             return Response({'message': 'Jelszó generálva és e-mailben elküldve'})
         except Exception as e:
+            logger.error(f"Jelszó generálás email hiba: {str(e)}")
             return Response(
                 {'message': f'Jelszó generálva, de e-mail küldése sikertelen: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

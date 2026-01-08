@@ -3,7 +3,7 @@ import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select
 import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
-import axios from 'axios';
+import api from '../../services/api';
 import dayjs from 'dayjs';
 
 const { Search } = Input;
@@ -42,15 +42,10 @@ const CustomerOrders: React.FC = () => {
   const [timestampAction, setTimestampAction] = useState<string>('');
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
 
-  const token = localStorage.getItem('access_token');
-  const axiosConfig = {
-    headers: { Authorization: `Bearer ${token}` },
-  };
-
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const response = await axios.get('http://localhost:8003/api/v1/sales/customer-orders/', axiosConfig);
+      const response = await api.get('/sales/customer-orders/');
       const data = response.data.results || response.data;
       setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -82,7 +77,7 @@ const CustomerOrders: React.FC = () => {
 
   const handleStatusChange = async (orderId: number, action: string, actionText: string) => {
     try {
-      await axios.post(`http://localhost:8003/api/v1/sales/customer-orders/${orderId}/${action}/`, {}, axiosConfig);
+      await api.post(`/sales/customer-orders/${orderId}/${action}/`, {});
       message.success(`${actionText} sikeres`);
       fetchOrders();
     } catch (error: any) {
@@ -213,12 +208,9 @@ const CustomerOrders: React.FC = () => {
                 size="small"
                 onClick={async () => {
                   try {
-                    const response = await axios.get(
-                      `http://localhost:8003/api/v1/sales/customer-orders/${record.id}/work_sheet/`,
+                    const response = await api.get(
+                      `/sales/customer-orders/${record.id}/work_sheet/`,
                       {
-                        headers: {
-                          Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-                        },
                         responseType: 'blob',
                       }
                     );
@@ -374,10 +366,9 @@ const CustomerOrders: React.FC = () => {
         onOk={async () => {
           if (!selectedOrder || !selectedTimestamp) return;
           try {
-            await axios.post(
-              `http://localhost:8003/api/v1/sales/customer-orders/${selectedOrder.id}/${timestampAction}/`,
-              { timestamp: selectedTimestamp.format('YYYY-MM-DD HH:mm:ss') },
-              { headers: { Authorization: `Bearer ${localStorage.getItem('access_token')}` } }
+            await api.post(
+              `/sales/customer-orders/${selectedOrder.id}/${timestampAction}/`,
+              { timestamp: selectedTimestamp.format('YYYY-MM-DD HH:mm:ss') }
             );
             message.success(timestampAction === 'mark_ready' ? 'Készre jelentve' : 'Leszállítva jelölve');
             setTimestampModalOpen(false);
@@ -419,16 +410,11 @@ const CustomerOrders: React.FC = () => {
           const showPrices = (document.getElementById('delivery-show-prices') as HTMLInputElement)?.checked ?? true;
           
           try {
-            const response = await axios.post(
-              `http://localhost:8003/api/v1/sales/customer-orders/${selectedOrder.id}/start_delivery/`,
+            const response = await api.post(
+              `/sales/customer-orders/${selectedOrder.id}/start_delivery/`,
               { 
                 recipient_email: recipientEmail,
                 show_prices: showPrices
-              },
-              {
-                headers: {
-                  Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-                },
               }
             );
             

@@ -1209,7 +1209,7 @@ def public_submit_order(request, token: str):
         return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
     
     # Értesítés küldése emailben
-    from django.core.mail import send_mail
+    from django.core.mail import get_connection, EmailMultiAlternatives
     from django.conf import settings
     
     order_details = []
@@ -1231,13 +1231,32 @@ A megrendelést a publikus linken keresztül küldték be.
 """
     
     try:
-        send_mail(
-            subject=f'Új megrendelés: {qr.number or qr.request_number}',
-            message=email_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            recipient_list=[qr.created_by.email] if qr.created_by and qr.created_by.email else ['admin@pixisys.eu'],
-            fail_silently=False,
-        )
+        # EmailServerConfig használata
+        email_config = EmailServerConfig.objects.filter(is_active=True).first()
+        if email_config:
+            connection = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
+                host=email_config.smtp_host,
+                port=email_config.smtp_port,
+                username=email_config.smtp_username,
+                password=email_config.smtp_password,
+                use_tls=email_config.smtp_use_tls,
+                use_ssl=email_config.smtp_use_ssl,
+                fail_silently=False,
+                timeout=10,
+            )
+            
+            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+            recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
+            
+            msg = EmailMultiAlternatives(
+                subject=f'Új megrendelés: {qr.number or qr.request_number}',
+                body=email_body,
+                from_email=from_email,
+                to=[recipient],
+                connection=connection
+            )
+            msg.send()
     except Exception as e:
         # Log the error but don't fail the request
         pass
@@ -1647,7 +1666,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         """Szállítás indítása vagy email újraküldése - publikus link és e-mail generálás"""
         import secrets
         from datetime import timedelta
-        from django.core.mail import send_mail
+        from django.core.mail import get_connection, EmailMultiAlternatives
         from django.template.loader import render_to_string
         from django.conf import settings
         
@@ -1690,31 +1709,56 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         
         # Send email if recipient exists
         email_sent = False
+        error_message = None
         if recipient_email:
             try:
-                context = {
-                    'order': order,
-                    'delivery_url': delivery_url,
-                    'company_name': order.quote_request.company.name if order.quote_request.company else (order.quote_request.customer.name if order.quote_request.customer else 'Ügyfél'),
-                }
-                html_message = render_to_string('emails/delivery_notification.html', context)
-                
-                send_mail(
-                    subject=f'Szállítás megkezdődött - {order.order_number}',
-                    message=f'A megrendelés szállítása megkezdődött. Szállítólevél megtekintése: {delivery_url}',
-                    from_email=settings.DEFAULT_FROM_EMAIL,
-                    recipient_list=[recipient_email],
-                    html_message=html_message,
-                    fail_silently=True,
-                )
-                email_sent = True
+                # EmailServerConfig használata - ugyanaz mint a teszt email
+                email_config = EmailServerConfig.objects.filter(is_active=True).first()
+                if not email_config:
+                    error_message = 'Nincs aktív email szerver konfiguráció'
+                else:
+                    # SMTP kapcsolat létrehozása - explicit backend használattal
+                    connection = get_connection(
+                        backend='django.core.mail.backends.smtp.EmailBackend',
+                        host=email_config.smtp_host,
+                        port=email_config.smtp_port,
+                        username=email_config.smtp_username,
+                        password=email_config.smtp_password,
+                        use_tls=email_config.smtp_use_tls,
+                        use_ssl=email_config.smtp_use_ssl,
+                        fail_silently=False,
+                        timeout=10,
+                    )
+                    
+                    context = {
+                        'order': order,
+                        'delivery_url': delivery_url,
+                        'company_name': order.quote_request.company.name if order.quote_request.company else (order.quote_request.customer.name if order.quote_request.customer else 'Ügyfél'),
+                    }
+                    html_message = render_to_string('emails/delivery_notification.html', context)
+                    text_message = f'A megrendelés szállítása megkezdődött. Szállítólevél megtekintése: {delivery_url}'
+                    
+                    from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+                    
+                    msg = EmailMultiAlternatives(
+                        subject=f'Szállítás megkezdődött - {order.order_number}',
+                        body=text_message,
+                        from_email=from_email,
+                        to=[recipient_email],
+                        connection=connection
+                    )
+                    msg.attach_alternative(html_message, "text/html")
+                    msg.send()
+                    email_sent = True
             except Exception as e:
-                print(f"Email küldési hiba: {e}")
+                error_message = f"Email küldési hiba: {str(e)}"
+                print(error_message)
         
         return Response({
             'order': self.get_serializer(order).data,
             'delivery_url': delivery_url,
             'email_sent': email_sent,
+            'error': error_message,
             'message': 'Email újraküldve' if order.status == 'in_delivery' and order.delivery_started_at else 'Szállítás elindítva'
         })
     

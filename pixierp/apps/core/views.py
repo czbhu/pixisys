@@ -356,9 +356,13 @@ class EmailServerConfigViewSet(viewsets.ModelViewSet):
         
         try:
             log_messages.append(f"Csatlakozás az email szerverhez: {email_server.smtp_host}:{email_server.smtp_port}")
+            log_messages.append(f"Felhasználó: {email_server.smtp_username}")
+            log_messages.append(f"SSL: {email_server.smtp_use_ssl}, TLS: {email_server.smtp_use_tls}")
             
-            # SMTP kapcsolat létrehozása
+            # SMTP kapcsolat létrehozása - FONTOS: backend='django.core.mail.backends.smtp.EmailBackend'
+            # hogy mindig valódi SMTP-t használjon, még DEBUG módban is
             connection = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
                 host=email_server.smtp_host,
                 port=email_server.smtp_port,
                 username=email_server.smtp_username,
@@ -366,6 +370,7 @@ class EmailServerConfigViewSet(viewsets.ModelViewSet):
                 use_tls=email_server.smtp_use_tls,
                 use_ssl=email_server.smtp_use_ssl,
                 fail_silently=False,
+                timeout=10,  # 10 másodperc timeout
             )
             
             log_messages.append("Kapcsolat létrehozva")
@@ -416,23 +421,72 @@ class EmailServerConfigViewSet(viewsets.ModelViewSet):
             msg.attach_alternative(html_content, "text/html")
             
             log_messages.append("Email küldése...")
-            msg.send()
-            log_messages.append("Email sikeresen elküldve!")
+            
+            # Kapcsolat megnyitása és tesztelése
+            log_messages.append("SMTP kapcsolat megnyitása...")
+            try:
+                connection.open()
+                log_messages.append(f"✓ SMTP kapcsolat sikeresen megnyitva")
+            except Exception as conn_error:
+                error_msg = str(conn_error)
+                log_messages.append(f"✗ SMTP kapcsolat hiba: {error_msg}")
+                
+                # Részletesebb hibaüzenetek
+                if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                    log_messages.append("→ A szerver nem válaszol (timeout). Ellenőrizd a host címet és portot.")
+                elif "refused" in error_msg.lower():
+                    log_messages.append("→ A kapcsolat visszautasítva. Lehet, hogy rossz a port, vagy a szerver nem fut.")
+                elif "name or service not known" in error_msg.lower() or "nodename nor servname" in error_msg.lower():
+                    log_messages.append("→ A szerver címe nem létezik vagy nem érhető el.")
+                elif "authentication failed" in error_msg.lower() or "535" in error_msg:
+                    log_messages.append("→ Sikertelen bejelentkezés. Ellenőrizd a felhasználónevet és jelszót.")
+                elif "ssl" in error_msg.lower() or "tls" in error_msg.lower():
+                    log_messages.append("→ SSL/TLS hiba. Próbáld meg megfordítani az SSL és TLS beállításokat.")
+                
+                raise conn_error
+            
+            # Email küldése
+            result = msg.send()
+            log_messages.append(f"✓ Email sikeresen elküldve (eredmény: {result})")
+            
+            connection.close()
+            log_messages.append("✓ SMTP kapcsolat lezárva")
             
             return Response({
                 'success': True,
                 'message': f'Teszt email sikeresen elküldve a {recipient} címre',
-                'log': log_messages
+                'log': log_messages,
+                'smtp_result': result
             })
             
         except Exception as e:
             error_trace = traceback.format_exc()
-            log_messages.append(f"HIBA: {str(e)}")
-            log_messages.append(f"Részletes hiba:\n{error_trace}")
+            error_msg = str(e)
+            
+            log_messages.append(f"✗ HIBA: {error_msg}")
+            
+            # Kategorizált hibaüzenetek
+            if "timed out" in error_msg.lower() or "timeout" in error_msg.lower():
+                user_friendly_error = "Kapcsolat időtúllépés - a szerver nem válaszol."
+            elif "refused" in error_msg.lower():
+                user_friendly_error = "Kapcsolat visszautasítva - ellenőrizd a host címet és portot."
+            elif "name or service not known" in error_msg.lower() or "nodename nor servname" in error_msg.lower():
+                user_friendly_error = "A szerver címe nem létezik vagy nem érhető el (DNS hiba)."
+            elif "authentication failed" in error_msg.lower() or "535" in error_msg:
+                user_friendly_error = "Sikertelen bejelentkezés - rossz felhasználónév vagy jelszó."
+            elif "ssl" in error_msg.lower() or "tls" in error_msg.lower() or "certificate" in error_msg.lower():
+                user_friendly_error = "SSL/TLS titkosítási hiba - ellenőrizd az SSL/TLS beállításokat."
+            elif "no such file" in error_msg.lower():
+                user_friendly_error = "Fájl nem található - lehet, hogy hiányzik egy tanúsítvány."
+            else:
+                user_friendly_error = error_msg
+            
+            log_messages.append(f"→ {user_friendly_error}")
             
             return Response({
                 'success': False,
-                'error': str(e),
+                'error': user_friendly_error,
+                'technical_error': error_msg,
                 'log': log_messages,
                 'traceback': error_trace
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Table, Button, Checkbox, message, Card, Select, Tag } from 'antd';
 import { FileTextOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
 
 const { Option } = Select;
@@ -65,14 +65,7 @@ const Invoicing: React.FC = () => {
   const fetchOrders = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(
-        'http://localhost:8003/api/v1/sales/customer-orders/invoiceable/',
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-          },
-        }
-      );
+      const response = await api.get('/sales/customer-orders/invoiceable/');
       setOrders(response.data);
     } catch (error: any) {
       message.error('Hiba a megrendelések betöltése során');
@@ -214,14 +207,9 @@ const Invoicing: React.FC = () => {
 
   const updateInvoiceNumber = async (orderId: number, invoiceNumber: string) => {
     try {
-      await axios.patch(
-        `http://localhost:8003/api/v1/sales/customer-orders/${orderId}/update_invoice_number/`,
-        { invoice_number: invoiceNumber },
-        {
-          headers: {
-            Authorization: `Bearer ${localStorage.getItem('access_token')}`,
-          },
-        }
+      await api.patch(
+        `/sales/customer-orders/${orderId}/update_invoice_number/`,
+        { invoice_number: invoiceNumber }
       );
       message.success('Számla szám frissítve');
       fetchOrders();

@@ -24,6 +24,7 @@ import {
     EyeOutlined,
     SearchOutlined
 } from '@ant-design/icons';
+import { useLocation } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
@@ -32,6 +33,7 @@ const { Option } = Select;
 const { TextArea } = Input;
 
 const Companies: React.FC = () => {
+    const location = useLocation();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [companies, setCompanies] = useState<any[]>([]);
@@ -55,6 +57,14 @@ const Companies: React.FC = () => {
     useEffect(() => {
         loadCompanies();
     }, []);
+
+    // Check for action=create query parameter
+    useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        if (searchParams.get('action') === 'create') {
+            showCreateModal();
+        }
+    }, [location.search]);
 
     const loadCompanies = async () => {
         try {

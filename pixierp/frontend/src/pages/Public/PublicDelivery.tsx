@@ -56,7 +56,7 @@ const PublicDelivery: React.FC = () => {
     try {
       setLoading(true);
       const response = await axios.get(
-        `http://localhost:8003/api/v1/sales/customer-orders/public/delivery/${token}/`
+        `/api/v1/sales/customer-orders/public/delivery/${token}/`
       );
       setData(response.data);
       setNotes(response.data.delivery_notes || '');
@@ -80,7 +80,7 @@ const PublicDelivery: React.FC = () => {
     try {
       setSubmitting(true);
       await axios.post(
-        `http://localhost:8003/api/v1/sales/customer-orders/public/delivery/${token}/confirm/`,
+        `/api/v1/sales/customer-orders/public/delivery/${token}/confirm/`,
         {
           confirmed_items: confirmedItems,
           notes: notes,
@@ -112,7 +112,7 @@ const PublicDelivery: React.FC = () => {
   };
 
   const handlePrint = () => {
-    const pdfUrl = `http://localhost:8003/api/v1/sales/customer-orders/public/delivery/${token}/pdf/`;
+    const pdfUrl = `/api/v1/sales/customer-orders/public/delivery/${token}/pdf/`;
     window.open(pdfUrl, '_blank');
   };
 

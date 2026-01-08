@@ -152,6 +152,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.BasicAuthentication',
     ],
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.IsAuthenticated',
@@ -168,7 +170,7 @@ REST_FRAMEWORK = {
 # CORS settings
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu,http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000',
+    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu,http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000',
     cast=_split_csv,
 )
 
@@ -176,7 +178,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://192.168.5.61:3000,http://192.168.5.61:8003,https://erp.pixisys.eu,http://erp.pixisys.eu',
+    default='http://192.168.5.61:3000,http://192.168.5.61:8003,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu',
     cast=_split_csv,
 )
 

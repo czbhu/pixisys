@@ -13,6 +13,7 @@ from django.conf import settings
 from decouple import config
 import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
+from invoices.models import SystemUser
 
 User = get_user_model()
 
@@ -118,7 +119,7 @@ def sso_login_view(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
-    """User login endpoint - accepts email or username"""
+    """User login endpoint - accepts email or username, supports both Django User and SystemUser"""
     email = request.data.get('email')
     password = request.data.get('password')
     
@@ -128,7 +129,46 @@ def login_view(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Try to find user by email first, then by username (for backward compatibility)
+    # Try SystemUser first
+    try:
+        system_user = SystemUser.objects.get(email=email, is_active=True)
+        if system_user.check_password(password):
+            # Get or create corresponding Django user for JWT
+            django_user, created = User.objects.get_or_create(
+                email=email,
+                defaults={
+                    'username': email,
+                    'first_name': system_user.first_name,
+                    'last_name': system_user.last_name,
+                    'is_active': True,
+                }
+            )
+            if created:
+                # Set unusable password for Django user (only SystemUser password is used)
+                django_user.set_unusable_password()
+                django_user.save()
+            
+            # Generate JWT tokens
+            refresh = RefreshToken.for_user(django_user)
+            
+            return Response({
+                'user': {
+                    'id': str(system_user.id),
+                    'email': system_user.email,
+                    'first_name': system_user.first_name,
+                    'last_name': system_user.last_name,
+                    'full_name': system_user.full_name,
+                },
+                'tokens': {
+                    'access': str(refresh.access_token),
+                    'refresh': str(refresh)
+                },
+                'user_type': 'system'
+            })
+    except SystemUser.DoesNotExist:
+        pass
+    
+    # Fallback to Django User authentication
     user = None
     try:
         user_obj = User.objects.get(email=email)
@@ -150,7 +190,8 @@ def login_view(request):
             'tokens': {
                 'access': str(refresh.access_token),
                 'refresh': str(refresh)
-            }
+            },
+            'user_type': 'django'
         })
     else:
         return Response(

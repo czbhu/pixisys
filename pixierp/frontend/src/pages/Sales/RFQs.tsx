@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -676,15 +676,31 @@ const RFQs: React.FC = () => {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item label="Cég" name="company_id" rules={[{ required: true, message: 'Válassz céget' }]}> 
-                <Select showSearch optionFilterProp="label" placeholder="Válassz céget" onChange={async (val) => {
-                  const list = await crmService.getContactsByCompany(val);
-                  setContacts(list.results ?? list);
-                  form.setFieldsValue({ contact_ids: [] });
-                }}>
-                  {companies.map((c: any) => (
-                    <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                  ))}
-                </Select>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Select 
+                    showSearch 
+                    optionFilterProp="label" 
+                    placeholder="Válassz céget" 
+                    style={{ width: 'calc(100% - 32px)' }}
+                    onChange={async (val) => {
+                      const list = await crmService.getContactsByCompany(val);
+                      setContacts(list.results ?? list);
+                      form.setFieldsValue({ contact_ids: [] });
+                    }}
+                  >
+                    {companies.map((c: any) => (
+                      <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                    ))}
+                  </Select>
+                  <Tooltip title="Új cég hozzáadása">
+                    <Button 
+                      icon={<PlusCircleOutlined />}
+                      onClick={() => {
+                        window.open('/crm/companies?action=create', '_blank');
+                      }}
+                    />
+                  </Tooltip>
+                </Space.Compact>
               </Form.Item>
             </Col>
             <Col span={16}>

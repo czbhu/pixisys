@@ -114,18 +114,20 @@ class Employee(BaseModel):
     
     @staticmethod
     def generate_employee_id():
-        """Automatikus alkalmazott ID generálása"""
-        last_employee = Employee.objects.aggregate(max_id=Max('employee_id'))
-        if last_employee['max_id'] is None:
+        """Automatikus alkalmazott ID generálása - csak numerikus ID-k alapján"""
+        # Csak a numerikus employee_id-kat vegyük figyelembe
+        numeric_ids = []
+        for emp in Employee.objects.all():
+            try:
+                numeric_ids.append(int(emp.employee_id))
+            except (ValueError, TypeError):
+                # Skip non-numeric IDs
+                pass
+        
+        if not numeric_ids:
             return '10001'
         else:
-            # Ha van már alkalmazott, akkor a legnagyobb ID + 1
-            try:
-                last_id = int(last_employee['max_id'])
-                return str(last_id + 1)
-            except (ValueError, TypeError):
-                # Ha nem szám, akkor 10001-től kezdjük
-                return '10001'
+            return str(max(numeric_ids) + 1)
     
     @staticmethod
     def generate_username(first_name, last_name):

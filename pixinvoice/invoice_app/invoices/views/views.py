@@ -4033,6 +4033,7 @@ class SystemUserViewSet(viewsets.ModelViewSet):
             )
         
         user.set_password(password)
+        user.save()  # Save the hashed password
         return Response({'message': 'Password updated successfully'})
 
     @action(detail=True, methods=['post'])

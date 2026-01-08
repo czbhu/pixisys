@@ -3,9 +3,13 @@ import axios from 'axios';
 const DEFAULT_DEV_API_BASE_URL = 'http://192.168.5.61:4001';
 const DEFAULT_PROD_API_BASE_URL = '';
 
+// Ha az oldal HTTPS-en fut, használj relatív útvonalat
+const isSecure = window.location.protocol === 'https:';
+
 const API_BASE_URL =
   process.env.REACT_APP_API_URL ||
-  (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_API_BASE_URL : DEFAULT_DEV_API_BASE_URL);
+  (isSecure ? DEFAULT_PROD_API_BASE_URL : 
+    (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_API_BASE_URL : DEFAULT_DEV_API_BASE_URL));
 
 const api = axios.create({
   baseURL: API_BASE_URL,

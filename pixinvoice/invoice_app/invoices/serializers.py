@@ -1048,6 +1048,7 @@ class SystemUserCreateSerializer(serializers.ModelSerializer):
         company_ids = validated_data.pop('company_ids', [])
         user = SystemUser.objects.create(**validated_data)
         user.set_password(password)
+        user.save()  # Save the hashed password
         if company_ids:
             user.companies.set(company_ids)
         return user
