@@ -2,6 +2,8 @@ from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator
 
+# Import emergency access model
+from .models_emergency import EmergencyAccessToken
 
 # User model is handled by Django's built-in User model
 

@@ -1,6 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from .views_emergency import emergency_login_view
 
 router = DefaultRouter()
 router.register(r'companies', views.CompanyViewSet, basename='company')
@@ -16,6 +17,7 @@ router.register(r'user-roles', views.UserRoleViewSet, basename='user-role')
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),
     path('auth/login/', views.login_view, name='login'),
+    path('auth/emergency-login/', emergency_login_view, name='emergency_login'),
     path('auth/register/', views.register_view, name='register'),
     path('auth/logout/', views.logout_view, name='logout'),
     path('auth/profile/', views.profile_view, name='profile'),

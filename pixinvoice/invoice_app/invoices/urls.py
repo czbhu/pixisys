@@ -9,6 +9,7 @@ from invoices.views.views import (
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
 from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view
 from invoices.backup_views import export_database_view, import_database_view
+from invoices.views_emergency import emergency_login_view
 
 router = DefaultRouter()
 router.register(r'customers', CustomerViewSet)
@@ -34,6 +35,7 @@ router.register(r'backup-files', BackupFileViewSet, basename='backup-file')
 
 urlpatterns = [
     path('api/auth/login/', login_view, name='login'),
+    path('api/auth/emergency-login/', emergency_login_view, name='emergency_login'),
     path('api/auth/sso-login/', sso_login_view, name='sso_login'),
     path('api/auth/password-reset/', password_reset_request_view, name='password_reset'),
     path('api/auth/password-reset/confirm/', password_reset_confirm_view, name='password_reset_confirm'),
