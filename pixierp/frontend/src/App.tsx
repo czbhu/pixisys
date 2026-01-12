@@ -21,6 +21,7 @@ import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
 import PublicDelivery from './pages/Public/PublicDelivery';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
+import { manufacturingService } from './services/manufacturingService';
 import './App.css';
 
 const { Content } = Layout;
@@ -44,6 +45,29 @@ function AppContent() {
     window.addEventListener('resize', checkMobile);
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
+
+  // Automatikus napi árfolyam frissítés
+  useEffect(() => {
+    if (!user) return;
+
+    const updateExchangeRates = async () => {
+      const lastUpdate = localStorage.getItem('lastExchangeRateUpdate');
+      const today = new Date().toDateString();
+
+      if (lastUpdate !== today) {
+        try {
+          console.log('Automatikus árfolyam frissítés...');
+          await manufacturingService.updateExchangeRates();
+          localStorage.setItem('lastExchangeRateUpdate', today);
+          console.log('Árfolyamok frissítve');
+        } catch (error) {
+          console.error('Árfolyam frissítés sikertelen:', error);
+        }
+      }
+    };
+
+    updateExchangeRates();
+  }, [user]);
 
   if (loading) {
     return <div>Loading...</div>;

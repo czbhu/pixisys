@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem
@@ -56,13 +57,20 @@ class ManufacturingProductViewSet(viewsets.ModelViewSet):
     serializer_class = ManufacturingProductSerializer
     permission_classes = [AllowAny]
 
-class QuoteRequestViewSet(viewsets.ModelViewSet):
+class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
+    queryset = QuoteRequest.objects.all()  # Base queryset
     serializer_class = QuoteRequestSerializer
     permission_classes = [AllowAny]
+    permission_module = 'sales'
+    permission_resource = 'sales.rfqs'
+    own_data_user_field = 'created_by'  # QuoteRequest.created_by = User
 
     def get_queryset(self):
-        """Alapértelmezetten csak a nem törölt árajánlatok"""
-        return QuoteRequest.objects.filter(is_deleted=False)
+        """Alapértelmezetten csak a nem törölt árajánlatok + OwnDataFilterMixin szűrés"""
+        # Először alkalmazzuk az OwnDataFilterMixin szűrést
+        queryset = super().get_queryset()
+        # Majd szűrjük a törölt elemeket
+        return queryset.filter(is_deleted=False)
 
     def list(self, request, *args, **kwargs):
         """List árajánlatok, automatikusan frissítve az archív státuszt"""
@@ -628,6 +636,9 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
                 qr.company = CrmCompany.objects.get(id=company_id)
             except CrmCompany.DoesNotExist:
                 pass
+        elif 'company_id' in data:
+            # Explicitly set to None if company_id is in data but null/empty
+            qr.company = None
         # Project - check if 'project_id' or 'project' is in data (even if None/null)
         if 'project_id' in data or 'project' in data:
             project_id = data.get('project_id') or data.get('project')
@@ -667,7 +678,7 @@ class QuoteRequestViewSet(viewsets.ModelViewSet):
                 contact_ids = json.loads(contact_ids)
         except Exception:
             contact_ids = []
-        if isinstance(contact_ids, list) and contact_ids:
+        if isinstance(contact_ids, list):
             try:
                 qr.contacts.set(Contact.objects.filter(id__in=contact_ids))
             except Exception:

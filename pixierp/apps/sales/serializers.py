@@ -91,6 +91,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     owner_id = serializers.PrimaryKeyRelatedField(source='owner', read_only=True)
     owner_name = serializers.SerializerMethodField()
     invitations_pending = serializers.SerializerMethodField()
+    total_amount = serializers.SerializerMethodField()
     
     class Meta:
         model = QuoteRequest
@@ -145,6 +146,21 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             ]
         except Exception:
             return []
+    
+    def get_total_amount(self, obj):
+        """Calculate total amount from items"""
+        try:
+            from decimal import Decimal
+            total = Decimal('0.00')
+            for item in obj.items.all():
+                # Use discounted_gross_total if discount exists, otherwise gross_total
+                if item.discount_percent and item.discount_percent > 0:
+                    total += item.discounted_gross_total or Decimal('0.00')
+                else:
+                    total += item.gross_total or Decimal('0.00')
+            return float(total)
+        except Exception:
+            return 0.00
 
 class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     invitee_name = serializers.SerializerMethodField()

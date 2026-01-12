@@ -129,7 +129,7 @@ const Invoicing: React.FC = () => {
       // Group by company
       const groupedByCompany: { [key: string]: typeof selectedOrders } = {};
       selectedOrders.forEach(order => {
-        const companyName = order.quote_request?.company?.name || 'Unknown';
+        const companyName = order.quote_request?.company?.name || 'Magánszemély';
         if (!groupedByCompany[companyName]) {
           groupedByCompany[companyName] = [];
         }
@@ -260,6 +260,7 @@ const Invoicing: React.FC = () => {
       title: 'Ügyfél',
       dataIndex: 'customer_name',
       key: 'customer_name',
+      render: (text: string) => text || 'Magánszemély',
     },
     {
       title: 'Kapcsolattartó',

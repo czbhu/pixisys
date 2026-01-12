@@ -267,3 +267,140 @@ class BackupFile(models.Model):
     def file_size_mb(self):
         """Return file size in MB"""
         return round(self.file_size / (1024 * 1024), 2)
+
+
+class Role(models.Model):
+    """Szerepkör (preset jogosultság csoport)"""
+    name = models.CharField(max_length=100, unique=True, verbose_name="Szerepkör neve")
+    description = models.TextField(blank=True, verbose_name="Leírás")
+    is_system = models.BooleanField(default=False, verbose_name="Rendszer szerepkör")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Szerepkör"
+        verbose_name_plural = "Szerepkörök"
+        ordering = ['name']
+        db_table = 'roles'
+
+    def __str__(self):
+        return self.name
+
+
+class Permission(models.Model):
+    """Jogosultság - modul/almodul/művelet szintű hozzáférés"""
+    MODULE_CHOICES = [
+        ('hr', 'HR'),
+        ('manufacturing', 'Gyártás'),
+        ('sales', 'Értékesítés'),
+        ('crm', 'CRM'),
+        ('finance', 'Pénzügy'),
+        ('warehouse', 'Raktár'),
+        ('orders', 'Megrendelések'),
+        ('pos', 'POS'),
+        ('settings', 'Beállítások'),
+    ]
+    
+    # Almodulok/Erőforrások modulonként
+    RESOURCE_CHOICES = [
+        # HR
+        ('hr.employees', 'HR - Alkalmazottak'),
+        ('hr.departments', 'HR - Osztályok'),
+        ('hr.positions', 'HR - Pozíciók'),
+        ('hr.attendance', 'HR - Jelenléti ív'),
+        ('hr.leave_requests', 'HR - Szabadság kérelmek'),
+        ('hr.payroll', 'HR - Bérszámfejtés'),
+        
+        # Manufacturing
+        ('manufacturing.projects', 'Gyártás - Projektek'),
+        ('manufacturing.products', 'Gyártás - Termékek'),
+        ('manufacturing.work_sheets', 'Gyártás - Munkalapok'),
+        ('manufacturing.materials', 'Gyártás - Anyagok'),
+        
+        # Sales
+        ('sales.rfqs', 'Értékesítés - Árajánlatok'),
+        ('sales.quotes', 'Értékesítés - Ajánlatok'),
+        ('sales.orders', 'Értékesítés - Megrendelések'),
+        ('sales.leads', 'Értékesítés - Leadek'),
+        ('sales.opportunities', 'Értékesítés - Lehetőségek'),
+        
+        # CRM
+        ('crm.companies', 'CRM - Cégek'),
+        ('crm.contacts', 'CRM - Kapcsolattartók'),
+        ('crm.activities', 'CRM - Tevékenységek'),
+        
+        # Finance
+        ('finance.invoices', 'Pénzügy - Számlák'),
+        ('finance.payments', 'Pénzügy - Kifizetések'),
+        ('finance.expenses', 'Pénzügy - Kiadások'),
+        
+        # Warehouse
+        ('warehouse.materials', 'Raktár - Anyagok'),
+        ('warehouse.inventory', 'Raktár - Készlet'),
+        ('warehouse.movements', 'Raktár - Mozgások'),
+        
+        # Orders
+        ('orders.customer_orders', 'Megrendelések - Vevői megrendelések'),
+        ('orders.purchase_orders', 'Megrendelések - Beszerzési megrendelések'),
+        
+        # POS
+        ('pos.transactions', 'POS - Tranzakciók'),
+        ('pos.products', 'POS - Termékek'),
+        
+        # Settings
+        ('settings.users', 'Beállítások - Felhasználók'),
+        ('settings.roles', 'Beállítások - Szerepkörök'),
+        ('settings.company', 'Beállítások - Cégadatok'),
+        ('settings.email', 'Beállítások - E-mail'),
+        ('settings.integrations', 'Beállítások - Integrációk'),
+    ]
+    
+    ACTION_CHOICES = [
+        ('view', 'Megtekintés'),
+        ('view_own', 'Saját adatok megtekintése'),
+        ('create', 'Létrehozás'),
+        ('edit', 'Szerkesztés'),
+        ('delete', 'Törlés'),
+        ('export', 'Export'),
+        ('manage', 'Teljes jogosultság'),
+    ]
+    
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='permissions', verbose_name="Szerepkör", null=True, blank=True)
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='custom_permissions', verbose_name="Felhasználó", null=True, blank=True)
+    module = models.CharField(max_length=50, choices=MODULE_CHOICES, verbose_name="Modul")
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, verbose_name="Művelet")
+    resource = models.CharField(max_length=100, choices=RESOURCE_CHOICES, blank=True, verbose_name="Almodul/Erőforrás")
+    allowed = models.BooleanField(default=True, verbose_name="Engedélyezett")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Jogosultság"
+        verbose_name_plural = "Jogosultságok"
+        db_table = 'permissions'
+        indexes = [
+            models.Index(fields=['module', 'action']),
+            models.Index(fields=['role']),
+            models.Index(fields=['user']),
+        ]
+
+    def __str__(self):
+        target = self.role.name if self.role else f"User#{self.user_id}"
+        resource_display = dict(self.RESOURCE_CHOICES).get(self.resource, self.resource) if self.resource else self.get_module_display()
+        return f"{target} - {resource_display} - {self.get_action_display()}"
+
+
+class UserRole(models.Model):
+    """Felhasználó-Szerepkör kapcsolat"""
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='user_roles', verbose_name="Felhasználó")
+    role = models.ForeignKey(Role, on_delete=models.CASCADE, related_name='user_assignments', verbose_name="Szerepkör")
+    assigned_at = models.DateTimeField(auto_now_add=True)
+    assigned_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='assigned_roles', verbose_name="Hozzárendelte")
+
+    class Meta:
+        verbose_name = "Felhasználó szerepkör"
+        verbose_name_plural = "Felhasználó szerepkörök"
+        unique_together = ['user', 'role']
+        db_table = 'user_roles'
+
+    def __str__(self):
+        return f"{self.user.username} - {self.role.name}"

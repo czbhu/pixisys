@@ -172,8 +172,13 @@ export const crmService = {
         return response.data;
     },
 
-    async getContactsByCompany(companyId: number) {
+    async getContactsByCompany(companyId: number | string) {
         const response = await api.get(`/crm/contacts/by_company/?company_id=${companyId}`);
+        return response.data;
+    },
+
+    async getPrivateContacts() {
+        const response = await api.get(`/crm/contacts/by_company/?company_id=private`);
         return response.data;
     },
 

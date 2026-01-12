@@ -12,6 +12,11 @@ class Department(models.Model):
     description = models.TextField(blank=True, null=True)
     managers = models.ManyToManyField(User, blank=True, related_name='managed_departments')
     budget = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    
+    # Szerepkörök az osztályhoz rendelve
+    # Az osztály tagjai automatikusan megkapják ezeket a szerepköröket
+    roles = models.ManyToManyField('core.Role', blank=True, related_name='departments')
+    
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -50,6 +55,9 @@ class Employee(BaseModel):
     departments = models.ManyToManyField(Department, blank=True, related_name='employees')
     position = models.ForeignKey(Position, on_delete=models.SET_NULL, null=True, blank=True)
     
+    # Jogosultságok (kapcsolódó UserRole-okon keresztül kezelve a core modulban)
+    # roles:Many-to-Many kapcsolat a core.Role-lal a UserRole táblán keresztül
+    
     # Bejelentési adatok
     tb_number = models.CharField(max_length=20, blank=True, null=True, verbose_name='TB szám')
     tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name='Adószám')
@@ -86,7 +94,7 @@ class Employee(BaseModel):
     address_house_number = models.CharField(max_length=20, blank=True, null=True, verbose_name='Házszám')
     address_generic = models.TextField(blank=True, null=True, verbose_name='Cím')
     
-    # Jogosultság és jelszó
+    # Jogosultság
     PERMISSION_LEVELS = [
         ('basic', 'Alapvető'),
         ('manager', 'Menedzser'),
@@ -94,7 +102,7 @@ class Employee(BaseModel):
         ('superuser', 'Szuper felhasználó'),
     ]
     permission_level = models.CharField(max_length=20, choices=PERMISSION_LEVELS, default='basic', verbose_name='Jogosultság szint')
-    password = models.CharField(max_length=128, blank=True, null=True, verbose_name='Jelszó')
+    # Jelszó: A Django User modellben tárolva (user.set_password() / user.check_password())
     
     # Meglévő mezők
     hire_date = models.DateField(null=True, blank=True)
@@ -111,6 +119,44 @@ class Employee(BaseModel):
 
     def __str__(self):
         return f"{self.user.get_full_name()} ({self.employee_id})"
+    
+    def get_all_roles(self):
+        """Összes szerepkör: osztályok szerepkörei + egyéni UserRole-ok"""
+        from apps.core.models import Role, UserRole
+        
+        role_ids = set()
+        
+        # Osztályok szerepkörei
+        for department in self.departments.all():
+            for role in department.roles.all():
+                role_ids.add(role.id)
+        
+        # Egyéni UserRole-ok
+        for user_role in UserRole.objects.filter(user=self.user):
+            role_ids.add(user_role.role.id)
+        
+        return Role.objects.filter(id__in=role_ids)
+    
+    def get_department_roles(self):
+        """Csak az osztályok szerepkörei"""
+        from apps.core.models import Role
+        
+        role_ids = set()
+        for department in self.departments.all():
+            for role in department.roles.all():
+                role_ids.add(role.id)
+        
+        return Role.objects.filter(id__in=role_ids)
+    
+    def get_individual_roles(self):
+        """Csak az egyéni UserRole-ok"""
+        from apps.core.models import UserRole
+        return [ur.role for ur in UserRole.objects.filter(user=self.user)]
+    
+    def get_custom_permissions(self):
+        """Egyéni jogosultságok (nem szerepkör alapú)"""
+        from apps.core.models import Permission
+        return Permission.objects.filter(user=self.user)
     
     @staticmethod
     def generate_employee_id():

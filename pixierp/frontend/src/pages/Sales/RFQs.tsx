@@ -136,8 +136,19 @@ const RFQs: React.FC = () => {
   { title: 'Ajánlatszám', dataIndex: 'number', key: 'number', sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || '') },
   { title: 'Keltezés', dataIndex: 'issue_date', key: 'issue_date', render: (d: string) => d ? new Date(d).toLocaleDateString('hu-HU') : '', sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') },
   { title: 'Cím', dataIndex: 'title', key: 'title', sorter: (a: any, b: any) => (a.title || '').localeCompare(b.title || '') },
-  { title: 'Cég', dataIndex: ['company', 'name'], key: 'company_name', render: (_: any, r: any) => r.company?.name || r.company_name || '', sorter: (a: any, b: any) => (a.company?.name || a.company_name || '').localeCompare(b.company?.name || b.company_name || '') },
+  { title: 'Cég', dataIndex: ['company', 'name'], key: 'company_name', render: (_: any, r: any) => r.company?.name || r.company_name || 'Magánszemély', sorter: (a: any, b: any) => (a.company?.name || a.company_name || '').localeCompare(b.company?.name || b.company_name || '') },
   { title: 'Kapcsolattartó', key: 'contact_names', render: (_: any, r: any) => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
+    { 
+      title: 'Összeg', 
+      key: 'total_amount', 
+      render: (_: any, r: any) => {
+        const amount = r.total_amount || 0;
+        const currencySymbol = r.currency_symbol || 'Ft';
+        return `${amount.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`;
+      },
+      sorter: (a: any, b: any) => (a.total_amount || 0) - (b.total_amount || 0),
+      align: 'right' as const
+    },
     { title: 'Státusz', dataIndex: 'status', key: 'status', render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
     { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', render: (d: string) => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
@@ -279,6 +290,10 @@ const RFQs: React.FC = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      console.log('[RFQs] Form values:', values);
+      console.log('[RFQs] contact_ids type:', typeof values.contact_ids, 'isArray:', Array.isArray(values.contact_ids));
+      console.log('[RFQs] contact_ids value:', values.contact_ids);
+      
       const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
       const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
       const createPayload = {
@@ -288,17 +303,38 @@ const RFQs: React.FC = () => {
         deadline: values.deadline.format('YYYY-MM-DD'),
         partial_order_allowed: partialOrderAllowed,
       } as any;
+      
+      console.log('[RFQs] Creating RFQ with:', createPayload);
       const created = await salesService.createQuoteRequest(createPayload);
+      console.log('[RFQs] Created RFQ:', created);
+      
       // Immediately enrich basic fields that serializer would reject on create
+      const updateData: any = {
+        contact_ids: values.contact_ids || [],
+        currency_code: currency,
+        project_id: values.project_id,
+        internal_description: values.internal_description || '',
+      };
+      
+      // Set company_id: null for private, or the actual ID
+      if (values.company_id === 'private') {
+        updateData.company_id = null;
+        console.log('[RFQs] Setting company_id to null (private)');
+      } else if (values.company_id) {
+        updateData.company_id = values.company_id;
+        console.log('[RFQs] Setting company_id to:', values.company_id);
+      }
+      
+      console.log('[RFQs] Updating with:', updateData);
       try {
-        await salesService.updateQuoteRequestBasic(created.id, {
-          company_id: values.company_id,
-          contact_ids: values.contact_ids || [],
-          currency_code: currency,
-          project_id: values.project_id,
-          internal_description: values.internal_description || '',
-        });
-      } catch {}
+        const updated = await salesService.updateQuoteRequestBasic(created.id, updateData);
+        console.log('[RFQs] Update successful:', updated);
+        console.log('[RFQs] Updated contacts:', updated.contacts);
+      } catch (err) {
+        console.error('[RFQs] Update basic failed:', err);
+        message.error('Nem sikerült menteni a cég/kapcsolattartó adatokat');
+        throw err; // Re-throw to prevent continuing
+      }
       // Upload RFQ-level attachments, if any
       if (rfqFiles.length) {
         for (const f of rfqFiles) {
@@ -675,19 +711,37 @@ const RFQs: React.FC = () => {
           </Row>
           <Row gutter={12}>
             <Col span={8}>
-              <Form.Item label="Cég" name="company_id" rules={[{ required: true, message: 'Válassz céget' }]}> 
+              <Form.Item 
+                label="Cég" 
+                name="company_id"
+              > 
                 <Space.Compact style={{ width: '100%' }}>
                   <Select 
                     showSearch 
                     optionFilterProp="label" 
-                    placeholder="Válassz céget" 
+                    placeholder="Válassz céget vagy magánszemélyt" 
                     style={{ width: 'calc(100% - 32px)' }}
+                    onFocus={async () => {
+                      // Frissítjük a cégek listáját amikor rákattintanak
+                      const list = await crmService.getCompanies();
+                      setCompanies(list.results ?? list);
+                    }}
                     onChange={async (val) => {
-                      const list = await crmService.getContactsByCompany(val);
-                      setContacts(list.results ?? list);
-                      form.setFieldsValue({ contact_ids: [] });
+                      form.setFieldsValue({ company_id: val });
+                      if (val === 'private') {
+                        // Magánszemélyek lekérdezése
+                        const list = await crmService.getPrivateContacts();
+                        setContacts(list.results ?? list);
+                        form.setFieldsValue({ contact_ids: [] });
+                      } else {
+                        // Céghez tartozó kapcsolattartók lekérdezése
+                        const list = await crmService.getContactsByCompany(val);
+                        setContacts(list.results ?? list);
+                        form.setFieldsValue({ contact_ids: [] });
+                      }
                     }}
                   >
+                    <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
                     {companies.map((c: any) => (
                       <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
                     ))}
@@ -712,20 +766,54 @@ const RFQs: React.FC = () => {
                     showSearch 
                     optionFilterProp="label" 
                     placeholder="Válassz kapcsolattartókat"
-                    style={{ width: 'calc(100% - 150px)' }}
+                    style={{ width: 'calc(100% - 190px)' }}
+                    onFocus={async () => {
+                      // Frissítjük a kapcsolattartók listáját amikor rákattintanak
+                      const companyId = form.getFieldValue('company_id');
+                      if (companyId === 'private') {
+                        const list = await crmService.getPrivateContacts();
+                        setContacts(list.results ?? list);
+                      } else if (companyId) {
+                        const list = await crmService.getContactsByCompany(companyId);
+                        setContacts(list.results ?? list);
+                      }
+                    }}
+                    onChange={(val) => {
+                      console.log('[RFQs] Contacts changed to:', val);
+                      form.setFieldsValue({ contact_ids: val });
+                    }}
                   >
                     {contacts.map((p: any) => (
                       <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
                     ))}
                   </Select>
+                  <Tooltip title="Új kapcsolattartó hozzáadása">
+                    <Button 
+                      icon={<PlusCircleOutlined />}
+                      onClick={() => {
+                        const companyId = form.getFieldValue('company_id');
+                        let url = '/crm/contacts?action=create';
+                        if (companyId && companyId !== 'private') {
+                          url += `&company=${companyId}`;
+                        }
+                        window.open(url, '_blank');
+                      }}
+                    />
+                  </Tooltip>
                   <Button 
                     type="default"
                     onClick={async () => {
                       const companyId = form.getFieldValue('company_id');
                       if (companyId) {
-                        const list = await crmService.getContactsByCompany(companyId);
-                        setContacts(list.results ?? list);
-                        message.success('Kapcsolattartók frissítve');
+                        if (companyId === 'private') {
+                          const list = await crmService.getPrivateContacts();
+                          setContacts(list.results ?? list);
+                          message.success('Magánszemély kapcsolattartók frissítve');
+                        } else {
+                          const list = await crmService.getContactsByCompany(companyId);
+                          setContacts(list.results ?? list);
+                          message.success('Kapcsolattartók frissítve');
+                        }
                       } else {
                         message.warning('Először válassz céget');
                       }

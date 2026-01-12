@@ -30,9 +30,16 @@ from .serializers import (
     BackupConfigurationSerializer,
     BackupFileSerializer,
     UserPreferenceSerializer,
+    RoleSerializer,
+    PermissionSerializer,
+    UserRoleSerializer,
 )
 from rest_framework import viewsets
-from .models import Company, BankAccount, EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile, UserPreference
+from .models import (
+    Company, BankAccount, EmailServerConfig, EmailTemplate, 
+    SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
+    BackupFile, UserPreference, Role, Permission, UserRole
+)
 import traceback
 import requests
 import json
@@ -227,34 +234,92 @@ def password_reset_request_view(request):
 
     Always returns 200 to avoid user enumeration.
     """
+    from django.core.mail import get_connection
+    from apps.core.models import EmailServerConfig
+    import logging
+    
+    logger = logging.getLogger(__name__)
     email = (request.data.get('email') or '').strip()
     if not email:
         return Response({'error': 'Email is required'}, status=status.HTTP_400_BAD_REQUEST)
 
     user = User.objects.filter(email__iexact=email, is_active=True).first()
     if user:
-        uid = urlsafe_base64_encode(force_bytes(user.pk))
-        token = default_token_generator.make_token(user)
-        base = (getattr(settings, 'FRONTEND_BASE_URL', '') or '').rstrip('/')
-        if not base:
-            base = request.build_absolute_uri('/').rstrip('/')
-        reset_link = f"{base}/reset-password/{uid}/{token}"
+        # EmailServerConfig használata (mint a HR modul jelszó generálásnál)
+        email_config = EmailServerConfig.objects.filter(is_active=True).first()
+        if not email_config:
+            # Logoljuk a hibát, de ne árulj el információt a felhasználóról
+            logger.error(f"Jelszó visszaállítás kérés: nincs aktív EmailServerConfig (user: {user.email})")
+            # Továbbra is sikeres választ adunk biztonsági okokból
+            return Response({'message': 'Ha létezik ilyen felhasználó, elküldtük a jelszó-visszaállító linket.'})
+        
+        try:
+            # SMTP kapcsolat létrehozása
+            connection = get_connection(
+                backend='django.core.mail.backends.smtp.EmailBackend',
+                host=email_config.smtp_host,
+                port=email_config.smtp_port,
+                username=email_config.smtp_username,
+                password=email_config.smtp_password,
+                use_tls=email_config.smtp_use_tls,
+                use_ssl=email_config.smtp_use_ssl,
+                fail_silently=False,
+                timeout=10,
+            )
+            
+            uid = urlsafe_base64_encode(force_bytes(user.pk))
+            token = default_token_generator.make_token(user)
+            
+            # Frontend URL meghatározása - request alapján (Origin vagy Referer header)
+            frontend_base = None
+            origin = request.META.get('HTTP_ORIGIN', '').rstrip('/')
+            referer = request.META.get('HTTP_REFERER', '').rstrip('/')
+            
+            if origin:
+                # Ha van Origin header, azt használjuk (pl. CORS kérések)
+                frontend_base = origin
+            elif referer:
+                # Ha van Referer header, abból vesszük a domain-t
+                from urllib.parse import urlparse
+                parsed = urlparse(referer)
+                frontend_base = f"{parsed.scheme}://{parsed.netloc}"
+            
+            # Ha nincs Origin/Referer, akkor a settings-ből vesszük, vagy a request alapján
+            if not frontend_base:
+                frontend_base = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
+            
+            if not frontend_base:
+                # Végső megoldás: a backend URL-jéből
+                frontend_base = request.build_absolute_uri('/').rstrip('/')
+            
+            reset_link = f"{frontend_base}/reset-password/{uid}/{token}"
+            
+            logger.info(f"Jelszó visszaállító link generálva - Frontend: {frontend_base}, User: {email}")
 
-        context = {
-            'user': user,
-            'reset_link': reset_link,
-            'requested_at': timezone.now(),
-        }
-        subject = render_to_string('emails/password_reset_subject.txt', context).strip().replace('\n', '')
-        body = render_to_string('emails/password_reset_body.txt', context)
+            context = {
+                'user': user,
+                'reset_link': reset_link,
+                'requested_at': timezone.now(),
+            }
+            subject = render_to_string('emails/password_reset_subject.txt', context).strip().replace('\n', '')
+            body = render_to_string('emails/password_reset_body.txt', context)
+            
+            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
 
-        message = EmailMultiAlternatives(
-            subject=subject or _('Password reset'),
-            body=body,
-            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', None),
-            to=[email],
-        )
-        message.send(fail_silently=False)
+            message = EmailMultiAlternatives(
+                subject=subject or _('Password reset'),
+                body=body,
+                from_email=from_email,
+                to=[email],
+                connection=connection
+            )
+            
+            message.send()
+            logger.info(f"Jelszó visszaállító email elküldve: {email}")
+        except Exception as e:
+            # Log hiba de ne árulj el információt a felhasználóról
+            logger.error(f"Jelszó visszaállító email hiba ({email}): {str(e)}", exc_info=True)
+            # Továbbra is sikeres választ adunk biztonsági okokból
 
     return Response({'message': 'Ha létezik ilyen felhasználó, elküldtük a jelszó-visszaállító linket.'})
 
@@ -878,3 +943,108 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': f'Hiba a tisztítás során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class RoleViewSet(viewsets.ModelViewSet):
+    """Szerepkörök kezelése"""
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = [IsAuthenticated]
+    
+    @action(detail=True, methods=['post'])
+    def set_permissions(self, request, pk=None):
+        """Szerepkör jogosultságainak beállítása"""
+        role = self.get_object()
+        permissions_data = request.data.get('permissions', [])
+        
+        # Töröljük a meglévő jogosultságokat (ha nem rendszer szerepkör)
+        if not role.is_system or request.user.is_superuser:
+            role.permissions.all().delete()
+            
+            # Új jogosultságok létrehozása
+            for perm_data in permissions_data:
+                Permission.objects.create(
+                    role=role,
+                    module=perm_data['module'],
+                    action=perm_data['action'],
+                    resource=perm_data.get('resource', ''),
+                    allowed=perm_data.get('allowed', True)
+                )
+            
+            return Response({'message': 'Jogosultságok frissítve'})
+        else:
+            return Response(
+                {'error': 'Rendszer szerepkör jogosultságai csak superuser által módosíthatók'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+
+class PermissionViewSet(viewsets.ModelViewSet):
+    """Jogosultságok kezelése"""
+    queryset = Permission.objects.all()
+    serializer_class = PermissionSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        role_id = self.request.query_params.get('role')
+        user_id = self.request.query_params.get('user')
+        
+        if role_id:
+            queryset = queryset.filter(role_id=role_id)
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+            
+        return queryset
+    
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    def modules(self, request):
+        """Elérhető modulok, almodulok és műveletek listája"""
+        # Modulok és almodulok csoportosítása
+        modules_with_resources = {}
+        for resource_value, resource_label in Permission.RESOURCE_CHOICES:
+            module_code = resource_value.split('.')[0]
+            module_name = dict(Permission.MODULE_CHOICES).get(module_code, module_code)
+            
+            if module_code not in modules_with_resources:
+                modules_with_resources[module_code] = {
+                    'code': module_code,
+                    'name': module_name,
+                    'resources': []
+                }
+            
+            modules_with_resources[module_code]['resources'].append({
+                'value': resource_value,
+                'label': resource_label
+            })
+        
+        return Response({
+            'modules': [
+                {'value': choice[0], 'label': choice[1]}
+                for choice in Permission.MODULE_CHOICES
+            ],
+            'resources': modules_with_resources,
+            'actions': [
+                {'value': choice[0], 'label': choice[1]}
+                for choice in Permission.ACTION_CHOICES
+            ]
+        })
+
+
+class UserRoleViewSet(viewsets.ModelViewSet):
+    """Felhasználó-Szerepkör hozzárendelések kezelése"""
+    queryset = UserRole.objects.all()
+    serializer_class = UserRoleSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user_id = self.request.query_params.get('user')
+        
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+            
+        return queryset
+    
+    def perform_create(self, serializer):
+        serializer.save(assigned_by=self.request.user)

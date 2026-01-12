@@ -13,6 +13,7 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from apps.core.permissions import OwnDataFilterMixin
 from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog
 from .serializers import (
     DepartmentSerializer, PositionSerializer, EmployeeSerializer,
@@ -36,6 +37,39 @@ class EmployeeViewSet(viewsets.ModelViewSet):
     queryset = Employee.objects.order_by('user__last_name', 'user__first_name', 'employee_id')
     serializer_class = EmployeeSerializer
     
+    @action(detail=True, methods=['get', 'post'])
+    def custom_permissions(self, request, pk=None):
+        """Egyéni jogosultságok kezelése (nem szerepkör alapú)"""
+        from apps.core.models import Permission
+        from apps.core.serializers import PermissionSerializer
+        
+        employee = self.get_object()
+        
+        if request.method == 'GET':
+            # Egyéni jogosultságok lekérdezése
+            permissions = Permission.objects.filter(user=employee.user)
+            serializer = PermissionSerializer(permissions, many=True)
+            return Response(serializer.data)
+        
+        elif request.method == 'POST':
+            # Egyéni jogosultságok beállítása
+            permissions_data = request.data.get('permissions', [])
+            
+            # Töröljük a meglévő egyéni jogosultságokat
+            Permission.objects.filter(user=employee.user).delete()
+            
+            # Új egyéni jogosultságok létrehozása
+            for perm_data in permissions_data:
+                Permission.objects.create(
+                    user=employee.user,
+                    module=perm_data['module'],
+                    resource=perm_data.get('resource'),
+                    action=perm_data['action'],
+                    allowed=perm_data.get('allowed', True)
+                )
+            
+            return Response({'message': 'Egyéni jogosultságok frissítve'})
+    
     @action(detail=True, methods=['post'])
     def generate_password(self, request, pk=None):
         """Jelszó generálása és e-mail küldése"""
@@ -47,11 +81,7 @@ class EmployeeViewSet(viewsets.ModelViewSet):
         # Új jelszó generálása
         new_password = get_random_string(12)
         
-        # Jelszó mentése az employee rekordba
-        employee.password = new_password
-        employee.save()
-        
-        # User jelszó frissítése
+        # User jelszó frissítése (hashelve)
         user = employee.user
         user.set_password(new_password)
         user.save()
@@ -127,14 +157,20 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
             )
 
 
-class AttendanceViewSet(viewsets.ModelViewSet):
+class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
+    permission_module = 'hr'
+    permission_resource = 'hr.attendance'
+    own_data_user_field = 'employee__user'  # Attendance -> Employee -> User
 
 
-class LeaveRequestViewSet(viewsets.ModelViewSet):
+class LeaveRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all()
     serializer_class = LeaveRequestSerializer
+    permission_module = 'hr'
+    permission_resource = 'hr.leave_requests'
+    own_data_user_field = 'employee__user'  # LeaveRequest -> Employee -> User
 
 
 class PayrollViewSet(viewsets.ModelViewSet):

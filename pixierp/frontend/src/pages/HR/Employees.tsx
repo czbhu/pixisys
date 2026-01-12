@@ -26,10 +26,12 @@ import {
     SaveOutlined,
     CloseOutlined,
     IdcardOutlined,
-    SearchOutlined
+    SearchOutlined,
+    SafetyOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { hrService } from '../../services/hrService';
+import { rolesService, Role } from '../../services/rolesService';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
 import { useSettings } from '../../contexts/SettingsContext';
@@ -86,6 +88,7 @@ const Employees: React.FC = () => {
     const [query, setQuery] = useState('');
     const [departments, setDepartments] = useState<any[]>([]);
     const [positions, setPositions] = useState<any[]>([]);
+    const [roles, setRoles] = useState<Role[]>([]);
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -96,6 +99,8 @@ const Employees: React.FC = () => {
     const [passwordEmployee, setPasswordEmployee] = useState<Employee | null>(null);
     const [credentialsEmployee, setCredentialsEmployee] = useState<Employee | null>(null);
     const [isCredentialsModalVisible, setIsCredentialsModalVisible] = useState(false);
+    const [isPermissionsModalVisible, setIsPermissionsModalVisible] = useState(false);
+    const [permissionsEmployee, setPermissionsEmployee] = useState<Employee | null>(null);
     const [showInactive, setShowInactive] = useState(settings.showInactiveEmployees);
     const [form] = Form.useForm();
     const [formKey, setFormKey] = useState(0);
@@ -105,6 +110,7 @@ const Employees: React.FC = () => {
         loadEmployees();
         loadDepartments();
         loadPositions();
+        loadRoles();
     }, []);
 
     // Keresési logika
@@ -159,7 +165,10 @@ const Employees: React.FC = () => {
                 hire_date: editingEmployee.hire_date ? dayjs(editingEmployee.hire_date) : null,
                 is_active: editingEmployee.is_active,
                 permission_level: editingEmployee.permission_level,
-                departments: editingEmployee.department_names || [],
+                departments: (editingEmployee.department_names || []).map((name: string) => {
+                    const dept = departments.find(d => d.name === name);
+                    return dept?.id;
+                }).filter(Boolean),
                 position: editingEmployee.position_name,
 
                 // Személyes adatok
@@ -255,6 +264,15 @@ const Employees: React.FC = () => {
         }
     };
 
+    const loadRoles = async () => {
+        try {
+            const data = await rolesService.getRoles();
+            setRoles(data);
+        } catch (err) {
+            console.error('Error loading roles:', err);
+        }
+    };
+
     const handlePostalCodeChange = (postalCode: string) => {
         const city = postalCodeService.getCityByPostalCode(postalCode);
         if (city) {
@@ -288,8 +306,14 @@ const Employees: React.FC = () => {
                     hire_date: employee.hire_date ? dayjs(employee.hire_date) : null,
                     is_active: employee.is_active,
                     permission_level: employee.permission_level,
-                    departments: employee.department_names || [],
+                    departments: (employee.department_names || []).map((name: string) => {
+                        const dept = departments.find(d => d.name === name);
+                        return dept?.id;
+                    }).filter(Boolean),
                     position: employee.position_name,
+                    
+                    // Szerepkörök
+                    role_ids: employee.role_ids || [],
 
                     // Személyes adatok
                     tb_number: employee.tb_number,
@@ -362,6 +386,11 @@ const Employees: React.FC = () => {
     const showCredentialsModal = (employee: Employee) => {
         setCredentialsEmployee(employee);
         setIsCredentialsModalVisible(true);
+    };
+
+    const showPermissionsModal = (employee: Employee) => {
+        setPermissionsEmployee(employee);
+        setIsPermissionsModalVisible(true);
     };
 
     const generateUsername = (force = false) => {
@@ -455,25 +484,32 @@ const Employees: React.FC = () => {
             // Position már ID formátumban jön a Select-ből
             // Nem kell átalakítás
 
-            // Departments mező kezelése - Department ID-kat küldünk
+            // Departments mező kezelése - már ID formátumban jön a Select-ből
             if (values.departments && Array.isArray(values.departments)) {
-                const departmentIds = values.departments.map((deptName: string) => {
-                    const dept = departments.find(d => d.name === deptName);
-                    return dept ? dept.id : null;
-                }).filter((id: number | null) => id !== null);
-                employeeData.departments = departmentIds;
-                console.log('Departments to save:', departmentIds);
+                employeeData.departments = values.departments;
+                console.log('Departments to save:', values.departments);
             } else {
+                employeeData.departments = [];
                 console.log('No departments selected or not an array:', values.departments);
+            }
+
+            // Szerepkörök hozzáadása az employeeData-hoz
+            if (values.role_ids && Array.isArray(values.role_ids)) {
+                employeeData.role_ids = values.role_ids;
+                console.log('Roles to save:', values.role_ids);
+            } else {
+                employeeData.role_ids = [];
+                console.log('No roles selected or not an array:', values.role_ids);
             }
 
             console.log('Employee data to save:', employeeData);
 
+            let savedEmployee: any;
             if (editingEmployee) {
-                await hrService.updateEmployee(editingEmployee.id, employeeData);
+                savedEmployee = await hrService.updateEmployee(editingEmployee.id, employeeData);
                 message.success('Alkalmazott sikeresen frissítve!');
             } else {
-                await hrService.createEmployee(employeeData);
+                savedEmployee = await hrService.createEmployee(employeeData);
                 message.success('Alkalmazott sikeresen létrehozva!');
             }
 
@@ -504,7 +540,11 @@ const Employees: React.FC = () => {
             await hrService.generatePassword(passwordEmployee.id);
             message.success('Jelszó generálva és e-mailben elküldve!');
             setIsPasswordModalVisible(false);
+            const empToEdit = passwordEmployee;
             setPasswordEmployee(null);
+            if (empToEdit) {
+                showModal(empToEdit);
+            }
         } catch (err) {
             console.error('Error generating password:', err);
             message.error('Hiba történt a jelszó generálása során');
@@ -559,28 +599,6 @@ const Employees: React.FC = () => {
             sorter: (a: Employee, b: Employee) => (a.position_name || '').localeCompare(b.position_name || ''),
         },
         {
-            title: 'Jogosultság',
-            dataIndex: 'permission_level',
-            key: 'permission_level',
-            width: 120,
-            sorter: (a: Employee, b: Employee) => a.permission_level.localeCompare(b.permission_level),
-            render: (level: string) => {
-                const colors = {
-                    'basic': 'blue',
-                    'manager': 'orange',
-                    'admin': 'red',
-                    'superuser': 'purple'
-                };
-                const labels = {
-                    'basic': 'Alapvető',
-                    'manager': 'Menedzser',
-                    'admin': 'Admin',
-                    'superuser': 'Szuper'
-                };
-                return <Tag color={colors[level as keyof typeof colors]}>{labels[level as keyof typeof labels]}</Tag>;
-            },
-        },
-        {
             title: 'Műveletek',
             key: 'actions',
             width: 120,
@@ -599,20 +617,6 @@ const Employees: React.FC = () => {
                             icon={<EditOutlined />}
                             size="small"
                             onClick={() => showModal(record)}
-                        />
-                    </Tooltip>
-                    <Tooltip title="Jelszó generálás">
-                        <Button
-                            icon={<KeyOutlined />}
-                            size="small"
-                            onClick={() => showPasswordModal(record)}
-                        />
-                    </Tooltip>
-                    <Tooltip title="Azonosítók">
-                        <Button
-                            icon={<IdcardOutlined />}
-                            size="small"
-                            onClick={() => showCredentialsModal(record)}
                         />
                     </Tooltip>
                     <Tooltip title="Törlés">
@@ -777,39 +781,68 @@ const Employees: React.FC = () => {
 
             {/* Alkalmazott Modal */}
             <Modal
-                title={
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>{editingEmployee ? 'Alkalmazott szerkesztése' : 'Új alkalmazott'}</span>
-                        <Space>
-                            <Tooltip title="Mentés">
-                                <Button
-                                    type="primary"
-                                    icon={<SaveOutlined />}
-                                    size="small"
-                                    onClick={() => form.submit()}
-                                />
-                            </Tooltip>
-                            <Tooltip title="Bezárás">
-                                <Button
-                                    icon={<CloseOutlined />}
-                                    size="small"
-                                    onClick={() => {
-                                        setIsModalVisible(false);
-                                        form.resetFields();
-                                    }}
-                                />
-                            </Tooltip>
-                        </Space>
-                    </div>
-                }
+                title={editingEmployee ? 'Alkalmazott szerkesztése' : 'Új alkalmazott'}
                 open={isModalVisible}
                 onCancel={() => {
                     setIsModalVisible(false);
                     form.resetFields();
                 }}
                 width={800}
-                footer={null}
-                closable={false}
+                footer={[
+                    <div key="footer" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>
+                        <Space>
+                            {editingEmployee && (
+                                <>
+                                    <Button
+                                        icon={<SafetyOutlined />}
+                                        onClick={() => {
+                                            setIsModalVisible(false);
+                                            showPermissionsModal(editingEmployee);
+                                        }}
+                                    >
+                                        Jogosultságok
+                                    </Button>
+                                    <Button
+                                        icon={<IdcardOutlined />}
+                                        onClick={() => {
+                                            setIsModalVisible(false);
+                                            showCredentialsModal(editingEmployee);
+                                        }}
+                                    >
+                                        Azonosítók
+                                    </Button>
+                                    <Button
+                                        icon={<KeyOutlined />}
+                                        onClick={() => {
+                                            setIsModalVisible(false);
+                                            showPasswordModal(editingEmployee);
+                                        }}
+                                    >
+                                        Jelszó generálás
+                                    </Button>
+                                </>
+                            )}
+                        </Space>
+                        <Space>
+                            <Button
+                                icon={<CloseOutlined />}
+                                onClick={() => {
+                                    setIsModalVisible(false);
+                                    form.resetFields();
+                                }}
+                            >
+                                Bezárás
+                            </Button>
+                            <Button
+                                type="primary"
+                                icon={<SaveOutlined />}
+                                onClick={() => form.submit()}
+                            >
+                                Mentés
+                            </Button>
+                        </Space>
+                    </div>
+                ]}
             >
                 <Form
                     key={formKey}
@@ -913,6 +946,10 @@ const Employees: React.FC = () => {
                                     mode="multiple"
                                     placeholder="Válasszon osztályokat"
                                     allowClear
+                                    onFocus={async () => {
+                                        // Frissítjük az osztályok listáját amikor rákattintanak
+                                        await loadDepartments();
+                                    }}
                                 >
                                     {departments.map(dept => (
                                         <Option key={dept.id} value={dept.id}>
@@ -933,6 +970,10 @@ const Employees: React.FC = () => {
                                     filterOption={(input, option) =>
                                         (option?.children as unknown as string)?.toLowerCase().indexOf(input.toLowerCase()) >= 0
                                     }
+                                    onFocus={async () => {
+                                        // Frissítjük a pozíciók listáját amikor rákattintanak
+                                        await loadPositions();
+                                    }}
                                 >
                                     {positions.map(pos => (
                                         <Option key={pos.id} value={pos.id}>
@@ -1136,22 +1177,10 @@ const Employees: React.FC = () => {
                         {({ getFieldValue }) => renderAddressFields(getFieldValue('address_country'))}
                     </Form.Item>
 
-                    {/* Jogosultság és egyéb */}
+                    {/* Egyéb adatok */}
+                    <h4>Egyéb adatok</h4>
                     <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item
-                                name="permission_level"
-                                label="Jogosultság szint"
-                            >
-                                <Select placeholder="Válasszon jogosultságot">
-                                    <Option value="basic">Alapvető</Option>
-                                    <Option value="manager">Menedzser</Option>
-                                    <Option value="admin">Adminisztrátor</Option>
-                                    <Option value="superuser">Szuper felhasználó</Option>
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
+                        <Col span={12}>
                             <Form.Item
                                 name="hire_date"
                                 label="Felvétel dátuma"
@@ -1250,7 +1279,11 @@ const Employees: React.FC = () => {
                 open={isPasswordModalVisible}
                 onCancel={() => {
                     setIsPasswordModalVisible(false);
+                    const empToEdit = passwordEmployee;
                     setPasswordEmployee(null);
+                    if (empToEdit) {
+                        showModal(empToEdit);
+                    }
                 }}
                 onOk={handleGeneratePassword}
                 okText="Generálás"
@@ -1265,10 +1298,37 @@ const Employees: React.FC = () => {
                 visible={isCredentialsModalVisible}
                 onClose={() => {
                     setIsCredentialsModalVisible(false);
+                    const empToEdit = credentialsEmployee;
                     setCredentialsEmployee(null);
+                    if (empToEdit) {
+                        showModal(empToEdit);
+                    }
                 }}
                 employee={credentialsEmployee}
             />
+
+            {/* Jogosultságok Modal */}
+            <Modal
+                title="Egyéni jogosultságok"
+                open={isPermissionsModalVisible}
+                onCancel={() => {
+                    setIsPermissionsModalVisible(false);
+                    const empToEdit = permissionsEmployee;
+                    setPermissionsEmployee(null);
+                    if (empToEdit) {
+                        showModal(empToEdit);
+                    }
+                }}
+                footer={null}
+                width={800}
+            >
+                {permissionsEmployee && (
+                    <div>
+                        <p><strong>Alkalmazott:</strong> {permissionsEmployee.user_first_name} {permissionsEmployee.user_last_name}</p>
+                        <p>Az egyéni jogosultságok kezelése hamarosan elérhető lesz.</p>
+                    </div>
+                )}
+            </Modal>
         </div>
     );
 };

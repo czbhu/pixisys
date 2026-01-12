@@ -6,6 +6,8 @@ import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import SignaturesPage from './pages/SignaturesPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import PixinvoiceSettingsPage from './pages/PixinvoiceSettingsPage';
+import CurrenciesPage from './pages/CurrenciesPage';
+import RolesPage from './pages/RolesPage';
 import CompanySettings from './CompanySettings';
 import Backup from './Backup';
 
@@ -15,6 +17,8 @@ const SettingsModule: React.FC = () => {
       <Route path="/" element={<Navigate to="/settings/email-server" replace />} />
       <Route path="/access-control" element={<AccessControlSettingsPage />} />
       <Route path="/companies" element={<CompanySettings />} />
+      <Route path="/currencies" element={<CurrenciesPage />} />
+      <Route path="/roles" element={<RolesPage />} />
       <Route path="/email-server" element={<EmailServerPage />} />
       <Route path="/email-templates" element={<EmailTemplatesPage />} />
       <Route path="/signatures" element={<SignaturesPage />} />

@@ -303,11 +303,21 @@ class ContactViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['get'])
     def by_company(self, request):
-        """Kapcsolattartók cég szerint"""
+        """Kapcsolattartók cég szerint
+        
+        Query params:
+        - company_id: cég ID vagy 'private' magánszemélyekhez
+        """
         company_id = request.query_params.get('company_id')
-        if company_id:
+        
+        if company_id == 'private':
+            # Magánszemélyek (nincs cég hozzárendelve)
+            contacts = Contact.objects.filter(company__isnull=True)
+        elif company_id:
+            # Adott cég kapcsolattartói
             contacts = Contact.objects.filter(company_id=company_id)
         else:
+            # Minden kapcsolattartó
             contacts = Contact.objects.all()
         
         serializer = self.get_serializer(contacts, many=True)

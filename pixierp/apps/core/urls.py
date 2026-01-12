@@ -9,6 +9,9 @@ router.register(r'pixinvoice-configs', views.PixinvoiceConfigViewSet, basename='
 router.register(r'backup-configs', views.BackupConfigurationViewSet, basename='backup-config')
 router.register(r'backup-files', views.BackupFileViewSet, basename='backup-file')
 router.register(r'user-preferences', views.UserPreferenceViewSet, basename='user-preference')
+router.register(r'roles', views.RoleViewSet, basename='role')
+router.register(r'permissions', views.PermissionViewSet, basename='permission')
+router.register(r'user-roles', views.UserRoleViewSet, basename='user-role')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

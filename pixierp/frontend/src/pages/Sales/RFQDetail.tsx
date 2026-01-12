@@ -71,6 +71,12 @@ const RFQDetail: React.FC = () => {
           const cl = await crmService.getContactsByCompany(rfqRes.company.id);
           setContacts((cl as any).results ?? cl);
         } catch {}
+      } else if (rfqRes?.contacts && rfqRes.contacts.length > 0) {
+        // Ha nincs cég, de vannak kapcsolattartók, akkor magánszemélyek
+        try {
+          const cl = await crmService.getPrivateContacts();
+          setContacts((cl as any).results ?? cl);
+        } catch {}
       } else {
         setContacts([]);
       }
@@ -84,7 +90,7 @@ const RFQDetail: React.FC = () => {
           created_by_name: createdByName,
           issue_date: rfqRes.issue_date ? dayjs(rfqRes.issue_date) : null,
           deadline: rfqRes.deadline ? dayjs(rfqRes.deadline) : null,
-          company_id: rfqRes.company?.id,
+          company_id: rfqRes.company?.id || (rfqRes.contacts && rfqRes.contacts.length > 0 ? 'private' : undefined),
           contact_ids: (rfqRes.contacts || []).map((c: any) => c.id),
           title: computedDemandTitle,
           project_id: rfqRes.project?.id || rfqRes.project,
@@ -366,9 +372,9 @@ const RFQDetail: React.FC = () => {
         <Form layout="vertical" form={formBasic} onFinish={async (v) => {
           console.log('[RFQDetail] Form submitted with values:', v);
           try {
-            // Company required for new quote and demand on save
+            // Company or 'private' required for new quote and demand on save
             const companyId = v.company_id ?? rfq.company?.id;
-            if (!companyId) {
+            if (!companyId && companyId !== 'private') {
               message.error('A Cég mező kötelező.');
               return;
             }
@@ -376,17 +382,26 @@ const RFQDetail: React.FC = () => {
               ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
               : String(v.title).trim();
             console.log('[RFQDetail] Sending update_basic with project_id:', v.project_id);
-            await salesService.updateQuoteRequestBasic(Number(id), {
+            
+            const updateData: any = {
               title: autoTitle,
               description: v.description,
               internal_description: v.internal_description,
               issue_date: v.issue_date ? v.issue_date.format('YYYY-MM-DD') : undefined,
               deadline: v.deadline ? v.deadline.format('YYYY-MM-DD') : undefined,
-              company_id: companyId,
               contact_ids: v.contact_ids || [],
               project_id: v.project_id,
               currency_code: v.currency_code,
-            });
+            };
+            
+            // Set company_id: null for private, or the actual ID
+            if (companyId === 'private') {
+              updateData.company_id = null;
+            } else if (companyId) {
+              updateData.company_id = companyId;
+            }
+            
+            await salesService.updateQuoteRequestBasic(Number(id), updateData);
             message.success('Mentve');
             load();
           } catch (err) {
@@ -425,14 +440,26 @@ const RFQDetail: React.FC = () => {
                       showSearch
                       optionFilterProp="label"
                       placeholder="Válassz céget"
+                      onFocus={async () => {
+                        // Frissítjük a cégek listáját amikor rákattintanak
+                        const list = await crmService.getCompanies();
+                        setCompanies((list as any).results ?? list);
+                      }}
                       onChange={async (val) => {
                         try {
-                          const list = await crmService.getContactsByCompany(val);
-                          setContacts((list as any).results ?? list);
-                          formBasic.setFieldValue('contact_ids', []);
+                          if (val === 'private') {
+                            const list = await crmService.getPrivateContacts();
+                            setContacts((list as any).results ?? list);
+                            formBasic.setFieldValue('contact_ids', []);
+                          } else {
+                            const list = await crmService.getContactsByCompany(val);
+                            setContacts((list as any).results ?? list);
+                            formBasic.setFieldValue('contact_ids', []);
+                          }
                         } catch {}
                       }}
                     >
+                      <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
                       {(companies || []).map((c: any) => (
                         <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
                       ))}
@@ -461,13 +488,51 @@ const RFQDetail: React.FC = () => {
               </Row>
             </Col>
             <Col span={16}>
-              <Form.Item label="Kapcsolattartók" name="contact_ids">
-                <Select mode="multiple" allowClear showSearch optionFilterProp="label" placeholder="Válassz kapcsolattartókat">
-                  {(contacts || []).map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
+              <Row gutter={4}>
+                <Col flex="auto">
+                  <Form.Item label="Kapcsolattartók" name="contact_ids">
+                    <Select 
+                      mode="multiple" 
+                      allowClear 
+                      showSearch 
+                      optionFilterProp="label" 
+                      placeholder="Válassz kapcsolattartókat"
+                      onFocus={async () => {
+                        // Frissítjük a kapcsolattartók listáját amikor rákattintanak
+                        const companyId = formBasic.getFieldValue('company_id');
+                        if (companyId === 'private') {
+                          const list = await crmService.getPrivateContacts();
+                          setContacts((list as any).results ?? list);
+                        } else if (companyId) {
+                          const list = await crmService.getContactsByCompany(companyId);
+                          setContacts((list as any).results ?? list);
+                        }
+                      }}
+                    >
+                      {(contacts || []).map((p: any) => (
+                        <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col flex="40px">
+                  <Form.Item label=" ">
+                    <Button
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        const companyId = formBasic.getFieldValue('company_id');
+                        let url = '/crm/contacts?action=create';
+                        if (companyId && companyId !== 'private') {
+                          url += `&company=${companyId}`;
+                        }
+                        window.open(url, '_blank');
+                      }}
+                      title="Új kapcsolattartó"
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
             </Col>
           </Row>
           <Row gutter={12}>

@@ -23,6 +23,7 @@ class ProductClassSerializer(serializers.ModelSerializer):
 class ProjectSerializer(serializers.ModelSerializer):
     contact_names = serializers.SerializerMethodField()
     project_manager_name = serializers.SerializerMethodField()
+    company_name = serializers.CharField(source='company.name', read_only=True)
     
     class Meta:
         model = Project

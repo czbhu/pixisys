@@ -40,7 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     const allMenuKeys = [
       '/dashboard',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
-      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders',
+      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/invoicing',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/product-classes', '/manufacturing/services',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
@@ -351,6 +351,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       children: [
         { key: '/settings/access-control', label: 'Beléptető rendszer' },
         { key: '/settings/companies', label: 'Alap adatok' },
+        { key: '/settings/currencies', label: 'Pénznemek' },
+        { key: '/settings/roles', label: 'Jogosultságok' },
         { key: '/settings/email-server', label: 'E-mail szerver' },
         { key: '/settings/email-templates', label: 'E-mail sablonok' },
         { key: '/settings/signatures', label: 'Aláírások' },

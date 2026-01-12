@@ -624,6 +624,15 @@ const Companies: React.FC = () => {
 
                     <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
                         <Space>
+                            {editingCompany && (
+                                <Button 
+                                    onClick={() => {
+                                        window.open(`/crm/contacts?company=${editingCompany.id}`, '_blank');
+                                    }}
+                                >
+                                    Kapcsolattartók
+                                </Button>
+                            )}
                             <Button onClick={() => setIsModalVisible(false)}>
                                 Mégse
                             </Button>
@@ -785,6 +794,17 @@ const Companies: React.FC = () => {
                 open={isViewModalVisible}
                 onCancel={() => setIsViewModalVisible(false)}
                 footer={[
+                    <Button 
+                        key="contacts" 
+                        type="primary"
+                        onClick={() => {
+                            if (viewingCompany) {
+                                window.open(`/crm/contacts?company=${viewingCompany.id}`, '_blank');
+                            }
+                        }}
+                    >
+                        Kapcsolattartók
+                    </Button>,
                     <Button key="close" onClick={() => setIsViewModalVisible(false)}>
                         Bezárás
                     </Button>

@@ -39,6 +39,7 @@ const Projects: React.FC = () => {
     const [filtered, setFiltered] = useState<Project[]>([]);
     const [query, setQuery] = useState('');
     const [contacts, setContacts] = useState<any[]>([]);
+    const [companies, setCompanies] = useState<any[]>([]);
     const [employees, setEmployees] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [isModalVisible, setIsModalVisible] = useState(false);
@@ -49,6 +50,7 @@ const Projects: React.FC = () => {
 
     useEffect(() => {
         loadProjects();
+        loadCompanies();
         loadContacts();
         loadEmployees();
     }, []);
@@ -63,6 +65,16 @@ const Projects: React.FC = () => {
             message.error('Hiba történt a projektek betöltése során');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const loadCompanies = async () => {
+        try {
+            const response = await crmService.getCompanies();
+            const allCompanies = (response as any).results ?? response;
+            setCompanies((allCompanies as any[]).filter((c: any) => c.is_customer));
+        } catch (err) {
+            console.error('Error loading companies:', err);
         }
     };
 
@@ -84,19 +96,33 @@ const Projects: React.FC = () => {
         }
     };
 
-    const showModal = (project?: Project) => {
+    const showModal = async (project?: Project) => {
         if (project) {
             setEditingProject(project);
             form.setFieldsValue({
                 name: project.name,
                 description: project.description,
                 deadline: dayjs(project.deadline),
+                company_id: (project as any).company?.id || ((project as any).contact_names?.length > 0 ? 'private' : undefined),
                 contacts: project.contact_names.map(name =>
                     contacts.find(c => c.name === name)?.id
                 ).filter(Boolean),
                 project_manager: employees.find(emp => emp.full_name === project.project_manager_name)?.id,
                 status: project.status,
             });
+            
+            // Betöltjük a kapcsolattartókat a céghez vagy magánszemélyeket
+            if ((project as any).company?.id) {
+                try {
+                    const list = await crmService.getContactsByCompany((project as any).company.id);
+                    setContacts((list as any).results ?? list);
+                } catch {}
+            } else if ((project as any).contact_names?.length > 0) {
+                try {
+                    const list = await crmService.getPrivateContacts();
+                    setContacts((list as any).results ?? list);
+                } catch {}
+            }
         } else {
             setEditingProject(null);
             form.resetFields();
@@ -115,7 +141,7 @@ const Projects: React.FC = () => {
 
     const handleSubmit = async (values: any) => {
         try {
-            const data = {
+            const data: any = {
                 name: values.name,
                 description: values.description || '',
                 deadline: values.deadline.format('YYYY-MM-DD'),
@@ -123,6 +149,13 @@ const Projects: React.FC = () => {
                 project_manager: values.project_manager,
                 status: values.status,
             };
+            
+            // Set company: null for private, or the actual ID
+            if (values.company_id === 'private') {
+                data.company = null;
+            } else if (values.company_id) {
+                data.company = values.company_id;
+            }
 
             if (editingProject) {
                 await manufacturingService.updateProject(editingProject.id, data);
@@ -188,6 +221,14 @@ const Projects: React.FC = () => {
             width: 120,
             render: (deadline: string) => dayjs(deadline).format('YYYY.MM.DD'),
             sorter: (a: Project, b: Project) => dayjs(a.deadline).unix() - dayjs(b.deadline).unix(),
+        },
+        {
+            title: 'Cég',
+            dataIndex: 'company_name',
+            key: 'company_name',
+            width: 150,
+            render: (company_name: string) => company_name || 'Magánszemély',
+            sorter: (a: Project, b: Project) => ((a as any).company_name || 'Magánszemély').localeCompare((b as any).company_name || 'Magánszemély'),
         },
         {
             title: 'Kapcsolattartók',
@@ -395,42 +436,124 @@ const Projects: React.FC = () => {
                         </Col>
                     </Row>
 
-                    <Form.Item
-                        name="contacts"
-                        label="Kapcsolattartók"
-                    >
-                        <Select
-                            mode="multiple"
-                            placeholder="Válasszon kapcsolattartókat"
-                            allowClear
-                            showSearch
-                            optionFilterProp="children"
-                            filterOption={(input, option) => {
-                                const children = option?.children as unknown as string;
-                                if (!children || typeof children !== 'string') return false;
+                    <Row gutter={16}>
+                        <Col span={12}>
+                            <Row gutter={4}>
+                                <Col flex="auto">
+                                    <Form.Item name="company_id" label="Cég">
+                                        <Select
+                                            showSearch
+                                            optionFilterProp="label"
+                                            placeholder="Válassz céget"
+                                            onFocus={async () => {
+                                                // Frissítjük a cégek listáját amikor rákattintanak
+                                                const list = await crmService.getCompanies();
+                                                setCompanies((list as any).results ?? list);
+                                            }}
+                                            onChange={async (val) => {
+                                                form.setFieldsValue({ company_id: val });
+                                                if (val === 'private') {
+                                                    const list = await crmService.getPrivateContacts();
+                                                    setContacts((list as any).results ?? list);
+                                                    form.setFieldsValue({ contacts: [] });
+                                                } else {
+                                                    const list = await crmService.getContactsByCompany(val);
+                                                    setContacts((list as any).results ?? list);
+                                                    form.setFieldsValue({ contacts: [] });
+                                                }
+                                            }}
+                                        >
+                                            <Option value="private">Magánszemély</Option>
+                                            {companies.map((c: any) => (
+                                                <Option key={c.id} value={c.id}>{c.name}</Option>
+                                            ))}
+                                        </Select>
+                                    </Form.Item>
+                                </Col>
+                                <Col flex="40px">
+                                    <Form.Item label=" ">
+                                        <Button
+                                            icon={<PlusOutlined />}
+                                            onClick={() => window.open('/crm/companies?action=create', '_blank')}
+                                            title="Új cég"
+                                            style={{ width: '100%' }}
+                                        />
+                                    </Form.Item>
+                                </Col>
+                            </Row>
+                        </Col>
+                        <Col span={12}>
+                            <Row gutter={4}>
+                                <Col flex="auto">
+                                    <Form.Item
+                                        name="contacts"
+                                        label="Kapcsolattartók"
+                                    >
+                                        <Select
+                                            mode="multiple"
+                                            placeholder="Válasszon kapcsolattartókat"
+                                            allowClear
+                                            showSearch
+                                            optionFilterProp="children"
+                                            onFocus={async () => {
+                                                // Frissítjük a kapcsolattartók listáját amikor rákattintanak
+                                                const companyId = form.getFieldValue('company_id');
+                                                if (companyId === 'private') {
+                                                    const list = await crmService.getPrivateContacts();
+                                                    setContacts((list as any).results ?? list);
+                                                } else if (companyId) {
+                                                    const list = await crmService.getContactsByCompany(companyId);
+                                                    setContacts((list as any).results ?? list);
+                                                }
+                                            }}
+                                            onChange={(val) => form.setFieldsValue({ contacts: val })}
+                                            filterOption={(input, option) => {
+                                                const children = option?.children as unknown as string;
+                                                if (!children || typeof children !== 'string') return false;
 
-                                // Ékezetek eltávolítása és kisbetűsítés
-                                const normalizeText = (text: string) => {
-                                    return text
-                                        .normalize('NFD')
-                                        .replace(/[\u0300-\u036f]/g, '')
-                                        .toLowerCase()
-                                        .replace(/[^a-z0-9\s]/g, '');
-                                };
+                                                // Ékezetek eltávolítása és kisbetűsítés
+                                                const normalizeText = (text: string) => {
+                                                    return text
+                                                        .normalize('NFD')
+                                                        .replace(/[\u0300-\u036f]/g, '')
+                                                        .toLowerCase()
+                                                        .replace(/[^a-z0-9\s]/g, '');
+                                                };
 
-                                const normalizedInput = normalizeText(input);
-                                const normalizedChildren = normalizeText(children);
+                                                const normalizedInput = normalizeText(input);
+                                                const normalizedChildren = normalizeText(children);
 
-                                return normalizedChildren.includes(normalizedInput);
-                            }}
-                        >
-                            {contacts.map(contact => (
-                                <Option key={contact.id} value={contact.id}>
-                                    {contact.name} - {contact.company_name || 'Magánszemély'}
-                                </Option>
-                            ))}
-                        </Select>
-                    </Form.Item>
+                                                return normalizedChildren.includes(normalizedInput);
+                                            }}
+                                        >
+                                            {contacts.map(contact => (
+                                                <Option key={contact.id} value={contact.id}>
+                                                    {contact.name} - {contact.company_name || 'Magánszemély'}
+                                                </Option>
+                                            ))}
+                                        </Select>
+                                    </Form.Item>
+                                </Col>
+                                <Col flex="40px">
+                                    <Form.Item label=" ">
+                                        <Button
+                                            icon={<PlusOutlined />}
+                                            onClick={() => {
+                                                const companyId = form.getFieldValue('company_id');
+                                                let url = '/crm/contacts?action=create';
+                                                if (companyId && companyId !== 'private') {
+                                                    url += `&company=${companyId}`;
+                                                }
+                                                window.open(url, '_blank');
+                                            }}
+                                            title="Új kapcsolattartó"
+                                            style={{ width: '100%' }}
+                                        />
+                                    </Form.Item>
+                                </Col>
+                            </Row>
+                        </Col>
+                    </Row>
 
                     <Form.Item
                         name="project_manager"

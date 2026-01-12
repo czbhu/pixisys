@@ -1,6 +1,10 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
-from .models import Company, BankAccount, EmailServerConfig, EmailTemplate, SignatureTemplate, PixinvoiceConfig, BackupConfiguration, BackupFile, UserPreference
+from .models import (
+    Company, BankAccount, EmailServerConfig, EmailTemplate, 
+    SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
+    BackupFile, UserPreference, Role, Permission, UserRole
+)
 
 User = get_user_model()
 
@@ -96,3 +100,55 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
     
     def get_default_signature_key(self, obj):
         return obj.default_signature.key if obj.default_signature else None
+
+
+class PermissionSerializer(serializers.ModelSerializer):
+    module_display = serializers.CharField(source='get_module_display', read_only=True)
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+    resource_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Permission
+        fields = ['id', 'role', 'user', 'module', 'module_display', 'resource', 'resource_display', 'action', 'action_display', 'allowed', 'created_at']
+        read_only_fields = ['id', 'created_at']
+    
+    def get_resource_display(self, obj):
+        if obj.resource:
+            return dict(Permission.RESOURCE_CHOICES).get(obj.resource, obj.resource)
+        return None
+
+
+class RoleSerializer(serializers.ModelSerializer):
+    permissions = PermissionSerializer(many=True, read_only=True)
+    permissions_count = serializers.SerializerMethodField()
+    users_count = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'is_system', 'permissions', 'permissions_count', 'users_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+    
+    def get_permissions_count(self, obj):
+        return obj.permissions.count()
+    
+    def get_users_count(self, obj):
+        return obj.user_assignments.count()
+
+
+class UserRoleSerializer(serializers.ModelSerializer):
+    role_name = serializers.CharField(source='role.name', read_only=True)
+    user_name = serializers.SerializerMethodField()
+    assigned_by_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = UserRole
+        fields = ['id', 'user', 'user_name', 'role', 'role_name', 'assigned_at', 'assigned_by', 'assigned_by_name']
+        read_only_fields = ['id', 'assigned_at']
+    
+    def get_user_name(self, obj):
+        return obj.user.get_full_name() or obj.user.username
+    
+    def get_assigned_by_name(self, obj):
+        if obj.assigned_by:
+            return obj.assigned_by.get_full_name() or obj.assigned_by.username
+        return None

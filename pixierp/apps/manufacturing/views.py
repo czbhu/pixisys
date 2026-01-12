@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
+from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, 
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
@@ -30,10 +31,14 @@ class ProductClassViewSet(viewsets.ModelViewSet):
     ordering = ['name']
 
 
-class ProjectViewSet(viewsets.ModelViewSet):
+class ProjectViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Project.objects.all()
     serializer_class = ProjectSerializer
     permission_classes = [AllowAny]
+    permission_module = 'manufacturing'
+    permission_resource = 'manufacturing.projects'
+    own_data_user_field = 'manager'  # Project.manager = User
+    own_data_project_field = None  # Direkt projekt kapcsolat, nem kell
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status']
     search_fields = ['name', 'description']
@@ -56,10 +61,14 @@ class ProjectViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-class ManufacturingProductViewSet(viewsets.ModelViewSet):
+class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = ManufacturingProduct.objects.all()
     serializer_class = ManufacturingProductSerializer
     permission_classes = [AllowAny]
+    permission_module = 'manufacturing'
+    permission_resource = 'manufacturing.products'
+    own_data_user_field = 'created_by'  # ManufacturingProduct.created_by = User
+    own_data_project_field = 'project'  # ManufacturingProduct.project -> Project.members
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'product_class', 'project', 'contact']
     search_fields = ['name', 'description', 'internal_description']
@@ -120,6 +129,34 @@ class CurrencyViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({
                 'error': f'Hiba történt az árfolyamok frissítése során: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+    
+    @action(detail=False, methods=['get'])
+    def mnb_currencies(self, request):
+        """MNB-ből elérhető valuták listája árfolyamokkal"""
+        try:
+            from apps.core.mnb_api import mnb_api
+            
+            rates = mnb_api.get_current_exchange_rates()
+            currencies = []
+            
+            for code, rate_data in rates.items():
+                currencies.append({
+                    'code': code,
+                    'name': rate_data['name'],
+                    'symbol': mnb_api.get_currency_symbol(code),
+                    'exchange_rate': float(rate_data['rate']),
+                    'rate_huf': float(rate_data['rate_huf']),
+                })
+            
+            # Sort by code
+            currencies.sort(key=lambda x: x['code'])
+            
+            return Response(currencies, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response({
+                'error': f'Hiba történt az MNB valuták lekérése során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class ServiceViewSet(viewsets.ModelViewSet):

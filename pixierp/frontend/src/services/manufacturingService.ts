@@ -176,6 +176,25 @@ class ManufacturingService {
         return response.data;
     }
 
+    async createCurrency(data: any): Promise<Currency> {
+        const response = await api.post('/manufacturing/currencies/', data);
+        return response.data;
+    }
+
+    async updateCurrency(id: number, data: any): Promise<Currency> {
+        const response = await api.put(`/manufacturing/currencies/${id}/`, data);
+        return response.data;
+    }
+
+    async deleteCurrency(id: number): Promise<void> {
+        await api.delete(`/manufacturing/currencies/${id}/`);
+    }
+
+    async getMNBCurrencies(): Promise<any[]> {
+        const response = await api.get('/manufacturing/currencies/mnb_currencies/');
+        return response.data;
+    }
+
     // Exchange rate update
     async updateExchangeRates(): Promise<{ message: string }> {
         const response = await api.post('/manufacturing/currencies/update_rates/');

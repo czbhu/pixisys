@@ -11,7 +11,16 @@ const ResetPassword = () => {
     const navigate = useNavigate();
     const { uid, token } = useParams();
 
+    // Debug: ellenőrizzük az URL paramétereket
+    React.useEffect(() => {
+        console.log('[ResetPassword] URL params - uid:', uid, 'token:', token);
+        if (!uid || !token) {
+            console.error('[ResetPassword] Hiányzó paraméterek!');
+        }
+    }, [uid, token]);
+
     const handleSubmit = async (values: { new_password1: string; new_password2: string }) => {
+        console.log('[ResetPassword] Submit - uid:', uid, 'token:', token);
         if (!uid || !token) {
             message.error('Érvénytelen vagy hiányos link');
             return;
@@ -56,14 +65,32 @@ const ResetPassword = () => {
                     borderRadius: 12
                 }}
             >
-                <div style={{ textAlign: 'center', marginBottom: 24 }}>
-                    <Title level={3} style={{ marginBottom: 8 }}>
-                        Új jelszó beállítása
-                    </Title>
-                    <Text type="secondary">
-                        Add meg az új jelszót.
-                    </Text>
-                </div>
+                {!uid || !token ? (
+                    <div style={{ textAlign: 'center' }}>
+                        <Title level={3} style={{ marginBottom: 16, color: '#ff4d4f' }}>
+                            Érvénytelen link
+                        </Title>
+                        <Text type="secondary" style={{ display: 'block', marginBottom: 24 }}>
+                            A jelszó visszaállító link érvénytelen vagy lejárt. 
+                            Kérj új linket a jelszó emlékeztető oldalon.
+                        </Text>
+                        <Button type="primary" onClick={() => navigate('/forgot-password')} block>
+                            Új link kérése
+                        </Button>
+                        <Button type="link" block onClick={() => navigate('/login')} style={{ marginTop: 8 }}>
+                            Vissza a bejelentkezéshez
+                        </Button>
+                    </div>
+                ) : (
+                    <>
+                        <div style={{ textAlign: 'center', marginBottom: 24 }}>
+                            <Title level={3} style={{ marginBottom: 8 }}>
+                                Új jelszó beállítása
+                            </Title>
+                            <Text type="secondary">
+                                Add meg az új jelszót.
+                            </Text>
+                        </div>
 
                 <Form name="reset_password" onFinish={handleSubmit} layout="vertical" size="large">
                     <Form.Item
@@ -104,6 +131,8 @@ const ResetPassword = () => {
                         Vissza a bejelentkezéshez
                     </Button>
                 </Form>
+                    </>
+                )}
             </Card>
         </div>
     );

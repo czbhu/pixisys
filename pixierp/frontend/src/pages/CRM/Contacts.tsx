@@ -23,13 +23,17 @@ import {
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
-    SearchOutlined
+    SearchOutlined,
+    FilterOutlined
 } from '@ant-design/icons';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
 
 const { Option } = Select;
 
 const Contacts: React.FC = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [contacts, setContacts] = useState<any[]>([]);
@@ -39,6 +43,7 @@ const Contacts: React.FC = () => {
     const [editingContact, setEditingContact] = useState<any>(null);
     const [viewingContact, setViewingContact] = useState<any>(null);
     const [searchQuery, setSearchQuery] = useState('');
+    const [companyFilter, setCompanyFilter] = useState<number | null>(null);
     const [form] = Form.useForm();
     const [companyForm] = Form.useForm();
     const [isCompanyModalVisible, setIsCompanyModalVisible] = useState(false);
@@ -48,6 +53,18 @@ const Contacts: React.FC = () => {
     useEffect(() => {
         loadData();
     }, []);
+    
+    // URL paraméter alapján cég szűrő beállítása
+    useEffect(() => {
+        const searchParams = new URLSearchParams(location.search);
+        const companyParam = searchParams.get('company');
+        if (companyParam) {
+            const companyId = parseInt(companyParam, 10);
+            if (!isNaN(companyId)) {
+                setCompanyFilter(companyId);
+            }
+        }
+    }, [location.search]);
 
     const loadData = async () => {
         try {
@@ -142,6 +159,18 @@ const Contacts: React.FC = () => {
     const showViewModal = (contact: any) => {
         setViewingContact(contact);
         setIsViewModalVisible(true);
+    };
+    
+    const showCreateModal = () => {
+        form.resetFields();
+        setEditingContact(null);
+        
+        // Ha van cég szűrő, automatikusan töltsük ki
+        if (companyFilter) {
+            form.setFieldsValue({ company: companyFilter });
+        }
+        
+        setIsModalVisible(true);
     };
 
     const columns = [
@@ -242,13 +271,60 @@ const Contacts: React.FC = () => {
             </div>
         );
     }
+    
+    // Szűrt kapcsolattartók
+    const filteredContacts = contacts.filter(contact => {
+        if (companyFilter) {
+            return contact.company === companyFilter;
+        }
+        return true;
+    });
+    
+    // Kiválasztott cég neve
+    const selectedCompany = companyFilter 
+        ? companies.find(c => c.id === companyFilter) 
+        : null;
 
     return (
         <div>
             <Card
-                title="Kapcsolattartók"
+                title={
+                    <Space>
+                        <span>Kapcsolattartók</span>
+                        {selectedCompany && (
+                            <Tag color="blue" closable onClose={() => {
+                                setCompanyFilter(null);
+                                navigate('/crm/contacts');
+                            }}>
+                                <FilterOutlined /> {selectedCompany.name}
+                            </Tag>
+                        )}
+                    </Space>
+                }
                 extra={
                     <Space>
+                        <Select
+                            placeholder="Szűrés cégre..."
+                            style={{ width: 200 }}
+                            allowClear
+                            showSearch
+                            optionFilterProp="children"
+                            value={companyFilter}
+                            onChange={(value) => {
+                                setCompanyFilter(value || null);
+                                if (value) {
+                                    navigate(`/crm/contacts?company=${value}`);
+                                } else {
+                                    navigate('/crm/contacts');
+                                }
+                            }}
+                        >
+                            {companies.map(company => (
+                                <Option key={company.id} value={company.id}>
+                                    {company.name}
+                                </Option>
+                            ))}
+                        </Select>
                         <Input.Search
                             placeholder="Kapcsolattartó keresése..."
                             value={searchQuery}
@@ -259,7 +335,7 @@ const Contacts: React.FC = () => {
                         <Button
                             type="primary"
                             icon={<PlusOutlined />}
-                            onClick={() => setIsModalVisible(true)}
+                            onClick={showCreateModal}
                         >
                             Új kapcsolattartó
                         </Button>
@@ -277,7 +353,7 @@ const Contacts: React.FC = () => {
                 )}
                 <Table
                     columns={columns}
-                    dataSource={contacts}
+                    dataSource={filteredContacts}
                     pagination={{ pageSize: 10 }}
                     rowKey="id"
                     scroll={{ x: 900 }}

@@ -130,6 +130,7 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'customer_name',
       key: 'customer_name',
       ellipsis: true,
+      render: (text: string) => text || 'Magánszemély',
     },
     {
       title: 'Kapcsolattartók',

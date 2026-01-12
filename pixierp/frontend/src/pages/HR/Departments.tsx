@@ -27,6 +27,7 @@ import {
     SearchOutlined
 } from '@ant-design/icons';
 import { hrService } from '../../services/hrService';
+import { rolesService } from '../../services/rolesService';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -37,6 +38,8 @@ interface Department {
     description?: string;
     managers?: number[];
     manager_names?: string[];
+    roles?: number[];
+    role_names?: string[];
     budget: number;
     created_at: string;
     updated_at: string;
@@ -45,10 +48,16 @@ interface Department {
 
 interface Employee {
     id: number;
+    user?: number;  // User ID az Employee objektumban
     full_name: string;
     employee_id: string;
     department_names?: string[];
     position_name?: string;
+}
+
+interface Role {
+    id: number;
+    name: string;
 }
 
 const Departments: React.FC = () => {
@@ -58,6 +67,7 @@ const Departments: React.FC = () => {
     const [filtered, setFiltered] = useState<Department[]>([]);
     const [query, setQuery] = useState('');
     const [employees, setEmployees] = useState<Employee[]>([]);
+    const [roles, setRoles] = useState<Role[]>([]);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
@@ -89,19 +99,22 @@ const Departments: React.FC = () => {
         try {
             setLoading(true);
             setError(null);
-            const [departmentsResponse, employeesResponse] = await Promise.all([
+            const [departmentsResponse, employeesResponse, rolesResponse] = await Promise.all([
                 hrService.getDepartments(),
-                hrService.getEmployees()
+                hrService.getEmployees(),
+                rolesService.getRoles()
             ]);
 
             // Handle paginated response
             const departmentsData = departmentsResponse.results || departmentsResponse;
             const employeesData = employeesResponse.results || employeesResponse;
+            const rolesData = rolesResponse.results || rolesResponse;
 
             const deptList = Array.isArray(departmentsData) ? departmentsData : [];
             setDepartments(deptList);
             setFiltered(deptList);
             setEmployees(Array.isArray(employeesData) ? employeesData : []);
+            setRoles(Array.isArray(rolesData) ? rolesData : []);
         } catch (err) {
             console.error('Error loading data:', err);
             setError('Hiba történt az adatok betöltése során');
@@ -122,6 +135,7 @@ const Departments: React.FC = () => {
             name: department.name,
             description: department.description || '',
             managers: department.managers || [],
+            roles: department.roles || [],
             budget: department.budget || 0
         });
         setIsModalVisible(true);
@@ -200,6 +214,21 @@ const Departments: React.FC = () => {
                 <Space size={[0, 8]} wrap>
                     {managerNames.map((name, index) => (
                         <Tag key={index} color="blue" icon={<UserOutlined />}>
+                            {name}
+                        </Tag>
+                    ))}
+                </Space>
+            ) : '-',
+            width: 200,
+        },
+        {
+            title: 'Szerepkörök',
+            dataIndex: 'role_names',
+            key: 'role_names',
+            render: (roleNames: string[]) => roleNames && roleNames.length > 0 ? (
+                <Space size={[0, 8]} wrap>
+                    {roleNames.map((name, index) => (
+                        <Tag key={index} color="purple">
                             {name}
                         </Tag>
                     ))}
@@ -367,7 +396,7 @@ const Departments: React.FC = () => {
                     </Form.Item>
 
                     <Form.Item
-        name="managers"
+                        name="managers"
                         label="Vezetők"
                     >
                         <Select
@@ -381,8 +410,30 @@ const Departments: React.FC = () => {
                             }
                         >
                             {employees.map((employee) => (
-                                <Option key={employee.id} value={employee.id}>
+                                <Option key={employee.id} value={employee.user || employee.id}>
                                     {employee.full_name} ({employee.employee_id})
+                                </Option>
+                            ))}
+                        </Select>
+                    </Form.Item>
+
+                    <Form.Item
+                        name="roles"
+                        label="Szerepkörök"
+                    >
+                        <Select
+                            mode="multiple"
+                            placeholder="Válasszon szerepkör(öke)t"
+                            allowClear
+                            showSearch
+                            optionFilterProp="children"
+                            filterOption={(input, option) =>
+                                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
+                            }
+                        >
+                            {roles.map((role) => (
+                                <Option key={role.id} value={role.id}>
+                                    {role.name}
                                 </Option>
                             ))}
                         </Select>
@@ -439,6 +490,17 @@ const Departments: React.FC = () => {
                                     <Space size={[0, 8]} wrap>
                                         {viewingDepartment.manager_names.map((name, index) => (
                                             <Tag key={index} color="blue" icon={<UserOutlined />}>
+                                                {name}
+                                            </Tag>
+                                        ))}
+                                    </Space>
+                                ) : '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Szerepkörök">
+                                {viewingDepartment.role_names && viewingDepartment.role_names.length > 0 ? (
+                                    <Space size={[0, 8]} wrap>
+                                        {viewingDepartment.role_names.map((name, index) => (
+                                            <Tag key={index} color="purple">
                                                 {name}
                                             </Tag>
                                         ))}
