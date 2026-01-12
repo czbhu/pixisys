@@ -220,7 +220,7 @@ const Dashboard = () => {
 
   return (
     <div>
-      <h1 style={{ marginBottom: '30px', color: '#2c3e50' }}>PixInvoice v0.9.0</h1>
+      <h1 style={{ marginBottom: '30px', color: '#2c3e50' }}>PixInvoice {process.env.REACT_APP_VERSION || 'dev'}</h1>
       
       <DashboardContainer>
         <StatCard>

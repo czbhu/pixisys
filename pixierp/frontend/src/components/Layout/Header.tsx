@@ -77,7 +77,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false }) => {
                     color: '#1890ff',
                     fontSize: isMobile ? 16 : 20 
                 }}>
-                    {isMobile ? 'PixiERP' : 'PixiERP Dashboard v1.0.0'}
+                    {isMobile ? 'PixiERP' : `PixiERP Dashboard ${process.env.REACT_APP_VERSION || 'dev'}`}
                 </h2>
             </div>
 
