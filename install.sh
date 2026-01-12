@@ -7,12 +7,83 @@ echo "  ERP + Invoice System"
 echo "=========================================="
 echo ""
 
+# ===== DOMAIN KONFIGURÁCIÓ =====
+# Kérdezz rá a domain beállításokra
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+CONFIG_FILE="$SCRIPT_DIR/.pixisys.conf"
+
 # Színek
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
+
+echo -e "${BLUE}📍 Domain konfiguráció${NC}"
+echo ""
+
+# Ellenőrizzük, van-e már mentett konfiguráció
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    echo -e "${GREEN}Létező konfiguráció betöltve:${NC}"
+    echo "  PixiERP:    $ERP_DOMAIN"
+    echo "  PixInvoice: $INV_DOMAIN"
+    echo "  HTTPS:      $USE_HTTPS"
+    echo ""
+    read -p "Használjam ezeket a beállításokat? (I/n): " USE_EXISTING
+    if [ "$USE_EXISTING" = "n" ] || [ "$USE_EXISTING" = "N" ]; then
+        # Új konfiguráció kérése
+        bash "$SCRIPT_DIR/config.sh"
+    fi
+else
+    # Első telepítés - alapértelmezett teszt környezet (te/ti.pixisys.eu)
+    echo -e "${YELLOW}Első telepítés - domain konfiguráció${NC}"
+    echo ""
+    read -p "Szeretnéd módosítani a domain-eket? (i/N): " MODIFY_DOMAINS
+    
+    if [ "$MODIFY_DOMAINS" = "i" ] || [ "$MODIFY_DOMAINS" = "I" ]; then
+        # Interaktív konfiguráció
+        bash "$SCRIPT_DIR/config.sh"
+    else
+        # Alapértelmezett teszt környezet
+        ERP_DOMAIN="te.pixisys.eu"
+        INV_DOMAIN="ti.pixisys.eu"
+        ERP_BACKEND_PORT="8003"
+        INV_BACKEND_PORT="4001"
+        USE_HTTPS="true"
+        
+        echo ""
+        echo -e "${GREEN}✓ Alapértelmezett teszt környezet (te/ti.pixisys.eu)${NC}"
+        echo -e "${YELLOW}  A rendszer localhost-on ÉS a domain-eken is működni fog.${NC}"
+        
+        # Mentés
+        cat > "$CONFIG_FILE" <<EOF
+# PixiSys Domain Konfiguráció
+# Generálva: $(date)
+ERP_DOMAIN="$ERP_DOMAIN"
+INV_DOMAIN="$INV_DOMAIN"
+ERP_BACKEND_PORT="$ERP_BACKEND_PORT"
+INV_BACKEND_PORT="$INV_BACKEND_PORT"
+USE_HTTPS="$USE_HTTPS"
+EOF
+    fi
+fi
+
+# Betöltjük a konfigurációt
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    source "$SCRIPT_DIR/config.sh" --load-only
+else
+    echo -e "${RED}HIBA: config.sh nem található!${NC}"
+    exit 1
+fi
+
+echo ""
+echo -e "${BLUE}📍 Telepítési konfiguráció:${NC}"
+echo -e "  PixiERP Frontend:  ${GREEN}${ERP_FRONTEND_URL}${NC}"
+echo -e "  PixiERP Backend:   ${GREEN}${ERP_BACKEND_URL}${NC}"
+echo -e "  PixInvoice Frontend: ${GREEN}${INV_FRONTEND_URL}${NC}"
+echo -e "  PixInvoice Backend:  ${GREEN}${INV_BACKEND_URL}${NC}"
+echo ""
 
 # Ellenőrző függvények
 check_command() {
@@ -186,8 +257,12 @@ if [ ! -f ".env" ]; then
 SECRET_KEY=$ERP_SECRET_KEY
 DEBUG=True
 
-# Frontend base URL
-FRONTEND_BASE_URL=http://localhost:3000
+# Frontend base URL used in password reset emails
+FRONTEND_BASE_URL=$ERP_FRONTEND_URL
+
+# Emergency access domain (used by generate_emergency_access command)
+# Dev: http://localhost:3000, Prod: https://erp.pixisys.eu or https://te.pixisys.eu
+EMERGENCY_DOMAIN=$ERP_FRONTEND_URL
 
 # Email (opcionális - hagyd üresen fejlesztéshez)
 DEFAULT_FROM_EMAIL=no-reply@pixisys.eu
@@ -198,9 +273,9 @@ EMAIL_HOST_PASSWORD=
 EMAIL_USE_TLS=True
 
 # Allowed hosts
-ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
-CSRF_TRUSTED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+ALLOWED_HOSTS=$ERP_ALLOWED_HOSTS
+CSRF_TRUSTED_ORIGINS=$ERP_CSRF_TRUSTED
+CORS_ALLOWED_ORIGINS=$ERP_CORS_ALLOWED
 
 # Database
 DB_NAME=$ERP_DB_NAME
@@ -214,7 +289,7 @@ REDIS_HOST=localhost
 REDIS_PORT=6379
 
 # Frontend
-FRONTEND_URL=http://localhost:3000
+FRONTEND_URL=$ERP_FRONTEND_URL
 EOF
     echo -e "${GREEN}✓ PixiERP .env létrehozva${NC}"
 else
@@ -271,8 +346,8 @@ npm install
 # Frontend .env
 if [ ! -f ".env" ]; then
     cat > .env <<EOF
-REACT_APP_API_URL=http://localhost:8003
-PORT=3000
+REACT_APP_API_URL=$ERP_BACKEND_URL
+PORT=${ERP_FRONTEND_PORT:-3000}
 EOF
     echo -e "${GREEN}✓ PixiERP Frontend .env létrehozva${NC}"
 fi
@@ -315,7 +390,7 @@ if [ ! -f ".env" ]; then
 # Django
 SECRET_KEY=$INV_SECRET_KEY
 DEBUG=True
-ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0
+ALLOWED_HOSTS=$INV_ALLOWED_HOSTS
 
 # Database
 DB_NAME=$INV_DB_NAME
@@ -325,16 +400,22 @@ DB_HOST=localhost
 DB_PORT=5432
 
 # SMTP Email (opcionális)
-SMTP_HOST=
-SMTP_PORT=587
-SMTP_USER=
-SMTP_PASSWORD=
-SMTP_USE_TLS=1
-SMTP_FROM=noreply@pixisys.eu
+EMAIL_BACKEND=django.core.mail.backends.smtp.EmailBackend
+EMAIL_HOST=
+EMAIL_PORT=587
+EMAIL_HOST_USER=
+EMAIL_HOST_PASSWORD=
+EMAIL_USE_TLS=True
+DEFAULT_FROM_EMAIL=no-reply@pixisys.eu
+FRONTEND_BASE_URL=$INV_FRONTEND_URL
+
+# Emergency access domain (used by generate_emergency_access command)
+# Dev: http://localhost:4000, Prod: https://inv.pixisys.eu or https://ti.pixisys.eu
+EMERGENCY_DOMAIN=$INV_FRONTEND_URL
 
 # URLs
-FRONTEND_URL=http://localhost:4000
-BACKEND_URL=http://localhost:4001
+FRONTEND_URL=$INV_FRONTEND_URL
+BACKEND_URL=$INV_BACKEND_URL
 EOF
     echo -e "${GREEN}✓ PixInvoice .env létrehozva${NC}"
 else
@@ -391,8 +472,8 @@ npm install
 # Frontend .env
 if [ ! -f ".env" ]; then
     cat > .env <<EOF
-REACT_APP_API_URL=http://localhost:4001
-PORT=4000
+REACT_APP_API_URL=$INV_BACKEND_URL
+PORT=${INV_FRONTEND_PORT:-4000}
 EOF
     echo -e "${GREEN}✓ PixInvoice Frontend .env létrehozva${NC}"
 fi

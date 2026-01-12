@@ -26,6 +26,7 @@ static/
 .env
 .env.local
 .env.production
+.pixisys.conf
 
 # Node
 node_modules/

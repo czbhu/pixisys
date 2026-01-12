@@ -19,19 +19,22 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         validity_minutes = options['minutes']
         
-        # Hostname meghatározása
-        try:
-            hostname = socket.gethostname()
-            # Próbáljuk meg kitalálni a domain-t
-            if 'erp.pixisys.eu' in settings.ALLOWED_HOSTS:
-                base_url = 'https://erp.pixisys.eu'
-            elif 'te.pixisys.eu' in settings.ALLOWED_HOSTS:
-                base_url = 'https://te.pixisys.eu'
-            else:
-                # Fallback localhost-ra
+        # Domain meghatározása környezeti változóból vagy ALLOWED_HOSTS-ból
+        import os
+        base_url = os.environ.get('EMERGENCY_DOMAIN')
+        
+        if not base_url:
+            # Fallback: próbáljuk meg kitalálni a domain-t
+            try:
+                if 'erp.pixisys.eu' in settings.ALLOWED_HOSTS:
+                    base_url = 'https://erp.pixisys.eu'
+                elif 'te.pixisys.eu' in settings.ALLOWED_HOSTS:
+                    base_url = 'https://te.pixisys.eu'
+                else:
+                    # Fallback localhost-ra
+                    base_url = 'http://localhost:3000'
+            except:
                 base_url = 'http://localhost:3000'
-        except:
-            base_url = 'http://localhost:3000'
         
         # Token létrehozása
         token = EmergencyAccessToken.create_token(validity_minutes=validity_minutes)
