@@ -225,6 +225,10 @@ fi
 echo "PixiERP adatbázis migrációk..."
 python manage.py migrate
 
+# Dev admin user létrehozása (DEBUG módban)
+echo "Dev admin felhasználó létrehozása (admin@pixisys.eu)..."
+python manage.py create_dev_admin || echo "⚠ create_dev_admin parancs nem elérhető vagy már létezik"
+
 # Statikus fájlok
 echo "Statikus fájlok gyűjtése..."
 python manage.py collectstatic --noinput > /dev/null 2>&1 || true
@@ -340,6 +344,10 @@ fi
 # Migrációk
 echo "PixInvoice adatbázis migrációk..."
 python manage.py migrate
+
+# Dev admin user létrehozása (DEBUG módban)
+echo "Dev admin felhasználó létrehozása (admin@pixisys.eu)..."
+python manage.py create_dev_admin || echo "⚠ create_dev_admin parancs nem elérhető vagy már létezik"
 
 # Statikus fájlok
 echo "Statikus fájlok gyűjtése..."

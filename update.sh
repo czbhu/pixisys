@@ -194,6 +194,15 @@ if [ -d "venv" ]; then
     echo -e "${YELLOW}  • Adatbázis migrációk futtatása...${NC}"
     python manage.py migrate --no-input
     
+    # Dev admin user létrehozása/frissítése (DEBUG módban)
+    if [ -f ".env" ]; then
+        source .env
+        if [ "$DEBUG" = "True" ] || [ "$DEBUG" = "true" ]; then
+            echo -e "${YELLOW}  • Dev admin felhasználó frissítése...${NC}"
+            python manage.py create_dev_admin 2>/dev/null || echo -e "${GREEN}    (create_dev_admin skip)${NC}"
+        fi
+    fi
+    
     # Static fájlok gyűjtése
     if [ -f ".env" ]; then
         source .env
@@ -259,6 +268,15 @@ if [ -d "venv" ]; then
     # Migrációk futtatása
     echo -e "${YELLOW}  • Adatbázis migrációk futtatása...${NC}"
     python manage.py migrate --no-input
+    
+    # Dev admin user létrehozása/frissítése (DEBUG módban)
+    if [ -f ".env" ]; then
+        source .env
+        if [ "$DEBUG" = "True" ] || [ "$DEBUG" = "true" ]; then
+            echo -e "${YELLOW}  • Dev admin felhasználó frissítése...${NC}"
+            python manage.py create_dev_admin 2>/dev/null || echo -e "${GREEN}    (create_dev_admin skip)${NC}"
+        fi
+    fi
     
     # Static fájlok gyűjtése
     if [ -f ".env" ]; then
