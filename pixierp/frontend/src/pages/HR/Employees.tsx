@@ -55,6 +55,7 @@ interface Employee {
     hire_date: string;
     is_active: boolean;
     permission_level: string;
+    role_ids?: number[];
     // Személyes adatok
     tb_number?: string;
     tax_number?: string;
