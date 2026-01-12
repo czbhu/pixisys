@@ -148,10 +148,16 @@ fi
 echo -e "${BLUE}[4/10] Új verzió letöltése...${NC}"
 git fetch origin
 CURRENT_BRANCH=$(git branch --show-current)
+
+# Ha nincs branch (detached HEAD), használjuk a main-t
+if [ -z "$CURRENT_BRANCH" ]; then
+    CURRENT_BRANCH="main"
+fi
+
 echo -e "${YELLOW}  • Branch: $CURRENT_BRANCH${NC}"
 
 # Megnézzük mi fog változni
-CHANGES=$(git log HEAD..origin/$CURRENT_BRANCH --oneline)
+CHANGES=$(git log HEAD..origin/$CURRENT_BRANCH --oneline 2>/dev/null || echo "")
 if [ -z "$CHANGES" ]; then
     echo -e "${GREEN}✓ Nincs új verzió, már a legfrissebb!${NC}"
     exit 0
