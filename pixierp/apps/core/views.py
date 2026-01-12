@@ -245,27 +245,40 @@ def password_reset_request_view(request):
 
     user = User.objects.filter(email__iexact=email, is_active=True).first()
     if user:
-        # EmailServerConfig használata (mint a HR modul jelszó generálásnál)
+        # EmailServerConfig használata, ha van, különben settings.py
         email_config = EmailServerConfig.objects.filter(is_active=True).first()
-        if not email_config:
-            # Logoljuk a hibát, de ne árulj el információt a felhasználóról
-            logger.error(f"Jelszó visszaállítás kérés: nincs aktív EmailServerConfig (user: {user.email})")
-            # Továbbra is sikeres választ adunk biztonsági okokból
-            return Response({'message': 'Ha létezik ilyen felhasználó, elküldtük a jelszó-visszaállító linket.'})
         
         try:
             # SMTP kapcsolat létrehozása
-            connection = get_connection(
-                backend='django.core.mail.backends.smtp.EmailBackend',
-                host=email_config.smtp_host,
-                port=email_config.smtp_port,
-                username=email_config.smtp_username,
-                password=email_config.smtp_password,
-                use_tls=email_config.smtp_use_tls,
-                use_ssl=email_config.smtp_use_ssl,
-                fail_silently=False,
-                timeout=10,
-            )
+            if email_config:
+                # Adatbázis konfiguráció használata
+                connection = get_connection(
+                    backend='django.core.mail.backends.smtp.EmailBackend',
+                    host=email_config.smtp_host,
+                    port=email_config.smtp_port,
+                    username=email_config.smtp_username,
+                    password=email_config.smtp_password,
+                    use_tls=email_config.smtp_use_tls,
+                    use_ssl=email_config.smtp_use_ssl,
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+            else:
+                # Fallback settings.py EMAIL_* változókra
+                logger.info(f"EmailServerConfig nincs, settings.py EMAIL_* változók használata")
+                connection = get_connection(
+                    backend=settings.EMAIL_BACKEND,
+                    host=settings.EMAIL_HOST,
+                    port=settings.EMAIL_PORT,
+                    username=settings.EMAIL_HOST_USER,
+                    password=settings.EMAIL_HOST_PASSWORD,
+                    use_tls=settings.EMAIL_USE_TLS,
+                    use_ssl=settings.EMAIL_USE_SSL,
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = settings.DEFAULT_FROM_EMAIL
             
             uid = urlsafe_base64_encode(force_bytes(user.pk))
             token = default_token_generator.make_token(user)
@@ -303,8 +316,6 @@ def password_reset_request_view(request):
             }
             subject = render_to_string('emails/password_reset_subject.txt', context).strip().replace('\n', '')
             body = render_to_string('emails/password_reset_body.txt', context)
-            
-            from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
 
             message = EmailMultiAlternatives(
                 subject=subject or _('Password reset'),
