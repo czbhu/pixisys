@@ -134,14 +134,14 @@ const RFQs: React.FC = () => {
 
   const columns = useMemo(() => ([
   { title: 'Ajánlatszám', dataIndex: 'number', key: 'number', sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || '') },
-  { title: 'Keltezés', dataIndex: 'issue_date', key: 'issue_date', render: (d: string) => d ? new Date(d).toLocaleDateString('hu-HU') : '', sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') },
+  { title: 'Keltezés', dataIndex: 'issue_date', key: 'issue_date', render: (d: string): string => d ? new Date(d).toLocaleDateString('hu-HU') : '', sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') },
   { title: 'Cím', dataIndex: 'title', key: 'title', sorter: (a: any, b: any) => (a.title || '').localeCompare(b.title || '') },
-  { title: 'Cég', dataIndex: ['company', 'name'], key: 'company_name', render: (_: any, r: any) => r.company?.name || r.company_name || 'Magánszemély', sorter: (a: any, b: any) => (a.company?.name || a.company_name || '').localeCompare(b.company?.name || b.company_name || '') },
-  { title: 'Kapcsolattartó', key: 'contact_names', render: (_: any, r: any) => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
+  { title: 'Cég', dataIndex: ['company', 'name'], key: 'company_name', render: (_: any, r: any): string => r.company?.name || r.company_name || 'Magánszemély', sorter: (a: any, b: any) => (a.company?.name || a.company_name || '').localeCompare(b.company?.name || b.company_name || '') },
+  { title: 'Kapcsolattartó', key: 'contact_names', render: (_: any, r: any): string => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
     { 
       title: 'Összeg', 
       key: 'total_amount', 
-      render: (_: any, r: any) => {
+      render: (_: any, r: any): string => {
         const amount = r.total_amount || 0;
         const currencySymbol = r.currency_symbol || 'Ft';
         return `${amount.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`;
@@ -150,9 +150,9 @@ const RFQs: React.FC = () => {
       align: 'right' as const
     },
     { title: 'Státusz', dataIndex: 'status', key: 'status', render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
-    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', render: (d: string) => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
+    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', render: (d: string): string => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
-      title: 'Műveletek', key: 'actions', render: (record: any) => (
+      title: 'Műveletek', key: 'actions', render: (record: any): React.ReactNode => (
         <Space size="small">
           <Tooltip title="Szerkesztés">
             <Button icon={<EditOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
