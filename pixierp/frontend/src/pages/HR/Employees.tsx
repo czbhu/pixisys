@@ -228,7 +228,7 @@ const Employees: React.FC = () => {
         try {
             setLoading(true);
             const response = await hrService.getEmployees();
-            let employees = response.results || response;
+            let employees = (response as any).results || response;
             employees = Array.isArray(employees) ? employees : [];
 
             // Ha nem mutatjuk az inaktívakat, akkor szűrjük ki őket
@@ -250,7 +250,7 @@ const Employees: React.FC = () => {
     const loadDepartments = async () => {
         try {
             const response = await hrService.getDepartments();
-            setDepartments(response.results || response);
+            setDepartments((response as any).results || response);
         } catch (err) {
             console.error('Error loading departments:', err);
         }
@@ -259,7 +259,7 @@ const Employees: React.FC = () => {
     const loadPositions = async () => {
         try {
             const response = await hrService.getPositions();
-            setPositions(response.results || response);
+            setPositions((response as any).results || response);
         } catch (err) {
             console.error('Error loading positions:', err);
         }

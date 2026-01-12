@@ -105,10 +105,10 @@ const Departments: React.FC = () => {
                 rolesService.getRoles()
             ]);
 
-            // Handle paginated response
-            const departmentsData = departmentsResponse.results || departmentsResponse;
-            const employeesData = employeesResponse.results || employeesResponse;
-            const rolesData = rolesResponse.results || rolesResponse;
+            // Handle paginated response - rolesResponse is already Role[], not paginated
+            const departmentsData = (departmentsResponse as any).results || departmentsResponse;
+            const employeesData = (employeesResponse as any).results || employeesResponse;
+            const rolesData = rolesResponse; // Already Role[], no .results property
 
             const deptList = Array.isArray(departmentsData) ? departmentsData : [];
             setDepartments(deptList);

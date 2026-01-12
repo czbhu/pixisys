@@ -62,7 +62,7 @@ const EmployeePerformance: React.FC = () => {
     const loadEmployees = async () => {
         try {
             const response = await hrService.getEmployees();
-            setEmployees(response.results || response);
+            setEmployees((response as any).results || response);
         } catch (error) {
             console.error('Error loading employees:', error);
             message.error('Hiba az alkalmazottak betöltése során');
