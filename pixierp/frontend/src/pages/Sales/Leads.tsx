@@ -21,7 +21,7 @@ const Leads: React.FC = () => {
             setError(null);
 
             const response = await salesService.getCustomers();
-            setCustomers(response.results || []);
+            setCustomers((response as any).results || []);
 
         } catch (err) {
             console.error('Error loading customers:', err);

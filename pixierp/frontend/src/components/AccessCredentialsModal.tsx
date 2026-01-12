@@ -64,7 +64,7 @@ const AccessCredentialsModal: React.FC<AccessCredentialsModalProps> = ({
         try {
             setLoading(true);
             const response = await hrService.getEmployeeCredentials(employee.id);
-            setCredentials(response.results || response || []);
+            setCredentials((response as any).results || response || []);
         } catch (err) {
             console.error('Error loading credentials:', err);
             message.error('Hiba az azonosítók betöltésekor');

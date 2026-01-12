@@ -63,7 +63,7 @@ const Suppliers: React.FC = () => {
             if (materialFilter) params.material = materialFilter;
             
             const response = await warehouseService.getMaterialSuppliers(params);
-            setSuppliers(response.results || response);
+            setSuppliers((response as any).results || response);
         } catch (error) {
             console.error('Error loading suppliers:', error);
             message.error('Hiba történt a beszállítók betöltése során');
@@ -75,7 +75,7 @@ const Suppliers: React.FC = () => {
     const loadMaterials = async () => {
         try {
             const response = await warehouseService.getMaterials();
-            setMaterials(response.results || response);
+            setMaterials((response as any).results || response);
         } catch (error) {
             console.error('Error loading materials:', error);
         }
@@ -84,7 +84,7 @@ const Suppliers: React.FC = () => {
     const loadCompanies = async () => {
         try {
             const response = await crmService.getCompanies();
-            const supplierCompanies = (response.results || response).filter((company: any) => company.is_supplier);
+            const supplierCompanies = ((response as any).results || response).filter((company: any) => company.is_supplier);
             setCompanies(supplierCompanies);
         } catch (error) {
             console.error('Error loading companies:', error);

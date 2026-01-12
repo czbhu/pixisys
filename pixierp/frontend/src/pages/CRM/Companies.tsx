@@ -71,7 +71,7 @@ const Companies: React.FC = () => {
             setLoading(true);
             const response = await crmService.getCompanies();
             // Handle paginated response
-            const companies = response.results || response;
+            const companies = (response as any).results || response;
             setCompanies(Array.isArray(companies) ? companies : []);
             setError(null);
         } catch (err) {

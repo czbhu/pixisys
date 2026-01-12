@@ -70,7 +70,7 @@ const Warehouses: React.FC = () => {
         try {
             setLoading(true);
             const response = await warehouseService.getWarehouses();
-            setWarehouses(response.results || response);
+            setWarehouses((response as any).results || response);
         } catch (error) {
             console.error('Error loading warehouses:', error);
             message.error('Hiba történt a raktárak betöltése során');

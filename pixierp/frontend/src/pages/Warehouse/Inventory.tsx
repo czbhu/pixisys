@@ -53,7 +53,7 @@ const Inventory: React.FC = () => {
             if (lowStockFilter) params.low_stock = 'true';
             
             const response = await warehouseService.getInventory(params);
-            setInventory(response.results || response);
+            setInventory((response as any).results || response);
         } catch (error) {
             console.error('Error loading inventory:', error);
         } finally {
@@ -64,7 +64,7 @@ const Inventory: React.FC = () => {
     const loadWarehouses = async () => {
         try {
             const response = await warehouseService.getWarehouses();
-            setWarehouses(response.results || response);
+            setWarehouses((response as any).results || response);
         } catch (error) {
             console.error('Error loading warehouses:', error);
         }

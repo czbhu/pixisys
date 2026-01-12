@@ -111,7 +111,7 @@ const Products: React.FC = () => {
     const loadContacts = async () => {
         try {
             const response = await crmService.getContacts();
-            setContacts(response.results || response);
+            setContacts((response as any).results || response);
         } catch (err) {
             console.error('Error loading contacts:', err);
         }

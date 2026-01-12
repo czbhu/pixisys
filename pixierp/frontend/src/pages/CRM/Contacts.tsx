@@ -74,8 +74,8 @@ const Contacts: React.FC = () => {
                 crmService.getContacts(),
                 crmService.getCompanies()
             ]);
-            setContacts(contactsResponse.results || []);
-            setCompanies(companiesResponse.results || []);
+            setContacts((contactsResponse as any).results || []);
+            setCompanies((companiesResponse as any).results || []);
         } catch (err) {
             console.error('Error loading data:', err);
             setError('Hiba történt az adatok betöltése során');
@@ -87,7 +87,7 @@ const Contacts: React.FC = () => {
     const refreshCompanies = async () => {
         try {
             const companiesResponse = await crmService.getCompanies();
-            setCompanies(companiesResponse.results || []);
+            setCompanies((companiesResponse as any).results || []);
         } catch (e) {
             // ignore
         }

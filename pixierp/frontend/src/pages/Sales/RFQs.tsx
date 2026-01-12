@@ -170,8 +170,8 @@ const RFQs: React.FC = () => {
                   settingsService.getEmailTemplates(),
                   settingsService.getSignatures()
                 ]);
-                templates = Array.isArray(templatesRes) ? templatesRes : (templatesRes?.results ?? []);
-                sigs = Array.isArray(sigsRes) ? sigsRes : (sigsRes?.results ?? []);
+                templates = Array.isArray(templatesRes) ? templatesRes : ((templatesRes as any)?.results ?? []);
+                sigs = Array.isArray(sigsRes) ? sigsRes : ((sigsRes as any)?.results ?? []);
                 setEmailTemplates(templates);
                 setSignatures(sigs);
               } catch {}
@@ -724,19 +724,19 @@ const RFQs: React.FC = () => {
                     onFocus={async () => {
                       // Frissítjük a cégek listáját amikor rákattintanak
                       const list = await crmService.getCompanies();
-                      setCompanies(list.results ?? list);
+                      setCompanies((list as any).results ?? list);
                     }}
                     onChange={async (val) => {
                       form.setFieldsValue({ company_id: val });
                       if (val === 'private') {
                         // Magánszemélyek lekérdezése
                         const list = await crmService.getPrivateContacts();
-                        setContacts(list.results ?? list);
+                        setContacts((list as any).results ?? list);
                         form.setFieldsValue({ contact_ids: [] });
                       } else {
                         // Céghez tartozó kapcsolattartók lekérdezése
                         const list = await crmService.getContactsByCompany(val);
-                        setContacts(list.results ?? list);
+                        setContacts((list as any).results ?? list);
                         form.setFieldsValue({ contact_ids: [] });
                       }
                     }}
@@ -772,10 +772,10 @@ const RFQs: React.FC = () => {
                       const companyId = form.getFieldValue('company_id');
                       if (companyId === 'private') {
                         const list = await crmService.getPrivateContacts();
-                        setContacts(list.results ?? list);
+                        setContacts((list as any).results ?? list);
                       } else if (companyId) {
                         const list = await crmService.getContactsByCompany(companyId);
-                        setContacts(list.results ?? list);
+                        setContacts((list as any).results ?? list);
                       }
                     }}
                     onChange={(val) => {
@@ -807,11 +807,11 @@ const RFQs: React.FC = () => {
                       if (companyId) {
                         if (companyId === 'private') {
                           const list = await crmService.getPrivateContacts();
-                          setContacts(list.results ?? list);
+                          setContacts((list as any).results ?? list);
                           message.success('Magánszemély kapcsolattartók frissítve');
                         } else {
                           const list = await crmService.getContactsByCompany(companyId);
-                          setContacts(list.results ?? list);
+                          setContacts((list as any).results ?? list);
                           message.success('Kapcsolattartók frissítve');
                         }
                       } else {

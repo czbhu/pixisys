@@ -118,10 +118,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         salesService.getTopManufacturingProducts().catch(() => []),
         salesService.getTopServices().catch(() => []),
       ]);
-      const productsData = prodRes.results ?? prodRes;
+      const productsData = (prodRes as any).results ?? prodRes;
       setProducts(productsData);
       setManuProducts((manuRes as any));
-      setServices(svcRes.results ?? svcRes);
+      setServices((svcRes as any).results ?? svcRes);
       setTop({ product: topProd as any[], manufacturing: topManu as any[], service: topSvc as any[] });
     } catch (e) {
       console.error('Error loading data:', e);

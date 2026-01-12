@@ -39,7 +39,7 @@ const Dashboard = () => {
             // Load orders
             const ordersResponse = await salesService.getOrders();
             const totalOrders = ordersResponse.count || 0;
-            const orders = ordersResponse.results || [];
+            const orders = (ordersResponse as any).results || [];
 
             // Calculate total revenue
             const totalRevenue = orders.reduce((sum: number, order: any) =>

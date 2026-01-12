@@ -60,7 +60,7 @@ const ProductClasses: React.FC = () => {
     const loadDepartments = async () => {
         try {
             const response = await hrService.getDepartments();
-            setDepartments(response.results || response);
+            setDepartments((response as any).results || response);
         } catch (err) {
             console.error('Error loading departments:', err);
         }

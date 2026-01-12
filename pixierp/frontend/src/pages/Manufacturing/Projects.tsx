@@ -81,7 +81,7 @@ const Projects: React.FC = () => {
     const loadContacts = async () => {
         try {
             const response = await crmService.getContacts();
-            setContacts(response.results || response);
+            setContacts((response as any).results || response);
         } catch (err) {
             console.error('Error loading contacts:', err);
         }
@@ -90,7 +90,7 @@ const Projects: React.FC = () => {
     const loadEmployees = async () => {
         try {
             const response = await hrService.getEmployees();
-            setEmployees(response.results || response);
+            setEmployees((response as any).results || response);
         } catch (err) {
             console.error('Error loading employees:', err);
         }

@@ -64,7 +64,7 @@ const Reports: React.FC = () => {
     const loadWarehouses = async () => {
         try {
             const response = await warehouseService.getWarehouses();
-            setWarehouses(response.results || response);
+            setWarehouses((response as any).results || response);
         } catch (error) {
             console.error('Error loading warehouses:', error);
         }

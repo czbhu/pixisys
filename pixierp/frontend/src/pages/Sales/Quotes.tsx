@@ -23,7 +23,7 @@ const Quotes: React.FC = () => {
 
             const quotesResponse = await salesService.getQuotes();
 
-            const quotesList = quotesResponse.results || [];
+            const quotesList = (quotesResponse as any).results || [];
             setQuotes(quotesList);
             setFiltered(quotesList);
 

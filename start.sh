@@ -64,7 +64,7 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-python manage.py runserver 127.0.0.1:4001 > /tmp/pixinvoice_backend.log 2>&1 &
+python manage.py runserver 0.0.0.0:4001 > /tmp/pixinvoice_backend.log 2>&1 &
 INVOICE_BACKEND_PID=$!
 echo -e "${GREEN}✅ Invoice Backend started (PID: $INVOICE_BACKEND_PID)${NC}"
 deactivate
@@ -103,7 +103,7 @@ if [ ! -d "node_modules" ]; then
     exit 1
 fi
 
-BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=http://localhost:4001 npm start > /tmp/pixinvoice_frontend.log 2>&1 &
+BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL= npm start > /tmp/pixinvoice_frontend.log 2>&1 &
 INVOICE_FRONTEND_PID=$!
 echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 
