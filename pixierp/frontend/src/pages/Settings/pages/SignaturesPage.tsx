@@ -10,7 +10,7 @@ const SignaturesPage: React.FC = () => {
 
   const load = async () => {
     const data = await settingsService.getSignatures();
-    const arr = Array.isArray(data) ? data : (data?.results ?? []);
+    const arr = Array.isArray(data) ? data : ((data as any)?.results ?? []);
     setList(arr);
   };
   useEffect(() => { load(); }, []);

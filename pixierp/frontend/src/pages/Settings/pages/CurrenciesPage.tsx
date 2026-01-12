@@ -35,7 +35,7 @@ const CurrenciesPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await manufacturingService.getCurrencies();
-      const arr = Array.isArray(data) ? data : (data?.results ?? []);
+      const arr = Array.isArray(data) ? data : ((data as any)?.results ?? []);
       setList(arr);
     } catch (error) {
       message.error('Nem sikerült betölteni a pénznemeket');
