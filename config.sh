@@ -513,7 +513,8 @@ EOF
         if [ -f "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" ]; then
             if [ ! -L "/etc/nginx/sites-enabled/${ERP_DOMAIN_NAME}.conf" ]; then
                 echo -e "${BLUE}Linking ${ERP_DOMAIN_NAME}.conf...${NC}"
-                sudo cp "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                # Replace __SCRIPT_DIR__ placeholder with actual path
+                sed "s|__SCRIPT_DIR__|$SCRIPT_DIR|g" "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" | sudo tee /etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf > /dev/null
                 sudo ln -sf "/etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf" "/etc/nginx/sites-enabled/"
                 echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME}.conf aktiválva${NC}"
             else
@@ -525,7 +526,8 @@ EOF
         if [ -f "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" ]; then
             if [ ! -L "/etc/nginx/sites-enabled/${INV_DOMAIN_NAME}.conf" ]; then
                 echo -e "${BLUE}Linking ${INV_DOMAIN_NAME}.conf...${NC}"
-                sudo cp "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                # Replace __SCRIPT_DIR__ placeholder with actual path
+                sed "s|__SCRIPT_DIR__|$SCRIPT_DIR|g" "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" | sudo tee /etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf > /dev/null
                 sudo ln -sf "/etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf" "/etc/nginx/sites-enabled/"
                 echo -e "${GREEN}✓ ${INV_DOMAIN_NAME}.conf aktiválva${NC}"
             else
