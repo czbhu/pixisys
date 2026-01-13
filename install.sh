@@ -775,39 +775,63 @@ EOF
                     fi
                     
                     if command -v certbot &> /dev/null; then
-                        echo ""
-                        echo -e "${YELLOW}FIGYELEM: Az SSL tanúsítvány kéréshez:${NC}"
-                        echo "  1. A domain-eknek (${ERP_DOMAIN_NAME}, ${INV_DOMAIN_NAME}) rá kell mutatniuk erre a szerverre (DNS A rekord)"
-                        echo "  2. A 80-as port elérhetőnek kell lennie külső hálózatról (tűzfal/router beállítás)"
-                        echo "  3. Érvényes email címet kell megadnod"
-                        echo ""
-                        read -p "Készen állsz SSL tanúsítvány kérésre? (i/N): " REQUEST_SSL
-                        if [ "$REQUEST_SSL" = "i" ] || [ "$REQUEST_SSL" = "I" ]; then
-                            echo ""
-                            read -p "Email cím (Let's Encrypt értesítésekhez): " SSL_EMAIL
-                            
-                            echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${ERP_DOMAIN_NAME}${NC}"
-                            if sudo certbot --nginx -d ${ERP_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
-                                echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
-                            else
-                                echo -e "${RED}❌ ${ERP_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
-                                echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
-                            fi
-                            
-                            echo ""
-                            echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${INV_DOMAIN_NAME}${NC}"
-                            if sudo certbot --nginx -d ${INV_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
-                                echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
-                            else
-                                echo -e "${RED}❌ ${INV_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
-                                echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
-                            fi
-                            
-                            echo ""
-                            echo -e "${GREEN}✓ SSL tanúsítványok feltelepítve${NC}"
+                        # Ellenőrizzük, hogy van-e már tanúsítvány
+                        ERP_HAS_CERT=false
+                        INV_HAS_CERT=false
+                        
+                        if sudo test -d "/etc/letsencrypt/live/${ERP_DOMAIN_NAME}" || sudo test -d "/etc/letsencrypt/live/${ERP_DOMAIN_NAME}-0001"; then
+                            ERP_HAS_CERT=true
+                        fi
+                        
+                        if sudo test -d "/etc/letsencrypt/live/${INV_DOMAIN_NAME}" || sudo test -d "/etc/letsencrypt/live/${INV_DOMAIN_NAME}-0001"; then
+                            INV_HAS_CERT=true
+                        fi
+                        
+                        if [ "$ERP_HAS_CERT" = "true" ] && [ "$INV_HAS_CERT" = "true" ]; then
+                            echo -e "${GREEN}✓ Mindkét domain SSL tanúsítványa megtalálva${NC}"
                             echo -e "${BLUE}ℹ️  A tanúsítványok automatikusan megújulnak (certbot timer)${NC}"
                         else
-                            echo -e "${YELLOW}⚠️  SSL tanúsítvány kihagyva${NC}"
+                            echo ""
+                            echo -e "${YELLOW}FIGYELEM: Az SSL tanúsítvány kéréshez:${NC}"
+                            echo "  1. A domain-eknek (${ERP_DOMAIN_NAME}, ${INV_DOMAIN_NAME}) rá kell mutatniuk erre a szerverre (DNS A rekord)"
+                            echo "  2. A 80-as port elérhetőnek kell lennie külső hálózatról (tűzfal/router beállítás)"
+                            echo "  3. Érvényes email címet kell megadnod"
+                            echo ""
+                            read -p "Készen állsz SSL tanúsítvány kérésre? (i/N): " REQUEST_SSL
+                            if [ "$REQUEST_SSL" = "i" ] || [ "$REQUEST_SSL" = "I" ]; then
+                                echo ""
+                                read -p "Email cím (Let's Encrypt értesítésekhez): " SSL_EMAIL
+                                
+                                if [ "$ERP_HAS_CERT" = "false" ]; then
+                                    echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${ERP_DOMAIN_NAME}${NC}"
+                                    if sudo certbot --nginx -d ${ERP_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                                        echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
+                                    else
+                                        echo -e "${RED}❌ ${ERP_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
+                                        echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
+                                    fi
+                                else
+                                    echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány már létezik${NC}"
+                                fi
+                                
+                                echo ""
+                                if [ "$INV_HAS_CERT" = "false" ]; then
+                                    echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${INV_DOMAIN_NAME}${NC}"
+                                    if sudo certbot --nginx -d ${INV_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                                        echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
+                                    else
+                                        echo -e "${RED}❌ ${INV_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
+                                        echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
+                                    fi
+                                else
+                                    echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány már létezik${NC}"
+                                fi
+                                
+                                echo ""
+                                echo -e "${GREEN}✓ SSL tanúsítványok ellenőrizve/telepítve${NC}"
+                                echo -e "${BLUE}ℹ️  A tanúsítványok automatikusan megújulnak (certbot timer)${NC}"
+                            else
+                                echo -e "${YELLOW}⚠️  SSL tanúsítvány kihagyva${NC}"
                             echo "   Később manuálisan is kérheted:"
                             echo "   sudo certbot --nginx -d ${ERP_DOMAIN_NAME} -d www.${ERP_DOMAIN_NAME}"
                             echo "   sudo certbot --nginx -d ${INV_DOMAIN_NAME} -d www.${INV_DOMAIN_NAME}"

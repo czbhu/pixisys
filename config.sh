@@ -368,14 +368,15 @@ EOF
                         ERP_CERT_EXISTS=false
                         INV_CERT_EXISTS=false
                         
-                        if [ -f "/etc/letsencrypt/live/${ERP_DOMAIN_NAME}/fullchain.pem" ]; then
+                        # Ellenőrzés: létezik-e a tanúsítvány mappa (certbot -0001, -0002 suffixekkel is működik)
+                        if sudo test -d "/etc/letsencrypt/live/${ERP_DOMAIN_NAME}" || sudo test -d "/etc/letsencrypt/live/${ERP_DOMAIN_NAME}-0001"; then
                             echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány megtalálva${NC}"
                             ERP_CERT_EXISTS=true
                         else
                             echo -e "${YELLOW}⚠️  ${ERP_DOMAIN_NAME} SSL tanúsítvány nem található${NC}"
                         fi
                         
-                        if [ -f "/etc/letsencrypt/live/${INV_DOMAIN_NAME}/fullchain.pem" ]; then
+                        if sudo test -d "/etc/letsencrypt/live/${INV_DOMAIN_NAME}" || sudo test -d "/etc/letsencrypt/live/${INV_DOMAIN_NAME}-0001"; then
                             echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány megtalálva${NC}"
                             INV_CERT_EXISTS=true
                         else
