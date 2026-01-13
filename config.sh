@@ -179,9 +179,9 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
         
         # PixiERP Frontend .env
         if [ -f "$SCRIPT_DIR/pixierp/frontend/.env" ]; then
-            sed -i "s|^REACT_APP_API_URL=.*|REACT_APP_API_URL=$ERP_BACKEND_URL|" "$SCRIPT_DIR/pixierp/frontend/.env"
+            sed -i "s|^REACT_APP_API_URL=.*|REACT_APP_API_URL=/api/v1|" "$SCRIPT_DIR/pixierp/frontend/.env"
             sed -i "s|^PORT=.*|PORT=${ERP_FRONTEND_PORT:-3000}|" "$SCRIPT_DIR/pixierp/frontend/.env"
-            echo -e "${GREEN}✓ PixiERP frontend .env frissítve${NC}"
+            echo -e "${GREEN}✓ PixiERP frontend .env frissítve (nginx proxy: /api/v1)${NC}"
         fi
         
         # PixInvoice Backend .env

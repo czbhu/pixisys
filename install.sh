@@ -346,9 +346,9 @@ npm install
 # Frontend .env
 if [ ! -f ".env" ]; then
     echo "PixiERP Frontend .env létrehozása..."
-    echo "  REACT_APP_API_URL = $ERP_BACKEND_URL"
+    echo "  REACT_APP_API_URL = /api/v1 (nginx proxy)"
     cat > .env <<EOF
-REACT_APP_API_URL=$ERP_BACKEND_URL
+REACT_APP_API_URL=/api/v1
 PORT=${ERP_FRONTEND_PORT:-3000}
 EOF
     echo -e "${GREEN}✓ PixiERP Frontend .env létrehozva${NC}"
