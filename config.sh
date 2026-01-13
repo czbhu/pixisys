@@ -220,7 +220,49 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
     # Nginx konfiguráció újragenerálása
     if [ ! "$ERP_DOMAIN" = "localhost:3000" ] && [ ! "$INV_DOMAIN" = "localhost:4000" ]; then
         echo ""
+        
+        # SSL konfiguráció detektálása
+        ERP_HAS_SSL=false
+        INV_HAS_SSL=false
+        
+        if [ -f "/etc/nginx/sites-enabled/${ERP_DOMAIN_NAME}.conf" ]; then
+            if sudo grep -q "listen 443 ssl" "/etc/nginx/sites-enabled/${ERP_DOMAIN_NAME}.conf" 2>/dev/null; then
+                ERP_HAS_SSL=true
+                echo -e "${YELLOW}⚠️  ${ERP_DOMAIN_NAME} nginx config már tartalmaz SSL konfigurációt (certbot)${NC}"
+            fi
+        fi
+        
+        if [ -f "/etc/nginx/sites-enabled/${INV_DOMAIN_NAME}.conf" ]; then
+            if sudo grep -q "listen 443 ssl" "/etc/nginx/sites-enabled/${INV_DOMAIN_NAME}.conf" 2>/dev/null; then
+                INV_HAS_SSL=true
+                echo -e "${YELLOW}⚠️  ${INV_DOMAIN_NAME} nginx config már tartalmaz SSL konfigurációt (certbot)${NC}"
+            fi
+        fi
+        
+        if [ "$ERP_HAS_SSL" = "true" ] || [ "$INV_HAS_SSL" = "true" ]; then
+            echo -e "${RED}FIGYELEM: SSL konfiguráció található az nginx fájlokban!${NC}"
+            echo "Ha újragenerálod, az SSL beállítások elvesznek és újra kell futtatni a certbot-ot."
+            echo ""
+        fi
+        
         read -p "Generáljak újra Nginx konfigurációkat? (i/N): " REGEN_NGINX
+        if [ "$REGEN_NGINX" = "i" ] || [ "$REGEN_NGINX" = "I" ]; then
+            echo ""
+            echo -e "${BLUE}📝 Nginx konfiguráció újragenerálása...${NC}"
+            
+            if [ "$ERP_HAS_SSL" = "true" ] || [ "$INV_HAS_SSL" = "true" ]; then
+                echo -e "${YELLOW}⚠️  SSL konfiguráció el fog veszni! Újra kell majd futtatni:${NC}"
+                echo "   sudo certbot --nginx -d ${ERP_DOMAIN_NAME}"
+                echo "   sudo certbot --nginx -d ${INV_DOMAIN_NAME}"
+                echo ""
+                read -p "Biztosan folytatod? (i/N): " CONFIRM_REGEN
+                if [ "$CONFIRM_REGEN" != "i" ] && [ "$CONFIRM_REGEN" != "I" ]; then
+                    echo -e "${YELLOW}⚠️  Nginx újragenerálás megszakítva${NC}"
+                    REGEN_NGINX="N"
+                fi
+            fi
+        fi
+        
         if [ "$REGEN_NGINX" = "i" ] || [ "$REGEN_NGINX" = "I" ]; then
             echo ""
             echo -e "${BLUE}📝 Nginx konfiguráció újragenerálása...${NC}"
