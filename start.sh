@@ -117,7 +117,7 @@ if [ ! -d "node_modules" ]; then
     exit 1
 fi
 
-PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=${INV_BACKEND_URL} npm start > /tmp/pixinvoice_frontend.log 2>&1 &
+PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api npm start > /tmp/pixinvoice_frontend.log 2>&1 &
 INVOICE_FRONTEND_PID=$!
 echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 

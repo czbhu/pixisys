@@ -130,8 +130,9 @@ fi
 # Teljes URL-ek
 ERP_FRONTEND_URL="${PROTOCOL}://${ERP_DOMAIN}"
 INV_FRONTEND_URL="${PROTOCOL}://${INV_DOMAIN}"
-ERP_BACKEND_URL="${PROTOCOL}://${ERP_DOMAIN_NAME}:${ERP_BACKEND_PORT}"
-INV_BACKEND_URL="${PROTOCOL}://${INV_DOMAIN_NAME}:${INV_BACKEND_PORT}"
+# Backend URL-ek nginx-szel használva (port nélkül, nginx proxyzi)
+ERP_BACKEND_URL="${PROTOCOL}://${ERP_DOMAIN_NAME}"
+INV_BACKEND_URL="${PROTOCOL}://${INV_DOMAIN_NAME}"
 
 # ALLOWED_HOSTS generálás - MINDIG tartalmazza localhost-ot ÉS mindkét domain-t
 # Így működik localhost-on, mindkét domain-en, és kereszt-domain is
