@@ -479,9 +479,9 @@ npm install
 # Frontend .env
 if [ ! -f ".env" ]; then
     echo "PixInvoice Frontend .env létrehozása..."
-    echo "  REACT_APP_API_URL = /api (nginx proxy)"
+    echo "  REACT_APP_API_URL = (üres, backend már tartalmazza az /api/ prefix-et)"
     cat > .env <<EOF
-REACT_APP_API_URL=/api
+REACT_APP_API_URL=
 PORT=${INV_FRONTEND_PORT:-4000}
 EOF
     echo -e "${GREEN}✓ PixInvoice Frontend .env létrehozva${NC}"
