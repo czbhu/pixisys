@@ -133,18 +133,23 @@ INV_FRONTEND_URL="${PROTOCOL}://${INV_DOMAIN}"
 ERP_BACKEND_URL="${PROTOCOL}://${ERP_DOMAIN_NAME}:${ERP_BACKEND_PORT}"
 INV_BACKEND_URL="${PROTOCOL}://${INV_DOMAIN_NAME}:${INV_BACKEND_PORT}"
 
-# ALLOWED_HOSTS generálás - MINDIG tartalmazza localhost-ot ÉS a domain-t is
-# Így működik localhost-on ÉS a domain-en is
-ERP_ALLOWED_HOSTS="localhost,127.0.0.1,0.0.0.0,$ERP_DOMAIN_NAME"
-INV_ALLOWED_HOSTS="localhost,127.0.0.1,0.0.0.0,$INV_DOMAIN_NAME"
+# ALLOWED_HOSTS generálás - MINDIG tartalmazza localhost-ot ÉS mindkét domain-t
+# Így működik localhost-on, mindkét domain-en, és kereszt-domain is
+ERP_ALLOWED_HOSTS="localhost,127.0.0.1,0.0.0.0,$ERP_DOMAIN_NAME,$INV_DOMAIN_NAME"
+INV_ALLOWED_HOSTS="localhost,127.0.0.1,0.0.0.0,$INV_DOMAIN_NAME,$ERP_DOMAIN_NAME"
 
-# CSRF és CORS beállítások - mindkét protokoll és domain
+# CSRF és CORS beállítások - mindkét protokoll és mindkét domain
+# Így működik az ERP és Invoice közötti kommunikáció is
 if [ "$USE_HTTPS" = "true" ]; then
-    ERP_CSRF_TRUSTED="http://localhost:3000,http://127.0.0.1:3000,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
-    ERP_CORS_ALLOWED="http://localhost:3000,http://127.0.0.1:3000,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
+    ERP_CSRF_TRUSTED="http://localhost:3000,http://127.0.0.1:3000,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME,https://$INV_DOMAIN_NAME,http://$INV_DOMAIN_NAME"
+    ERP_CORS_ALLOWED="http://localhost:3000,http://127.0.0.1:3000,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME,https://$INV_DOMAIN_NAME,http://$INV_DOMAIN_NAME"
+    INV_CSRF_TRUSTED="http://localhost:4000,http://127.0.0.1:4000,https://$INV_DOMAIN_NAME,http://$INV_DOMAIN_NAME,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
+    INV_CORS_ALLOWED="http://localhost:4000,http://127.0.0.1:4000,https://$INV_DOMAIN_NAME,http://$INV_DOMAIN_NAME,https://$ERP_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
 else
-    ERP_CSRF_TRUSTED="http://localhost:3000,http://127.0.0.1:3000,http://$ERP_DOMAIN_NAME"
-    ERP_CORS_ALLOWED="http://localhost:3000,http://127.0.0.1:3000,http://$ERP_DOMAIN_NAME"
+    ERP_CSRF_TRUSTED="http://localhost:3000,http://127.0.0.1:3000,http://$ERP_DOMAIN_NAME,http://$INV_DOMAIN_NAME"
+    ERP_CORS_ALLOWED="http://localhost:3000,http://127.0.0.1:3000,http://$ERP_DOMAIN_NAME,http://$INV_DOMAIN_NAME"
+    INV_CSRF_TRUSTED="http://localhost:4000,http://127.0.0.1:4000,http://$INV_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
+    INV_CORS_ALLOWED="http://localhost:4000,http://127.0.0.1:4000,http://$INV_DOMAIN_NAME,http://$ERP_DOMAIN_NAME"
 fi
 
 # ===== KONFIGURÁCIÓ MEGJELENÍTÉSE =====
@@ -187,6 +192,8 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
         # PixInvoice Backend .env
         if [ -f "$SCRIPT_DIR/pixinvoice/invoice_app/.env" ]; then
             sed -i "s|^ALLOWED_HOSTS=.*|ALLOWED_HOSTS=$INV_ALLOWED_HOSTS|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
+            sed -i "s|^CSRF_TRUSTED_ORIGINS=.*|CSRF_TRUSTED_ORIGINS=$INV_CSRF_TRUSTED|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
+            sed -i "s|^CORS_ALLOWED_ORIGINS=.*|CORS_ALLOWED_ORIGINS=$INV_CORS_ALLOWED|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
             sed -i "s|^FRONTEND_BASE_URL=.*|FRONTEND_BASE_URL=$INV_FRONTEND_URL|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
             sed -i "s|^EMERGENCY_DOMAIN=.*|EMERGENCY_DOMAIN=$INV_FRONTEND_URL|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
             sed -i "s|^FRONTEND_URL=.*|FRONTEND_URL=$INV_FRONTEND_URL|" "$SCRIPT_DIR/pixinvoice/invoice_app/.env"
