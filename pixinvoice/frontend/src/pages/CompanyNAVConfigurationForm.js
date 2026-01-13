@@ -262,7 +262,7 @@ const CompanyNAVConfigurationForm = () => {
       tax_number: '',
       sign_key: '',
       exchange_key: '',
-      software_id: 'PIXINVOICE',
+      software_id: 'PIXINVOICE00000000',  // Exactly 18 characters
       software_name: 'PIX Invoice System',
       software_operation: 'ONLINE_SERVICE',
       software_main_version: '1.0',
@@ -323,7 +323,17 @@ const CompanyNAVConfigurationForm = () => {
         navigate('/settings/nav-configurations');
       },
       onError: (error) => {
-        toast.error('Hiba történt a NAV konfiguráció létrehozása során');
+        // Display specific validation errors from backend
+        const errorData = error.response?.data;
+        if (errorData && typeof errorData === 'object') {
+          // Show field-specific errors
+          Object.entries(errorData).forEach(([field, messages]) => {
+            const errorMsg = Array.isArray(messages) ? messages.join(', ') : messages;
+            toast.error(`${field}: ${errorMsg}`);
+          });
+        } else {
+          toast.error('Hiba történt a NAV konfiguráció létrehozása során');
+        }
         console.error('Create config error:', error);
       }
     }
@@ -341,7 +351,17 @@ const CompanyNAVConfigurationForm = () => {
         navigate('/settings/nav-configurations');
       },
       onError: (error) => {
-        toast.error('Hiba történt a NAV konfiguráció frissítése során');
+        // Display specific validation errors from backend
+        const errorData = error.response?.data;
+        if (errorData && typeof errorData === 'object') {
+          // Show field-specific errors
+          Object.entries(errorData).forEach(([field, messages]) => {
+            const errorMsg = Array.isArray(messages) ? messages.join(', ') : messages;
+            toast.error(`${field}: ${errorMsg}`);
+          });
+        } else {
+          toast.error('Hiba történt a NAV konfiguráció frissítése során');
+        }
         console.error('Update config error:', error);
       }
     }
@@ -616,10 +636,20 @@ const CompanyNAVConfigurationForm = () => {
             <Label htmlFor="software_id">Szoftver azonosító *</Label>
             <Input
               id="software_id"
-              {...register('software_id', { required: 'Szoftver azonosító megadása kötelező' })}
+              {...register('software_id', { 
+                required: 'Szoftver azonosító megadása kötelező',
+                pattern: {
+                  value: /^[0-9A-Z\-]{18}$/,
+                  message: 'Pontosan 18 karakter, csak szám (0-9), nagybetű (A-Z) és kötőjel (-) engedélyezett'
+                }
+              })}
               className={errors.software_id ? 'error' : ''}
-              placeholder="PIXINVOICE"
+              placeholder="123456789012345678"
+              maxLength={18}
             />
+            <small style={{ color: '#666', fontSize: '12px' }}>
+              Pontosan 18 karakter, csak szám, nagybetű és kötőjel. Példa: 123456789012345678
+            </small>
             {errors.software_id && (
               <ErrorMessage>{errors.software_id.message}</ErrorMessage>
             )}

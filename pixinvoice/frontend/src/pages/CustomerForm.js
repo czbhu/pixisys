@@ -759,6 +759,7 @@ const CustomerForm = () => {
       vat_status: 'DOMESTIC',
       is_hungarian_taxpayer: true,
       eu_tax_number: '',
+      payment_due_days: 8,
     },
   });
 
@@ -841,7 +842,16 @@ const CustomerForm = () => {
           });
           setPendingData(data);
         } else {
-          toast.error('Hiba történt az ügyfél létrehozása során');
+          // Display detailed validation errors
+          if (error.response?.data && typeof error.response.data === 'object') {
+            const errors = error.response.data;
+            Object.entries(errors).forEach(([field, messages]) => {
+              const messageText = Array.isArray(messages) ? messages.join(', ') : messages;
+              toast.error(`${field}: ${messageText}`);
+            });
+          } else {
+            toast.error('Hiba történt az ügyfél létrehozása során');
+          }
           console.error('Create customer error:', error);
         }
       },
@@ -891,7 +901,16 @@ const CustomerForm = () => {
           });
           setPendingData(data);
         } else {
-          toast.error('Hiba történt az ügyfél frissítése során');
+          // Display detailed validation errors
+          if (error.response?.data && typeof error.response.data === 'object') {
+            const errors = error.response.data;
+            Object.entries(errors).forEach(([field, messages]) => {
+              const messageText = Array.isArray(messages) ? messages.join(', ') : messages;
+              toast.error(`${field}: ${messageText}`);
+            });
+          } else {
+            toast.error('Hiba történt az ügyfél frissítése során');
+          }
         }
       },
     }
@@ -901,7 +920,18 @@ const CustomerForm = () => {
 
   const retryLookupTaxpayer = async (taxNumber, attempt = 1) => {
     try {
-      const response = await customerAPI.lookupTaxpayer(taxNumber);
+      // Try to get company_id from localStorage or current context
+      let companyId = null;
+      try {
+        const storedCompanyId = localStorage.getItem('selectedCompanyId') || localStorage.getItem('currentCompanyId');
+        if (storedCompanyId) {
+          companyId = storedCompanyId;
+        }
+      } catch (e) {
+        // ignore
+      }
+      
+      const response = await customerAPI.lookupTaxpayer(taxNumber, companyId);
       
       const hasRealData = response.data?.data && (
         response.data.data.taxpayer_name || 

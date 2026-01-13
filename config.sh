@@ -54,11 +54,11 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
     echo "A rendszer automatikusan hallgatni fog localhost-on ÉS a megadott domain-eken is."
     echo ""
     
-    read -p "PixiERP domain [${ERP_DOMAIN:-te.pixisys.eu}]: " NEW_ERP_DOMAIN
-    ERP_DOMAIN=${NEW_ERP_DOMAIN:-${ERP_DOMAIN:-te.pixisys.eu}}
+    read -p "PixiERP domain [${ERP_DOMAIN:-erp.pixisys.eu}]: " NEW_ERP_DOMAIN
+    ERP_DOMAIN=${NEW_ERP_DOMAIN:-${ERP_DOMAIN:-erp.pixisys.eu}}
     
-    read -p "PixInvoice domain [${INV_DOMAIN:-ti.pixisys.eu}]: " NEW_INV_DOMAIN
-    INV_DOMAIN=${NEW_INV_DOMAIN:-${INV_DOMAIN:-ti.pixisys.eu}}
+    read -p "PixInvoice domain [${INV_DOMAIN:-inv.pixisys.eu}]: " NEW_INV_DOMAIN
+    INV_DOMAIN=${NEW_INV_DOMAIN:-${INV_DOMAIN:-inv.pixisys.eu}}
     
     read -p "PixiERP backend port [${ERP_BACKEND_PORT:-8003}]: " NEW_ERP_BACKEND_PORT
     ERP_BACKEND_PORT=${NEW_ERP_BACKEND_PORT:-${ERP_BACKEND_PORT:-8003}}

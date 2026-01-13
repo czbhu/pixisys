@@ -36,7 +36,7 @@ if [ -f "$CONFIG_FILE" ]; then
         bash "$SCRIPT_DIR/config.sh"
     fi
 else
-    # Első telepítés - alapértelmezett teszt környezet (te/ti.pixisys.eu)
+    # Első telepítés - alapértelmezett production környezet (erp/inv.pixisys.eu)
     echo -e "${YELLOW}Első telepítés - domain konfiguráció${NC}"
     echo ""
     read -p "Szeretnéd módosítani a domain-eket? (i/N): " MODIFY_DOMAINS
@@ -45,15 +45,15 @@ else
         # Interaktív konfiguráció
         bash "$SCRIPT_DIR/config.sh"
     else
-        # Alapértelmezett teszt környezet
-        ERP_DOMAIN="te.pixisys.eu"
-        INV_DOMAIN="ti.pixisys.eu"
+        # Alapértelmezett production környezet
+        ERP_DOMAIN="erp.pixisys.eu"
+        INV_DOMAIN="inv.pixisys.eu"
         ERP_BACKEND_PORT="8003"
         INV_BACKEND_PORT="4001"
         USE_HTTPS="true"
         
         echo ""
-        echo -e "${GREEN}✓ Alapértelmezett teszt környezet (te/ti.pixisys.eu)${NC}"
+        echo -e "${GREEN}✓ Alapértelmezett production környezet (erp/inv.pixisys.eu)${NC}"
         echo -e "${YELLOW}  A rendszer localhost-on ÉS a domain-eken is működni fog.${NC}"
         
         # Mentés
@@ -261,7 +261,7 @@ DEBUG=True
 FRONTEND_BASE_URL=$ERP_FRONTEND_URL
 
 # Emergency access domain (used by generate_emergency_access command)
-# Dev: http://localhost:3000, Prod: https://erp.pixisys.eu or https://te.pixisys.eu
+# Dev: http://localhost:3000, Prod: https://erp.pixisys.eu
 EMERGENCY_DOMAIN=$ERP_FRONTEND_URL
 
 # Email (opcionális - hagyd üresen fejlesztéshez)
@@ -419,7 +419,7 @@ DEFAULT_FROM_EMAIL=no-reply@pixisys.eu
 FRONTEND_BASE_URL=$INV_FRONTEND_URL
 
 # Emergency access domain (used by generate_emergency_access command)
-# Dev: http://localhost:4000, Prod: https://inv.pixisys.eu or https://ti.pixisys.eu
+# Dev: http://localhost:4000, Prod: https://inv.pixisys.eu
 EMERGENCY_DOMAIN=$INV_FRONTEND_URL
 
 # URLs

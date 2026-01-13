@@ -257,7 +257,17 @@ const InvoiceBlockForm = () => {
         navigate('/settings/invoice-blocks');
       },
       onError: (error) => {
-        toast.error('Hiba történt a számlatömb létrehozása során');
+        // Display specific validation errors from backend
+        const errorData = error.response?.data;
+        if (errorData && typeof errorData === 'object') {
+          // Show field-specific errors
+          Object.entries(errorData).forEach(([field, messages]) => {
+            const errorMsg = Array.isArray(messages) ? messages.join(', ') : messages;
+            toast.error(`${field}: ${errorMsg}`);
+          });
+        } else {
+          toast.error('Hiba történt a számlatömb létrehozása során');
+        }
         console.error('Create block error:', error);
       }
     }
@@ -275,7 +285,17 @@ const InvoiceBlockForm = () => {
         navigate('/settings/invoice-blocks');
       },
       onError: (error) => {
-        toast.error('Hiba történt a számlatömb frissítése során');
+        // Display specific validation errors from backend
+        const errorData = error.response?.data;
+        if (errorData && typeof errorData === 'object') {
+          // Show field-specific errors
+          Object.entries(errorData).forEach(([field, messages]) => {
+            const errorMsg = Array.isArray(messages) ? messages.join(', ') : messages;
+            toast.error(`${field}: ${errorMsg}`);
+          });
+        } else {
+          toast.error('Hiba történt a számlatömb frissítése során');
+        }
         console.error('Update block error:', error);
       }
     }

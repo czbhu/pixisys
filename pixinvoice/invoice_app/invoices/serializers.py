@@ -1073,7 +1073,7 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
             'total_net_amount', 'total_vat_amount', 'nav_configuration',
             'nav_configuration_name', 'nav_configuration_id', 'company_id', 'invoice_appearance', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'company', 'created_at', 'updated_at']
 
     def get_nav_configuration_name(self, obj):
         return obj.nav_configuration.name if obj.nav_configuration else None
@@ -1087,6 +1087,9 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
                 attrs['company'] = Company.objects.get(id=company_id)
             except Company.DoesNotExist:
                 raise serializers.ValidationError({'company_id': 'Cég nem található'})
+        elif not self.instance and 'company' not in attrs:
+            # Company is required when creating a new block
+            raise serializers.ValidationError({'company': 'Cég megadása kötelező'})
 
         nav_config_id = attrs.pop('nav_configuration_id', serializers.empty)
         company = attrs.get('company') or getattr(self.instance, 'company', None)

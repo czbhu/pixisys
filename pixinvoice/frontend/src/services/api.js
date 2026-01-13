@@ -122,7 +122,10 @@ export const customerAPI = {
   deleteCustomer: (id) => api.delete(`/api/customers/${id}/`),
   
   // Look up taxpayer from NAV
-  lookupTaxpayer: (taxNumber) => api.post('/api/customers/lookup_taxpayer/', { tax_number: taxNumber }),
+  lookupTaxpayer: (taxNumber, companyId = null) => api.post('/api/customers/lookup_taxpayer/', { 
+    tax_number: taxNumber,
+    company_id: companyId 
+  }),
   
   // Token exchange with NAV
   tokenExchange: () => api.post('/api/customers/token_exchange/', {}),
@@ -304,9 +307,6 @@ export const companyNAVConfigAPI = {
   
   // Toggle active status
   toggleActive: (id) => api.post(`/api/company-nav-configurations/${id}/toggle_active/`),
-  
-  // Look up taxpayer
-  lookupTaxpayer: (id, taxNumber) => api.post(`/api/company-nav-configurations/${id}/lookup_taxpayer/`, { tax_number: taxNumber }),
 };
 
 export const emailSettingsAPI = {
