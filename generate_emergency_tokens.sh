@@ -41,7 +41,7 @@ echo -e "${GREEN}  📊 PixiERP - Emergency Access Token${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-cd /home/pixi/pixisys_dev/pixisys/pixierp
+cd "$SCRIPT_DIR/pixierp"
 source venv/bin/activate
 EMERGENCY_DOMAIN="${ERP_FRONTEND_URL}" python manage.py generate_emergency_access --minutes $MINUTES 2>/dev/null || {
     echo -e "${RED}❌ Hiba a PixiERP token generálása során!${NC}"
@@ -58,7 +58,7 @@ echo -e "${GREEN}  🧾 PixInvoice - Emergency Access Token${NC}"
 echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 echo ""
 
-cd /home/pixi/pixisys_dev/pixisys/pixinvoice/invoice_app
+cd "$SCRIPT_DIR/pixinvoice/invoice_app"
 source venv/bin/activate
 EMERGENCY_DOMAIN="${INV_FRONTEND_URL}" python manage.py generate_emergency_access --minutes $MINUTES 2>/dev/null || {
     echo -e "${RED}❌ Hiba a PixInvoice token generálása során!${NC}"
