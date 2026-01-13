@@ -341,6 +341,28 @@ EOF
             echo "  sudo ln -sf /etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/"
             echo "  sudo ln -sf /etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/"
             echo "  sudo nginx -t && sudo systemctl reload nginx"
+            echo ""
+            
+            read -p "Telepítsem most az Nginx konfigurációkat és indítsam újra? (i/N): " INSTALL_NOW
+            if [ "$INSTALL_NOW" = "i" ] || [ "$INSTALL_NOW" = "I" ]; then
+                echo ""
+                echo -e "${BLUE}🔧 Nginx konfiguráció telepítése...${NC}"
+                sudo cp "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                sudo cp "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                sudo ln -sf /etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/
+                sudo ln -sf /etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/
+                
+                echo -e "${BLUE}🧪 Nginx konfiguráció tesztelése...${NC}"
+                if sudo nginx -t; then
+                    echo -e "${GREEN}✓ Nginx konfiguráció helyes${NC}"
+                    echo -e "${BLUE}🔄 Nginx újratöltése...${NC}"
+                    sudo systemctl reload nginx
+                    echo -e "${GREEN}✓ Nginx sikeresen újratöltve${NC}"
+                else
+                    echo -e "${RED}❌ Nginx konfiguráció hibás!${NC}"
+                    echo "Ellenőrizd a fenti hibaüzeneteket."
+                fi
+            fi
         fi
     fi
     
