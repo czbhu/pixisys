@@ -209,6 +209,141 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
         echo "   cd pixinvoice && ./start.sh"
     fi
     
+    # Nginx konfiguráció újragenerálása
+    if [ ! "$ERP_DOMAIN" = "localhost:3000" ] && [ ! "$INV_DOMAIN" = "localhost:4000" ]; then
+        echo ""
+        read -p "Generáljak újra Nginx konfigurációkat? (i/N): " REGEN_NGINX
+        if [ "$REGEN_NGINX" = "i" ] || [ "$REGEN_NGINX" = "I" ]; then
+            echo ""
+            echo -e "${BLUE}📝 Nginx konfiguráció újragenerálása...${NC}"
+            
+            # PixiERP nginx konfig
+            cat > "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" <<EOF
+# PixiERP - ${ERP_DOMAIN_NAME}
+# Generálva: $(date)
+# NE SZERKESZD MANUÁLISAN! Használd az install.sh vagy config.sh scripteket!
+
+server {
+    listen 80;
+    server_name ${ERP_DOMAIN_NAME} www.${ERP_DOMAIN_NAME};
+
+    # Backend API
+    location /api/ {
+        proxy_pass http://localhost:${ERP_BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # WebSocket support
+    location /ws/ {
+        proxy_pass http://127.0.0.1:${ERP_BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_read_timeout 86400;
+    }
+
+    # Django admin static files
+    location ~ ^/(admin|api-auth)/.*\.(?:css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
+        proxy_pass http://localhost:${ERP_BACKEND_PORT};
+    }
+
+    # Media files
+    location /media/ {
+        alias ${SCRIPT_DIR}/pixierp/media/;
+        expires 7d;
+    }
+
+    # Frontend
+    location / {
+        proxy_pass http://localhost:${ERP_FRONTEND_PORT:-3000};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+
+    access_log /var/log/nginx/${ERP_DOMAIN_NAME}-access.log;
+    error_log /var/log/nginx/${ERP_DOMAIN_NAME}-error.log;
+}
+EOF
+            
+            # PixInvoice nginx konfig
+            cat > "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" <<EOF
+# PixInvoice - ${INV_DOMAIN_NAME}
+# Generálva: $(date)
+# NE SZERKESZD MANUÁLISAN! Használd az install.sh vagy config.sh scripteket!
+
+server {
+    listen 80;
+    server_name ${INV_DOMAIN_NAME} www.${INV_DOMAIN_NAME};
+
+    # Backend API
+    location /api/ {
+        proxy_pass http://127.0.0.1:${INV_BACKEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+
+    # Django admin static files
+    location ~ ^/(admin|api-auth)/.*\.(?:css|js|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)\$ {
+        proxy_pass http://localhost:${INV_BACKEND_PORT};
+    }
+
+    # Media files
+    location /media/ {
+        alias ${SCRIPT_DIR}/pixinvoice/invoice_app/media/;
+        expires 7d;
+    }
+
+    # Frontend
+    location / {
+        proxy_pass http://localhost:${INV_FRONTEND_PORT:-4000};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+
+    access_log /var/log/nginx/${INV_DOMAIN_NAME}-access.log;
+    error_log /var/log/nginx/${INV_DOMAIN_NAME}-error.log;
+}
+EOF
+            
+            echo -e "${GREEN}✓ Nginx konfigurációk létrehozva:${NC}"
+            echo "  - nginx/${ERP_DOMAIN_NAME}.conf"
+            echo "  - nginx/${INV_DOMAIN_NAME}.conf"
+            echo ""
+            echo -e "${YELLOW}📋 Telepítés:${NC}"
+            echo "  sudo cp nginx/${ERP_DOMAIN_NAME}.conf /etc/nginx/sites-available/"
+            echo "  sudo cp nginx/${INV_DOMAIN_NAME}.conf /etc/nginx/sites-available/"
+            echo "  sudo ln -sf /etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/"
+            echo "  sudo ln -sf /etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf /etc/nginx/sites-enabled/"
+            echo "  sudo nginx -t && sudo systemctl reload nginx"
+        fi
+    fi
+    
     echo ""
     echo -e "${GREEN}=========================================="
     echo -e "  Konfiguráció kész!"
