@@ -345,11 +345,16 @@ npm install
 
 # Frontend .env
 if [ ! -f ".env" ]; then
+    echo "PixiERP Frontend .env létrehozása..."
+    echo "  REACT_APP_API_URL = $ERP_BACKEND_URL"
     cat > .env <<EOF
 REACT_APP_API_URL=$ERP_BACKEND_URL
 PORT=${ERP_FRONTEND_PORT:-3000}
 EOF
     echo -e "${GREEN}✓ PixiERP Frontend .env létrehozva${NC}"
+else
+    echo -e "${YELLOW}⚠ PixiERP Frontend .env már létezik, kihagyás...${NC}"
+    echo "  Jelenlegi REACT_APP_API_URL: $(grep REACT_APP_API_URL .env || echo 'nincs beállítva')"
 fi
 
 # Build (opcionális)
@@ -471,11 +476,16 @@ npm install
 
 # Frontend .env
 if [ ! -f ".env" ]; then
+    echo "PixInvoice Frontend .env létrehozása..."
+    echo "  REACT_APP_API_URL = $INV_BACKEND_URL"
     cat > .env <<EOF
 REACT_APP_API_URL=$INV_BACKEND_URL
 PORT=${INV_FRONTEND_PORT:-4000}
 EOF
     echo -e "${GREEN}✓ PixInvoice Frontend .env létrehozva${NC}"
+else
+    echo -e "${YELLOW}⚠ PixInvoice Frontend .env már létezik, kihagyás...${NC}"
+    echo "  Jelenlegi REACT_APP_API_URL: $(grep REACT_APP_API_URL .env || echo 'nincs beállítva')"
 fi
 
 # Build (opcionális)
