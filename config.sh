@@ -196,9 +196,9 @@ if [ "$SKIP_INTERACTIVE" = "false" ]; then
         
         # PixInvoice Frontend .env
         if [ -f "$SCRIPT_DIR/pixinvoice/frontend/.env" ]; then
-            sed -i "s|^REACT_APP_API_URL=.*|REACT_APP_API_URL=$INV_BACKEND_URL|" "$SCRIPT_DIR/pixinvoice/frontend/.env"
+            sed -i "s|^REACT_APP_API_URL=.*|REACT_APP_API_URL=/api|" "$SCRIPT_DIR/pixinvoice/frontend/.env"
             sed -i "s|^PORT=.*|PORT=${INV_FRONTEND_PORT:-4000}|" "$SCRIPT_DIR/pixinvoice/frontend/.env"
-            echo -e "${GREEN}✓ PixInvoice frontend .env frissítve${NC}"
+            echo -e "${GREEN}✓ PixInvoice frontend .env frissítve (nginx proxy: /api)${NC}"
         fi
         
         echo ""
