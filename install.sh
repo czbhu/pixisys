@@ -571,7 +571,7 @@ if [ ! "$ERP_DOMAIN" = "localhost:3000" ] && [ ! "$INV_DOMAIN" = "localhost:4000
 
 server {
     listen 80;
-    server_name ${ERP_DOMAIN_NAME} www.${ERP_DOMAIN_NAME};
+    server_name ${ERP_DOMAIN_NAME};
 
     # Redirect HTTP to HTTPS (uncomment when SSL is configured)
     # return 301 https://\$server_name\$request_uri;
@@ -656,7 +656,7 @@ EOF
 
 server {
     listen 80;
-    server_name ${INV_DOMAIN_NAME} www.${INV_DOMAIN_NAME};
+    server_name ${INV_DOMAIN_NAME};
 
     # Redirect HTTP to HTTPS (uncomment when SSL is configured)
     # return 301 https://\$server_name\$request_uri;
@@ -788,7 +788,7 @@ EOF
                             read -p "Email cím (Let's Encrypt értesítésekhez): " SSL_EMAIL
                             
                             echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${ERP_DOMAIN_NAME}${NC}"
-                            if sudo certbot --nginx -d ${ERP_DOMAIN_NAME} -d www.${ERP_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                            if sudo certbot --nginx -d ${ERP_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
                                 echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
                             else
                                 echo -e "${RED}❌ ${ERP_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
@@ -797,7 +797,7 @@ EOF
                             
                             echo ""
                             echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${INV_DOMAIN_NAME}${NC}"
-                            if sudo certbot --nginx -d ${INV_DOMAIN_NAME} -d www.${INV_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                            if sudo certbot --nginx -d ${INV_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
                                 echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
                             else
                                 echo -e "${RED}❌ ${INV_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
