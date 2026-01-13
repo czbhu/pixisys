@@ -108,7 +108,8 @@ const Departments: React.FC = () => {
             // Handle paginated response
             const departmentsData = departmentsResponse.results || departmentsResponse;
             const employeesData = employeesResponse.results || employeesResponse;
-            const rolesData = rolesResponse.results || rolesResponse;
+            // rolesService.getRoles() már Promise<Role[]> típust ad vissza
+            const rolesData = rolesResponse;
 
             const deptList = Array.isArray(departmentsData) ? departmentsData : [];
             setDepartments(deptList);
