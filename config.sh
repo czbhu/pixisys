@@ -291,6 +291,7 @@ server {
 
     # Backend API
     location /api/ {
+        rewrite ^/api/(.*)$ /\$1 break;
         proxy_pass http://127.0.0.1:${INV_BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;

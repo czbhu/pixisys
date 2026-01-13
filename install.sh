@@ -577,8 +577,7 @@ server {
     # return 301 https://\$server_name\$request_uri;
 
     # Backend API
-    location /api/ {
-        proxy_pass http://localhost:${ERP_BACKEND_PORT};
+    location /api/ {        rewrite ^/api/(.*)\$ /\$1 break;        proxy_pass http://localhost:${ERP_BACKEND_PORT};
         proxy_http_version 1.1;
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection 'upgrade';
