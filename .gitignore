@@ -23,6 +23,7 @@ staticfiles/
 static/
 
 # Environment
+.env
 .env.local
 .env.production.local
 .pixisys.conf
