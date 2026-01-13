@@ -12,8 +12,8 @@ This directory contains Nginx reverse proxy configurations for the PixiSys appli
 The configurations are automatically symlinked to Nginx:
 
 ```bash
-/etc/nginx/sites-available/te.pixisys.eu.conf → /home/pixi/pixisys_dev/pixisys/nginx/te.pixisys.eu.conf
-/etc/nginx/sites-available/ti.pixisys.eu.conf → /home/pixi/pixisys_dev/pixisys/nginx/ti.pixisys.eu.conf
+/etc/nginx/sites-available/te.pixisys.eu.conf → /path/to/pixisys/nginx/te.pixisys.eu.conf
+/etc/nginx/sites-available/ti.pixisys.eu.conf → /path/to/pixisys/nginx/ti.pixisys.eu.conf
 ```
 
 ## SSL Configuration (HTTPS)

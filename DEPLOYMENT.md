@@ -17,12 +17,12 @@ Ez az útmutató részletezi, hogyan lehet biztonságosan frissíteni az **éles
 
 ### Környezetek szétválasztása
 
-**Fejlesztői környezet** (pl. `/home/pixi/pixisys_dev/`):
+**Fejlesztői környezet** (pl. `/home/username/pixisys_dev/`):
 - Itt fejlesztesz
 - Teszt adatokkal dolgozol
 - Gyakori változtatások, commitok
 
-**Production környezet** (pl. `/var/www/pixisys/`):
+**Production környezet** (pl. `/opt/pixisys/`):
 - Éles adatok
 - Systemd service-ekkel fut
 - Nginx reverse proxy
@@ -443,7 +443,7 @@ deactivate
 
 ```bash
 # Új feature fejlesztése
-cd /home/pixi/pixisys_dev/pixisys/pixinvoice/invoice_app
+cd /path/to/pixisys/pixinvoice/invoice_app
 
 # Model módosítás
 vim invoices/models.py  # Új mező hozzáadása
@@ -462,7 +462,7 @@ vim src/pages/Invoices.js  # UI módosítás
 npm start
 
 # Ha minden OK, commit
-cd /home/pixi/pixisys_dev/pixisys
+cd /path/to/pixisys
 git add .
 git commit -m "v0.43 - Új mező hozzáadása számlákhoz"
 git tag v0.43
