@@ -352,12 +352,6 @@ if [ ! -f ".env" ]; then
 REACT_APP_API_URL=/api/v1
 PORT=${ERP_FRONTEND_PORT:-3000}
 DANGEROUSLY_DISABLE_HOST_CHECK=true
-
-# WebSocket support for development HMR
-WDS_SOCKET_HOST=${ERP_DOMAIN_NAME}
-WDS_SOCKET_PORT=443
-WDS_SOCKET_PATH=/ws
-WDS_SOCKET_PROTOCOL=wss
 EOF
     echo -e "${GREEN}✓ PixiERP Frontend .env létrehozva${NC}"
 else
@@ -493,12 +487,6 @@ if [ ! -f ".env" ]; then
 REACT_APP_API_URL=
 PORT=${INV_FRONTEND_PORT:-4000}
 DANGEROUSLY_DISABLE_HOST_CHECK=true
-
-# WebSocket support for development HMR
-WDS_SOCKET_HOST=${INV_DOMAIN_NAME}
-WDS_SOCKET_PORT=443
-WDS_SOCKET_PATH=/ws
-WDS_SOCKET_PROTOCOL=wss
 EOF
     echo -e "${GREEN}✓ PixInvoice Frontend .env létrehozva${NC}"
 else
