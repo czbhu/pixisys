@@ -7,8 +7,8 @@ echo "🚀 Starting PixiSys (ERP + Invoice)..."
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
-# Production mode flag (default: false for development)
-PRODUCTION_MODE=${PRODUCTION_MODE:-false}
+# Production mode flag (default: true for production)
+PRODUCTION_MODE=${PRODUCTION_MODE:-true}
 
 # Load domain configuration
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
