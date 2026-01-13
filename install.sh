@@ -753,6 +753,68 @@ EOF
                 echo -e "${BLUE}🔄 Nginx újratöltése...${NC}"
                 sudo systemctl reload nginx
                 echo -e "${GREEN}✓ Nginx sikeresen újratöltve${NC}"
+                
+                # SSL tanúsítvány kérés
+                if [ "$USE_HTTPS" = "true" ]; then
+                    echo ""
+                    echo -e "${BLUE}🔐 SSL tanúsítvány kérés...${NC}"
+                    echo "A Let's Encrypt SSL tanúsítvánnyal biztonságos HTTPS kapcsolatot hozhatsz létre."
+                    echo ""
+                    
+                    # Certbot telepítése ha nincs
+                    if ! command -v certbot &> /dev/null; then
+                        echo -e "${YELLOW}⚠️  certbot nincs telepítve${NC}"
+                        read -p "Telepítsem a certbot-ot? (i/N): " INSTALL_CERTBOT
+                        if [ "$INSTALL_CERTBOT" = "i" ] || [ "$INSTALL_CERTBOT" = "I" ]; then
+                            echo -e "${BLUE}📦 certbot telepítése...${NC}"
+                            sudo apt update
+                            sudo apt install -y certbot python3-certbot-nginx
+                            echo -e "${GREEN}✓ certbot telepítve${NC}"
+                        else
+                            echo -e "${YELLOW}⚠️  SSL tanúsítvány kihagyva${NC}"
+                        fi
+                    fi
+                    
+                    if command -v certbot &> /dev/null; then
+                        echo ""
+                        echo -e "${YELLOW}FIGYELEM: Az SSL tanúsítvány kéréshez:${NC}"
+                        echo "  1. A domain-eknek (${ERP_DOMAIN_NAME}, ${INV_DOMAIN_NAME}) rá kell mutatniuk erre a szerverre (DNS A rekord)"
+                        echo "  2. A 80-as port elérhetőnek kell lennie külső hálózatról (tűzfal/router beállítás)"
+                        echo "  3. Érvényes email címet kell megadnod"
+                        echo ""
+                        read -p "Készen állsz SSL tanúsítvány kérésre? (i/N): " REQUEST_SSL
+                        if [ "$REQUEST_SSL" = "i" ] || [ "$REQUEST_SSL" = "I" ]; then
+                            echo ""
+                            read -p "Email cím (Let's Encrypt értesítésekhez): " SSL_EMAIL
+                            
+                            echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${ERP_DOMAIN_NAME}${NC}"
+                            if sudo certbot --nginx -d ${ERP_DOMAIN_NAME} -d www.${ERP_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                                echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
+                            else
+                                echo -e "${RED}❌ ${ERP_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
+                                echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
+                            fi
+                            
+                            echo ""
+                            echo -e "${BLUE}🔐 SSL tanúsítvány kérés: ${INV_DOMAIN_NAME}${NC}"
+                            if sudo certbot --nginx -d ${INV_DOMAIN_NAME} -d www.${INV_DOMAIN_NAME} --non-interactive --agree-tos --email "$SSL_EMAIL"; then
+                                echo -e "${GREEN}✓ ${INV_DOMAIN_NAME} SSL tanúsítvány telepítve${NC}"
+                            else
+                                echo -e "${RED}❌ ${INV_DOMAIN_NAME} SSL tanúsítvány kérés sikertelen${NC}"
+                                echo -e "${YELLOW}Ellenőrizd a DNS beállításokat és a tűzfalat${NC}"
+                            fi
+                            
+                            echo ""
+                            echo -e "${GREEN}✓ SSL tanúsítványok feltelepítve${NC}"
+                            echo -e "${BLUE}ℹ️  A tanúsítványok automatikusan megújulnak (certbot timer)${NC}"
+                        else
+                            echo -e "${YELLOW}⚠️  SSL tanúsítvány kihagyva${NC}"
+                            echo "   Később manuálisan is kérheted:"
+                            echo "   sudo certbot --nginx -d ${ERP_DOMAIN_NAME} -d www.${ERP_DOMAIN_NAME}"
+                            echo "   sudo certbot --nginx -d ${INV_DOMAIN_NAME} -d www.${INV_DOMAIN_NAME}"
+                        fi
+                    fi
+                fi
             else
                 echo -e "${RED}❌ Nginx konfiguráció hibás!${NC}"
                 echo "Ellenőrizd a fenti hibaüzeneteket."
