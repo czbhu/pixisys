@@ -223,7 +223,7 @@ const Contacts: React.FC = () => {
             key: 'actions',
             width: 120,
             fixed: 'right' as const,
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <Space size="small">
                     <Button
                         icon={<EyeOutlined />}

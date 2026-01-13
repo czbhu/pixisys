@@ -213,7 +213,7 @@ const Companies: React.FC = () => {
         {
             title: 'Típus',
             key: 'company_type',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <Space>
                     {record.is_customer && <Tag color="blue">Ügyfél</Tag>}
                     {record.is_supplier && <Tag color="green">Beszállító</Tag>}
@@ -224,7 +224,7 @@ const Companies: React.FC = () => {
         {
             title: 'Adószám',
             key: 'tax_number',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <div>
                     {record.tax_number && <Tag color="blue">{record.tax_number}</Tag>}
                     {record.group_tax_number && <Tag color="green">{record.group_tax_number}</Tag>}
@@ -246,7 +246,7 @@ const Companies: React.FC = () => {
         {
             title: 'Műveletek',
             key: 'actions',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <Space>
                     <Button
                         type="link"

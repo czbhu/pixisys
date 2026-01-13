@@ -54,9 +54,9 @@ const Demands: React.FC = () => {
   const columns = [
     { title: 'Szám', dataIndex: 'number', key: 'number' },
     { title: 'Cím', dataIndex: 'title', key: 'title' },
-    { title: 'Cég', key: 'company', render: (_: any, r: any) => r.company?.name || '-' },
-    { title: 'Felelős', key: 'owner', render: (_: any, r: any) => r.owner_name || '-' },
-    { title: 'Résztvevők', key: 'assignees', render: (_: any, r: any) => r.assignee_names || '-' },
+    { title: 'Cég', key: 'company', render: (_: any, r: any): React.ReactNode => r.company?.name || '-' },
+    { title: 'Felelős', key: 'owner', render: (_: any, r: any): React.ReactNode => r.owner_name || '-' },
+    { title: 'Résztvevők', key: 'assignees', render: (_: any, r: any): React.ReactNode => r.assignee_names || '-' },
     { title: 'Státusz', dataIndex: 'status', key: 'status', render: (s: string) => <Tag>{s === 'new' ? 'Új' : s}</Tag> },
     { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', render: (d: string) => d ? new Date(d).toLocaleDateString('hu-HU') : '' },
     { title: 'Műveletek', key: 'actions', render: (r: any) => (
@@ -132,7 +132,7 @@ const Demands: React.FC = () => {
           columns={[
             { title: 'Szám', dataIndex: 'number' },
             { title: 'Cím', dataIndex: 'title' },
-            { title: 'Cég', render: (_: any, r: any) => r.company?.name || '-' },
+            { title: 'Cég', render: (_: any, r: any): React.ReactNode => r.company?.name || '-' },
             { title: 'Törölte', dataIndex: 'updated_at', render: (d: string) => d ? new Date(d).toLocaleString('hu-HU') : '' },
           ] as any}
           dataSource={deletedList}

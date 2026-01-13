@@ -1,16 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Modal, Form, Input, message, Switch, Space, Popconfirm, InputNumber, Select, AutoComplete } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
-import { manufacturingService } from '../../../services/manufacturingService';
+import { manufacturingService, Currency } from '../../../services/manufacturingService';
 
-interface Currency {
-  id: number;
-  code: string;
-  name: string;
-  symbol: string;
-  is_default: boolean;
-  exchange_rate: string;
-  is_active: boolean;
+interface CurrencyExtended extends Currency {
+  is_active?: boolean;
 }
 
 interface MNBCurrency {
@@ -22,10 +16,10 @@ interface MNBCurrency {
 }
 
 const CurrenciesPage: React.FC = () => {
-  const [list, setList] = useState<Currency[]>([]);
+  const [list, setList] = useState<CurrencyExtended[]>([]);
   const [open, setOpen] = useState(false);
   const [form] = Form.useForm();
-  const [editing, setEditing] = useState<Currency | null>(null);
+  const [editing, setEditing] = useState<CurrencyExtended | null>(null);
   const [loading, setLoading] = useState(false);
   const [mnbCurrencies, setMnbCurrencies] = useState<MNBCurrency[]>([]);
   const [searchValue, setSearchValue] = useState('');
@@ -35,8 +29,8 @@ const CurrenciesPage: React.FC = () => {
     try {
       setLoading(true);
       const data = await manufacturingService.getCurrencies();
-      const arr = Array.isArray(data) ? data : (data?.results ?? []);
-      setList(arr);
+      // getCurrencies() már Promise<Currency[]> típust ad vissza
+      setList(Array.isArray(data) ? data : []);
     } catch (error) {
       message.error('Nem sikerült betölteni a pénznemeket');
     } finally {

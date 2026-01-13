@@ -237,7 +237,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             {
               title: 'Műveletek',
               key: 'actions',
-              render: (record: any) => (
+              render: (record: any): React.ReactNode => (
                 <Button 
                   type="link" 
                   href={record.file_url || record.file} 

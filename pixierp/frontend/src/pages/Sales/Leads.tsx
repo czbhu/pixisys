@@ -101,7 +101,7 @@ const Leads: React.FC = () => {
         {
             title: 'Műveletek',
             key: 'actions',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <Space size="small">
                     <Tooltip title="Megtekintés">
                         <Button

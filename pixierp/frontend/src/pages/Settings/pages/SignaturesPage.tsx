@@ -18,7 +18,7 @@ const SignaturesPage: React.FC = () => {
   const columns = [
     { title: 'Kulcs', dataIndex: 'key' },
     { title: 'Név', dataIndex: 'name' },
-    { title: 'Műveletek', render: (_: any, r: any) => <Button onClick={() => { setEditing(r); form.setFieldsValue(r); setOpen(true); }}>Szerkesztés</Button> },
+    { title: 'Műveletek', render: (_: any, r: any): React.ReactNode => <Button onClick={() => { setEditing(r); form.setFieldsValue(r); setOpen(true); }}>Szerkesztés</Button> },
   ];
 
   const onSave = async () => {

@@ -78,7 +78,7 @@ const Reports: React.FC = () => {
         {
             title: 'Alapanyag',
             key: 'material',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <div>
                     <div style={{ fontWeight: 'bold' }}>{record.material__name}</div>
                     <div style={{ color: '#666', fontSize: '12px' }}>{record.material__code}</div>

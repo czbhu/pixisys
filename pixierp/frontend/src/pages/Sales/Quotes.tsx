@@ -111,7 +111,7 @@ const Quotes: React.FC = () => {
             title: 'Igény száma',
             dataIndex: ['quote_request', 'number'],
             key: 'rfq_number',
-            render: (_: any, r: any) => r.quote_request_number || r.quote_request?.number || '-',
+            render: (_: any, r: any): React.ReactNode => r.quote_request_number || r.quote_request?.number || '-',
         },
         {
             title: 'Ügyfél',
@@ -119,8 +119,8 @@ const Quotes: React.FC = () => {
             key: 'customer_name',
             sorter: (a: any, b: any) => (a.customer_name || '').localeCompare(b.customer_name || ''),
         },
-        { title: 'Felelős', dataIndex: 'owner_name', key: 'owner_name', render: (_: any, r: any) => r.owner_name || r.quote_request?.owner_name || '-', sorter: (a: any, b: any) => (a.owner_name || a.quote_request?.owner_name || '').localeCompare(b.owner_name || b.quote_request?.owner_name || '') },
-        { title: 'Résztvevők', dataIndex: 'assignee_names', key: 'assignee_names', render: (_: any, r: any) => r.assignee_names || r.quote_request?.assignee_names || '-', sorter: (a: any, b: any) => (a.assignee_names || a.quote_request?.assignee_names || '').localeCompare(b.assignee_names || b.quote_request?.assignee_names || '') },
+        { title: 'Felelős', dataIndex: 'owner_name', key: 'owner_name', render: (_: any, r: any): React.ReactNode => r.owner_name || r.quote_request?.owner_name || '-', sorter: (a: any, b: any) => (a.owner_name || a.quote_request?.owner_name || '').localeCompare(b.owner_name || b.quote_request?.owner_name || '') },
+        { title: 'Résztvevők', dataIndex: 'assignee_names', key: 'assignee_names', render: (_: any, r: any): React.ReactNode => r.assignee_names || r.quote_request?.assignee_names || '-', sorter: (a: any, b: any) => (a.assignee_names || a.quote_request?.assignee_names || '').localeCompare(b.assignee_names || b.quote_request?.assignee_names || '') },
         {
             title: 'Összeg',
             dataIndex: 'total_amount',
@@ -156,7 +156,7 @@ const Quotes: React.FC = () => {
         {
             title: 'Műveletek',
             key: 'actions',
-            render: (record: any) => (
+            render: (record: any): React.ReactNode => (
                 <Space size="small">
                     <Tooltip title="Megtekintés">
                         <Button

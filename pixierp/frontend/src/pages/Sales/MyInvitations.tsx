@@ -40,9 +40,9 @@ const MyInvitations: React.FC = () => {
 
   const columns = [
     { title: 'Ajánlatkérő', dataIndex: 'quote_request_number', key: 'rfq', sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || '') },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', render: (s: string) => <Tag>{s}</Tag>, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
-    { title: 'Meghívás ideje', dataIndex: 'created_at', key: 'created_at', render: (d: string) => d ? new Date(d).toLocaleString('hu-HU') : '', sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || '') },
-    { title: 'Műveletek', key: 'actions', render: (_: any, r: any) => (
+    { title: 'Státusz', dataIndex: 'status', key: 'status', render: (s: string): React.ReactNode => <Tag>{s}</Tag>, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
+    { title: 'Meghívás ideje', dataIndex: 'created_at', key: 'created_at', render: (d: string): React.ReactNode => d ? new Date(d).toLocaleString('hu-HU') : '', sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || '') },
+    { title: 'Műveletek', key: 'actions', render: (_: any, r: any): React.ReactNode => (
       <Space>
         <Button type="primary" size="small" onClick={async () => {
           try { await salesService.acceptInvitation(r.quote_request); message.success('Elfogadva'); load(); }

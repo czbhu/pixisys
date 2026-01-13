@@ -62,9 +62,9 @@ const Orders: React.FC = () => {
     const columns = useMemo(() => ([
         { title: 'Rendelésszám', dataIndex: 'order_number', key: 'order_number' },
         { title: 'Keltezés', dataIndex: 'created_at', key: 'created_at', render: (d: string) => d ? new Date(d).toLocaleDateString('hu-HU') : '' },
-        { title: 'Ügyfél', dataIndex: ['quote', 'quote_request', 'customer', 'name'], key: 'customer', render: (_: any, r: any) => r.customer_name || r.quote?.quote_request?.customer?.name || '' },
-        { title: 'Felelős', key: 'owner', render: (_: any, r: any) => r.quote?.quote_request?.owner_name || '-' },
-        { title: 'Résztvevők', key: 'assignees', render: (_: any, r: any) => r.quote?.quote_request?.assignee_names || '-' },
+        { title: 'Ügyfél', dataIndex: ['quote', 'quote_request', 'customer', 'name'], key: 'customer', render: (_: any, r: any): React.ReactNode => r.customer_name || r.quote?.quote_request?.customer?.name || '' },
+        { title: 'Felelős', key: 'owner', render: (_: any, r: any): React.ReactNode => r.quote?.quote_request?.owner_name || '-' },
+        { title: 'Résztvevők', key: 'assignees', render: (_: any, r: any): React.ReactNode => r.quote?.quote_request?.assignee_names || '-' },
         { title: 'Összeg', dataIndex: 'total_amount', key: 'total_amount', render: (n: number) => (Number(n) || 0).toLocaleString('hu-HU') + ' Ft' },
         { title: 'Határidő', dataIndex: 'delivery_date', key: 'delivery_date', render: (d: string) => d ? new Date(d).toLocaleDateString('hu-HU') : '' },
         { title: 'Státusz', dataIndex: 'status', key: 'status', render: statusTag },
