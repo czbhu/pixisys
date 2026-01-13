@@ -172,8 +172,8 @@ const ApiAccess = () => {
 
   const apiBaseUrl = (() => {
     try {
-      const { protocol, hostname, port } = window.location;
-      if (hostname === 'localhost' || hostname === '127.0.0.1' || port === '4000') {
+      const { protocol, hostname } = window.location;
+      if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return `${protocol}//${hostname}:4001/api/`;
       }
       return `${window.location.origin}/api/`;

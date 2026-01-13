@@ -7,6 +7,9 @@ echo "🚀 Starting PixiSys (ERP + Invoice)..."
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Production mode flag (default: false for development)
+PRODUCTION_MODE=${PRODUCTION_MODE:-false}
+
 # Load domain configuration
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
     source "$SCRIPT_DIR/config.sh" --load-only
@@ -42,8 +45,12 @@ kill_port() {
 echo "🧹 Cleaning up existing processes..."
 kill_port 8003  # ERP backend (Daphne)
 kill_port 4001  # Invoice backend
-kill_port 3000  # ERP frontend
-kill_port 4000  # Invoice frontend
+
+# Only kill frontend ports in dev mode (production uses nginx)
+if [ "$PRODUCTION_MODE" != "true" ]; then
+    kill_port 3000  # ERP frontend (dev server)
+    kill_port 4000  # Invoice frontend (dev server)
+fi
 
 # Start ERP Backend (Daphne)
 echo -e "${BLUE}📡 Starting ERP Backend (Daphne on port ${ERP_BACKEND_PORT})...${NC}"
@@ -87,39 +94,81 @@ deactivate
 echo "⏳ Waiting for backends to initialize..."
 sleep 3
 
-# Start ERP Frontend
-echo -e "${BLUE}⚛️  Starting ERP Frontend (port ${ERP_FRONTEND_PORT})...${NC}"
-cd "$SCRIPT_DIR/pixierp/frontend"
-if [ ! -f "package.json" ]; then
-    echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
-    exit 1
+if [ "$PRODUCTION_MODE" = "true" ]; then
+    # Production mode: Build frontends for nginx
+    echo -e "${BLUE}🏗️  Production Mode: Building frontends...${NC}"
+    
+    # Build ERP Frontend
+    echo -e "${BLUE}Building ERP Frontend...${NC}"
+    cd "$SCRIPT_DIR/pixierp/frontend"
+    if [ ! -f "package.json" ]; then
+        echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
+        exit 1
+    fi
+    npm run build > /tmp/pixierp_build.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ ERP Frontend built successfully${NC}"
+    else
+        echo -e "${RED}❌ ERP Frontend build failed. Check /tmp/pixierp_build.log${NC}"
+        exit 1
+    fi
+    
+    # Build Invoice Frontend
+    echo -e "${BLUE}Building Invoice Frontend...${NC}"
+    cd "$SCRIPT_DIR/pixinvoice/frontend"
+    if [ ! -f "package.json" ]; then
+        echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
+        exit 1
+    fi
+    npm run build > /tmp/pixinvoice_build.log 2>&1
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✅ Invoice Frontend built successfully${NC}"
+    else
+        echo -e "${RED}❌ Invoice Frontend build failed. Check /tmp/pixinvoice_build.log${NC}"
+        exit 1
+    fi
+    
+    ERP_FRONTEND_PID="N/A (nginx serves build/)"
+    INVOICE_FRONTEND_PID="N/A (nginx serves build/)"
+    
+else
+    # Development mode: Start dev servers
+    echo -e "${BLUE}💻 Development Mode: Starting dev servers...${NC}"
+    
+    # Start ERP Frontend
+    echo -e "${BLUE}⚛️  Starting ERP Frontend (port ${ERP_FRONTEND_PORT})...${NC}"
+    cd "$SCRIPT_DIR/pixierp/frontend"
+    if [ ! -f "package.json" ]; then
+        echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
+        exit 1
+    fi
+    
+    if [ ! -d "node_modules" ]; then
+        echo -e "${RED}❌ Error: pixierp/frontend/node_modules not found. Run: npm install${NC}"
+        exit 1
+    fi
+    
+    PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
+    ERP_FRONTEND_PID=$!
+    echo -e "${GREEN}✅ ERP Frontend started (PID: $ERP_FRONTEND_PID)${NC}"
+    
+    # Start Invoice Frontend
+    echo -e "${BLUE}⚛️  Starting Invoice Frontend (port ${INV_FRONTEND_PORT})...${NC}"
+    cd "$SCRIPT_DIR/pixinvoice/frontend"
+    if [ ! -f "package.json" ]; then
+        echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
+        exit 1
+    fi
+    
+    if [ ! -d "node_modules" ]; then
+        echo -e "${RED}❌ Error: pixinvoice/frontend/node_modules not found. Run: npm install${NC}"
+        exit 1
+    fi
+    
+    PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL= npm start > /tmp/pixinvoice_frontend.log 2>&1 &
+    INVOICE_FRONTEND_PID=$!
+    echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 fi
-
-if [ ! -d "node_modules" ]; then
-    echo -e "${RED}❌ Error: pixierp/frontend/node_modules not found. Run: npm install${NC}"
-    exit 1
-fi
-
-PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
-ERP_FRONTEND_PID=$!
-echo -e "${GREEN}✅ ERP Frontend started (PID: $ERP_FRONTEND_PID)${NC}"
-
-# Start Invoice Frontend
-echo -e "${BLUE}⚛️  Starting Invoice Frontend (port ${INV_FRONTEND_PORT})...${NC}"
-cd "$SCRIPT_DIR/pixinvoice/frontend"
-if [ ! -f "package.json" ]; then
-    echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
-    exit 1
-fi
-
-if [ ! -d "node_modules" ]; then
-    echo -e "${RED}❌ Error: pixinvoice/frontend/node_modules not found. Run: npm install${NC}"
-    exit 1
-fi
-
-PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL= npm start > /tmp/pixinvoice_frontend.log 2>&1 &
-INVOICE_FRONTEND_PID=$!
-echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 
 # Summary
 echo ""
