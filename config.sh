@@ -484,6 +484,65 @@ EOF
         fi
     fi
     
+    # .env.production.local fájlok létrehozása (ha még nincsenek)
+    echo ""
+    echo -e "${BLUE}📝 Production környezeti fájlok ellenőrzése...${NC}"
+    
+    if [ ! -f "$SCRIPT_DIR/pixinvoice/frontend/.env.production.local" ]; then
+        echo -e "${BLUE}Creating pixinvoice/frontend/.env.production.local${NC}"
+        echo "REACT_APP_API_URL=" > "$SCRIPT_DIR/pixinvoice/frontend/.env.production.local"
+        echo -e "${GREEN}✓ pixinvoice .env.production.local létrehozva${NC}"
+    else
+        echo -e "${GREEN}✓ pixinvoice .env.production.local már létezik${NC}"
+    fi
+    
+    if [ ! -f "$SCRIPT_DIR/pixierp/frontend/.env.production.local" ]; then
+        echo -e "${BLUE}Creating pixierp/frontend/.env.production.local${NC}"
+        echo "REACT_APP_API_URL=" > "$SCRIPT_DIR/pixierp/frontend/.env.production.local"
+        echo -e "${GREEN}✓ pixierp .env.production.local létrehozva${NC}"
+    else
+        echo -e "${GREEN}✓ pixierp .env.production.local már létezik${NC}"
+    fi
+    
+    # Nginx konfiguráció szimbolikus linkek létrehozása
+    if [ -f "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" ] || [ -f "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" ]; then
+        echo ""
+        echo -e "${BLUE}🔗 Nginx szimbolikus linkek ellenőrzése...${NC}"
+        
+        # ERP config
+        if [ -f "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" ]; then
+            if [ ! -L "/etc/nginx/sites-enabled/${ERP_DOMAIN_NAME}.conf" ]; then
+                echo -e "${BLUE}Linking ${ERP_DOMAIN_NAME}.conf...${NC}"
+                sudo cp "$SCRIPT_DIR/nginx/${ERP_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                sudo ln -sf "/etc/nginx/sites-available/${ERP_DOMAIN_NAME}.conf" "/etc/nginx/sites-enabled/"
+                echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME}.conf aktiválva${NC}"
+            else
+                echo -e "${GREEN}✓ ${ERP_DOMAIN_NAME}.conf már aktív${NC}"
+            fi
+        fi
+        
+        # Invoice config
+        if [ -f "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" ]; then
+            if [ ! -L "/etc/nginx/sites-enabled/${INV_DOMAIN_NAME}.conf" ]; then
+                echo -e "${BLUE}Linking ${INV_DOMAIN_NAME}.conf...${NC}"
+                sudo cp "$SCRIPT_DIR/nginx/${INV_DOMAIN_NAME}.conf" /etc/nginx/sites-available/
+                sudo ln -sf "/etc/nginx/sites-available/${INV_DOMAIN_NAME}.conf" "/etc/nginx/sites-enabled/"
+                echo -e "${GREEN}✓ ${INV_DOMAIN_NAME}.conf aktiválva${NC}"
+            else
+                echo -e "${GREEN}✓ ${INV_DOMAIN_NAME}.conf már aktív${NC}"
+            fi
+        fi
+        
+        # Nginx reload ha voltak változások
+        echo -e "${BLUE}🔄 Nginx újratöltése...${NC}"
+        if sudo nginx -t 2>/dev/null; then
+            sudo systemctl reload nginx
+            echo -e "${GREEN}✓ Nginx sikeresen újratöltve${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Nginx teszt sikertelen, újratöltés kihagyva${NC}"
+        fi
+    fi
+    
     echo ""
     echo -e "${GREEN}=========================================="
     echo -e "  Konfiguráció kész!"
