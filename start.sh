@@ -7,10 +7,24 @@ echo "🚀 Starting PixiSys (ERP + Invoice)..."
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
+# Load domain configuration
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    source "$SCRIPT_DIR/config.sh" --load-only
+else
+    # Fallback to localhost if no config
+    ERP_FRONTEND_URL="http://localhost:3000"
+    ERP_BACKEND_URL="http://localhost:8003"
+    INV_FRONTEND_URL="http://localhost:4000"
+    INV_BACKEND_URL="http://localhost:4001"
+    ERP_BACKEND_PORT="8003"
+    INV_BACKEND_PORT="4001"
+fi
+
 # Colors for output
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 RED='\033[0;31m'
+YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Function to check if port is in use and kill the process
@@ -32,7 +46,7 @@ kill_port 3000  # ERP frontend
 kill_port 4000  # Invoice frontend
 
 # Start ERP Backend (Daphne)
-echo -e "${BLUE}📡 Starting ERP Backend (Daphne on port 8003)...${NC}"
+echo -e "${BLUE}📡 Starting ERP Backend (Daphne on port ${ERP_BACKEND_PORT})...${NC}"
 cd "$SCRIPT_DIR/pixierp"
 if [ ! -f "manage.py" ]; then
     echo -e "${RED}❌ Error: pixierp/manage.py not found${NC}"
@@ -45,13 +59,13 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-daphne -b 0.0.0.0 -p 8003 erp_system.asgi:application > /tmp/pixierp_backend.log 2>&1 &
+daphne -b 0.0.0.0 -p ${ERP_BACKEND_PORT} erp_system.asgi:application > /tmp/pixierp_backend.log 2>&1 &
 ERP_BACKEND_PID=$!
 echo -e "${GREEN}✅ ERP Backend started (PID: $ERP_BACKEND_PID)${NC}"
 deactivate
 
 # Start Invoice Backend
-echo -e "${BLUE}📡 Starting Invoice Backend (port 4001)...${NC}"
+echo -e "${BLUE}📡 Starting Invoice Backend (port ${INV_BACKEND_PORT})...${NC}"
 cd "$SCRIPT_DIR/pixinvoice/invoice_app"
 if [ ! -f "manage.py" ]; then
     echo -e "${RED}❌ Error: pixinvoice/invoice_app/manage.py not found${NC}"
@@ -64,7 +78,7 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-python manage.py runserver 127.0.0.1:4001 > /tmp/pixinvoice_backend.log 2>&1 &
+python manage.py runserver 0.0.0.0:${INV_BACKEND_PORT} > /tmp/pixinvoice_backend.log 2>&1 &
 INVOICE_BACKEND_PID=$!
 echo -e "${GREEN}✅ Invoice Backend started (PID: $INVOICE_BACKEND_PID)${NC}"
 deactivate
@@ -74,7 +88,7 @@ echo "⏳ Waiting for backends to initialize..."
 sleep 3
 
 # Start ERP Frontend
-echo -e "${BLUE}⚛️  Starting ERP Frontend (port 3000)...${NC}"
+echo -e "${BLUE}⚛️  Starting ERP Frontend (port ${ERP_FRONTEND_PORT})...${NC}"
 cd "$SCRIPT_DIR/pixierp/frontend"
 if [ ! -f "package.json" ]; then
     echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
@@ -86,12 +100,12 @@ if [ ! -d "node_modules" ]; then
     exit 1
 fi
 
-BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
+PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
 ERP_FRONTEND_PID=$!
 echo -e "${GREEN}✅ ERP Frontend started (PID: $ERP_FRONTEND_PID)${NC}"
 
 # Start Invoice Frontend
-echo -e "${BLUE}⚛️  Starting Invoice Frontend (port 4000)...${NC}"
+echo -e "${BLUE}⚛️  Starting Invoice Frontend (port ${INV_FRONTEND_PORT})...${NC}"
 cd "$SCRIPT_DIR/pixinvoice/frontend"
 if [ ! -f "package.json" ]; then
     echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
@@ -103,7 +117,7 @@ if [ ! -d "node_modules" ]; then
     exit 1
 fi
 
-BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=http://localhost:4001 npm start > /tmp/pixinvoice_frontend.log 2>&1 &
+PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=${INV_BACKEND_URL} npm start > /tmp/pixinvoice_frontend.log 2>&1 &
 INVOICE_FRONTEND_PID=$!
 echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 
@@ -114,14 +128,14 @@ echo -e "${GREEN}✅ PixiSys Started Successfully!${NC}"
 echo -e "${GREEN}========================================${NC}"
 echo ""
 echo -e "${BLUE}ERP System:${NC}"
-echo "   Frontend:  http://localhost:3000"
-echo "   Backend:   http://localhost:8003"
-echo "   Admin:     http://localhost:8003/admin"
+echo "   Frontend:  ${ERP_FRONTEND_URL}"
+echo "   Backend:   ${ERP_BACKEND_URL}"
+echo "   Admin:     ${ERP_BACKEND_URL}/admin"
 echo ""
 echo -e "${BLUE}Invoice System:${NC}"
-echo "   Frontend:  http://localhost:4000"
-echo "   Backend:   http://localhost:4001"
-echo "   Admin:     http://localhost:4001/admin"
+echo "   Frontend:  ${INV_FRONTEND_URL}"
+echo "   Backend:   ${INV_BACKEND_URL}"
+echo "   Admin:     ${INV_BACKEND_URL}/admin"
 echo ""
 echo -e "${BLUE}Process IDs:${NC}"
 echo "   ERP Backend:      $ERP_BACKEND_PID"
@@ -143,10 +157,10 @@ cleanup() {
     echo ""
     echo -e "${RED}🛑 Stopping all services...${NC}"
     kill $ERP_BACKEND_PID $INVOICE_BACKEND_PID $ERP_FRONTEND_PID $INVOICE_FRONTEND_PID 2>/dev/null
-    kill_port 8003
-    kill_port 4001
-    kill_port 3000
-    kill_port 4000
+    kill_port ${ERP_BACKEND_PORT}
+    kill_port ${INV_BACKEND_PORT}
+    kill_port ${ERP_FRONTEND_PORT}
+    kill_port ${INV_FRONTEND_PORT}
     echo -e "${GREEN}✅ All services stopped${NC}"
     exit 0
 }
