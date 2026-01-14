@@ -137,7 +137,7 @@ def extract_supplier_data_from_invoice_xml(xml_text: str) -> Optional[Dict]:
         # Először a supplierBankAccountNumber-ből
         bank_elem = supplier_info.find('.//nav:supplierBankAccountNumber', ns) or supplier_info.find('.//supplierBankAccountNumber')
         if bank_elem is not None and bank_elem.text:
-            supplier_data['bank_account'] = bank_elem.text.strip()
+            supplier_data['bank_account'] = bank_elem.text.strip().replace(' ', '').replace('-', '')
         
         # Ha nincs, akkor a paymentMethod TRANSFER esetén keressük máshol
         if not supplier_data.get('bank_account'):
@@ -147,7 +147,7 @@ def extract_supplier_data_from_invoice_xml(xml_text: str) -> Optional[Dict]:
                 # Próbáljunk meg bankszámlát találni az XML más részeiből
                 bank_account_elem = root.find('.//nav:bankAccountNumber', ns) or root.find('.//bankAccountNumber')
                 if bank_account_elem is not None and bank_account_elem.text:
-                    supplier_data['bank_account'] = bank_account_elem.text.strip()
+                    supplier_data['bank_account'] = bank_account_elem.text.strip().replace(' ', '').replace('-', '')
         
         return supplier_data
         
@@ -334,11 +334,11 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
         customer = Customer.objects.filter(tax_number=supplier_tax_number).first()
         if customer:
             default_bank = customer.bank_accounts.filter(is_default=True).first()
-            if default_bank:
-                return default_bank.account_number
+            if default_bank and default_bank.account_number:
+                return default_bank.account_number.replace(' ', '').replace('-', '')
             # Ha nincs default, akkor az első
             first_bank = customer.bank_accounts.first()
-            if first_bank:
-                return first_bank.account_number
+            if first_bank and first_bank.account_number:
+                return first_bank.account_number.replace(' ', '').replace('-', '')
     
     return None

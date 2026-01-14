@@ -5375,21 +5375,24 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             if company and supplier_tax_number:
                 account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '')
                 if account:
-                    # Detektáljuk az account típusát
-                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', account):
-                        return 'IBAN', account
-                    elif re.match(r'^\d{8}-\d{8}(?:-\d{8})?$', account):
-                        return 'BBAN', account
+                    # Tisztítjuk és detektáljuk az account típusát
+                    clean_account = account.replace(' ', '').replace('-', '')
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account):
+                        return 'IBAN', clean_account
+                    elif re.match(r'^\d{24}$', clean_account):  # 24 számjegy (8+8+8 kötőjel nélkül)
+                        return 'BBAN', clean_account
                     else:
-                        return 'OTHER', account
+                        return 'OTHER', clean_account
             return None, None
         try:
+            # Először tisztítsuk meg az XML-t szóközöktől
+            clean_xml = xml_text.replace(' ', '').replace('-', '')
             # Prefer IBAN
-            iban_match = re.search(r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b', xml_text)
+            iban_match = re.search(r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b', clean_xml)
             if iban_match:
                 return 'IBAN', iban_match.group(0)
-            # Fallback: Hungarian domestic account number nnnnnnnn-nnnnnnnn(-nnnnnnnn)
-            acct_match = re.search(r'\b\d{8}-\d{8}(?:-\d{8})?\b', xml_text)
+            # Fallback: Hungarian domestic account number (24 számjegy)
+            acct_match = re.search(r'\b\d{24}\b', clean_xml)
             if acct_match:
                 return 'BBAN', acct_match.group(0)
             
@@ -5397,13 +5400,14 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             if company and supplier_tax_number:
                 account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text)
                 if account:
-                    # Detektáljuk az account típusát
-                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', account):
-                        return 'IBAN', account
-                    elif re.match(r'^\d{8}-\d{8}(?:-\d{8})?$', account):
-                        return 'BBAN', account
+                    # Tisztítjuk és detektáljuk az account típusát
+                    clean_account = account.replace(' ', '').replace('-', '')
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account):
+                        return 'IBAN', clean_account
+                    elif re.match(r'^\d{24}$', clean_account):  # 24 számjegy
+                        return 'BBAN', clean_account
                     else:
-                        return 'OTHER', account
+                        return 'OTHER', clean_account
         except Exception:
             pass
         return None, None
