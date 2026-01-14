@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useQueryClient } from 'react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { 
   Search, 
   Plus, 
@@ -324,12 +324,50 @@ const TableActions = styled(TableCell)`
 `;
 
 const Customers = () => {
-  const [searchTerm, setSearchTerm] = useState('');
-  const [currentPage, setCurrentPage] = useState(1);
-  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
-  const [pageSize, setPageSize] = useState(20);
+  const navigate = useNavigate();
+  const location = useLocation();
+  
+  // Load saved preferences from localStorage
+  const getSavedPreferences = () => {
+    try {
+      const saved = localStorage.getItem('customersPagePreferences');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (e) {
+      console.error('Error loading preferences:', e);
+    }
+    return {
+      viewMode: 'grid',
+      pageSize: 20,
+      currentPage: 1,
+      searchTerm: ''
+    };
+  };
+
+  const savedPrefs = getSavedPreferences();
+  
+  const [searchTerm, setSearchTerm] = useState(savedPrefs.searchTerm);
+  const [currentPage, setCurrentPage] = useState(savedPrefs.currentPage);
+  const [viewMode, setViewMode] = useState(savedPrefs.viewMode);
+  const [pageSize, setPageSize] = useState(savedPrefs.pageSize);
   
   const queryClient = useQueryClient();
+
+  // Save preferences to localStorage whenever they change
+  useEffect(() => {
+    const preferences = {
+      viewMode,
+      pageSize,
+      currentPage,
+      searchTerm
+    };
+    try {
+      localStorage.setItem('customersPagePreferences', JSON.stringify(preferences));
+    } catch (e) {
+      console.error('Error saving preferences:', e);
+    }
+  }, [viewMode, pageSize, currentPage, searchTerm]);
 
   const { data: customers, isLoading, error } = useQuery(
     ['customers', { search: searchTerm, page: currentPage, pageSize }],
@@ -355,7 +393,7 @@ const Customers = () => {
   };
 
   const handleDoubleClick = (customerId) => {
-    window.location.href = `/customers/${customerId}/edit`;
+    navigate(`/customers/${customerId}`);
   };
 
   const renderPagination = () => (
