@@ -213,10 +213,48 @@ const EmptyState = styled.div`
 
 const Pagination = styled.div`
   display: flex;
-  justify-content: center;
+  justify-content: space-between;
   align-items: center;
-  padding: 20px;
+  padding: 20px 24px;
+  gap: 16px;
+  flex-wrap: wrap;
+`;
+
+const PaginationControls = styled.div`
+  display: flex;
+  align-items: center;
   gap: 8px;
+  flex: 1;
+  justify-content: center;
+`;
+
+const PageSizeSelector = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #2c3e50;
+`;
+
+const PageSizeSelect = styled.select`
+  padding: 6px 10px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  background: white;
+  cursor: pointer;
+  transition: border-color 0.2s;
+
+  &:focus {
+    outline: none;
+    border-color: #3498db;
+  }
+`;
+
+const PageInfo = styled.div`
+  font-size: 14px;
+  color: #7f8c8d;
+  white-space: nowrap;
 `;
 
 const PaginationButton = styled.button`
@@ -289,14 +327,16 @@ const Customers = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
+  const [pageSize, setPageSize] = useState(20);
   
   const queryClient = useQueryClient();
 
   const { data: customers, isLoading, error } = useQuery(
-    ['customers', { search: searchTerm, page: currentPage }],
+    ['customers', { search: searchTerm, page: currentPage, pageSize }],
     () => customerAPI.getCustomers({
       search: searchTerm || undefined,
       page: currentPage,
+      page_size: pageSize,
     }),
     {
       keepPreviousData: true,
@@ -306,6 +346,17 @@ const Customers = () => {
       }
     }
   );
+
+  const totalPages = customers?.count ? Math.ceil(customers.count / pageSize) : 0;
+
+  const handlePageSizeChange = (newSize) => {
+    setPageSize(Number(newSize));
+    setCurrentPage(1); // Reset to first page when changing page size
+  };
+
+  const handleDoubleClick = (customerId) => {
+    window.location.href = `/customers/${customerId}/edit`;
+  };
 
   if (isLoading) {
     return <LoadingSpinner>Betöltés...</LoadingSpinner>;
@@ -357,7 +408,11 @@ const Customers = () => {
         <div>
           <CustomersGrid>
             {customers?.results?.map((customer) => (
-          <CustomerCard key={customer.id}>
+          <CustomerCard 
+            key={customer.id}
+            onDoubleClick={() => handleDoubleClick(customer.id)}
+            style={{ cursor: 'pointer' }}
+          >
             <CustomerHeader>
               <div>
                 <CustomerName>{customer.name}</CustomerName>
@@ -430,7 +485,11 @@ const Customers = () => {
             </TableHeader>
             <tbody>
               {customers?.results?.map((customer) => (
-                <TableRow key={customer.id}>
+                <TableRow 
+                  key={customer.id}
+                  onDoubleClick={() => handleDoubleClick(customer.id)}
+                  style={{ cursor: 'pointer' }}
+                >
                   <TableCell>
                     <strong>{customer.name}</strong>
                   </TableCell>
@@ -477,31 +536,47 @@ const Customers = () => {
 
       {!isLoading && !error && customers?.count > 0 && (
         <Pagination>
-          <PaginationButton
-            onClick={() => setCurrentPage(currentPage - 1)}
-            disabled={!customers.previous}
-          >
-            Előző
-          </PaginationButton>
-          
-          {Array.from({ length: Math.ceil(customers.count / 20) }, (_, i) => i + 1)
-            .slice(Math.max(0, currentPage - 3), currentPage + 2)
-            .map((page) => (
-              <PaginationButton
-                key={page}
-                className={page === currentPage ? 'active' : ''}
-                onClick={() => setCurrentPage(page)}
-              >
-                {page}
-              </PaginationButton>
-            ))}
-          
-          <PaginationButton
-            onClick={() => setCurrentPage(currentPage + 1)}
-            disabled={!customers.next}
-          >
-            Következő
-          </PaginationButton>
+          <PageSizeSelector>
+            <span>Sorok száma:</span>
+            <PageSizeSelect value={pageSize} onChange={(e) => handlePageSizeChange(e.target.value)}>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+              <option value={200}>200</option>
+            </PageSizeSelect>
+          </PageSizeSelector>
+
+          <PaginationControls>
+            <PaginationButton
+              onClick={() => setCurrentPage(currentPage - 1)}
+              disabled={!customers.previous}
+            >
+              Előző
+            </PaginationButton>
+            
+            {Array.from({ length: totalPages }, (_, i) => i + 1)
+              .slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))
+              .map((page) => (
+                <PaginationButton
+                  key={page}
+                  className={page === currentPage ? 'active' : ''}
+                  onClick={() => setCurrentPage(page)}
+                >
+                  {page}
+                </PaginationButton>
+              ))}
+            
+            <PaginationButton
+              onClick={() => setCurrentPage(currentPage + 1)}
+              disabled={!customers.next}
+            >
+              Következő
+            </PaginationButton>
+          </PaginationControls>
+
+          <PageInfo>
+            {currentPage}. oldal / {totalPages} oldal összesen
+          </PageInfo>
         </Pagination>
       )}
     </CustomersContainer>
