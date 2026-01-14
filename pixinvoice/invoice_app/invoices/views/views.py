@@ -5439,15 +5439,27 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
         dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
         ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
+        
+        # Determine debtor account - use batch account or company's primary/first account
+        debtor_account = batch.bank_account
+        if not debtor_account:
+            # Try to find primary account or first available
+            debtor_account = batch.company.bank_accounts.filter(is_primary=True).first()
+            if not debtor_account:
+                debtor_account = batch.company.bank_accounts.first()
+        
+        if not debtor_account:
+            raise ValueError(f'{batch.company.name}: Nincs bankszámla megadva a csomaghoz vagy a céghez')
+        
         dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
         dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
-        if batch.bank_account and batch.bank_account.iban:
-            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = batch.bank_account.iban
-        elif batch.bank_account and batch.bank_account.account_number:
+        if debtor_account.iban:
+            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = debtor_account.iban
+        elif debtor_account.account_number:
             othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
-            ET.SubElement(othr, ET.QName(ns, 'Id')).text = batch.bank_account.account_number
+            ET.SubElement(othr, ET.QName(ns, 'Id')).text = debtor_account.account_number
         else:
-            raise ValueError('A csomaghoz rendelt bankszámla IBAN vagy számlaszám szükséges')
+            raise ValueError(f'{batch.company.name}: A bankszámlának IBAN vagy számlaszám szükséges')
         ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV'
 
         # Transactions
