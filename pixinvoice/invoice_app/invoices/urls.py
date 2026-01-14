@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from invoices.views.views import (
     CustomerViewSet, InvoiceViewSet, InvoiceItemViewSet, NAVConfigurationViewSet, ContactViewSet,
-    CompanyViewSet, SystemUserViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
+    CompanyViewSet, SystemUserViewSet, RoleViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
     CompanyEmailSettingsViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
     BackupConfigurationViewSet, BackupFileViewSet
 )
@@ -20,6 +20,7 @@ router.register(r'nav-configurations', NAVConfigurationViewSet)
 router.register(r'contacts', ContactViewSet)
 router.register(r'companies', CompanyViewSet)
 router.register(r'system-users', SystemUserViewSet)
+router.register(r'roles', RoleViewSet)
 router.register(r'invoice-blocks', InvoiceBlockViewSet)
 router.register(r'company-nav-configurations', CompanyNAVConfigurationViewSet)
 router.register(r'company-email-settings', CompanyEmailSettingsViewSet)

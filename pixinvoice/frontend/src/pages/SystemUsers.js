@@ -412,6 +412,7 @@ const SystemUsers = () => {
               <TableHeaderCell>Név</TableHeaderCell>
               <TableHeaderCell>E-mail</TableHeaderCell>
               <TableHeaderCell>Cégek</TableHeaderCell>
+              <TableHeaderCell>Szerepkörök</TableHeaderCell>
               <TableHeaderCell>Státusz</TableHeaderCell>
               <TableHeaderCell>Műveletek</TableHeaderCell>
             </tr>
@@ -437,6 +438,19 @@ const SystemUsers = () => {
                       ))
                     ) : (
                       <span style={{ color: '#7f8c8d', fontSize: '12px' }}>Nincs hozzárendelt cég</span>
+                    )}
+                  </CompanyTags>
+                </TableCell>
+                <TableCell>
+                  <CompanyTags>
+                    {user.roles && user.roles.length > 0 ? (
+                      user.roles.map((role) => (
+                        <CompanyTag key={role.id}>
+                          {role.name}
+                        </CompanyTag>
+                      ))
+                    ) : (
+                      <span style={{ color: '#7f8c8d', fontSize: '12px' }}>Nincs szerepkör</span>
                     )}
                   </CompanyTags>
                 </TableCell>

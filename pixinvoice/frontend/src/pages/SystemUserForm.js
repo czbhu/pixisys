@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Save, ArrowLeft, Users, Eye, EyeOff } from 'lucide-react';
 import styled from 'styled-components';
-import { systemUserAPI, companyAPI } from '../services/api';
+import { systemUserAPI, companyAPI, roleAPI } from '../services/api';
 
 const FormContainer = styled.div`
   background: white;
@@ -203,6 +203,7 @@ const SystemUserForm = () => {
   const isEdit = Boolean(id);
   const [showPassword, setShowPassword] = useState(false);
   const [selectedCompanies, setSelectedCompanies] = useState([]);
+  const [selectedRoles, setSelectedRoles] = useState([]);
 
   const { data: user, isLoading: userLoading } = useQuery(
     ['system-user', id],
@@ -218,6 +219,14 @@ const SystemUserForm = () => {
     () => companyAPI.getCompanies({ is_active: true }),
     {
       select: (response) => response.data?.results || []
+    }
+  );
+
+  const { data: roles, isLoading: rolesLoading, error: rolesError } = useQuery(
+    ['roles-all'],
+    () => roleAPI.getRoles({ is_active: true }),
+    {
+      select: (response) => response.data?.results || response.data || response,
     }
   );
 
@@ -246,9 +255,13 @@ const SystemUserForm = () => {
         const mapped = (companies || []).filter(c => data.company_ids.includes(c.id));
         if (mapped.length) setSelectedCompanies(mapped);
       }
+      if (Array.isArray(data?.role_ids)) {
+        const mappedRoles = (roles || []).filter(r => data.role_ids.includes(r.id));
+        if (mappedRoles.length) setSelectedRoles(mappedRoles);
+      }
     } catch {}
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [DRAFT_KEY, isEdit, companies]);
+  }, [DRAFT_KEY, isEdit, companies, roles]);
 
   // Persist draft (new only)
   React.useEffect(() => {
@@ -258,13 +271,13 @@ const SystemUserForm = () => {
       clearTimeout(t);
       t = setTimeout(() => {
         try { 
-          const payload = { ...value, company_ids: selectedCompanies.map(c => c.id) };
+          const payload = { ...value, company_ids: selectedCompanies.map(c => c.id), role_ids: selectedRoles.map(r => r.id) };
           localStorage.setItem(DRAFT_KEY, JSON.stringify(payload));
         } catch {}
       }, 300);
     });
     return () => { sub.unsubscribe(); clearTimeout(t); };
-  }, [watch, DRAFT_KEY, isEdit, selectedCompanies]);
+  }, [watch, DRAFT_KEY, isEdit, selectedCompanies, selectedRoles]);
 
   // Keep only on refresh (new only)
   React.useEffect(() => {
@@ -322,6 +335,7 @@ const SystemUserForm = () => {
       setValue('email', user.email);
       setValue('is_active', user.is_active);
       setSelectedCompanies(user.companies || []);
+      setSelectedRoles(user.roles || []);
     }
   }, [user, setValue]);
 
@@ -337,7 +351,8 @@ const SystemUserForm = () => {
   const onSubmit = (data) => {
     const formData = {
       ...data,
-      company_ids: selectedCompanies.map(c => c.id)
+      company_ids: selectedCompanies.map(c => c.id),
+      role_ids: selectedRoles.map(r => r.id)
     };
 
     if (isEdit) {
@@ -347,7 +362,7 @@ const SystemUserForm = () => {
     }
   };
 
-  if (userLoading || companiesLoading) {
+  if (userLoading || companiesLoading || rolesLoading) {
     return (
       <FormContainer>
         <LoadingSpinner>Adatok betöltése...</LoadingSpinner>
@@ -355,10 +370,10 @@ const SystemUserForm = () => {
     );
   }
 
-  if (companiesError) {
+  if (companiesError || rolesError) {
     return (
       <FormContainer>
-        <div>Hiba történt a cégek betöltése során: {companiesError.message}</div>
+        <div>Hiba történt az adatok betöltése során: {(companiesError || rolesError).message}</div>
       </FormContainer>
     );
   }
@@ -494,6 +509,52 @@ const SystemUserForm = () => {
           </MultiSelect>
           <div style={{ marginTop: '8px', fontSize: '12px', color: '#7f8c8d' }}>
             Válassza ki, hogy mely cégekhez fér hozzá a felhasználó
+          </div>
+        </FormGroup>
+
+        <FormGroup>
+          <Label>Szerepkörök</Label>
+          <MultiSelect>
+            {roles && roles.length > 0 ? (
+              roles.map((role) => {
+                const isSelected = selectedRoles.some(r => r.id === role.id);
+                return (
+                  <MultiSelectItem
+                    key={role.id}
+                    className={isSelected ? 'selected' : ''}
+                    onClick={() => {
+                      const currentlySelected = selectedRoles.some(r => r.id === role.id);
+                      if (currentlySelected) {
+                        setSelectedRoles(selectedRoles.filter(r => r.id !== role.id));
+                      } else {
+                        setSelectedRoles([...selectedRoles, role]);
+                      }
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => {
+                        const currentlySelected = selectedRoles.some(r => r.id === role.id);
+                        if (currentlySelected) {
+                          setSelectedRoles(selectedRoles.filter(r => r.id !== role.id));
+                        } else {
+                          setSelectedRoles([...selectedRoles, role]);
+                        }
+                      }}
+                    />
+                    <span>{role.name}</span>
+                  </MultiSelectItem>
+                );
+              })
+            ) : (
+              <div style={{ color: '#7f8c8d', textAlign: 'center', padding: '20px' }}>
+                Nincsenek elérhető szerepkörök
+              </div>
+            )}
+          </MultiSelect>
+          <div style={{ marginTop: '8px', fontSize: '12px', color: '#7f8c8d' }}>
+            Válassza ki a felhasználó szerepköreit (menü jogosultságok)
           </div>
         </FormGroup>
 

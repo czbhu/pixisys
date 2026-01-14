@@ -149,6 +149,12 @@ const Settings = () => {
       icon: Upload,
       title: 'Adat Import',
       description: 'Tömeges ügyfél és kapcsolattartó importálás CSV fájlból'
+    },
+    {
+      path: '/settings/roles',
+      icon: Users,
+      title: 'Jogosultságok',
+      description: 'Szerepkörök és menü jogosultságok kezelése'
     }
   ];
 

@@ -193,22 +193,25 @@ const Layout = ({ children }) => {
   const location = useLocation();
   const { user, logout } = useAuth();
 
+  const allowedMenus = user?.allowed_menus || [];
+  const canSee = (key) => !allowedMenus.length || allowedMenus.includes(key);
+
   const navigation = [
-    { path: '/', label: 'Dashboard', icon: Home },
-    { path: '/invoices', label: 'Számlák', icon: FileText },
-    { path: '/incoming-invoices', label: 'Bejövő számlák', icon: FileText },
-    { path: '/proformas', label: 'Díjbekérők', icon: FileText },
-    { path: '/bank-statements', label: 'Bank', icon: CreditCard },
-    { path: '/customers', label: 'Ügyfelek', icon: Users },
-    { path: '/contacts', label: 'Kapcsolattartók', icon: UserCheck },
-    { path: '/settings', label: 'Beállítások', icon: Settings },
-    { path: '/reports', label: 'Jelentések', icon: BarChart3 },
+    { path: '/', label: 'Dashboard', icon: Home, key: 'dashboard' },
+    { path: '/invoices', label: 'Számlák', icon: FileText, key: 'invoices' },
+    { path: '/incoming-invoices', label: 'Bejövő számlák', icon: FileText, key: 'incoming_invoices' },
+    { path: '/proformas', label: 'Díjbekérők', icon: FileText, key: 'proformas' },
+    { path: '/bank-statements', label: 'Bank', icon: CreditCard, key: 'bank_statements' },
+    { path: '/customers', label: 'Ügyfelek', icon: Users, key: 'customers' },
+    { path: '/contacts', label: 'Kapcsolattartók', icon: UserCheck, key: 'contacts' },
+    { path: '/settings', label: 'Beállítások', icon: Settings, key: 'settings' },
+    { path: '/reports', label: 'Jelentések', icon: BarChart3, key: 'reports' },
   ];
 
   const quickActions = [
-    { path: '/invoices/new', label: 'Új számla', icon: Plus },
-    { path: '/customers/new', label: 'Új ügyfél', icon: Plus },
-    { path: '/contacts/new', label: 'Új kapcsolattartó', icon: Plus },
+    { path: '/invoices/new', label: 'Új számla', icon: Plus, key: 'invoices' },
+    { path: '/customers/new', label: 'Új ügyfél', icon: Plus, key: 'customers' },
+    { path: '/contacts/new', label: 'Új kapcsolattartó', icon: Plus, key: 'contacts' },
   ];
 
   const userMenuItems = [
@@ -254,7 +257,7 @@ const Layout = ({ children }) => {
           onCompanyChange={setSelectedCompany}
         />
         <SidebarNav>
-          {navigation.map((item) => {
+          {navigation.filter((item) => canSee(item.key)).map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.path;
             return (
@@ -278,7 +281,7 @@ const Layout = ({ children }) => {
             <Menu />
           </MobileMenuButton>
           <QuickActions>
-            {quickActions.map((action) => {
+            {quickActions.filter((action) => canSee(action.key)).map((action) => {
               const Icon = action.icon;
               return (
                 <QuickActionButton key={action.path} to={action.path}>

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration
+from .models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration, Role
 
 
 @admin.register(Customer)
@@ -139,7 +139,7 @@ class SystemUserAdmin(admin.ModelAdmin):
     list_filter = ['is_active', 'created_at']
     search_fields = ['first_name', 'last_name', 'email']
     readonly_fields = ['id', 'created_at', 'updated_at']
-    filter_horizontal = ['companies']
+    filter_horizontal = ['companies', 'roles']
     
     fieldsets = (
         ('Alapadatok', {
@@ -149,8 +149,28 @@ class SystemUserAdmin(admin.ModelAdmin):
             'fields': ('password_hash',),
             'classes': ('collapse',)
         }),
-        ('Cégek', {
-            'fields': ('companies',)
+        ('Cégek és szerepkörök', {
+            'fields': ('companies', 'roles')
+        }),
+        ('Rendszer', {
+            'fields': ('id', 'created_at', 'updated_at'),
+            'classes': ('collapse',)
+        }),
+    )
+
+
+@admin.register(Role)
+class RoleAdmin(admin.ModelAdmin):
+    list_display = ['name', 'is_active', 'created_at']
+    list_filter = ['is_active', 'created_at']
+    search_fields = ['name', 'description']
+    readonly_fields = ['id', 'created_at', 'updated_at']
+    fieldsets = (
+        ('Alapadatok', {
+            'fields': ('name', 'description', 'is_active')
+        }),
+        ('Jogosultságok', {
+            'fields': ('menu_permissions',)
         }),
         ('Rendszer', {
             'fields': ('id', 'created_at', 'updated_at'),

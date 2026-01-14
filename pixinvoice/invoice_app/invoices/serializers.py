@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.db import models
 from .models import (
-    Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser,
+    Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role,
     InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType,
     BankStatement, BankStatementItem, ProformaInvoice, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingDocument,
     BackupConfiguration, BackupFile
@@ -1008,10 +1008,24 @@ class CompanyEmailSettingsSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
+class RoleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Role
+        fields = ['id', 'name', 'description', 'menu_permissions', 'is_active', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
 class SystemUserSerializer(serializers.ModelSerializer):
     full_name = serializers.ReadOnlyField()
     companies = CompanySerializer(many=True, read_only=True)
     company_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=False
+    )
+    roles = RoleSerializer(many=True, read_only=True)
+    allowed_menus = serializers.SerializerMethodField(read_only=True)
+    role_ids = serializers.ListField(
         child=serializers.UUIDField(),
         write_only=True,
         required=False
@@ -1021,7 +1035,7 @@ class SystemUserSerializer(serializers.ModelSerializer):
         model = SystemUser
         fields = [
             'id', 'first_name', 'last_name', 'full_name', 'email',
-            'is_active', 'last_login', 'companies', 'company_ids', 'created_at', 'updated_at'
+            'is_active', 'last_login', 'companies', 'company_ids', 'roles', 'role_ids', 'allowed_menus', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'last_login', 'created_at', 'updated_at']
         extra_kwargs = {
@@ -1030,19 +1044,38 @@ class SystemUserSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         company_ids = validated_data.pop('company_ids', [])
+        role_ids = validated_data.pop('role_ids', [])
         user = SystemUser.objects.create(**validated_data)
         if company_ids:
             user.companies.set(company_ids)
+        if role_ids:
+            user.roles.set(role_ids)
         return user
 
     def update(self, instance, validated_data):
         company_ids = validated_data.pop('company_ids', None)
+        role_ids = validated_data.pop('role_ids', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
         if company_ids is not None:
             instance.companies.set(company_ids)
+        if role_ids is not None:
+            instance.roles.set(role_ids)
         return instance
+
+    def get_allowed_menus(self, obj):
+        menus = []
+        for role in obj.roles.filter(is_active=True):
+            menus.extend(role.menu_permissions or [])
+        seen = set()
+        deduped = []
+        for key in menus:
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(key)
+        return deduped
 
 
 class SystemUserCreateSerializer(serializers.ModelSerializer):
@@ -1052,21 +1085,29 @@ class SystemUserCreateSerializer(serializers.ModelSerializer):
         write_only=True,
         required=False
     )
+    role_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=False
+    )
     
     class Meta:
         model = SystemUser
         fields = [
-            'first_name', 'last_name', 'email', 'password', 'is_active', 'company_ids'
+            'first_name', 'last_name', 'email', 'password', 'is_active', 'company_ids', 'role_ids'
         ]
 
     def create(self, validated_data):
         password = validated_data.pop('password')
         company_ids = validated_data.pop('company_ids', [])
+        role_ids = validated_data.pop('role_ids', [])
         user = SystemUser.objects.create(**validated_data)
         user.set_password(password)
         user.save()  # Save the hashed password
         if company_ids:
             user.companies.set(company_ids)
+        if role_ids:
+            user.roles.set(role_ids)
         return user
 
 

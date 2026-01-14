@@ -9,13 +9,22 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
+    const normalizeUser = (u) => {
+        if (!u) return null;
+        return {
+            ...u,
+            roles: Array.isArray(u.roles) ? u.roles : [],
+            allowed_menus: Array.isArray(u.allowed_menus) ? u.allowed_menus : [],
+        };
+    };
+
     useEffect(() => {
         // Check for existing auth on mount
         const token = localStorage.getItem('access_token');
         const savedUser = localStorage.getItem('user');
         
         if (token && savedUser) {
-            setUser(JSON.parse(savedUser));
+            setUser(normalizeUser(JSON.parse(savedUser)));
             axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
         }
         setLoading(false);
@@ -25,13 +34,14 @@ export const AuthProvider = ({ children }) => {
         try {
             const response = await axios.post('/api/auth/login/', credentials);
             const { user: userData, tokens } = response.data;
+            const normalized = normalizeUser(userData);
             
             localStorage.setItem('access_token', tokens.access);
             localStorage.setItem('refresh_token', tokens.refresh);
-            localStorage.setItem('user', JSON.stringify(userData));
+            localStorage.setItem('user', JSON.stringify(normalized));
             
             axios.defaults.headers.common['Authorization'] = `Bearer ${tokens.access}`;
-            setUser(userData);
+            setUser(normalized);
             
             return { success: true };
         } catch (error) {
@@ -56,7 +66,8 @@ export const AuthProvider = ({ children }) => {
         user,
         login,
         logout,
-        loading
+        loading,
+        allowedMenus: user?.allowed_menus || []
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

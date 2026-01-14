@@ -162,6 +162,9 @@ class IncomingInvoiceDigest(models.Model):
     currency = models.CharField(max_length=10, blank=True, null=True)
     invoice_net_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
     invoice_vat_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True)
+    is_approved = models.BooleanField(default=False)
+    approved_by = models.ForeignKey('SystemUser', on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_incoming_invoices')
+    approved_at = models.DateTimeField(blank=True, null=True)
     transaction_id = models.CharField(max_length=50, blank=True, null=True)
     index = models.IntegerField(blank=True, null=True)
     original_invoice_number = models.CharField(max_length=100, blank=True, null=True)
@@ -177,6 +180,7 @@ class IncomingInvoiceDigest(models.Model):
         indexes = [
             models.Index(fields=['company', 'invoice_issue_date']),
             models.Index(fields=['company', 'ins_date']),
+            models.Index(fields=['company', 'is_approved']),
         ]
         unique_together = (('company', 'invoice_number', 'transaction_id'),)
 
@@ -657,6 +661,7 @@ class SystemUser(models.Model):
     is_active = models.BooleanField(default=True, verbose_name="Active")
     last_login = models.DateTimeField(null=True, blank=True, verbose_name="Last Login")
     companies = models.ManyToManyField(Company, related_name='users', verbose_name="Companies")
+    roles = models.ManyToManyField('Role', related_name='users', verbose_name="Roles", blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -678,6 +683,25 @@ class SystemUser(models.Model):
 
     def check_password(self, raw_password):
         return check_password(raw_password, self.password_hash)
+
+
+class Role(models.Model):
+    """Role with menu-level permissions"""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=100, unique=True, verbose_name="Role Name")
+    description = models.TextField(blank=True, null=True, verbose_name="Description")
+    menu_permissions = models.JSONField(default=list, verbose_name="Menu Permissions")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Role"
+        verbose_name_plural = "Roles"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
 
 
 class InvoiceBlock(models.Model):

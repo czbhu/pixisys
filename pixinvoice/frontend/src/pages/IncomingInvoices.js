@@ -3,6 +3,7 @@ import styled from 'styled-components';
 import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 import '../print.css';
 
 const InvoicesContainer = styled.div`
@@ -228,6 +229,7 @@ export default function IncomingInvoices() {
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid | due
   const [paymentFilter, setPaymentFilter] = useState('all'); // all | transfer | cash | card | voucher | utanvet | other
+  const [approvalFilter, setApprovalFilter] = useState('all'); // all | approved | unapproved
   const [xmlOpen, setXmlOpen] = useState(false);
   const [xmlLoading, setXmlLoading] = useState(false);
   const [xmlError, setXmlError] = useState('');
@@ -262,6 +264,26 @@ export default function IncomingInvoices() {
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
   const searchTimer = useRef(null);
+  const [approvalSaving, setApprovalSaving] = useState({});
+
+  const { allowedMenus, user } = useAuth();
+  const allowAllMenus = !allowedMenus || allowedMenus.length === 0;
+  const isSuperuser = !!user?.is_superuser;
+  const canApproveInvoices = !!(
+    isSuperuser ||
+    allowAllMenus ||
+    (allowedMenus && (
+      allowedMenus.includes('incoming_invoices_approve') ||
+      allowedMenus.includes('settings_roles') ||
+      allowedMenus.includes('settings_users') ||
+      allowedMenus.includes('settings')
+    ))
+  );
+  const canSkipApprovalForBatch = !!(
+    isSuperuser ||
+    allowAllMenus ||
+    (allowedMenus && allowedMenus.includes('payment_batch_without_approval'))
+  );
 
   useEffect(() => {
     const sync = () => {
@@ -278,7 +300,7 @@ export default function IncomingInvoices() {
   }, []);
 
   // Reset page and items when filters change
-  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter]);
+  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter, approvalFilter]);
 
   // Poll pending batch count lightly when company changes
   useEffect(() => {
@@ -308,7 +330,7 @@ export default function IncomingInvoices() {
     if (pageArg && pageArg > 1) setIsFetchingMore(true); else setLoading(true);
     setErrorMsg('');
     try {
-  const res = await api.get('/api/invoices/incoming/', { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo, page: pageArg || page, refresh: doRefresh, backfill_all: opts.backfillAll ? 1 : undefined, search: (searchText||'').trim() || undefined, status: statusFilter==='all'? undefined : statusFilter, payment_method: paymentFilter==='all'? undefined : paymentFilter } });
+      const res = await api.get('/api/invoices/incoming/', { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo, page: pageArg || page, refresh: doRefresh, backfill_all: opts.backfillAll ? 1 : undefined, search: (searchText||'').trim() || undefined, status: statusFilter==='all'? undefined : statusFilter, payment_method: paymentFilter==='all'? undefined : paymentFilter, approval: approvalFilter==='all'? undefined : approvalFilter } });
       const data = res.data || {};
       if (data.success && Array.isArray(data.items)) {
         setItems(prev => (replace ? data.items : [...prev, ...data.items]));
@@ -349,7 +371,7 @@ export default function IncomingInvoices() {
     }, 400);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, companyId, statusFilter, paymentFilter]);
+  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter]);
 
   // Infinite scroll sentinel
   useEffect(() => {
@@ -730,7 +752,13 @@ export default function IncomingInvoices() {
   const loadNext = () => { if (hasMore) fetchDigest(page + 1); };
 
   const rowKey = (row) => `${row.invoiceNumber||''}|${row.supplierTaxNumber||''}`;
-  const canSelect = (row) => String(row.paymentMethod || '').toUpperCase() === 'TRANSFER' && !row.inPaymentBatch;
+  const isRowApproved = (row) => row?.isApproved === true || row?.isApproved === 1 || row?.isApproved === '1';
+  const canSelect = (row) => {
+    const isTransfer = String(row.paymentMethod || '').toUpperCase() === 'TRANSFER';
+    if (!isTransfer || row.inPaymentBatch) return false;
+    if (isSuperuser || allowAllMenus || canSkipApprovalForBatch) return true;
+    return isRowApproved(row);
+  };
   const toggleSelect = (row, idx, event) => {
     if (!canSelect(row)) return;
     const key = rowKey(row);
@@ -836,6 +864,43 @@ export default function IncomingInvoices() {
     }
   };
 
+  const toggleApproval = async (row) => {
+    if (!companyId) { toast.error('Válassz céget'); return; }
+    if (!canApproveInvoices) { toast.error('Nincs jogosultság a jóváhagyáshoz'); return; }
+    const key = rowKey(row);
+    const currentApproved = isRowApproved(row);
+    const nextVal = !currentApproved;
+    setApprovalSaving(prev => ({ ...prev, [key]: true }));
+    try {
+      const res = await api.post('/api/invoices/incoming/set_approval/', {
+        company_id: companyId,
+        invoice_number: row.invoiceNumber,
+        supplier_tax_number: row.supplierTaxNumber,
+        approved: nextVal,
+      });
+      const data = res.data || {};
+      setItems(prev => prev.map(r => (rowKey(r) === key ? {
+        ...r,
+        isApproved: data.is_approved ?? nextVal,
+        approvedAt: data.approved_at || null,
+        approvedBy: data.approved_by_name || null,
+      } : r)));
+      if (!nextVal) {
+        setSelected(prev => {
+          const copy = new Set(Array.from(prev));
+          copy.delete(key);
+          return copy;
+        });
+      }
+      toast.success(nextVal ? 'Jóváhagyva' : 'Jóváhagyás visszavonva');
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Jóváhagyási hiba';
+      toast.error(msg);
+    } finally {
+      setApprovalSaving(prev => ({ ...prev, [key]: false }));
+    }
+  };
+
   const fetchBatchLists = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
     try {
@@ -904,8 +969,13 @@ export default function IncomingInvoices() {
       // refresh pending count
       try { const pc = await api.post('/api/payment-batches/pending-count/', { company_id: companyId }); setPendingCount(pc.data?.count || 0); } catch {}
     } catch (e) {
-      const msg = e?.response?.data?.error || e?.message || 'Csomag létrehozási hiba';
-      toast.error(msg);
+      const resp = e?.response?.data || {};
+      const msg = resp.error || e?.message || 'Csomag létrehozási hiba';
+      if (Array.isArray(resp.not_approved) && resp.not_approved.length) {
+        toast.error(`${msg}: jóváhagyás szükséges (${resp.not_approved.join(', ')})`);
+      } else {
+        toast.error(msg);
+      }
     } finally {
       setCreatingBatch(false);
     }
@@ -1020,7 +1090,15 @@ export default function IncomingInvoices() {
         const list = await api.post('/api/payment-batches/list-pending/', { company_id: companyId });
         setPendingBatches(list.data || []);
       } catch {}
-    } catch (e) { toast.error('Hozzáadás hiba'); }
+    } catch (e) {
+      const resp = e?.response?.data || {};
+      const msg = resp.error || e?.message || 'Hozzáadás hiba';
+      if (Array.isArray(resp.not_approved) && resp.not_approved.length) {
+        toast.error(`${msg}: jóváhagyás szükséges (${resp.not_approved.join(', ')})`);
+      } else {
+        toast.error(msg);
+      }
+    }
   };
 
   const saveBatchItemAmount = async (batchId, itemId, amount) => {
@@ -1088,8 +1166,13 @@ export default function IncomingInvoices() {
       } catch {}
       fetchDigest(1, { replace: true });
     } catch (e) {
-      const msg = e?.response?.data?.error || 'Mentési hiba';
-      toast.error(msg);
+      const resp = e?.response?.data || {};
+      const msg = resp.error || 'Mentési hiba';
+      if (Array.isArray(resp.not_approved) && resp.not_approved.length) {
+        toast.error(`${msg}: jóváhagyás szükséges (${resp.not_approved.join(', ')})`);
+      } else {
+        toast.error(msg);
+      }
     } finally { setSavingEdit(false); }
   };
 
@@ -1122,6 +1205,11 @@ export default function IncomingInvoices() {
               <option value="VOUCHER">Utalvány</option>
               <option value="UTANVET">Utánvét</option>
               <option value="OTHER">Egyéb</option>
+            </select>
+            <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); setPage(1); setItems([]); setHasMore(true); fetchDigest(1, { replace: true }); }} style={{ padding:'6px 10px' }}>
+              <option value="all">Összes jóváhagyás</option>
+              <option value="approved">Csak jóváhagyott</option>
+              <option value="unapproved">Csak nem jóváhagyott</option>
             </select>
           </div>
           <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading}>
@@ -1174,6 +1262,7 @@ export default function IncomingInvoices() {
               <TableHeaderCell>Nettó</TableHeaderCell>
               <TableHeaderCell>ÁFA</TableHeaderCell>
               <TableHeaderCell>Bruttó</TableHeaderCell>
+              <TableHeaderCell>Jóváhagyás</TableHeaderCell>
               <TableHeaderCell>Fizetési mód</TableHeaderCell>
               <TableHeaderCell>Művelet</TableHeaderCell>
             </tr>
@@ -1207,6 +1296,28 @@ export default function IncomingInvoices() {
                 <TableCell className="text-right">{row.netAmount}</TableCell>
                 <TableCell className="text-right">{row.vatAmount}</TableCell>
                 <TableCell className="text-right">{row.grossAmount}</TableCell>
+                <TableCell>
+                  {canApproveInvoices ? (
+                    <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+                      <input
+                        type="checkbox"
+                        checked={isRowApproved(row)}
+                        onChange={()=>toggleApproval(row)}
+                        disabled={!!approvalSaving[rowKey(row)]}
+                      />
+                      <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                        <span>Jóváhagyó: {row.approvedBy || '—'}</span>
+                        <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                      </SmallMuted>
+                    </label>
+                  ) : (
+                    <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                      <span>{isRowApproved(row) ? 'Jóváhagyva' : '—'}</span>
+                      <span>Jóváhagyó: {row.approvedBy || '—'}</span>
+                      <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                    </SmallMuted>
+                  )}
+                </TableCell>
                 <TableCell>
                   {needsPaymentMethod(row) ? (
                     <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>

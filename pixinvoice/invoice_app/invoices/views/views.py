@@ -56,11 +56,12 @@ from django.shortcuts import get_object_or_404
 from django.db import models
 from django.db.models import Q, Sum, Max
 from django.utils import timezone
-from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile
+from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile
+from django.contrib.auth.hashers import make_password
 from invoices.serializers import (
     CustomerSerializer, InvoiceSerializer, InvoiceCreateSerializer,
     InvoiceItemSerializer, NAVConfigurationSerializer, ContactSerializer, ContactCreateSerializer,
-    CompanySerializer, SystemUserSerializer, SystemUserCreateSerializer, InvoiceBlockSerializer, CompanyNAVConfigurationSerializer,
+    CompanySerializer, SystemUserSerializer, SystemUserCreateSerializer, RoleSerializer, InvoiceBlockSerializer, CompanyNAVConfigurationSerializer,
     CustomerBankAccountSerializer, CompanyBankAccountSerializer, VATTypeSerializer, BankStatementSerializer,
     ProformaSerializer, ProformaCreateSerializer
 )
@@ -78,6 +79,31 @@ import xml.etree.ElementTree as ET
 import json
 from django.forms.models import model_to_dict
 from django.db import transaction
+
+
+ROLE_MENU_OPTIONS = [
+    {'key': 'dashboard', 'label': 'Dashboard'},
+    {'key': 'invoices', 'label': 'Számlák'},
+    {'key': 'incoming_invoices', 'label': 'Bejövő számlák'},
+    {'key': 'incoming_invoices_approve', 'label': 'Bejövő számlák jóváhagyás'},
+    {'key': 'payment_batch_without_approval', 'label': 'Fizetési csomag jóváhagyás nélkül'},
+    {'key': 'proformas', 'label': 'Díjbekérők'},
+    {'key': 'bank_statements', 'label': 'Bank'},
+    {'key': 'customers', 'label': 'Ügyfelek'},
+    {'key': 'contacts', 'label': 'Kapcsolattartók'},
+    {'key': 'reports', 'label': 'Jelentések'},
+    {'key': 'settings', 'label': 'Beállítások'},
+    {'key': 'settings_roles', 'label': 'Jogosultságok'},
+    {'key': 'settings_users', 'label': 'Felhasználók'},
+    {'key': 'settings_companies', 'label': 'Cégek'},
+    {'key': 'settings_invoice_blocks', 'label': 'Számlatömbök'},
+    {'key': 'settings_nav_configurations', 'label': 'NAV konfigurációk'},
+    {'key': 'settings_email', 'label': 'E-mail beállítások'},
+    {'key': 'settings_backup', 'label': 'Backup / Visszaállítás'},
+    {'key': 'settings_api_access', 'label': 'API hozzáférés'},
+    {'key': 'settings_data_import', 'label': 'Adat import'},
+    {'key': 'settings_vat_types', 'label': 'ÁFA típusok'},
+]
 
 logger = logging.getLogger(__name__)
 
@@ -1691,6 +1717,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         search = (request.query_params.get('search') or '').strip()
         status_filter = (request.query_params.get('status') or '').strip().lower()
         payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
+        approval_filter = (request.query_params.get('approval') or '').strip().lower()
         today_date = timezone.now().date()
 
         if not company_id:
@@ -2003,6 +2030,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if payment_method_filter and payment_method_filter != 'all':
             qs = qs.filter(payment_method__iexact=payment_method_filter.upper())
 
+        # Approval filter
+        if approval_filter == 'approved':
+            qs = qs.filter(is_approved=True)
+        elif approval_filter == 'unapproved':
+            qs = qs.filter(is_approved=False)
+
         # Paid/unpaid coarse filter in DB (due handled later)
         if status_filter == 'paid':
             qs = qs.filter(Q(payment_date__isnull=False) | ~Q(payment_method__iexact='TRANSFER'))
@@ -2259,6 +2292,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if not ok_due:
                     continue
 
+            approver_name = None
+            try:
+                if getattr(r, 'approved_by', None):
+                    approver_name = getattr(r.approved_by, 'full_name', None) or f"{r.approved_by.last_name} {r.approved_by.first_name}".strip()
+            except Exception:
+                approver_name = None
+
             items_all.append({
                 'invoiceNumber': r.invoice_number,
                 'invoiceIssueDate': date_val.isoformat() if date_val else None,
@@ -2279,6 +2319,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'isPaid': is_paid,
                 'isPartial': is_partial,
                 'inPaymentBatch': pay_key in pay_map,
+                'isApproved': bool(getattr(r, 'is_approved', False)),
+                'approvedBy': approver_name,
+                'approvedAt': (r.approved_at.isoformat() if getattr(r, 'approved_at', None) else None),
             })
 
         page_items = items_all
@@ -2574,6 +2617,110 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         obj.payment_method = payment_method
         obj.save(update_fields=['payment_method'])
         return Response({'success': True, 'payment_method': obj.payment_method})
+
+    @action(detail=False, methods=['post'], url_path='incoming/set_approval')
+    def set_incoming_approval(self, request):
+        """Approve or revoke approval for an incoming invoice digest."""
+        from invoices.models import IncomingInvoiceDigest, Company, SystemUser
+        from django.utils import timezone
+
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        invoice_number = request.data.get('invoice_number') or ''
+        supplier_tax_number = request.data.get('supplier_tax_number') or None
+        approved_raw = request.data.get('approved')
+        approved = str(approved_raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        def _resolve_system_user(user_obj):
+            if isinstance(user_obj, SystemUser):
+                return user_obj
+            email = getattr(user_obj, 'email', None)
+            username = getattr(user_obj, 'username', None)
+            candidate_email = email or username
+            if candidate_email:
+                return SystemUser.objects.filter(email=candidate_email, is_active=True).prefetch_related('roles').first()
+            return None
+
+        req_user = getattr(request, 'user', None)
+        sys_user = _resolve_system_user(req_user)
+
+        def _has_approval_permission():
+            if getattr(req_user, 'is_superuser', False) or getattr(req_user, 'is_staff', False):
+                return True
+            if not sys_user:
+                # If we cannot resolve a SystemUser, trust authenticated request user (superadmin cases in UI).
+                return True
+            allowed = []
+            for r in sys_user.roles.filter(is_active=True):
+                allowed.extend(r.menu_permissions or [])
+            if not allowed:
+                return True  # no menu restriction means full access
+            if 'incoming_invoices_approve' in allowed:
+                return True
+            admin_keys = {'settings_roles', 'settings_users', 'settings'}
+            if any(k in allowed for k in admin_keys):
+                return True
+            return False
+
+        if not _has_approval_permission():
+            return Response({'error': 'Nincs jogosultság a jóváhagyáshoz'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not company_id or not invoice_number:
+            return Response({'error': 'company_id és invoice_number kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # If we have an authenticated Django user but no SystemUser, create/link one to persist approver name.
+        if not sys_user:
+            email = getattr(req_user, 'email', None) or getattr(req_user, 'username', None)
+            if email:
+                sys_user, _ = SystemUser.objects.get_or_create(
+                    email=email,
+                    defaults={
+                        'first_name': getattr(req_user, 'first_name', '') or '',
+                        'last_name': getattr(req_user, 'last_name', '') or '',
+                        'password_hash': make_password(None),
+                        'is_active': True,
+                    },
+                )
+                try:
+                    sys_user.companies.add(company)
+                except Exception:
+                    pass
+
+        qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
+        if supplier_tax_number:
+            qs = qs.filter(supplier_tax_number=supplier_tax_number)
+        obj = qs.order_by('-ins_date').first()
+        if not obj:
+            return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        approver = sys_user if approved else None
+
+        obj.is_approved = approved
+        obj.approved_by = approver if approved else None
+        obj.approved_at = timezone.now() if approved else None
+        obj.save(update_fields=['is_approved', 'approved_by', 'approved_at'])
+
+        approver_name = None
+        if obj.approved_by:
+            try:
+                approver_name = getattr(obj.approved_by, 'full_name', None) or f"{obj.approved_by.last_name} {obj.approved_by.first_name}".strip()
+            except Exception:
+                approver_name = None
+        if not approver_name and req_user:
+            name_parts = [getattr(req_user, 'last_name', '') or '', getattr(req_user, 'first_name', '') or '']
+            fallback_name = ' '.join([p for p in name_parts if p]).strip() or getattr(req_user, 'email', None) or getattr(req_user, 'username', None)
+            approver_name = fallback_name
+
+        return Response({
+            'success': True,
+            'is_approved': obj.is_approved,
+            'approved_at': obj.approved_at.isoformat() if obj.approved_at else None,
+            'approved_by_id': str(obj.approved_by.id) if obj.approved_by else None,
+            'approved_by_name': approver_name,
+        })
 
     @action(detail=False, methods=['post', 'get'], url_path='incoming/backfill')
     def backfill_incoming_cache(self, request):
@@ -4327,6 +4474,27 @@ class CompanyViewSet(viewsets.ModelViewSet):
         return Response({'success': True, 'results': results})
 
 
+class RoleViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing roles and menu permissions"""
+    queryset = Role.objects.all()
+    serializer_class = RoleSerializer
+    permission_classes = []  # Nincs autentikáció szükséges
+
+    def get_queryset(self):
+        qs = Role.objects.all()
+        search = self.request.query_params.get('search')
+        is_active = self.request.query_params.get('is_active')
+        if search:
+            qs = qs.filter(Q(name__icontains=search) | Q(description__icontains=search))
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        return qs
+
+    @action(detail=False, methods=['get'])
+    def menu_options(self, request):
+        return Response({'menus': ROLE_MENU_OPTIONS})
+
+
 class SystemUserViewSet(viewsets.ModelViewSet):
     """ViewSet for managing system users"""
     queryset = SystemUser.objects.all()
@@ -4338,7 +4506,7 @@ class SystemUserViewSet(viewsets.ModelViewSet):
         return SystemUserSerializer
 
     def get_queryset(self):
-        queryset = SystemUser.objects.prefetch_related('companies').all()
+        queryset = SystemUser.objects.prefetch_related('companies', 'roles').all()
         search = self.request.query_params.get('search', None)
         is_active = self.request.query_params.get('is_active', None)
         company_id = self.request.query_params.get('company_id', None)
@@ -4610,9 +4778,12 @@ class BankStatementViewSet(viewsets.ModelViewSet):
 
         import zipfile, io, re
         created = 0
-        skipped = []
         errors = []
         preview = []
+        skipped = []
+
+        def normalize_acct(s: str):
+            return re.sub(r'\D+', '', (s or ''))
 
         # Prepare bank account lookup by account number fragment present in filenames
         # Filename pattern example:
@@ -4621,12 +4792,9 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         acct_map = {}
         for acc in CompanyBankAccount.objects.filter(company=company):
             if acc.iban:
-                acct_map[re.sub(r'\s+', '', acc.iban)] = acc
+                acct_map[normalize_acct(acc.iban)] = acc
             if acc.account_number:
-                acct_map[re.sub(r'\D+', '', acc.account_number)] = acc
-
-        def normalize_acct(s: str):
-            return re.sub(r'\D+', '', (s or ''))
+                acct_map[normalize_acct(acc.account_number)] = acc
 
         for f in files:
             try:
@@ -5215,11 +5383,37 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         created = 0
         skipped = 0
         mismatched = []
+        not_approved = []
+        valid_items = []
+        is_super = getattr(request.user, 'is_superuser', False)
         for it in items:
             inv = (it or {})
             if inv.get('currency') and batch.currency and inv.get('currency') != batch.currency:
                 mismatched.append(inv.get('invoice_number'))
                 continue
+            if not is_super:
+                tax = inv.get('supplier_tax_number')
+                digest_qs = IncomingInvoiceDigest.objects.filter(
+                    company=batch.company,
+                    invoice_number=inv.get('invoice_number') or '',
+                )
+                if tax:
+                    digest_qs = digest_qs.filter(supplier_tax_number=tax)
+                digest = digest_qs.order_by('-ins_date').first()
+                if digest and not digest.is_approved:
+                    not_approved.append(inv.get('invoice_number') or digest.invoice_number)
+                    continue
+            valid_items.append(inv)
+        if not_approved and not is_super:
+            return Response(
+                {
+                    'error': 'Csak jóváhagyott számlák adhatók fizetési csomaghoz',
+                    'not_approved': not_approved,
+                    'currency_mismatched': mismatched,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        for inv in valid_items:
             try:
                 PaymentBatchItem.objects.create(
                     batch=batch,
@@ -5246,13 +5440,57 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not isinstance(items, list):
             return Response({'error': 'items tömb szükséges'}, status=status.HTTP_400_BAD_REQUEST)
         mismatched = []
+        not_approved = []
+        def _can_skip_approval():
+            user = getattr(request, 'user', None)
+            if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+                return True
+            sys_user = None
+            try:
+                if isinstance(user, SystemUser):
+                    sys_user = user
+                else:
+                    email = getattr(user, 'email', None) or getattr(user, 'username', None)
+                    if email:
+                        sys_user = SystemUser.objects.filter(email=email, is_active=True).prefetch_related('roles').first()
+            except Exception:
+                sys_user = None
+            if not sys_user:
+                return False
+            allowed = []
+            for r in sys_user.roles.filter(is_active=True):
+                allowed.extend(r.menu_permissions or [])
+            if not allowed:
+                return True
+            return 'payment_batch_without_approval' in allowed
+
+        skip_approval_check = _can_skip_approval()
         # Validate currencies before applying
         for it in items:
             cur = (it or {}).get('currency')
             if cur and batch.currency and cur != batch.currency:
                 mismatched.append((it or {}).get('invoice_number'))
+            if not skip_approval_check:
+                tax = (it or {}).get('supplier_tax_number')
+                digest_qs = IncomingInvoiceDigest.objects.filter(
+                    company=batch.company,
+                    invoice_number=(it or {}).get('invoice_number') or '',
+                )
+                if tax:
+                    digest_qs = digest_qs.filter(supplier_tax_number=tax)
+                digest = digest_qs.order_by('-ins_date').first()
+                if digest and not digest.is_approved:
+                    not_approved.append((it or {}).get('invoice_number') or digest.invoice_number)
         if mismatched:
             return Response({'error': 'Eltérő pénznemű tételek', 'currency_mismatched': mismatched}, status=status.HTTP_400_BAD_REQUEST)
+        if not_approved and not skip_approval_check:
+            return Response(
+                {
+                    'error': 'Csak jóváhagyott számlák adhatók fizetési csomaghoz',
+                    'not_approved': not_approved,
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         with transaction.atomic():
             batch.items.all().delete()
             created = 0

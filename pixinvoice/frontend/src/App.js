@@ -26,6 +26,8 @@ import Companies from './pages/Companies';
 import CompanyForm from './pages/CompanyForm';
 import SystemUsers from './pages/SystemUsers';
 import SystemUserForm from './pages/SystemUserForm';
+import Roles from './pages/Roles';
+import RoleForm from './pages/RoleForm';
 import InvoiceBlocks from './pages/InvoiceBlocks';
 import InvoiceBlockForm from './pages/InvoiceBlockForm';
 import CompanyNAVConfigurations from './pages/CompanyNAVConfigurations';
@@ -65,7 +67,9 @@ const ProtectedRoute = ({ children }) => {
 };
 
 function AppContent() {
-  const { user } = useAuth();
+  const { user, allowedMenus } = useAuth();
+  const canAccess = (key) => !allowedMenus || allowedMenus.length === 0 || allowedMenus.includes(key);
+  const guard = (key, element) => (canAccess(key) ? element : <Navigate to="/" replace />);
 
   return (
     <div className="App">
@@ -81,45 +85,48 @@ function AppContent() {
           <ProtectedRoute>
             <Layout>
               <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/invoices" element={<Invoices />} />
-                <Route path="/incoming-invoices" element={<IncomingInvoices />} />
-                <Route path="/invoices/new" element={<InvoiceForm />} />
-                <Route path="/invoices/:id/edit" element={<InvoiceForm />} />
-                <Route path="/bank-statements" element={<BankStatements />} />
-                <Route path="/bank-statements/new" element={<BankStatementForm />} />
-                <Route path="/bank-statements/:id/edit" element={<BankStatementForm />} />
-                <Route path="/proformas" element={<Proformas />} />
-                <Route path="/proformas/new" element={<InvoiceForm />} />
-                <Route path="/proformas/:id/edit" element={<InvoiceForm />} />
-                <Route path="/customers" element={<Customers />} />
-                <Route path="/customers/new" element={<CustomerForm />} />
-                <Route path="/customers/:id" element={<CustomerDetail />} />
-                <Route path="/customers/:id/edit" element={<CustomerForm />} />
-                <Route path="/contacts" element={<Contacts />} />
-                <Route path="/contacts/new" element={<ContactForm />} />
-                <Route path="/contacts/:id" element={<ContactDetail />} />
-                <Route path="/contacts/:id/edit" element={<ContactForm />} />
-                <Route path="/settings" element={<Settings />} />
-                <Route path="/settings/vat-types" element={<VATTypes />} />
-                <Route path="/settings/email" element={<EmailSettings />} />
-                <Route path="/settings/companies" element={<Companies />} />
-                <Route path="/settings/companies/new" element={<CompanyForm />} />
-                <Route path="/settings/companies/:id/edit" element={<CompanyForm />} />
-                <Route path="/settings/users" element={<SystemUsers />} />
-                <Route path="/settings/users/new" element={<SystemUserForm />} />
-                <Route path="/settings/users/:id/edit" element={<SystemUserForm />} />
-                <Route path="/settings/invoice-blocks" element={<InvoiceBlocks />} />
-                <Route path="/settings/invoice-blocks/new" element={<InvoiceBlockForm />} />
-                <Route path="/settings/invoice-blocks/:id/edit" element={<InvoiceBlockForm />} />
-                <Route path="/settings/nav-configurations" element={<CompanyNAVConfigurations />} />
-                <Route path="/settings/nav-configurations/new" element={<CompanyNAVConfigurationForm />} />
-                <Route path="/settings/nav-configurations/:id/edit" element={<CompanyNAVConfigurationForm />} />
-                <Route path="/nav-config" element={<NAVConfig />} />
-                <Route path="/settings/backup" element={<BackupRestore />} />
-                <Route path="/settings/api-access" element={<ApiAccess />} />
-                <Route path="/settings/data-import" element={<DataImport />} />
-                <Route path="/reports" element={<Reports />} />
+                <Route path="/" element={guard('dashboard', <Dashboard />)} />
+                <Route path="/invoices" element={guard('invoices', <Invoices />)} />
+                <Route path="/incoming-invoices" element={guard('incoming_invoices', <IncomingInvoices />)} />
+                <Route path="/invoices/new" element={guard('invoices', <InvoiceForm />)} />
+                <Route path="/invoices/:id/edit" element={guard('invoices', <InvoiceForm />)} />
+                <Route path="/bank-statements" element={guard('bank_statements', <BankStatements />)} />
+                <Route path="/bank-statements/new" element={guard('bank_statements', <BankStatementForm />)} />
+                <Route path="/bank-statements/:id/edit" element={guard('bank_statements', <BankStatementForm />)} />
+                <Route path="/proformas" element={guard('proformas', <Proformas />)} />
+                <Route path="/proformas/new" element={guard('proformas', <InvoiceForm />)} />
+                <Route path="/proformas/:id/edit" element={guard('proformas', <InvoiceForm />)} />
+                <Route path="/customers" element={guard('customers', <Customers />)} />
+                <Route path="/customers/new" element={guard('customers', <CustomerForm />)} />
+                <Route path="/customers/:id" element={guard('customers', <CustomerDetail />)} />
+                <Route path="/customers/:id/edit" element={guard('customers', <CustomerForm />)} />
+                <Route path="/contacts" element={guard('contacts', <Contacts />)} />
+                <Route path="/contacts/new" element={guard('contacts', <ContactForm />)} />
+                <Route path="/contacts/:id" element={guard('contacts', <ContactDetail />)} />
+                <Route path="/contacts/:id/edit" element={guard('contacts', <ContactForm />)} />
+                <Route path="/settings" element={guard('settings', <Settings />)} />
+                <Route path="/settings/vat-types" element={guard('settings_vat_types', <VATTypes />)} />
+                <Route path="/settings/email" element={guard('settings_email', <EmailSettings />)} />
+                <Route path="/settings/companies" element={guard('settings_companies', <Companies />)} />
+                <Route path="/settings/companies/new" element={guard('settings_companies', <CompanyForm />)} />
+                <Route path="/settings/companies/:id/edit" element={guard('settings_companies', <CompanyForm />)} />
+                <Route path="/settings/users" element={guard('settings_users', <SystemUsers />)} />
+                <Route path="/settings/users/new" element={guard('settings_users', <SystemUserForm />)} />
+                <Route path="/settings/users/:id/edit" element={guard('settings_users', <SystemUserForm />)} />
+                <Route path="/settings/roles" element={guard('settings_roles', <Roles />)} />
+                <Route path="/settings/roles/new" element={guard('settings_roles', <RoleForm />)} />
+                <Route path="/settings/roles/:id/edit" element={guard('settings_roles', <RoleForm />)} />
+                <Route path="/settings/invoice-blocks" element={guard('settings_invoice_blocks', <InvoiceBlocks />)} />
+                <Route path="/settings/invoice-blocks/new" element={guard('settings_invoice_blocks', <InvoiceBlockForm />)} />
+                <Route path="/settings/invoice-blocks/:id/edit" element={guard('settings_invoice_blocks', <InvoiceBlockForm />)} />
+                <Route path="/settings/nav-configurations" element={guard('settings_nav_configurations', <CompanyNAVConfigurations />)} />
+                <Route path="/settings/nav-configurations/new" element={guard('settings_nav_configurations', <CompanyNAVConfigurationForm />)} />
+                <Route path="/settings/nav-configurations/:id/edit" element={guard('settings_nav_configurations', <CompanyNAVConfigurationForm />)} />
+                <Route path="/nav-config" element={guard('settings_nav_configurations', <NAVConfig />)} />
+                <Route path="/settings/backup" element={guard('settings_backup', <BackupRestore />)} />
+                <Route path="/settings/api-access" element={guard('settings_api_access', <ApiAccess />)} />
+                <Route path="/settings/data-import" element={guard('settings_data_import', <DataImport />)} />
+                <Route path="/reports" element={guard('reports', <Reports />)} />
               </Routes>
             </Layout>
           </ProtectedRoute>

@@ -234,6 +234,15 @@ export const companyBankAccountAPI = {
   setPrimary: (id) => api.post(`/api/company-bank-accounts/${id}/set_primary/`),
 };
 
+export const roleAPI = {
+  getRoles: (params = {}) => api.get('/api/roles/', { params }),
+  getRole: (id) => api.get(`/api/roles/${id}/`),
+  createRole: (data) => api.post('/api/roles/', data),
+  updateRole: (id, data) => api.put(`/api/roles/${id}/`, data),
+  deleteRole: (id) => api.delete(`/api/roles/${id}/`),
+  menuOptions: () => api.get('/api/roles/menu_options/'),
+};
+
 export const systemUserAPI = {
   // Get all system users
   getSystemUsers: (params = {}) => api.get('/api/system-users/', { params }),

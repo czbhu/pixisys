@@ -13,9 +13,34 @@ from django.conf import settings
 from decouple import config
 import jwt
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
-from invoices.models import SystemUser
+from invoices.models import SystemUser, Role
 
 User = get_user_model()
+
+
+def _serialize_roles_for_user(system_user: SystemUser):
+    roles_qs = system_user.roles.filter(is_active=True)
+    roles_data = [
+        {
+            'id': str(r.id),
+            'name': r.name,
+            'description': r.description,
+            'menu_permissions': r.menu_permissions or [],
+        }
+        for r in roles_qs
+    ]
+    allowed_menus = []
+    for r in roles_qs:
+        allowed_menus.extend(r.menu_permissions or [])
+    # deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for key in allowed_menus:
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(key)
+    return roles_data, deduped
 
 
 @api_view(['POST'])
@@ -92,6 +117,8 @@ def sso_login_view(request):
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
+                'roles': [],
+                'allowed_menus': [],
             },
             'tokens': {
                 'access': str(refresh.access_token),
@@ -155,6 +182,7 @@ def login_view(request):
             
             # Generate JWT tokens
             refresh = RefreshToken.for_user(django_user)
+            roles_data, allowed_menus = _serialize_roles_for_user(system_user)
             
             return Response({
                 'user': {
@@ -163,6 +191,8 @@ def login_view(request):
                     'first_name': system_user.first_name,
                     'last_name': system_user.last_name,
                     'full_name': system_user.full_name,
+                    'roles': roles_data,
+                    'allowed_menus': allowed_menus,
                 },
                 'tokens': {
                     'access': str(refresh.access_token),
@@ -191,6 +221,8 @@ def login_view(request):
                 'email': user.email,
                 'first_name': user.first_name,
                 'last_name': user.last_name,
+                'roles': [],
+                'allowed_menus': [],
             },
             'tokens': {
                 'access': str(refresh.access_token),
