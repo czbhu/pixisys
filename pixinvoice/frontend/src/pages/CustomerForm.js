@@ -761,6 +761,8 @@ const CustomerForm = () => {
       is_hungarian_taxpayer: true,
       eu_tax_number: '',
       payment_due_days: 8,
+      is_supplier: false,
+      is_customer: true,
     },
   });
 
@@ -1229,6 +1231,8 @@ const CustomerForm = () => {
       setValue('vat_group_id', c.vat_group_id || '');
       setValue('vat_group_member_tax_number', c.vat_group_member_tax_number || '');
       setValue('payment_due_days', c.payment_due_days ?? 8);
+      setValue('is_supplier', c.is_supplier ?? false);
+      setValue('is_customer', c.is_customer ?? true);
       const status = c.vat_status || (c.is_hungarian_taxpayer ? 'DOMESTIC' : 'OTHER');
       setValue('vat_status', status);
       setVatStatus(status);
@@ -1370,6 +1374,17 @@ const CustomerForm = () => {
             {...register('payment_due_days', { valueAsNumber: true })}
             placeholder="Alapértelmezés: 8"
           />
+        </FormGroup>
+
+        <FormGroup style={{display: 'flex', gap: '16px', flexDirection: 'row', alignItems: 'center'}}>
+          <label style={{display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer'}}>
+            <input type="checkbox" {...register('is_supplier')} />
+            <span>Beszállító</span>
+          </label>
+          <label style={{display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer'}}>
+            <input type="checkbox" {...register('is_customer')} />
+            <span>Vevő</span>
+          </label>
         </FormGroup>
 
         <BankAccountsSection>

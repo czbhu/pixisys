@@ -1,0 +1,6 @@
+Név,Rövid név,Adószám (8 jegyű),Cím,Utca név,Közterület jellege,Házszám,Épület,Lépcsőház,Emelet,Ajtó,Város,Irányítószám,Ország,E-mail,Telefon,ÁFA kód,Megyekód,ÁFA csoport ID,ÁFA csoport tag adószám,Adóalanyiság (DOMESTIC/PRIVATE_PERSON/OTHER),EU adószám,Fizetési határidő (nap)
+ Belvárosi Lottózó, Belvárosi Lottózó,21417119,Bátori út 14,Bátori út 14,,,,,,,4320,,,,,,,,,DOMESTIC,,
+ Kurgán Kft., Kurgán Kft.,23503353,Király u. 26.,Király,u.,26.,,,,,Budapest,1060,,,,,,,,DOMESTIC,,
+ Zetor West Kft, Zetor West Kft,12334229,,,,,,,,,Klapka Gy. u. 73,2900,,,,,,,,DOMESTIC,,
+"""BRAGI"" Településfejlesztési, Tanácsadó és Kommunikációs Kft.","""BRAGI"" Településfejlesztési, ",14965218,Bólyai János u. 14.,Bólyai János u. 14.,,,,,,,Balmazújváros,4060,,,,,,,,DOMESTIC,,
+"""LOÓS"" CSOMAGOLÁSTECHNIKAI KORLÁTOLT FELELŐSSÉGŰ TÁRSASÁG","""LOÓS"" CSOMAGOLÁSTECHNIKAI KOR",22655244,VÁLLALKOZÓI TELEPHELYEK,VÁLLALKOZÓI TELEPHELYEK,,,,,,,"DEBRECEN, KISMACS",4002,HU,,,,,,,DOMESTIC,,

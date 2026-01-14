@@ -61,12 +61,28 @@ class CustomerSerializer(serializers.ModelSerializer):
             'street_name', 'public_place_category', 'street_number', 'building', 'staircase', 'floor', 'door',
             'city', 'postal_code', 'country', 'email', 'phone', 'vat_code', 'county_code', 
             'vat_group_id', 'vat_group_member_tax_number', 'vat_status', 'is_hungarian_taxpayer', 'eu_tax_number', 'created_at', 'updated_at',
-            'payment_due_days', 'bank_accounts'
+            'payment_due_days', 'is_supplier', 'is_customer', 'bank_accounts'
         ]
 
     def validate(self, attrs):
         vat_status = attrs.get('vat_status', getattr(self.instance, 'vat_status', 'DOMESTIC'))
         attrs['is_hungarian_taxpayer'] = (vat_status == 'DOMESTIC')
+
+        # Adószám egyediség ellenőrzése (8 számjegy, szóköz és kötőjel nélkül)
+        tax_number = attrs.get('tax_number', getattr(self.instance, 'tax_number', '')).replace('-', '').replace(' ', '')
+        if tax_number:
+            tax_number = tax_number[:8]
+            if len(tax_number) != 8:
+                raise serializers.ValidationError({'tax_number': 'Az adószámnak 8 számjegyből kell állnia'})
+
+            existing = Customer.objects.filter(tax_number=tax_number)
+            if self.instance:
+                existing = existing.exclude(id=self.instance.id)
+            if existing.exists():
+                raise serializers.ValidationError({'tax_number': 'Már létezik ügyfél ezzel az adószámmal'})
+
+            # Normalizált értékkel dolgozzunk tovább
+            attrs['tax_number'] = tax_number
         return attrs
 
     def get_bank_accounts(self, obj):
@@ -1120,11 +1136,12 @@ class PaymentBatchSerializer(serializers.ModelSerializer):
     item_count = serializers.ReadOnlyField()
     company_name = serializers.SerializerMethodField(read_only=True)
     bank_account_name = serializers.SerializerMethodField(read_only=True)
+    gross_total = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = PaymentBatch
-        fields = ['id', 'company', 'company_name', 'name', 'bank_account', 'bank_account_name', 'currency', 'status', 'created_by', 'created_at', 'updated_at', 'items', 'item_count']
-        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'item_count', 'company_name', 'bank_account_name']
+        fields = ['id', 'company', 'company_name', 'name', 'bank_account', 'bank_account_name', 'currency', 'status', 'created_by', 'created_at', 'updated_at', 'items', 'item_count', 'gross_total']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'item_count', 'company_name', 'bank_account_name', 'gross_total']
 
     def get_company_name(self, obj):
         try:
@@ -1139,6 +1156,14 @@ class PaymentBatchSerializer(serializers.ModelSerializer):
                 return None
             label = (acc.bank_name + ' - ') if acc.bank_name else ''
             return f"{label}{acc.iban or acc.account_number or ''}"
+        except Exception:
+            return None
+
+    def get_gross_total(self, obj):
+        try:
+            from django.db.models import Sum
+            total = obj.items.aggregate(s=Sum('amount_gross')).get('s')
+            return str(total) if total is not None else None
         except Exception:
             return None
 

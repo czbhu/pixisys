@@ -1,9 +1,9 @@
 import React from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery } from 'react-query';
-import { ArrowLeft, Edit, MapPin, Phone, Mail, Building, User } from 'lucide-react';
+import { ArrowLeft, Edit, MapPin, Phone, Mail, Building, User, Users, Star, CreditCard } from 'lucide-react';
 import styled from 'styled-components';
-import { customerAPI } from '../services/api';
+import { customerAPI, contactAPI } from '../services/api';
 
 const Container = styled.div`
   max-width: 900px;
@@ -130,6 +130,141 @@ const ErrorMessage = styled.div`
   text-align: center;
 `;
 
+const ContactsList = styled.div`
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+`;
+
+const ContactCard = styled.div`
+  background: #f8f9fa;
+  border-radius: 6px;
+  padding: 16px;
+  border-left: 4px solid ${props => props.isPrimary ? '#f39c12' : '#3498db'};
+  transition: all 0.2s;
+  position: relative;
+  cursor: pointer;
+
+  &:hover {
+    background: #e9ecef;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  }
+`;
+
+const ContactHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+`;
+
+const ContactName = styled.h4`
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c3e50;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const ContactBadge = styled.span`
+  display: inline-block;
+  padding: 4px 8px;
+  background-color: ${props => {
+    const colors = {
+      'primary': '#f39c12',
+      'billing': '#3498db',
+      'technical': '#9b59b6',
+      'sales': '#27ae60',
+      'support': '#e67e22',
+      'other': '#95a5a6'
+    };
+    return colors[props.type] || '#95a5a6';
+  }};
+  color: white;
+  border-radius: 12px;
+  font-size: 12px;
+  font-weight: 500;
+`;
+
+const ContactInfo = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 14px;
+  color: #6c757d;
+`;
+
+const ContactInfoRow = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+`;
+
+const NoContactsMessage = styled.div`
+  text-align: center;
+  padding: 24px;
+  color: #7f8c8d;
+  font-size: 14px;
+`;
+
+const BankAccountCard = styled.div`
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 16px;
+  margin-bottom: 12px;
+  background: ${props => props.isPrimary ? '#f0f9ff' : '#fafafa'};
+  border-left: 3px solid ${props => props.isPrimary ? '#3498db' : '#e0e0e0'};
+`;
+
+const BankAccountHeader = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+`;
+
+const BankAccountNumber = styled.div`
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c3e50;
+  font-family: monospace;
+`;
+
+const PrimaryBadge = styled.span`
+  background: #3498db;
+  color: white;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 500;
+`;
+
+const BankAccountInfo = styled.div`
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  font-size: 13px;
+  color: #555;
+`;
+
+const BankAccountInfoItem = styled.div`
+  display: flex;
+  flex-direction: column;
+`;
+
+const BankAccountLabel = styled.span`
+  font-size: 11px;
+  color: #888;
+  text-transform: uppercase;
+  margin-bottom: 2px;
+`;
+
+const BankAccountValue = styled.span`
+  color: #333;
+`;
+
 const CustomerDetail = () => {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -144,6 +279,19 @@ const CustomerDetail = () => {
       }
     }
   );
+
+  const { data: contacts = [], isLoading: contactsLoading } = useQuery(
+    ['customer-contacts', id],
+    () => contactAPI.getContacts({ customer_id: id }),
+    { 
+      enabled: !!id,
+      select: (response) => response.data?.results || []
+    }
+  );
+
+  const handleContactClick = (contactId) => {
+    navigate(`/contacts/${contactId}/edit`);
+  };
 
   if (isLoading) {
     return <LoadingSpinner>Betöltés...</LoadingSpinner>;
@@ -316,6 +464,49 @@ const CustomerDetail = () => {
         </InfoGrid>
       </DetailCard>
 
+      {customer.bank_accounts && customer.bank_accounts.length > 0 && (
+        <DetailCard>
+          <SectionTitle>
+            <CreditCard size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+            Bankszámlák
+          </SectionTitle>
+          {customer.bank_accounts.map((account) => (
+            <BankAccountCard key={account.id} isPrimary={account.is_primary}>
+              <BankAccountHeader>
+                <BankAccountNumber>{account.account_number || account.iban || 'N/A'}</BankAccountNumber>
+                {account.is_primary && <PrimaryBadge>Elsődleges</PrimaryBadge>}
+              </BankAccountHeader>
+              <BankAccountInfo>
+                {account.bank_name && (
+                  <BankAccountInfoItem>
+                    <BankAccountLabel>Bank név</BankAccountLabel>
+                    <BankAccountValue>{account.bank_name}</BankAccountValue>
+                  </BankAccountInfoItem>
+                )}
+                {account.iban && account.iban !== account.account_number && (
+                  <BankAccountInfoItem>
+                    <BankAccountLabel>IBAN</BankAccountLabel>
+                    <BankAccountValue>{account.iban}</BankAccountValue>
+                  </BankAccountInfoItem>
+                )}
+                {account.swift_bic && (
+                  <BankAccountInfoItem>
+                    <BankAccountLabel>SWIFT/BIC</BankAccountLabel>
+                    <BankAccountValue>{account.swift_bic}</BankAccountValue>
+                  </BankAccountInfoItem>
+                )}
+                {account.currency && (
+                  <BankAccountInfoItem>
+                    <BankAccountLabel>Pénznem</BankAccountLabel>
+                    <BankAccountValue>{account.currency}</BankAccountValue>
+                  </BankAccountInfoItem>
+                )}
+              </BankAccountInfo>
+            </BankAccountCard>
+          ))}
+        </DetailCard>
+      )}
+
       <DetailCard>
         <SectionTitle><User size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />Kapcsolat</SectionTitle>
         <InfoGrid>
@@ -372,6 +563,57 @@ const CustomerDetail = () => {
           </InfoGrid>
         </DetailCard>
       )}
+
+      <DetailCard>
+        <SectionTitle>
+          <Users size={18} style={{ marginRight: '8px', verticalAlign: 'middle' }} />
+          Kapcsolattartók
+        </SectionTitle>
+        {contactsLoading ? (
+          <NoContactsMessage>Kapcsolattartók betöltése...</NoContactsMessage>
+        ) : contacts.length === 0 ? (
+          <NoContactsMessage>Nincs kapcsolattartó</NoContactsMessage>
+        ) : (
+          <ContactsList>
+            {contacts.map(contact => (
+              <ContactCard
+                key={contact.id}
+                isPrimary={contact.is_primary}
+                onClick={() => handleContactClick(contact.id)}
+              >
+                <ContactHeader>
+                  <ContactName>
+                    {contact.is_primary && <Star size={16} fill="#f39c12" color="#f39c12" />}
+                    {contact.full_name}
+                  </ContactName>
+                </ContactHeader>
+                <ContactBadge type={contact.contact_type} style={{ marginBottom: '12px' }}>
+                  {contact.contact_type === 'primary' && 'Elsődleges'}
+                  {contact.contact_type === 'billing' && 'Számlázási'}
+                  {contact.contact_type === 'technical' && 'Technikai'}
+                  {contact.contact_type === 'sales' && 'Értékesítési'}
+                  {contact.contact_type === 'support' && 'Támogatás'}
+                  {contact.contact_type === 'other' && 'Egyéb'}
+                </ContactBadge>
+                <ContactInfo>
+                  {contact.email && (
+                    <ContactInfoRow>
+                      <Mail size={14} />
+                      {contact.email}
+                    </ContactInfoRow>
+                  )}
+                  {contact.phone && (
+                    <ContactInfoRow>
+                      <Phone size={14} />
+                      {contact.phone}
+                    </ContactInfoRow>
+                  )}
+                </ContactInfo>
+              </ContactCard>
+            ))}
+          </ContactsList>
+        )}
+      </DetailCard>
     </Container>
   );
 };

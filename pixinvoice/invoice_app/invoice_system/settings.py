@@ -63,6 +63,9 @@ MIDDLEWARE = [
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
 
+# Disable automatic trailing slash redirect for DRF actions
+APPEND_SLASH = False
+
 ROOT_URLCONF = 'invoice_system.urls'
 
 TEMPLATES = [

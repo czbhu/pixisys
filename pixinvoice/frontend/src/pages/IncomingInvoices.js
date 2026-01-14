@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
-import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon } from 'lucide-react';
+import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
 import '../print.css';
@@ -226,7 +226,8 @@ export default function IncomingInvoices() {
   const [errorMsg, setErrorMsg] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
   const [searchText, setSearchText] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid
+  const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid | due
+  const [paymentFilter, setPaymentFilter] = useState('all'); // all | transfer | cash | card | voucher | utanvet | other
   const [xmlOpen, setXmlOpen] = useState(false);
   const [xmlLoading, setXmlLoading] = useState(false);
   const [xmlError, setXmlError] = useState('');
@@ -251,8 +252,16 @@ export default function IncomingInvoices() {
   const [batchName, setBatchName] = useState('');
   const [creatingBatch, setCreatingBatch] = useState(false);
   const [pendingBatches, setPendingBatches] = useState([]);
+  const [completedBatches, setCompletedBatches] = useState([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [batchCurrency, setBatchCurrency] = useState('');
+  const [paymentDrafts, setPaymentDrafts] = useState({});
+  const [editableAfterSave, setEditableAfterSave] = useState({});
+  const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const [batchTab, setBatchTab] = useState('pending');
+  const [batchItemSaving, setBatchItemSaving] = useState({});
+  const [itemAmountDrafts, setItemAmountDrafts] = useState({});
+  const searchTimer = useRef(null);
 
   useEffect(() => {
     const sync = () => {
@@ -269,14 +278,14 @@ export default function IncomingInvoices() {
   }, []);
 
   // Reset page and items when filters change
-  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter]);
+  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter]);
 
   // Poll pending batch count lightly when company changes
   useEffect(() => {
     if (!companyId) return;
     const load = async () => {
       try {
-        const res = await api.get('/api/payment-batches/pending-count', { params: { company_id: companyId } });
+        const res = await api.post('/api/payment-batches/pending-count/', { company_id: companyId });
         setPendingCount(res.data?.count || 0);
       } catch (_) { setPendingCount(0); }
     };
@@ -299,13 +308,16 @@ export default function IncomingInvoices() {
     if (pageArg && pageArg > 1) setIsFetchingMore(true); else setLoading(true);
     setErrorMsg('');
     try {
-  const res = await api.get('/api/invoices/incoming/', { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo, page: pageArg || page, refresh: doRefresh, search: (searchText||'').trim() || undefined, status: statusFilter==='all'? undefined : statusFilter } });
+  const res = await api.get('/api/invoices/incoming/', { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo, page: pageArg || page, refresh: doRefresh, backfill_all: opts.backfillAll ? 1 : undefined, search: (searchText||'').trim() || undefined, status: statusFilter==='all'? undefined : statusFilter, payment_method: paymentFilter==='all'? undefined : paymentFilter } });
       const data = res.data || {};
       if (data.success && Array.isArray(data.items)) {
         setItems(prev => (replace ? data.items : [...prev, ...data.items]));
         setPage(data.page || pageArg || 1);
         setHasMore(!!data.hasMore);
         setLastRefreshedAt(data.lastRefreshedAt || null);
+        if (data.refreshError) {
+          toast.error(data.refreshError);
+        }
         if (replace && data.refreshed) {
           const cnt = typeof data.upserted === 'number' ? data.upserted : data.items.length;
           if (cnt > 0) toast.success(`Új bejövő számlák frissítve (${cnt})`);
@@ -327,6 +339,18 @@ export default function IncomingInvoices() {
     }
   };
 
+  // Debounced search to keep quick search responsive
+  useEffect(() => {
+    if (!companyId) return;
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => {
+      setPage(1); setItems([]); setHasMore(true);
+      fetchDigest(1, { replace: true });
+    }, 400);
+    return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchText, companyId, statusFilter, paymentFilter]);
+
   // Infinite scroll sentinel
   useEffect(() => {
     const el = document.getElementById('incoming-sentinel');
@@ -345,7 +369,7 @@ export default function IncomingInvoices() {
   const downloadXml = async (invoiceNumber, supplierTaxNumber) => {
     // kept as fallback download if needed in the future
     try {
-      const res = await api.get('/api/invoices/incoming/download', { params: { company_id: companyId, invoice_number: invoiceNumber, supplier_tax_number: supplierTaxNumber }, responseType: 'blob' });
+      const res = await api.post('/api/invoices/incoming/download/', { company_id: companyId, invoice_number: invoiceNumber, supplier_tax_number: supplierTaxNumber }, { responseType: 'blob' });
       const blob = new Blob([res.data], { type: 'application/xml' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -367,8 +391,7 @@ export default function IncomingInvoices() {
     setXmlText('');
     try {
       const baseParams = { company_id: companyId, invoice_number: invoiceNumber, supplier_tax_number: supplierTaxNumber, inline: 1 };
-      const res = await api.get('/api/invoices/incoming/download', {
-        params: baseParams,
+      const res = await api.post('/api/invoices/incoming/download/', baseParams, {
         responseType: 'text'
       });
       setXmlTitle(`Számla XML: ${invoiceNumber}`);
@@ -440,8 +463,9 @@ export default function IncomingInvoices() {
 
       if (needForce) {
         try {
-          const res2 = await api.get('/api/invoices/incoming/download', {
-            params: { ...baseParams, force: 1 },
+          const res2 = await api.post('/api/invoices/incoming/download/', {
+            ...baseParams, force: 1
+          }, {
             responseType: 'text'
           });
           let t2 = typeof res2.data === 'string' ? res2.data : (res2?.data ? String(res2.data) : '');
@@ -706,21 +730,126 @@ export default function IncomingInvoices() {
   const loadNext = () => { if (hasMore) fetchDigest(page + 1); };
 
   const rowKey = (row) => `${row.invoiceNumber||''}|${row.supplierTaxNumber||''}`;
-  const canSelect = (row) => String(row.paymentMethod || '').toUpperCase() === 'TRANSFER';
-  const toggleSelect = (row) => {
+  const canSelect = (row) => String(row.paymentMethod || '').toUpperCase() === 'TRANSFER' && !row.inPaymentBatch;
+  const toggleSelect = (row, idx, event) => {
     if (!canSelect(row)) return;
     const key = rowKey(row);
+    const isShift = !!event?.shiftKey;
+    const isCtrl = !!(event?.ctrlKey || event?.metaKey);
     setSelected(prev => {
-      const next = new Set(Array.from(prev));
-      if (next.has(key)) next.delete(key); else next.add(key);
+      let next = new Set(Array.from(prev));
+      if (isShift && lastSelectedIndex !== null) {
+        const start = Math.min(lastSelectedIndex, idx);
+        const end = Math.max(lastSelectedIndex, idx);
+        for (let i = start; i <= end; i++) {
+          const r = items[i];
+          if (r && canSelect(r)) next.add(rowKey(r));
+        }
+      } else if (isCtrl) {
+        if (next.has(key)) next.delete(key); else next.add(key);
+      } else {
+        if (next.has(key)) next.delete(key); else next.add(key);
+      }
       return next;
     });
+    setLastSelectedIndex(idx);
   };
 
   const selectedRows = items.filter(r => selected.has(rowKey(r)));
   const selectedCount = selectedRows.length;
   const selectedCurrencies = Array.from(new Set(selectedRows.map(r => r.currency).filter(Boolean)));
   const selectedCurrency = (selectedRows[0]?.currency) || '';
+  const effectiveBatchCurrency = batchCurrency || selectedCurrencies[0] || 'HUF';
+  const selectedRowsForBatch = selectedRows.filter(r => !effectiveBatchCurrency || !r.currency || r.currency === effectiveBatchCurrency);
+  const excludedForBatch = selectedRows.length - selectedRowsForBatch.length;
+  const selectedTotal = selectedRowsForBatch.reduce((sum, r) => sum + Number(r.grossAmount || 0), 0);
+
+  const needsPaymentMethod = (row) => {
+    const pm = String(row.paymentMethod || '').trim().toUpperCase();
+    return !pm || pm === 'OTHER' || pm === '-';
+  };
+
+  const formatPaymentMethod = (pm) => {
+    const val = String(pm || '').trim().toUpperCase();
+    switch (val) {
+      case 'OTHER': return 'Egyéb';
+      case 'UTANVET': return 'Utánvét';
+      case 'TRANSFER': return 'Átutalás';
+      case 'CASH': return 'Készpénz';
+      case 'CARD': return 'Kártya';
+      case 'VOUCHER': return 'Utalvány';
+      default: return pm || '-';
+    }
+  };
+
+  const isPaymentEditable = (row) => {
+    const pm = String(row.paymentMethod || '').trim().toUpperCase();
+    return !pm || pm === 'OTHER' || pm === '-';
+  };
+
+  const formatMoney = (val) => {
+    if (val === null || val === undefined) return null;
+    const num = Number(val);
+    if (Number.isNaN(num)) return val;
+    return num.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  };
+
+  const savePaymentMethod = async (row) => {
+    const key = rowKey(row);
+    const draft = paymentDrafts[key];
+    if (!draft) { toast.error('Válassz fizetési módot'); return; }
+    if (!companyId) { toast.error('Válassz céget'); return; }
+    try {
+      const pm = draft;
+      await api.post('/api/invoices/incoming/set_payment_method/', {
+        company_id: companyId,
+        invoice_number: row.invoiceNumber,
+        supplier_tax_number: row.supplierTaxNumber,
+        payment_method: pm,
+      });
+      setItems(prev => prev.map(r => (rowKey(r) === key ? { ...r, paymentMethod: pm } : r)));
+      setEditableAfterSave(prev => ({ ...prev, [key]: true }));
+      toast.success('Fizetési mód mentve');
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Mentési hiba';
+      toast.error(msg);
+    }
+  };
+
+  const resetPaymentMethod = async (row) => {
+    if (!companyId) { toast.error('Válassz céget'); return; }
+    try {
+      await api.post('/api/invoices/incoming/set_payment_method/', {
+        company_id: companyId,
+        invoice_number: row.invoiceNumber,
+        supplier_tax_number: row.supplierTaxNumber,
+        payment_method: 'OTHER',
+      });
+      const key = rowKey(row);
+      setItems(prev => prev.map(r => (rowKey(r) === key ? { ...r, paymentMethod: 'OTHER' } : r)));
+      setPaymentDrafts(prev => ({ ...prev, [key]: 'OTHER' }));
+      setEditableAfterSave(prev => ({ ...prev, [key]: false }));
+      toast.success('Fizetési mód visszaállítva');
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Visszaállítási hiba';
+      toast.error(msg);
+    }
+  };
+
+  const fetchBatchLists = async () => {
+    if (!companyId) { toast.error('Válassz céget'); return; }
+    try {
+      const [pendingRes, completedRes] = await Promise.all([
+        api.post('/api/payment-batches/list-pending/', { company_id: companyId }),
+        api.post('/api/payment-batches/list-completed/', { company_id: companyId })
+      ]);
+      setPendingBatches(pendingRes.data || []);
+      setCompletedBatches(completedRes.data || []);
+      setPendingCount(pendingRes.data?.length || 0);
+    } catch (e) {
+      toast.error('Csomagok lekérdezési hiba');
+    }
+  };
 
   const openCreateBatchModal = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
@@ -728,7 +857,7 @@ export default function IncomingInvoices() {
     try {
       const [accRes, cntRes] = await Promise.all([
         api.get('/api/company-bank-accounts/', { params: { company_id: companyId } }),
-        api.get('/api/payment-batches/pending-count', { params: { company_id: companyId } })
+        api.post('/api/payment-batches/pending-count/', { company_id: companyId })
       ]);
       const accData = Array.isArray(accRes.data) ? accRes.data : (accRes.data?.results || []);
       setBankAccounts(accData);
@@ -755,14 +884,12 @@ export default function IncomingInvoices() {
   const createBatch = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
     if (!batchName) { toast.error('Adj meg egy csomagnév-et'); return; }
-    const currency = batchCurrency || selectedCurrencies[0] || 'HUF';
+    const currency = effectiveBatchCurrency || 'HUF';
     setCreatingBatch(true);
     try {
       const res = await api.post('/api/payment-batches/', { company: companyId, name: batchName, bank_account: batchBankAccount || null, currency });
       const batch = res.data;
-      const filtered = selectedRows.filter(r => !currency || !r.currency || r.currency === currency);
-      const excluded = selectedRows.length - filtered.length;
-      const itemsPayload = filtered.map(r => ({
+      const itemsPayload = selectedRowsForBatch.map(r => ({
         invoice_number: r.invoiceNumber,
         supplier_tax_number: r.supplierTaxNumber,
         supplier_name: r.supplierName,
@@ -771,11 +898,11 @@ export default function IncomingInvoices() {
       }));
       const addRes = await api.post(`/api/payment-batches/${batch.id}/add-items/`, { items: itemsPayload });
       const cr = addRes.data || {};
-      toast.success(`Csomag létrehozva: ${cr.created} tétel${excluded? `, kihagyva: ${excluded}`:''}`);
+      toast.success(`Csomag létrehozva: ${cr.created} tétel${excludedForBatch? `, kihagyva: ${excludedForBatch}`:''}`);
       setShowCreateBatch(false);
       setSelected(new Set());
       // refresh pending count
-      try { const pc = await api.get('/api/payment-batches/pending-count', { params: { company_id: companyId } }); setPendingCount(pc.data?.count || 0); } catch {}
+      try { const pc = await api.post('/api/payment-batches/pending-count/', { company_id: companyId }); setPendingCount(pc.data?.count || 0); } catch {}
     } catch (e) {
       const msg = e?.response?.data?.error || e?.message || 'Csomag létrehozási hiba';
       toast.error(msg);
@@ -786,17 +913,19 @@ export default function IncomingInvoices() {
 
   const openBatches = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
-    try {
-      const res = await api.get('/api/payment-batches/list-pending', { params: { company_id: companyId } });
-      setPendingBatches(res.data || []);
-      setShowBatches(true);
-    } catch (e) { toast.error('Csomagok lekérdezési hiba'); }
+    setBatchTab('pending');
+    await fetchBatchLists();
+    setShowBatches(true);
   };
 
   const deleteBatch = async (id) => {
-    try { await api.delete(`/api/payment-batches/${id}/delete/`); toast.success('Csomag törölve'); setPendingBatches(prev => prev.filter(b => b.id !== id));
-      // refresh pending count
+    try {
+      await api.delete(`/api/payment-batches/${id}/delete/`);
+      toast.success('Csomag törölve');
+      await fetchBatchLists();
       try { const pc = await api.get('/api/payment-batches/pending-count', { params: { company_id: companyId } }); setPendingCount(pc.data?.count || 0); } catch {}
+      // Refresh invoices table to update payment status
+      fetchDigest(page || 1, { replace: true });
     } catch (e) { toast.error('Törlési hiba'); }
   };
 
@@ -827,19 +956,26 @@ export default function IncomingInvoices() {
       const y = execDate.getFullYear();
       const m = String(execDate.getMonth()+1).padStart(2, '0');
       const d = String(execDate.getDate()).padStart(2, '0');
-      const res = await api.post(`/api/payment-batches/${b.id}/export-file/`, null, { responseType: 'blob', params: { format: 'sepa', execution_date: `${y}-${m}-${d}` } });
+      let res;
+      const params = { format: 'pain.001', execution_date: `${y}-${m}-${d}`, company_id: companyId };
+      try {
+        res = await api.get(`/api/payment-batches/${b.id}/bank-export/`, { responseType: 'blob', params });
+      } catch (err) {
+        const status = err?.response?.status;
+        if (status === 404 || status === 405) {
+          res = await api.post(`/api/payment-batches/${b.id}/bank-export/`, params, { responseType: 'blob' });
+        } else {
+          throw err;
+        }
+      }
       const blob = new Blob([res.data], { type: 'application/xml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `payment_batch_${(b.name||b.id)}.xml`;
+      a.download = `payment_batch_${(b.name||b.id)}_pain.001.xml`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
       toast.success('Banki export elkészült');
-      // Refresh the pending list to reflect EXPORTED status if backend updated it
-      try {
-        const list = await api.get('/api/payment-batches/list-pending', { params: { company_id: companyId } });
-        setPendingBatches(list.data || []);
-      } catch {}
+      try { await fetchBatchLists(); } catch {}
     } catch (e) {
       const msg = e?.response?.data?.error || 'Banki export hiba';
       toast.error(msg);
@@ -853,8 +989,8 @@ export default function IncomingInvoices() {
       toast.success(`Kifizetve jelölve: ${n} tétel`);
       // Refresh batches list and current digest view to reflect paymentDate
       try {
-        const list = await api.get('/api/payment-batches/list-pending', { params: { company_id: companyId } });
-        setPendingBatches(list.data || []);
+        await fetchBatchLists();
+        try { const pc = await api.post('/api/payment-batches/pending-count/', { company_id: companyId }); setPendingCount(pc.data?.count || 0); } catch {}
       } catch {}
       // Soft refresh first page to update payment pills quickly
       fetchDigest(1, { replace: true });
@@ -881,10 +1017,33 @@ export default function IncomingInvoices() {
       toast.success(`Hozzáadva: ${cr.created}, kihagyva: ${excluded + (cr.skipped||0)}`);
       // Refresh list to update item_count
       try {
-        const list = await api.get('/api/payment-batches/list-pending', { params: { company_id: companyId } });
+        const list = await api.post('/api/payment-batches/list-pending/', { company_id: companyId });
         setPendingBatches(list.data || []);
       } catch {}
     } catch (e) { toast.error('Hozzáadás hiba'); }
+  };
+
+  const saveBatchItemAmount = async (batchId, itemId, amount) => {
+    if (!amount && amount !== 0) { toast.error('Adj meg összeget'); return; }
+    setBatchItemSaving(prev => ({ ...prev, [itemId]: true }));
+    try {
+      const res = await api.post(`/api/payment-batches/${batchId}/update-item/`, { item_id: itemId, amount_gross: amount });
+      const updateList = (listSetter) => {
+        listSetter(prev => (prev || []).map(b => {
+          if (String(b.id) !== String(batchId)) return b;
+          const updatedItems = (b.items || []).map(it => String(it.id) === String(itemId) ? { ...it, amount_gross: res.data?.item?.amount_gross } : it);
+          return { ...b, items: updatedItems, gross_total: res.data?.gross_total ?? b.gross_total };
+        }));
+      };
+      updateList(setPendingBatches);
+      updateList(setCompletedBatches);
+      toast.success('Összeg frissítve');
+    } catch (e) {
+      const msg = e?.response?.data?.error || 'Mentési hiba';
+      toast.error(msg);
+    } finally {
+      setBatchItemSaving(prev => ({ ...prev, [itemId]: false }));
+    }
   };
 
   // Edit mode state
@@ -924,7 +1083,7 @@ export default function IncomingInvoices() {
       setEditingBatch(null);
       // Refresh pending list and digest table (to update pills)
       try {
-        const list = await api.get('/api/payment-batches/list-pending', { params: { company_id: companyId } });
+        const list = await api.post('/api/payment-batches/list-pending/', { company_id: companyId });
         setPendingBatches(list.data || []);
       } catch {}
       fetchDigest(1, { replace: true });
@@ -953,6 +1112,16 @@ export default function IncomingInvoices() {
               <option value="all">Mind</option>
               <option value="unpaid">Kifizetetlen</option>
               <option value="paid">Kifizetett</option>
+              <option value="due">Esedékes</option>
+            </select>
+            <select value={paymentFilter} onChange={(e)=>{ setPaymentFilter(e.target.value); setPage(1); setItems([]); setHasMore(true); fetchDigest(1, { replace: true }); }} style={{ padding:'6px 10px' }}>
+              <option value="all">Összes fizetési mód</option>
+              <option value="TRANSFER">Átutalás</option>
+              <option value="CASH">Készpénz</option>
+              <option value="CARD">Kártya</option>
+              <option value="VOUCHER">Utalvány</option>
+              <option value="UTANVET">Utánvét</option>
+              <option value="OTHER">Egyéb</option>
             </select>
           </div>
           <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading}>
@@ -1011,13 +1180,19 @@ export default function IncomingInvoices() {
           </TableHeader>
           <TableBody>
             {items.map((row, idx) => {
-              const isPaid = !!row.paymentDate;
+              const key = rowKey(row);
+              const isPaid = !!row.isPaid || (!!row.paymentDate && !row.remainingAmount);
               const isUnpaid = !isPaid && String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
+              const paymentDisplayDate = row.paymentDisplayDate || row.paymentDate;
+              const remainingAmount = row.remainingAmount;
+              const overpaidAmount = row.overpaidAmount;
+              const isTransfer = String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
+              const dueText = row.dueDate ? row.dueDate : '-';
               return (
               <TableRow key={`${row.invoiceNumber||'row'}_${idx}`} $paid={isPaid} $unpaid={isUnpaid}>
                 <TableCell style={{width:40}}>
                   {canSelect(row) ? (
-                    <CheckboxBtn onClick={()=>toggleSelect(row)} title="Kijelölés">
+                    <CheckboxBtn onClick={(e)=>toggleSelect(row, idx, e)} title="Kijelölés">
                       {selected.has(rowKey(row)) ? <CheckSquare size={18}/> : <Square size={18}/>} 
                     </CheckboxBtn>
                   ) : (
@@ -1033,11 +1208,75 @@ export default function IncomingInvoices() {
                 <TableCell className="text-right">{row.vatAmount}</TableCell>
                 <TableCell className="text-right">{row.grossAmount}</TableCell>
                 <TableCell>
-                  <div>{row.paymentMethod || '-'}</div>
-                  {String(row.paymentMethod||'').toUpperCase() === 'TRANSFER' && (
-                    <StatusPill variant="unpaid">
-                      Esedékes: {row.dueDate ? row.dueDate : '-'}
-                    </StatusPill>
+                  {needsPaymentMethod(row) ? (
+                    <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
+                      <select
+                        value={paymentDrafts[rowKey(row)] ?? (String(row.paymentMethod||'').toUpperCase()==='OTHER' ? 'OTHER' : '')}
+                        onChange={(e)=>setPaymentDrafts(prev => ({ ...prev, [rowKey(row)]: e.target.value }))}
+                        style={{ padding:'6px 8px' }}
+                      >
+                        <option value="">Válassz…</option>
+                        <option value="TRANSFER">Átutalás</option>
+                        <option value="CASH">Készpénz</option>
+                        <option value="CARD">Kártya</option>
+                        <option value="VOUCHER">Utalvány</option>
+                        <option value="UTANVET">Utánvét</option>
+                        <option value="OTHER">Egyéb</option>
+                      </select>
+                      <SecondaryButton onClick={()=>savePaymentMethod(row)} disabled={!paymentDrafts[rowKey(row)]}>
+                        <Save size={14}/> Mentés
+                      </SecondaryButton>
+                      {isPaymentEditable(row) && (
+                        <button
+                          onClick={()=>resetPaymentMethod(row)}
+                          style={{ display:'inline-flex', alignItems:'center', gap:6, border:'1px solid #ad5f00', background:'#fff7ec', color:'#ad5f00', borderRadius:6, padding:'2px 8px', cursor:'pointer', fontSize:12 }}
+                          title="Fizetési mód visszaállítása"
+                        >
+                          <RotateCcw size={14} /> RE
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+                        <span>{formatPaymentMethod(row.paymentMethod)}</span>
+                        {editableAfterSave[key] && !isPaymentEditable(row) && (
+                          <button
+                            onClick={()=>resetPaymentMethod(row)}
+                            style={{ display:'inline-flex', alignItems:'center', gap:6, border:'1px solid #ad5f00', background:'#fff7ec', color:'#ad5f00', borderRadius:6, padding:'2px 8px', cursor:'pointer', fontSize:12 }}
+                            title="Fizetési mód visszaállítása"
+                          >
+                            <RotateCcw size={14} /> RE
+                          </button>
+                        )}
+                      </div>
+                      {isTransfer ? (
+                        remainingAmount || overpaidAmount ? (
+                          <>
+                            <StatusPill variant="unpaid">
+                              Esedékes: {dueText}
+                            </StatusPill>
+                            {paymentDisplayDate && (
+                              <SmallMuted>Utolsó fizetés: {paymentDisplayDate}</SmallMuted>
+                            )}
+                            {remainingAmount && (
+                              <SmallMuted>Fennmaradó összeg: {formatMoney(remainingAmount)} {row.currency}</SmallMuted>
+                            )}
+                            {overpaidAmount && (
+                              <SmallMuted>Túlfizetés: {formatMoney(overpaidAmount)} {row.currency}</SmallMuted>
+                            )}
+                          </>
+                        ) : (
+                          <StatusPill variant="paid">
+                            Kifizetve: {paymentDisplayDate || dueText}
+                          </StatusPill>
+                        )
+                      ) : (
+                        <StatusPill variant="paid">
+                          Kifizetve: {paymentDisplayDate || row.invoiceIssueDate || '-'}
+                        </StatusPill>
+                      )}
+                    </>
                   )}
                 </TableCell>
                 <TableCell>
@@ -1273,6 +1512,49 @@ export default function IncomingInvoices() {
                   Az eltérő pénznemű kijelöltek kimaradnak a csomagból.
                 </div>
               )}
+              <div style={{ marginTop: 12 }}>
+                <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                  <div style={{ fontWeight:600 }}>Tételek ({selectedRowsForBatch.length})</div>
+                  {excludedForBatch > 0 && (
+                    <div style={{ color:'#ad5f00', fontSize:13 }}>
+                      Kimarad: {excludedForBatch} eltérő pénznemű tétel
+                    </div>
+                  )}
+                </div>
+                <div style={{ maxHeight: 280, overflow:'auto', border:'1px solid #ecf0f1', borderRadius:6 }}>
+                  <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                    <thead>
+                      <tr>
+                        <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:50 }}>#</th>
+                        <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Eladó</th>
+                        <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Számlaszám</th>
+                        <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:150 }}>Bruttó összeg</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {selectedRowsForBatch.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} style={{ padding:10, textAlign:'center', color:'#7f8c8d' }}>Nincs megjeleníthető tétel.</td>
+                        </tr>
+                      ) : (
+                        selectedRowsForBatch.map((r, idx) => (
+                          <tr key={rowKey(r)}>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{idx + 1}</td>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.supplierName || '-'}</td>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.invoiceNumber || '-'}</td>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>
+                              {(formatMoney(r.grossAmount) ?? '-')} {effectiveBatchCurrency || ''}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                <div style={{ display:'flex', justifyContent:'flex-end', marginTop:8, fontWeight:600 }}>
+                  Összesen: {formatMoney(selectedTotal)} {effectiveBatchCurrency || ''}
+                </div>
+              </div>
               <div style={{display:'flex', justifyContent:'flex-end', gap:8, marginTop:12}}>
                 <SecondaryButton onClick={()=>setShowCreateBatch(false)}>Mégse</SecondaryButton>
                 <PrimaryButton onClick={createBatch} disabled={creatingBatch}>
@@ -1289,55 +1571,98 @@ export default function IncomingInvoices() {
         <ModalOverlay onClick={()=>setShowBatches(false)}>
           <ModalContent onClick={(e)=>e.stopPropagation()}>
             <ModalHeader>
-              <ModalTitle>Függő fizetési csomagok</ModalTitle>
+              <ModalTitle>Fizetési csomagok</ModalTitle>
               <CloseBtn onClick={()=>setShowBatches(false)}>Bezárás</CloseBtn>
             </ModalHeader>
             <ModalBody>
-              {pendingBatches.length === 0 ? (
-                <div>Nincs függő csomag.</div>
+              <div style={{ display:'flex', gap:8, marginBottom:12 }}>
+                <SecondaryButton onClick={()=>setBatchTab('pending')} style={batchTab==='pending'? { background:'#dbeafe', color:'#0f172a' } : {}}>Függő ({pendingBatches.length})</SecondaryButton>
+                <SecondaryButton onClick={()=>setBatchTab('completed')} style={batchTab==='completed'? { background:'#dbeafe', color:'#0f172a' } : {}}>Kifizetett ({completedBatches.length})</SecondaryButton>
+              </div>
+              {((batchTab==='pending'? pendingBatches : completedBatches) || []).length === 0 ? (
+                <div>{batchTab==='pending' ? 'Nincs függő csomag.' : 'Nincs kifizetett csomag.'}</div>
               ) : (
-                <table style={{width:'100%', borderCollapse:'collapse'}}>
-                  <thead>
-                    <tr>
-                      <th style={{textAlign:'left', padding:8, borderBottom:'1px solid #eee'}}>Név</th>
-                      <th style={{textAlign:'left', padding:8, borderBottom:'1px solid #eee'}}>Bankszámla</th>
-                      <th style={{textAlign:'left', padding:8, borderBottom:'1px solid #eee'}}>Pénznem</th>
-                      <th style={{textAlign:'right', padding:8, borderBottom:'1px solid #eee'}}>Tételek</th>
-                      <th style={{textAlign:'left', padding:8, borderBottom:'1px solid #eee'}}>Létrehozva</th>
-                      <th style={{textAlign:'left', padding:8, borderBottom:'1px solid #eee'}}>Művelet</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pendingBatches.map(b => (
-                      <tr key={b.id}>
-                        <td style={{padding:8}}>{b.name}</td>
-                        <td style={{padding:8}}>{b.bank_account_name || '-'}</td>
-                        <td style={{padding:8}}>{b.currency}</td>
-                        <td style={{padding:8, textAlign:'right'}}>{b.item_count || 0}</td>
-                        <td style={{padding:8}}>{(b.created_at||'').replace('T',' ').slice(0,16)}</td>
-                        <td style={{padding:8}}>
-                          <div style={{display:'flex', gap:8, flexWrap:'wrap'}}>
-                            <IconButton onClick={()=>markBatchPaid(b)} title="Tételek kifizetve jelölése">
-                              Kifizetve
-                            </IconButton>
-                            <IconButton onClick={()=>startEditBatch(b)} title="Csomag módosítása">
-                              <Edit2 size={16}/> Módosítás
-                            </IconButton>
-                            <IconButton onClick={()=>exportBatch(b.id, b.name)} title="Export">
-                              <FileDown size={16}/> Export
-                            </IconButton>
-                            <IconButton onClick={()=>exportBatchBankFile(b)} title="Banki export (SEPA XML)">
-                              <FileDown size={16}/> Bank export
-                            </IconButton>
-                            <IconButton style={{ background:'#c0392b'}} onClick={()=>deleteBatch(b.id)} title="Törlés">
-                              <Trash2 size={16}/> Törlés
-                            </IconButton>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                (batchTab==='pending' ? pendingBatches : completedBatches).map(b => {
+                  const totalVal = b.gross_total ?? ((Array.isArray(b.items) ? b.items.reduce((acc, it)=> acc + Number(it.amount_gross || 0), 0) : null));
+                  const totalText = totalVal != null ? `${formatMoney(totalVal)} ${b.currency || ''}` : '-';
+                  return (
+                    <div key={b.id} style={{ border:'1px solid #ecf0f1', borderRadius:8, padding:12, marginBottom:12 }}>
+                      <div style={{ display:'flex', justifyContent:'space-between', gap:12, flexWrap:'wrap', alignItems:'center' }}>
+                        <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                          <div style={{ fontWeight:600 }}>{b.name}</div>
+                          <SmallMuted>{b.bank_account_name || '-'} · {b.currency}</SmallMuted>
+                          <SmallMuted>Létrehozva: {(b.created_at||'').replace('T',' ').slice(0,16)}</SmallMuted>
+                          <SmallMuted>Bruttó összesen: {totalText}</SmallMuted>
+                        </div>
+                        <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                          {batchTab==='pending' && (
+                            <>
+                              <IconButton onClick={()=>markBatchPaid(b)} title="Tételek kifizetve jelölése">
+                                Kifizetve
+                              </IconButton>
+                              <IconButton onClick={()=>startEditBatch(b)} title="Csomag módosítása">
+                                <Edit2 size={16}/> Módosítás
+                              </IconButton>
+                            </>
+                          )}
+                          <IconButton onClick={()=>exportBatch(b.id, b.name)} title="Export">
+                            <FileDown size={16}/> Export
+                          </IconButton>
+                          <IconButton onClick={()=>exportBatchBankFile(b)} title="Banki export (SEPA XML)">
+                            <FileDown size={16}/> Bank export
+                          </IconButton>
+                          <IconButton style={{ background:'#c0392b'}} onClick={()=>deleteBatch(b.id)} title="Törlés">
+                            <Trash2 size={16}/> Törlés
+                          </IconButton>
+                        </div>
+                      </div>
+                      <div style={{ marginTop:10 }}>
+                        <div style={{ fontWeight:600, marginBottom:6 }}>Tételek</div>
+                        {(b.items && b.items.length > 0) ? (
+                          <table style={{ width:'100%', borderCollapse:'collapse' }}>
+                            <thead>
+                              <tr>
+                                <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>#</th>
+                                <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Eladó</th>
+                                <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Számlaszám</th>
+                                <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Bruttó összeg</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {b.items.map((it, idx) => (
+                                <tr key={it.id}>
+                                  <td style={{padding:6}}>{idx+1}</td>
+                                  <td style={{padding:6}}>{it.supplier_name || '-'}</td>
+                                  <td style={{padding:6}}>{it.invoice_number}</td>
+                                  <td style={{padding:6}}>
+                                    {batchTab==='pending' ? (
+                                      <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                                        <input
+                                          style={{ padding:6, width:120 }}
+                                          value={itemAmountDrafts[it.id] ?? it.amount_gross ?? ''}
+                                          onChange={(e)=>setItemAmountDrafts(prev => ({ ...prev, [it.id]: e.target.value }))}
+                                          type="number"
+                                          step="0.01"
+                                        />
+                                        <SecondaryButton onClick={()=>saveBatchItemAmount(b.id, it.id, itemAmountDrafts[it.id] ?? it.amount_gross)} disabled={!!batchItemSaving[it.id]}>
+                                          {batchItemSaving[it.id] ? 'Mentés…' : 'Mentés'}
+                                        </SecondaryButton>
+                                      </div>
+                                    ) : (
+                                      <div>{formatMoney(it.amount_gross)} {b.currency}</div>
+                                    )}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <SmallMuted>Nincs tétel.</SmallMuted>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
               )}
             </ModalBody>
           </ModalContent>

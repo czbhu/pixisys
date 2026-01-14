@@ -5,6 +5,7 @@ import { toast } from 'react-toastify';
 import styled from 'styled-components';
 import { Upload, Download, FileText, Users, UserPlus, CheckCircle, AlertCircle, X, Loader } from 'lucide-react';
 import { importAPI, companyAPI } from '../services/api';
+import api from '../services/api';
 
 // [STYLED COMPONENTS REMAIN THE SAME - Keeping existing styles]
 const Container = styled.div`
@@ -399,6 +400,7 @@ const DataImport = () => {
   const [importing, setImporting] = useState(false);
   const [importResult, setImportResult] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
+  const [importingSuppliers, setImportingSuppliers] = useState(false);
   
   // Progress tracking state
   const [showProgress, setShowProgress] = useState(false);
@@ -564,15 +566,58 @@ const DataImport = () => {
           }
         }
       } else {
-        // For contacts, use the regular non-streaming import
+        // For contacts, use streaming import
         const formData = new FormData();
         formData.append('file', file);
         
-        const response = await importAPI.importContacts(formData);
-        setImportResult(response.data);
-        setShowProgress(false);
-        toast.success(`Importálás sikeres: ${response.data.created} új, ${response.data.updated} frissített`);
-        setContactFile(null);
+        const baseURL = process.env.REACT_APP_API_URL || 
+          (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+        
+        const response = await fetch(`${baseURL}/api/import/contacts/streaming/`, {
+          method: 'POST',
+          body: formData,
+        });
+
+        if (!response.ok) {
+          throw new Error('Import failed');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              const data = JSON.parse(line.substring(6));
+              
+              if (data.type === 'progress') {
+                setProgress(data);
+              } else if (data.type === 'complete') {
+                setImportResult(data);
+                setShowProgress(false);
+                
+                let message = `${data.created + data.updated} kapcsolat importálva`;
+                if (data.skipped > 0) {
+                  message += `, ${data.skipped} kihagyva (hiányzó ügyfél)`;
+                }
+                toast.success(message);
+                
+                // Clear file
+                setContactFile(null);
+              } else if (data.type === 'error') {
+                throw new Error(data.message);
+              }
+            }
+          }
+        }
       }
     } catch (error) {
       console.error('Import error:', error);
@@ -587,12 +632,135 @@ const DataImport = () => {
     }
   };
 
+  const handleDownloadMissingCustomers = async () => {
+    if (!importResult || !importResult.missing_customers || importResult.missing_customers.length === 0) {
+      toast.error('Nincs hiányzó ügyfél adat');
+      return;
+    }
+
+    try {
+      const baseURL = process.env.REACT_APP_API_URL || 
+        (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+      
+      const response = await fetch(`${baseURL}/api/import/missing-customers/export/`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          missing_customers: importResult.missing_customers
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Export failed');
+      }
+
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'hianyzó_ugyfelek.csv';
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
+      
+      toast.success('Hiányzó ügyfelek listája letöltve');
+    } catch (error) {
+      console.error('Download error:', error);
+      toast.error('Hiba történt a letöltés során');
+    }
+  };
+
   const closeProgressModal = () => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
     setShowProgress(false);
+  };
+
+  const handleImportSuppliersFromInvoices = async () => {
+    if (!selectedCompany) {
+      toast.error('Válassz céget a beszállítók importálásához');
+      return;
+    }
+
+    setImportingSuppliers(true);
+    setImportResult(null);
+    setShowProgress(true);
+    setProgress({ total: 0, imported: 0, created: 0, updated: 0, current_tax_number: '' });
+
+    try {
+      const eventSource = new EventSource(`/api/import/suppliers-from-invoices/streaming/?company_id=${selectedCompany}`, {
+        withCredentials: true
+      });
+      
+      // Note: EventSource only supports GET, so we use POST endpoint fallback
+      // Instead, use fetch with streaming
+      const response = await fetch('/api/import/suppliers-from-invoices/streaming/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ company_id: selectedCompany })
+      });
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            try {
+              const data = JSON.parse(line.substring(6));
+              
+              if (data.type === 'progress') {
+                setProgress({
+                  total: data.total,
+                  imported: data.processed,
+                  created: data.created,
+                  updated: data.updated,
+                  skipped: data.skipped,
+                  current_tax_number: progress.current_tax_number
+                });
+              } else if (data.type === 'current') {
+                setProgress(prev => ({ ...prev, current_tax_number: data.tax_number }));
+              } else if (data.type === 'complete') {
+                setImportResult(data);
+                setShowProgress(false);
+                if (data.success) {
+                  toast.success(`Beszállítók importálva! Létrehozott: ${data.created}, Frissített: ${data.updated}`);
+                }
+              } else if (data.error) {
+                toast.error(data.error);
+                setImportResult({ success: false, error: data.error });
+                setShowProgress(false);
+              }
+            } catch (e) {
+              console.error('Parse error:', e);
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Supplier import error:', error);
+      const errorMsg = error?.message || 'Hiba történt a beszállítók importálása során';
+      toast.error(errorMsg);
+      setImportResult({ success: false, error: errorMsg });
+      setShowProgress(false);
+    } finally {
+      setImportingSuppliers(false);
+    }
   };
 
   const progressPercent = progress.total > 0 ? Math.round((progress.imported / progress.total) * 100) : 0;
@@ -612,6 +780,10 @@ const DataImport = () => {
         <Tab active={activeTab === 'contacts'} onClick={() => { setActiveTab('contacts'); setImportResult(null); }}>
           <UserPlus size={20} />
           Kapcsolattartók
+        </Tab>
+        <Tab active={activeTab === 'suppliers'} onClick={() => { setActiveTab('suppliers'); setImportResult(null); }}>
+          <Users size={20} />
+          Beszállítók
         </Tab>
       </TabContainer>
 
@@ -807,6 +979,31 @@ const DataImport = () => {
                   {importResult.skipped > 0 && (
                     <ResultText type="error">Kihagyott (nincs ügyfél): {importResult.skipped} db</ResultText>
                   )}
+                  {importResult.missing_customers && importResult.missing_customers.length > 0 && (
+                    <>
+                      <ResultText type="warning">
+                        Hiányzó ügyfelek: {importResult.missing_customers.length} db
+                      </ResultText>
+                      <ErrorList>
+                        {importResult.missing_customers.slice(0, 5).map((customer, idx) => (
+                          <li key={idx}>
+                            {customer.tax_number} - {customer.company_name || 'Nincs cégnév'}
+                          </li>
+                        ))}
+                        {importResult.missing_customers.length > 5 && (
+                          <li>... és még {importResult.missing_customers.length - 5} db</li>
+                        )}
+                      </ErrorList>
+                      <Button 
+                        variant="warning" 
+                        onClick={handleDownloadMissingCustomers}
+                        style={{ marginTop: '12px' }}
+                      >
+                        <Download size={18} />
+                        Hiányzó ügyfelek listájának letöltése
+                      </Button>
+                    </>
+                  )}
                   {importResult.errors > 0 && (
                     <>
                       <ResultText type="error">Hibák: {importResult.errors} db</ResultText>
@@ -817,6 +1014,100 @@ const DataImport = () => {
                           ))}
                         </ErrorList>
                       )}
+                    </>
+                  )}
+                </>
+              )}
+              {!importResult.success && (
+                <ResultText type="error">{importResult.error}</ResultText>
+              )}
+            </ResultCard>
+          )}
+        </Card>
+      )}
+
+      {activeTab === 'suppliers' && (
+        <Card>
+          <SectionTitle>
+            <Users size={24} />
+            Beszállítók Importálása Bejövő Számlákból
+          </SectionTitle>
+
+          <div style={{ padding: '1rem', background: '#eff6ff', borderRadius: '0.5rem', marginBottom: '1.5rem' }}>
+            <p style={{ color: '#1e40af', fontSize: '0.875rem', margin: 0, lineHeight: '1.5' }}>
+              <strong>Automatikus beszállító importálás:</strong><br/>
+              • Bejövő számlákból kiszedi az adószámokat<br/>
+              • NAV adatbázisból lekérdezi a céginformációkat<br/>
+              • Ha nincs még ügyfél: létrehoz egy újat "Beszállító" jelöléssel<br/>
+              • Ha már létezik ügyfél: frissíti az adatokat és bejelöli "Beszállító"-nak<br/>
+              • Ha már "Vevő" volt, az megmarad<br/>
+              • Ha a számlán van bankszámlaszám, azt is rögzíti
+            </p>
+          </div>
+
+          {companies && companies.length > 0 && (
+            <div style={{ marginBottom: '1.5rem' }}>
+              <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: '#374151' }}>
+                Válassz céget:
+              </label>
+              <select
+                value={selectedCompany}
+                onChange={(e) => setSelectedCompany(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '0.625rem',
+                  border: '1px solid #d1d5db',
+                  borderRadius: '0.375rem',
+                  fontSize: '0.875rem',
+                  backgroundColor: 'white'
+                }}
+              >
+                <option value="">-- Válassz céget --</option>
+                {companies.map((company) => (
+                  <option key={company.id} value={company.id}>
+                    {company.name} ({company.tax_number})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          <ButtonGroup>
+            <Button 
+              variant="primary" 
+              onClick={handleImportSuppliersFromInvoices} 
+              disabled={importingSuppliers || !selectedCompany}
+            >
+              <Upload size={18} />
+              {importingSuppliers ? 'Importálás folyamatban...' : 'Belföldi beszállítók importálása'}
+            </Button>
+          </ButtonGroup>
+
+          {importResult && (
+            <ResultCard type={importResult.success ? 'success' : 'error'}>
+              <ResultTitle type={importResult.success ? 'success' : 'error'}>
+                {importResult.success ? <CheckCircle size={20} /> : <AlertCircle size={20} />}
+                {importResult.success ? 'Importálás befejezve' : 'Hiba történt'}
+              </ResultTitle>
+              {importResult.success && (
+                <>
+                  <ResultText type="success">Összesen feldolgozva: {importResult.total} db</ResultText>
+                  <ResultText type="success">Új beszállító létrehozva: {importResult.created} db</ResultText>
+                  <ResultText type="success">Meglévő frissítve: {importResult.updated} db</ResultText>
+                  {importResult.skipped > 0 && (
+                    <ResultText type="error">Kihagyva (hiba): {importResult.skipped} db</ResultText>
+                  )}
+                  {importResult.error_details && importResult.error_details.length > 0 && (
+                    <>
+                      <ResultText type="warning">Hibák:</ResultText>
+                      <ErrorList>
+                        {importResult.error_details.slice(0, 10).map((error, idx) => (
+                          <li key={idx}>{error}</li>
+                        ))}
+                        {importResult.error_details.length > 10 && (
+                          <li>... és még {importResult.error_details.length - 10} hiba</li>
+                        )}
+                      </ErrorList>
                     </>
                   )}
                 </>

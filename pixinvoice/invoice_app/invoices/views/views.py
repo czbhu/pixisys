@@ -54,7 +54,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.shortcuts import get_object_or_404
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, Sum, Max
 from django.utils import timezone
 from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile
 from invoices.serializers import (
@@ -66,6 +66,7 @@ from invoices.serializers import (
 )
 from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer
 from invoices.nav_service import NAVService
+from invoices.supplier_auto_register import auto_register_or_update_supplier, get_supplier_bank_account_for_invoice
 import logging
 import time
 import os
@@ -330,6 +331,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             or (getattr(self.request, 'company', None) and str(self.request.company.id))
         )
         search = self.request.query_params.get('search', None)
+        payment_method_filter = (self.request.query_params.get('payment_method') or '').strip().lower()
         
         if status_filter:
             queryset = queryset.filter(status=status_filter)
@@ -343,6 +345,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 Q(customer__name__icontains=search) |
                 Q(notes__icontains=search)
             )
+        if payment_method_filter and payment_method_filter != 'all':
+            queryset = queryset.filter(payment_method__iexact=payment_method_filter.upper())
         return queryset
 
     @action(detail=False, methods=['get'])
@@ -371,6 +375,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 Q(customer__name__icontains=search) |
                 Q(customer__tax_number__icontains=search)
             )
+        payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
+        if payment_method_filter and payment_method_filter != 'all':
+            queryset = queryset.filter(payment_method__iexact=payment_method_filter.upper())
         data = [
             {
                 'id': str(inv.id),
@@ -1676,7 +1683,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         from django.utils import timezone
         from datetime import datetime
         from django.core.paginator import Paginator
-
         company_id = request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         date_from = request.query_params.get('date_from')
         date_to = request.query_params.get('date_to')
@@ -1684,6 +1690,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         page_size = int(request.query_params.get('page_size') or 50)
         search = (request.query_params.get('search') or '').strip()
         status_filter = (request.query_params.get('status') or '').strip().lower()
+        payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
+        today_date = timezone.now().date()
 
         if not company_id:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1728,6 +1736,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         did_refresh = False
         upsert_count = 0
+        refresh_error = None
+        backfill_all = (request.query_params.get('backfill_all') or '').strip().lower() in ('1','true','yes','all')
+        stop_date_raw = (request.query_params.get('stop_date') or '').strip() or None
         if needs_refresh or not has_any:
             cfg = CompanyNAVConfiguration.objects.filter(company_id=company_id, is_active=True).order_by('-is_default').first()
             if not cfg:
@@ -1751,127 +1762,220 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     dt_date = today.isoformat()
                     src_from, src_to = df_date, dt_date
 
-            # Iterate NAV pages and upsert digests
-            nav_page = 1
-            while True:
-                res = nav_service.query_invoice_digest('INBOUND', src_from, src_to, page=nav_page)
-                if not (res.get('success') and res.get('response')):
-                    break
-                root = ET.fromstring(res['response'])
-                ns_api = '{http://schemas.nav.gov.hu/OSA/3.0/api}'
-                ns_base = '{http://schemas.nav.gov.hu/OSA/3.0/base}'
-
-                digests = root.findall(f'.//{ns_api}invoiceDigest') or []
+            # NAV only allows max 35-day intervals; chunk the requested range
+            from datetime import timedelta, datetime as dt
+            def _chunk_date_range(df_raw, dt_raw, max_days=35):
+                spans = []
                 try:
-                    logger.info(f"Incoming: page {nav_page} found {len(digests)} digests")
+                    df_date = dt.fromisoformat(df_raw.split('T')[0]).date()
+                    dt_date = dt.fromisoformat(dt_raw.split('T')[0]).date()
+                except Exception:
+                    return [(df_raw, dt_raw)]
+                cur = df_date
+                while cur <= dt_date:
+                    end = min(cur + timedelta(days=max_days-1), dt_date)
+                    spans.append((cur.isoformat(), end.isoformat()))
+                    cur = end + timedelta(days=1)
+                return spans or [(df_raw, dt_raw)]
+
+            # If using datetime range (insDate), just clamp to 35 days
+            use_datetime = ('T' in src_from) or ('T' in src_to)
+            if use_datetime:
+                try:
+                    df_dt = dt.fromisoformat(src_from.replace('Z',''))
+                    dt_dt = dt.fromisoformat(src_to.replace('Z',''))
+                    if (dt_dt - df_dt).days > 35:
+                        dt_dt = df_dt + timedelta(days=35)
+                        src_to = dt_dt.isoformat().replace('+00:00','Z')
                 except Exception:
                     pass
-                for d in digests:
-                    child_map = {}
-                    for c in list(d):
-                        key = c.tag.split('}', 1)[-1]
-                        child_map[key] = (c.text.strip() if c is not None and c.text else None)
+                spans = [(src_from, src_to)]
+            else:
+                spans = _chunk_date_range(src_from, src_to)
 
-                    inv_number = child_map.get('invoiceNumber') or child_map.get('originalInvoiceNumber') or child_map.get('transactionId')
-                    if not inv_number:
-                        try:
-                            logger.info("Incoming: skip digest without identifier (no invoiceNumber/originalInvoiceNumber/transactionId)")
-                        except Exception:
-                            pass
-                        continue
-
-                    supplier_name = child_map.get('supplierName')
-                    supplier_tax_id = child_map.get('supplierTaxNumber')
-                    if not supplier_tax_id:
-                        stn = d.find(f'{ns_api}supplierTaxNumber') or d.find('supplierTaxNumber')
-                        if stn is not None:
-                            ti = stn.find(f'{ns_base}taxpayerId') or stn.find('taxpayerId')
-                            supplier_tax_id = (ti.text.strip() if (ti is not None and ti.text) else (stn.text.strip() if stn.text else None))
-
-                    fields = {
-                        'invoice_operation': child_map.get('invoiceOperation'),
-                        'invoice_category': child_map.get('invoiceCategory'),
-                        'invoice_issue_date': child_map.get('invoiceIssueDate') or None,
-                        'invoice_delivery_date': child_map.get('invoiceDeliveryDate') or None,
-                        'supplier_tax_number': supplier_tax_id,
-                        'supplier_name': supplier_name,
-                        'customer_tax_number': child_map.get('customerTaxNumber'),
-                        'customer_name': child_map.get('customerName'),
-                        'payment_method': child_map.get('paymentMethod'),
-                        # IMPORTANT: NAV digest paymentDate is the due date, NOT actual payment
-                        # We deliberately do NOT take it here; preserve existing DB value if any
-                        'payment_date': None,
-                        'invoice_appearance': child_map.get('invoiceAppearance'),
-                        'currency': child_map.get('currency'),
-                        'invoice_net_amount': child_map.get('invoiceNetAmount'),
-                        'invoice_vat_amount': child_map.get('invoiceVatAmount'),
-                        'transaction_id': child_map.get('transactionId'),
-                        'index': int((child_map.get('index') or '1') or '1'),
-                        'original_invoice_number': child_map.get('originalInvoiceNumber'),
-                        'modification_index': int(child_map['modificationIndex']) if child_map.get('modificationIndex') else None,
-                        'ins_date': child_map.get('insDate'),
-                        'completeness_indicator': (child_map.get('completenessIndicator') == 'true'),
-                    }
-
-                    # Cast dates/datetimes
-                    from django.utils.dateparse import parse_date, parse_datetime
-                    if isinstance(fields['invoice_issue_date'], str):
-                        fields['invoice_issue_date'] = parse_date(fields['invoice_issue_date'])
-                    if isinstance(fields['invoice_delivery_date'], str):
-                        fields['invoice_delivery_date'] = parse_date(fields['invoice_delivery_date'])
-                    # fields['payment_date'] intentionally left as-is (None here)
-                    if isinstance(fields['ins_date'], str):
-                        fields['ins_date'] = parse_datetime(fields['ins_date'])
-                    # Cast decimals
-                    from decimal import Decimal
-                    for k in ('invoice_net_amount','invoice_vat_amount'):
-                        try:
-                            v = fields.get(k)
-                            fields[k] = (Decimal(str(v)) if v is not None else None)
-                        except Exception:
-                            fields[k] = None
-
-                    # Upsert
+            def _fetch_span(span_from, span_to):
+                nonlocal refresh_error, upsert_count
+                window_new = 0
+                nav_page = 1
+                while True:
+                    res = nav_service.query_invoice_digest('INBOUND', span_from, span_to, page=nav_page)
+                    if not res.get('success'):
+                        refresh_error = res.get('error_message') or res.get('error') or 'NAV lekérdezési hiba'
+                        break
+                    if not res.get('response'):
+                        refresh_error = 'NAV üres válasz'
+                        break
                     try:
-                        logger.info(f"Incoming: upsert {inv_number} tx={fields.get('transaction_id')}")
+                        root = ET.fromstring(res['response'])
+                    except Exception:
+                        refresh_error = 'NAV válasz XML feldolgozási hiba'
+                        break
+                    ns_api = '{http://schemas.nav.gov.hu/OSA/3.0/api}'
+                    ns_base = '{http://schemas.nav.gov.hu/OSA/3.0/base}'
+
+                    digests = root.findall(f'.//{ns_api}invoiceDigest') or []
+                    try:
+                        logger.info(f"Incoming: range {span_from}..{span_to} page {nav_page} found {len(digests)} digests")
                     except Exception:
                         pass
-                    # Preserve prior payment_date if record exists
+                    for d in digests:
+                        child_map = {}
+                        for c in list(d):
+                            key = c.tag.split('}', 1)[-1]
+                            child_map[key] = (c.text.strip() if c is not None and c.text else None)
+
+                        inv_number = child_map.get('invoiceNumber') or child_map.get('originalInvoiceNumber') or child_map.get('transactionId')
+                        if not inv_number:
+                            try:
+                                logger.info("Incoming: skip digest without identifier (no invoiceNumber/originalInvoiceNumber/transactionId)")
+                            except Exception:
+                                pass
+                            continue
+
+                        supplier_name = child_map.get('supplierName')
+                        supplier_tax_id = child_map.get('supplierTaxNumber')
+                        if not supplier_tax_id:
+                            stn = d.find(f'{ns_api}supplierTaxNumber') or d.find('supplierTaxNumber')
+                            if stn is not None:
+                                ti = stn.find(f'{ns_base}taxpayerId') or stn.find('taxpayerId')
+                                supplier_tax_id = (ti.text.strip() if (ti is not None and ti.text) else (stn.text.strip() if stn.text else None))
+
+                        fields = {
+                            'invoice_operation': child_map.get('invoiceOperation'),
+                            'invoice_category': child_map.get('invoiceCategory'),
+                            'invoice_issue_date': child_map.get('invoiceIssueDate') or None,
+                            'invoice_delivery_date': child_map.get('invoiceDeliveryDate') or None,
+                            # NAV digest may include paymentDueDate (preferred), occasionally dueDate, and sometimes only paymentDate
+                            'due_date': (
+                                child_map.get('paymentDueDate')
+                                or child_map.get('dueDate')
+                                or child_map.get('paymentDate')
+                                or None
+                            ),
+                            'supplier_tax_number': supplier_tax_id,
+                            'supplier_name': supplier_name,
+                            'customer_tax_number': child_map.get('customerTaxNumber'),
+                            'customer_name': child_map.get('customerName'),
+                            'payment_method': child_map.get('paymentMethod'),
+                            'payment_date': None,  # NAV digest paymentDate is due date; keep DB if any
+                            'invoice_appearance': child_map.get('invoiceAppearance'),
+                            'currency': child_map.get('currency'),
+                            'invoice_net_amount': child_map.get('invoiceNetAmount'),
+                            'invoice_vat_amount': child_map.get('invoiceVatAmount'),
+                            'transaction_id': child_map.get('TransactionId') or child_map.get('transactionId'),
+                            'index': int((child_map.get('index') or '1') or '1'),
+                            'original_invoice_number': child_map.get('originalInvoiceNumber'),
+                            'modification_index': int(child_map['modificationIndex']) if child_map.get('modificationIndex') else None,
+                            'ins_date': child_map.get('insDate'),
+                            'completeness_indicator': (child_map.get('completenessIndicator') == 'true'),
+                        }
+
+                        from django.utils.dateparse import parse_date, parse_datetime
+                        if isinstance(fields['invoice_issue_date'], str):
+                            fields['invoice_issue_date'] = parse_date(fields['invoice_issue_date'])
+                        if isinstance(fields['invoice_delivery_date'], str):
+                            fields['invoice_delivery_date'] = parse_date(fields['invoice_delivery_date'])
+                        if isinstance(fields.get('due_date'), str):
+                            fields['due_date'] = parse_date(fields['due_date'])
+                        if isinstance(fields['ins_date'], str):
+                            fields['ins_date'] = parse_datetime(fields['ins_date'])
+                        from decimal import Decimal
+                        for k in ('invoice_net_amount','invoice_vat_amount'):
+                            try:
+                                v = fields.get(k)
+                                fields[k] = (Decimal(str(v)) if v is not None else None)
+                            except Exception:
+                                fields[k] = None
+
+                        try:
+                            logger.info(f"Incoming: upsert {inv_number} tx={fields.get('transaction_id')}")
+                        except Exception:
+                            pass
+                        obj, created = IncomingInvoiceDigest.objects.get_or_create(
+                            company=company,
+                            invoice_number=inv_number,
+                            transaction_id=fields['transaction_id'],
+                            defaults=fields,
+                        )
+                        if (not created) and fields.get('due_date') and getattr(obj, 'due_date', None) != fields['due_date']:
+                            obj.due_date = fields['due_date']
+                            try:
+                                obj.save(update_fields=['due_date'])
+                            except Exception:
+                                pass
+                        if created:
+                            upsert_count += 1
+                            window_new += 1
+
+                    cp = root.find(f'.//{ns_api}currentPage')
+                    pc = root.find(f'.//{ns_api}pageCount')
                     try:
-                        existing = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=inv_number, transaction_id=fields['transaction_id']).order_by('-ins_date').first()
+                        cur = int(cp.text) if (cp is not None and cp.text) else nav_page
+                        total = int(pc.text) if (pc is not None and pc.text) else cur
                     except Exception:
-                        existing = None
-                    if existing and getattr(existing, 'payment_date', None):
-                        fields['payment_date'] = existing.payment_date
+                        cur = nav_page
+                        total = nav_page
+                    if cur >= total:
+                        break
+                    nav_page = cur + 1
+                return window_new
 
-                    obj, created = IncomingInvoiceDigest.objects.update_or_create(
-                        company=company,
-                        invoice_number=inv_number,
-                        transaction_id=fields['transaction_id'],
-                        defaults=fields,
-                    )
-                    upsert_count += 1
-
-                # Pagination
-                cp = root.find(f'.//{ns_api}currentPage')
-                pc = root.find(f'.//{ns_api}pageCount')
+            # Optional backward backfill (walk backwards until stop_date or empty windows)
+            if backfill_all and not refresh_error:
                 try:
-                    cur = int(cp.text) if (cp is not None and cp.text) else nav_page
-                    total = int(pc.text) if (pc is not None and pc.text) else cur
+                    from django.db.models import Min
+                    earliest_issue = IncomingInvoiceDigest.objects.filter(company=company).aggregate(m=Min('invoice_issue_date'))['m']
                 except Exception:
-                    cur = nav_page
-                    total = nav_page
-                if cur >= total:
-                    break
-                nav_page = cur + 1
+                    earliest_issue = None
+                try:
+                    stop_date = dt.fromisoformat(stop_date_raw).date() if stop_date_raw else None
+                except Exception:
+                    stop_date = None
+                from datetime import date as _date
+                today_date = timezone.now().date()
+                cur_end = (earliest_issue - timedelta(days=1)) if earliest_issue else today_date
+                empty_streak = 0
+                window_counter = 0
+                max_windows = 400
+                while cur_end and window_counter < max_windows:
+                    if stop_date and cur_end < stop_date:
+                        break
+                    cur_start = cur_end - timedelta(days=34)
+                    if stop_date and cur_start < stop_date:
+                        cur_start = stop_date
+                    spans_back = _chunk_date_range(cur_start.isoformat(), cur_end.isoformat())
+                    window_new = 0
+                    for span_from, span_to in spans_back:
+                        window_new += _fetch_span(span_from, span_to)
+                        if refresh_error:
+                            break
+                    if refresh_error:
+                        break
+                    empty_streak = empty_streak + 1 if window_new == 0 else 0
+                    cur_end = cur_start - timedelta(days=1)
+                    window_counter += 1
+                    if empty_streak >= 2:
+                        break
 
-            try:
-                logger.info(f"Incoming: upserted digests count={upsert_count} for range {src_from}..{src_to}")
-            except Exception:
-                pass
-            sync.last_refreshed_at = timezone.now()
-            sync.save(update_fields=['last_refreshed_at'])
-            did_refresh = True
+            # Forward/default fetch for requested range
+            for span_from, span_to in spans:
+                _fetch_span(span_from, span_to)
+                if refresh_error:
+                    break
+
+            if refresh_error:
+                try:
+                    logger.warning(f"Incoming: refresh failed: {refresh_error}")
+                except Exception:
+                    pass
+            else:
+                try:
+                    logger.info(f"Incoming: upserted digests count={upsert_count} for range {src_from}..{src_to}")
+                except Exception:
+                    pass
+                sync.last_refreshed_at = timezone.now()
+                sync.save(update_fields=['last_refreshed_at'])
+                did_refresh = True
 
         # Serve from DB
         qs = IncomingInvoiceDigest.objects.filter(company=company)
@@ -1895,18 +1999,62 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 Q(supplier_tax_number__icontains=search)
             )
 
-        # Paid/unpaid filter
+        # Payment method filter
+        if payment_method_filter and payment_method_filter != 'all':
+            qs = qs.filter(payment_method__iexact=payment_method_filter.upper())
+
+        # Paid/unpaid coarse filter in DB (due handled later)
         if status_filter == 'paid':
-            # Consider non-TRANSFER as paid by definition, plus any with payment_date
             qs = qs.filter(Q(payment_date__isnull=False) | ~Q(payment_method__iexact='TRANSFER'))
-        elif status_filter == 'unpaid':
+        elif status_filter in ('unpaid', 'due'):
             qs = qs.filter(Q(payment_method__iexact='TRANSFER') & Q(payment_date__isnull=True))
 
-        qs = qs.order_by('-invoice_issue_date', '-ins_date')
-        paginator = Paginator(qs, page_size)
+        ordered_qs = qs.order_by('-invoice_issue_date', '-ins_date')
+        paginator = Paginator(ordered_qs, page_size)
         page_obj = paginator.get_page(page)
-        items = []
-        # Lazy helper to extract dueDate from cached full XML when available (prefer matching supplier)
+        page_items_raw = list(page_obj.object_list)
+
+        # Aggregate payments per invoice for paid/partial/over checks (only current page items)
+        if page_items_raw:
+            q_pay = Q()
+            for r in page_items_raw:
+                q_pay |= (Q(invoice_number=r.invoice_number) & (Q(supplier_tax_number=r.supplier_tax_number) | Q(supplier_tax_number__isnull=True)))
+            payment_aggs = PaymentBatchItem.objects.filter(batch__company=company).filter(q_pay).values('invoice_number', 'supplier_tax_number').annotate(
+                total=Sum('amount_gross'),
+                last_payment=Max('created_at'),
+            )
+        else:
+            payment_aggs = []
+        pay_map = {}
+        for row in payment_aggs:
+            key = f"{row.get('invoice_number') or ''}|{row.get('supplier_tax_number') or ''}"
+            pay_map[key] = {
+                'total': row.get('total'),
+                'last_payment': row.get('last_payment'),
+            }
+
+        items_all = []
+
+        # Helpers for due date extraction and on-demand NAV fetch
+        def _parse_due_from_xml_text(xml_text: str):
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(xml_text)
+            except Exception:
+                return None
+            wanted = {'paymentduedate', 'duedate', 'paymentdate'}
+            for el in root.iter():
+                try:
+                    tag_raw = el.tag.split('}', 1)[-1] if isinstance(el.tag, str) and '}' in el.tag else el.tag
+                    tag = (tag_raw or '').lower()
+                    if tag in wanted:
+                        val = (el.text or '').strip()
+                        if val:
+                            return val
+                except Exception:
+                    continue
+            return None
+
         def extract_due_date_from_cache(inv_number, supplier_tax_number=None):
             try:
                 from invoices.models import IncomingInvoiceData
@@ -1915,31 +2063,108 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     q = q.filter(supplier_tax_number=supplier_tax_number)
                 cached = q.order_by('-updated_at').first()
                 if (not cached or not cached.xml_text) and supplier_tax_number:
-                    # Fallback: try without supplier filter if strict match not found
                     cached = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number).order_by('-updated_at').first()
                 if not cached or not cached.xml_text:
                     return None
-                import xml.etree.ElementTree as ET
-                try:
-                    root = ET.fromstring(cached.xml_text)
-                except Exception:
-                    return None
-                # Find first paymentDueDate or dueDate element in XML (NAV 3.0 uses paymentDueDate)
-                wanted = {'paymentDueDate', 'dueDate'}
-                for el in root.iter():
-                    try:
-                        tag = el.tag.split('}', 1)[-1] if isinstance(el.tag, str) and '}' in el.tag else el.tag
-                        if tag in wanted:
-                            val = (el.text or '').strip()
-                            if val:
-                                return val
-                    except Exception:
-                        continue
-                return None
+                return _parse_due_from_xml_text(cached.xml_text)
             except Exception:
                 return None
 
-        for r in page_obj.object_list:
+        fetched_due_cache = {}
+
+        def fetch_due_date_from_nav(inv_number, supplier_tax_number=None, digest_index=None):
+            key = f"{inv_number}|{supplier_tax_number or ''}"
+            if key in fetched_due_cache:
+                return fetched_due_cache[key]
+            try:
+                from invoices.models import CompanyNAVConfiguration, IncomingInvoiceData, IncomingInvoiceDigest
+                import base64, gzip, io
+                cfg = CompanyNAVConfiguration.objects.filter(company=company, is_active=True).order_by('-is_default').first()
+                if not cfg:
+                    fetched_due_cache[key] = None
+                    return None
+                nav_service = NAVService(cfg)
+
+                def _decode_invoice_data(response_text: str):
+                    try:
+                        import xml.etree.ElementTree as ET
+                        root = ET.fromstring(response_text)
+                        def _find_any(root_el, local):
+                            for el in root_el.iter():
+                                tag = el.tag
+                                if tag == local or (isinstance(tag, str) and tag.endswith('}'+local)):
+                                    return el
+                            return None
+                        data_el = _find_any(root, 'invoiceDataResult') or root
+                        inv_b64_el = _find_any(root, 'invoiceData') or (_find_any(data_el, 'invoiceData') if data_el is not None else None)
+                        if inv_b64_el is not None and inv_b64_el.text:
+                            raw = base64.b64decode(inv_b64_el.text)
+                            try:
+                                with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                                    decoded = gz.read()
+                            except OSError:
+                                decoded = raw
+                            return decoded.decode('utf-8', errors='replace')
+                    except Exception:
+                        return ''
+                    return ''
+
+                variants = [
+                    (digest_index, supplier_tax_number),
+                    (None, supplier_tax_number),
+                    (digest_index, None),
+                    (None, None),
+                ]
+                decoded_xml = ''
+                for bi, stn in variants:
+                    try:
+                        res = nav_service.query_invoice_data('INBOUND', inv_number, stn, bi)
+                        decoded_xml = _decode_invoice_data(res.get('response') or '')
+                        if decoded_xml:
+                            supplier_tax_number = stn or supplier_tax_number
+                            break
+                    except Exception:
+                        continue
+                if not decoded_xml:
+                    fetched_due_cache[key] = None
+                    return None
+
+                due_val = _parse_due_from_xml_text(decoded_xml)
+                try:
+                    if decoded_xml:
+                        IncomingInvoiceData.objects.update_or_create(
+                            company=company,
+                            invoice_number=inv_number,
+                            supplier_tax_number=supplier_tax_number,
+                            defaults={'xml_text': decoded_xml},
+                        )
+                        # Auto-register supplier
+                        try:
+                            customer, conflict = auto_register_or_update_supplier(company, decoded_xml)
+                            if conflict:
+                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                        except Exception as e:
+                            logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
+                except Exception:
+                    pass
+
+                if due_val:
+                    try:
+                        qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=inv_number)
+                        if supplier_tax_number:
+                            qs = qs.filter(supplier_tax_number=supplier_tax_number)
+                        if digest_index:
+                            qs = qs.filter(index=digest_index)
+                        qs.update(due_date=due_val)
+                    except Exception:
+                        pass
+                fetched_due_cache[key] = due_val
+                return due_val
+            except Exception:
+                fetched_due_cache[key] = None
+                return None
+
+        for r in page_items_raw:
             date_val = r.invoice_issue_date
             if not date_val and r.ins_date:
                 try:
@@ -1957,19 +2182,84 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 gross_val = None
             # Extract due date for all invoices
-            due_date_str = extract_due_date_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None))
-            # If no dueDate in XML, fallback to DB field or None
-            if not due_date_str and hasattr(r, 'due_date') and r.due_date:
-                due_date_str = r.due_date.isoformat()
+            due_date_str = None
+            if getattr(r, 'due_date', None):
+                try:
+                    due_date_str = r.due_date.isoformat()
+                except Exception:
+                    due_date_str = None
+            if not due_date_str:
+                due_date_str = extract_due_date_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None))
+            if not due_date_str:
+                due_date_str = fetch_due_date_from_nav(r.invoice_number, getattr(r, 'supplier_tax_number', None), getattr(r, 'index', None))
+            # If still no dueDate, fallback to recorded payment date
+            if not due_date_str and getattr(r, 'payment_date', None):
+                try:
+                    due_date_str = r.payment_date.isoformat()
+                except Exception:
+                    pass
 
-            # Payment status logic
+            # Payment status logic with batch sums
             payment_method = (r.payment_method or '').lower()
             payment_date = r.payment_date
+            pay_key = f"{r.invoice_number or ''}|{r.supplier_tax_number or ''}"
+            paid_amount = pay_map.get(pay_key, {}).get('total') or decimal.Decimal('0')
+            last_payment_dt = pay_map.get(pay_key, {}).get('last_payment')
             # For card, cash, voucher, other: always paid, payment date = issue date
             if payment_method in ['card', 'cash', 'voucher', 'other']:
                 payment_date = date_val
 
-            items.append({
+            remaining_amount = None
+            overpaid_amount = None
+            is_paid = False
+            is_partial = False
+            # Determine paid/partial based on gross vs paid amounts
+            try:
+                tol = decimal.Decimal('0.005')
+                if gross_val is not None:
+                    remaining_amount = gross_val - paid_amount
+                    if remaining_amount <= tol:
+                        is_paid = True
+                        if remaining_amount < decimal.Decimal('0'):
+                            overpaid_amount = abs(remaining_amount)
+                            remaining_amount = decimal.Decimal('0')
+                    elif paid_amount > tol:
+                        is_partial = True
+                else:
+                    # If we don't know gross, fall back to payment method/date
+                    is_paid = bool(payment_date) or payment_method in ['card','cash','voucher','other']
+            except Exception:
+                pass
+
+            # payment display date: NAV/issue for instant methods, mark-paid date or last payment for transfers
+            payment_display_date = None
+            if payment_date:
+                payment_display_date = payment_date
+            elif payment_method in ['card', 'cash', 'voucher', 'other']:
+                payment_display_date = date_val
+            elif last_payment_dt:
+                try:
+                    payment_display_date = last_payment_dt.date()
+                except Exception:
+                    payment_display_date = None
+
+            # Apply due filter (in-page) when requested
+            if status_filter == 'due':
+                if is_paid:
+                    continue
+                ok_due = False
+                if due_date_str:
+                    try:
+                        from django.utils.dateparse import parse_date
+                        due_dt = parse_date(due_date_str)
+                        if due_dt and due_dt <= today_date:
+                            ok_due = True
+                    except Exception:
+                        ok_due = False
+                if not ok_due:
+                    continue
+
+            items_all.append({
                 'invoiceNumber': r.invoice_number,
                 'invoiceIssueDate': date_val.isoformat() if date_val else None,
                 'supplierTaxNumber': r.supplier_tax_number,
@@ -1979,23 +2269,33 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'vatAmount': (str(r.invoice_vat_amount) if r.invoice_vat_amount is not None else None),
                 'grossAmount': (str(gross_val) if gross_val is not None else None),
                 'deliveryDate': (r.invoice_delivery_date.isoformat() if r.invoice_delivery_date else None),
-                'paymentDate': (payment_date.isoformat() if payment_date else None),
+                'paymentDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
                 'paymentMethod': r.payment_method,
                 'dueDate': due_date_str,
+                'paidAmount': (str(paid_amount) if paid_amount is not None else None),
+                'remainingAmount': (str(remaining_amount) if (remaining_amount is not None and remaining_amount > decimal.Decimal('0')) else None),
+                'overpaidAmount': (str(overpaid_amount) if overpaid_amount is not None else None),
+                'paymentDisplayDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
+                'isPaid': is_paid,
+                'isPartial': is_partial,
+                'inPaymentBatch': pay_key in pay_map,
             })
+
+        page_items = items_all
 
         return Response({
             'success': True,
             'page': page_obj.number,
             'pageCount': paginator.num_pages,
             'hasMore': page_obj.has_next(),
-            'items': items,
+            'items': page_items,
             'lastRefreshedAt': sync.last_refreshed_at.isoformat() if sync.last_refreshed_at else None,
             'refreshed': did_refresh,
             'upserted': upsert_count,
+            'refreshError': refresh_error,
         })
 
-    @action(detail=False, methods=['get'], url_path='incoming/download')
+    @action(detail=False, methods=['post'], url_path='incoming/download')
     def download_incoming(self, request):
         """Return full invoice XML for a given invoice using queryInvoiceData.
         Caches the decoded invoice XML in DB to avoid repeated NAV calls.
@@ -2003,10 +2303,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         """
         from django.http import HttpResponse
         from invoices.models import CompanyNAVConfiguration, Company, IncomingInvoiceData
-        company_id = request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
-        invoice_number = request.query_params.get('invoice_number')
-        supplier_tax_number = request.query_params.get('supplier_tax_number')
-        force_refresh = (request.query_params.get('force') or '').strip().lower() in ('1', 'true', 'yes')
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        invoice_number = request.data.get('invoice_number') or request.query_params.get('invoice_number')
+        supplier_tax_number = request.data.get('supplier_tax_number') or request.query_params.get('supplier_tax_number')
+        force_refresh = (request.data.get('force') or request.query_params.get('force') or '').strip().lower() in ('1', 'true', 'yes')
         if not (company_id and invoice_number):
             return Response({'error': 'company_id és invoice_number kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2117,6 +2417,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                                             supplier_tax_number=supplier_tax_number,
                                                             defaults={'xml_text': xml_text2},
                                                         )
+                                                        # Auto-register supplier
+                                                        try:
+                                                            customer, conflict = auto_register_or_update_supplier(company, xml_text2)
+                                                            if conflict:
+                                                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                                                        except Exception as e:
+                                                            logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                                                     except Exception:
                                                         pass
                                                 break
@@ -2196,6 +2503,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         supplier_tax_number=supplier_tax_number,
                         defaults={'xml_text': xml_text}
                     )
+                    # Auto-register supplier
+                    try:
+                        customer, conflict = auto_register_or_update_supplier(company, xml_text)
+                        if conflict:
+                            logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                    except Exception as e:
+                        logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
             except Exception:
                 pass
 
@@ -2232,6 +2546,34 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         disp = 'inline' if inline else 'attachment'
         resp['Content-Disposition'] = f'{disp}; filename="incoming_{invoice_number}.xml"'
         return resp
+
+    @action(detail=False, methods=['post'], url_path='incoming/set_payment_method')
+    def set_incoming_payment_method(self, request):
+        """Set payment_method for an incoming invoice digest without overwriting other fields."""
+        from invoices.models import IncomingInvoiceDigest, Company
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        invoice_number = request.data.get('invoice_number') or ''
+        supplier_tax_number = request.data.get('supplier_tax_number') or None
+        payment_method = (request.data.get('payment_method') or '').strip().upper()
+        allowed = {'TRANSFER','CASH','CARD','VOUCHER','OTHER','UTANVET'}
+        if payment_method not in allowed:
+            return Response({'error': 'Érvénytelen fizetési mód'}, status=status.HTTP_400_BAD_REQUEST)
+        if not company_id or not invoice_number:
+            return Response({'error': 'company_id és invoice_number kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
+        if supplier_tax_number:
+            qs = qs.filter(supplier_tax_number=supplier_tax_number)
+        obj = qs.order_by('-ins_date').first()
+        if not obj:
+            return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+        obj.payment_method = payment_method
+        obj.save(update_fields=['payment_method'])
+        return Response({'success': True, 'payment_method': obj.payment_method})
 
     @action(detail=False, methods=['post', 'get'], url_path='incoming/backfill')
     def backfill_incoming_cache(self, request):
@@ -2365,6 +2707,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     supplier_tax_number=d.supplier_tax_number,
                     defaults={'xml_text': xml_text, 'transaction_id': d.transaction_id},
                 )
+                # Auto-register supplier
+                try:
+                    customer, conflict = auto_register_or_update_supplier(company, xml_text)
+                    if conflict:
+                        logger.warning(f"Beszállító adatok eltérnek ({d.supplier_tax_number}): {conflict['differences']}")
+                except Exception as e:
+                    logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                 created += 1
             except Exception as e:
                 errors.append({'invoice': d.invoice_number, 'error': str(e)})
@@ -4838,22 +5187,20 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
     permission_classes = []
 
     def get_queryset(self):
-        qs = super().get_queryset()
-        company_id = (
-            self.request.query_params.get('company_id')
-            or self.request.query_params.get('company')
-            or (getattr(self.request, 'company', None) and str(self.request.company.id))
-        )
-        status_filter = self.request.query_params.get('status')
-        if company_id:
-            qs = qs.filter(company_id=company_id)
-        if status_filter:
-            qs = qs.filter(status=status_filter)
-        return qs
+        # Avoid filtering here to prevent 404 on detail actions; list filters handled separately.
+        return PaymentBatch.objects.select_related('company', 'bank_account', 'created_by').all()
 
-    @action(detail=False, methods=['get'], url_path='pending-count')
+    def get_object(self):
+        from django.http import Http404
+        pk = self.kwargs.get('pk')
+        obj = PaymentBatch.objects.select_related('company', 'bank_account', 'created_by').filter(id=pk).first()
+        if not obj:
+            raise Http404('Fizetési csomag nem található')
+        return obj
+
+    @action(detail=False, methods=['post'], url_path='pending-count')
     def pending_count(self, request):
-        company_id = request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         if not company_id:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         cnt = PaymentBatch.objects.filter(company_id=company_id, status='PENDING').count()
@@ -4929,8 +5276,112 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         data = PaymentBatchItemSerializer(batch.items.all(), many=True).data
         return Response({'success': True, 'batch': PaymentBatchSerializer(batch).data, 'items': data})
 
-    def _extract_supplier_account(self, xml_text: str):
+    @action(detail=True, methods=['get', 'post'], url_path='bank-export')
+    def export_file(self, request, pk=None):
+        batch = self.get_object()
+        fmt = (request.data.get('format') or request.query_params.get('format') or 'sepa').lower()
+        exec_date_str = request.data.get('execution_date') or request.query_params.get('execution_date')
+        try:
+            exec_date = datetime.strptime(exec_date_str, '%Y-%m-%d').date() if exec_date_str else timezone.now().date()
+        except Exception:
+            return Response({'error': 'execution_date formátum: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
+
+        sepa_aliases = ('sepa', 'pain.001', 'pain001', 'pain')
+        if fmt not in (*sepa_aliases, 'csv'):
+            return Response({'error': 'Nem támogatott export formátum (engedélyezett: pain.001, csv)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Build items with supplier account numbers from cached NAV XML if available
+        missing_accounts = []
+        tx_items = []
+        for it in batch.items.all():
+            acct_type = None
+            account = None
+            # Try find cached full invoice XML
+            try:
+                from invoices.models import IncomingInvoiceData
+                q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=it.invoice_number)
+                if it.supplier_tax_number:
+                    q = q.filter(supplier_tax_number=it.supplier_tax_number)
+                invdata = q.order_by('-created_at').first()
+                if invdata and invdata.xml_text:
+                    acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, it.supplier_tax_number)
+                elif invdata:
+                    # Nincs XML cache, de van supplier_tax_number -> próbáljuk az ügyféltörzsből
+                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number)
+                else:
+                    # Nincs invdata se -> próbáljuk az ügyféltörzsből
+                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number)
+            except Exception:
+                pass
+            if not account:
+                missing_accounts.append({'invoice_number': it.invoice_number, 'supplier': it.supplier_name})
+                continue
+            tx_items.append({
+                'end_to_end': it.invoice_number,
+                'amount': str(it.amount_gross),
+                'currency': it.currency or batch.currency or 'HUF',
+                'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
+                'acct_type': acct_type or 'IBAN',
+                'account': account,
+                'remittance': f"Számla {it.invoice_number}",
+            })
+
+        if not tx_items:
+            error_details = '\n'.join([f"{m['supplier']}: Bankszámlaszám üres!" for m in missing_accounts])
+            return Response({'error': f'Hiányzó bankszámlaszámok:\n{error_details}', 'missing': missing_accounts}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            if fmt in sepa_aliases:
+                content = self._build_pain_001(batch, tx_items, exec_date)
+                content_type = 'application/xml'
+                filename = f"payment_batch_{(batch.name or str(batch.id)).replace(' ', '_')}_pain.001.xml"
+            else:
+                header = ['account','account_type','beneficiary_name','amount','currency','remittance','execution_date','end_to_end']
+                rows = []
+                for it in tx_items:
+                    rows.append([
+                        it['account'], it['acct_type'], it['name'], f"{decimal.Decimal(it['amount']):.2f}", it['currency'], it['remittance'], exec_date.strftime('%Y-%m-%d'), it['end_to_end']
+                    ])
+                csv = ';'.join(header) + '\n' + '\n'.join([';'.join([str(col).replace(';', ',') for col in r]) for r in rows])
+                content = ("\ufeff" + csv).encode('utf-8')
+                content_type = 'text/csv; charset=utf-8'
+                filename = f"payment_batch_{(batch.name or str(batch.id)).replace(' ', '_')}.csv"
+        except ValueError as ve:
+            return Response({'error': str(ve)}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            logger.exception('Export build error')
+            return Response({'error': f'Export hiba: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # Optionally mark as exported
+        try:
+            if batch.status != 'EXPORTED':
+                batch.status = 'EXPORTED'
+                batch.save(update_fields=['status', 'updated_at'])
+        except Exception:
+            pass
+
+        resp = HttpResponse(content, content_type=content_type)
+        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        return resp
+
+    def _extract_supplier_account(self, xml_text: str, company=None, supplier_tax_number: str = None):
+        """
+        Kinyeri a beszállító bankszámlaszámát.
+        1. Először az XML-ből próbálja
+        2. Ha nincs az XML-ben, akkor az ügyféltörzsből (ha van company és supplier_tax_number)
+        """
         if not xml_text:
+            # Ha nincs XML, próbáljuk az ügyféltörzsből
+            if company and supplier_tax_number:
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '')
+                if account:
+                    # Detektáljuk az account típusát
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', account):
+                        return 'IBAN', account
+                    elif re.match(r'^\d{8}-\d{8}(?:-\d{8})?$', account):
+                        return 'BBAN', account
+                    else:
+                        return 'OTHER', account
             return None, None
         try:
             # Prefer IBAN
@@ -4941,6 +5392,18 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             acct_match = re.search(r'\b\d{8}-\d{8}(?:-\d{8})?\b', xml_text)
             if acct_match:
                 return 'BBAN', acct_match.group(0)
+            
+            # Ha nincs az XML-ben, próbáljuk az ügyféltörzsből
+            if company and supplier_tax_number:
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text)
+                if account:
+                    # Detektáljuk az account típusát
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', account):
+                        return 'IBAN', account
+                    elif re.match(r'^\d{8}-\d{8}(?:-\d{8})?$', account):
+                        return 'BBAN', account
+                    else:
+                        return 'OTHER', account
         except Exception:
             pass
         return None, None
@@ -5010,86 +5473,6 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
 
         return ET.tostring(d, encoding='utf-8', xml_declaration=True)
 
-    @action(detail=True, methods=['post'], url_path='export-file')
-    def export_file(self, request, pk=None):
-        batch = self.get_object()
-        fmt = request.query_params.get('format', 'sepa')
-        exec_date_str = request.query_params.get('execution_date')
-        try:
-            exec_date = datetime.strptime(exec_date_str, '%Y-%m-%d').date() if exec_date_str else timezone.now().date()
-        except Exception:
-            return Response({'error': 'execution_date formátum: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if fmt not in ('sepa', 'csv'):
-            return Response({'error': 'Nem támogatott export formátum'}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Build items with supplier account numbers from cached NAV XML if available
-        missing_accounts = []
-        tx_items = []
-        for it in batch.items.all():
-            acct_type = None
-            account = None
-            # Try find cached full invoice XML
-            try:
-                from invoices.models import IncomingInvoiceData
-                q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=it.invoice_number)
-                if it.supplier_tax_number:
-                    q = q.filter(supplier_tax_number=it.supplier_tax_number)
-                invdata = q.order_by('-created_at').first()
-                if invdata and invdata.xml_text:
-                    acct_type, account = self._extract_supplier_account(invdata.xml_text)
-            except Exception:
-                pass
-            if not account:
-                missing_accounts.append({'invoice_number': it.invoice_number, 'supplier': it.supplier_name})
-                continue
-            tx_items.append({
-                'end_to_end': it.invoice_number,
-                'amount': str(it.amount_gross),
-                'currency': it.currency or batch.currency or 'HUF',
-                'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
-                'acct_type': acct_type or 'IBAN',
-                'account': account,
-                'remittance': f"Számla {it.invoice_number}",
-            })
-
-        if not tx_items:
-            return Response({'error': 'Nincs exportálható tétel (hiányzó bankszámlaszámok)' , 'missing': missing_accounts}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            if fmt == 'sepa':
-                content = self._build_pain_001(batch, tx_items, exec_date)
-                content_type = 'application/xml'
-                filename = f"payment_batch_{(batch.name or str(batch.id)).replace(' ', '_')}.xml"
-            else:
-                header = ['account','account_type','beneficiary_name','amount','currency','remittance','execution_date','end_to_end']
-                rows = []
-                for it in tx_items:
-                    rows.append([
-                        it['account'], it['acct_type'], it['name'], f"{decimal.Decimal(it['amount']):.2f}", it['currency'], it['remittance'], exec_date.strftime('%Y-%m-%d'), it['end_to_end']
-                    ])
-                csv = ';'.join(header) + '\n' + '\n'.join([';'.join([str(col).replace(';', ',') for col in r]) for r in rows])
-                content = ("\ufeff" + csv).encode('utf-8')
-                content_type = 'text/csv; charset=utf-8'
-                filename = f"payment_batch_{(batch.name or str(batch.id)).replace(' ', '_')}.csv"
-        except ValueError as ve:
-            return Response({'error': str(ve)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            logger.exception('Export build error')
-            return Response({'error': f'Export hiba: {e}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        # Optionally mark as exported
-        try:
-            if batch.status != 'EXPORTED':
-                batch.status = 'EXPORTED'
-                batch.save(update_fields=['status', 'updated_at'])
-        except Exception:
-            pass
-
-        resp = HttpResponse(content, content_type=content_type)
-        resp['Content-Disposition'] = f'attachment; filename="{filename}"'
-        return resp
-
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
         batch = self.get_object()
@@ -5102,6 +5485,12 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(supplier_tax_number=it.supplier_tax_number)
             updated = qs.update(payment_date=today)
             total_updated += updated
+        try:
+            if batch.status != 'EXPORTED':
+                batch.status = 'EXPORTED'
+                batch.save(update_fields=['status', 'updated_at'])
+        except Exception:
+            pass
         return Response({'success': True, 'updated': total_updated, 'payment_date': str(today)})
 
     @action(detail=True, methods=['delete'], url_path='delete')
@@ -5110,13 +5499,43 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         batch.delete()
         return Response({'success': True})
 
-    @action(detail=False, methods=['get'], url_path='list-pending')
+    @action(detail=False, methods=['post'], url_path='list-pending')
     def list_pending(self, request):
-        company_id = request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         if not company_id:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         qs = PaymentBatch.objects.filter(company_id=company_id, status='PENDING').order_by('-created_at')
         return Response(PaymentBatchSerializer(qs, many=True).data)
+
+    @action(detail=False, methods=['post'], url_path='list-completed')
+    def list_completed(self, request):
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        qs = PaymentBatch.objects.filter(company_id=company_id).exclude(status='PENDING').order_by('-created_at')
+        return Response(PaymentBatchSerializer(qs, many=True).data)
+
+    @action(detail=True, methods=['post'], url_path='update-item')
+    def update_item(self, request, pk=None):
+        batch = self.get_object()
+        item_id = request.data.get('item_id')
+        amount_raw = request.data.get('amount_gross')
+        if not item_id:
+            return Response({'error': 'item_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            item = PaymentBatchItem.objects.get(id=item_id, batch=batch)
+        except PaymentBatchItem.DoesNotExist:
+            return Response({'error': 'Tétel nem található ebben a csomagban'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            new_amount = decimal.Decimal(str(amount_raw))
+        except Exception:
+            return Response({'error': 'Érvénytelen összeg'}, status=status.HTTP_400_BAD_REQUEST)
+        if new_amount < decimal.Decimal('0'):
+            return Response({'error': 'Az összeg nem lehet negatív'}, status=status.HTTP_400_BAD_REQUEST)
+        item.amount_gross = new_amount
+        item.save(update_fields=['amount_gross'])
+        total = batch.items.aggregate(s=Sum('amount_gross')).get('s')
+        return Response({'success': True, 'item': PaymentBatchItemSerializer(item).data, 'gross_total': str(total) if total is not None else None})
 
 
 # Backup Management Views

@@ -3,7 +3,7 @@ import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Save, ArrowLeft, User, Building, Mail, Phone, Star } from 'lucide-react';
+import { Save, ArrowLeft, User, Building, Mail, Phone, Star, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import { contactAPI, customerAPI } from '../services/api';
 
@@ -362,14 +362,21 @@ const ContactForm = () => {
   );
 
   const { data: customers, isLoading: customersLoading, error: customersError } = useQuery(
-    ['customers'],
-    () => customerAPI.getCustomers(),
+    ['customers-all'],
+    async () => {
+      const response = await customerAPI.getCustomers({ page_size: 10000 });
+      console.log('ContactForm - Full API response:', response);
+      console.log('ContactForm - response.data:', response.data);
+      console.log('ContactForm - response.data.results:', response.data?.results);
+      console.log('ContactForm - results length:', response.data?.results?.length);
+      return response;
+    },
     {
       select: (response) => {
-        console.log('ContactForm customers response:', response);
-        console.log('ContactForm customers data:', response.data);
-        console.log('ContactForm customers results:', response.data?.results);
-        return response.data?.results || [];
+        const results = response.data?.results || [];
+        console.log('ContactForm - Selected results:', results);
+        console.log('ContactForm - Selected results length:', results.length);
+        return results;
       }
     }
   );
@@ -457,6 +464,7 @@ const ContactForm = () => {
       onSuccess: () => {
         queryClient.invalidateQueries(['contacts']);
         queryClient.invalidateQueries(['contact', id]);
+        queryClient.invalidateQueries(['customer-contacts']);
         toast.success('Kapcsolattartó frissítve');
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         try { localStorage.removeItem(KEEP_FLAG_KEY); } catch {}
@@ -469,8 +477,39 @@ const ContactForm = () => {
     }
   );
 
+  const deleteContactMutation = useMutation(
+    () => contactAPI.deleteContact(id),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['contacts']);
+        queryClient.invalidateQueries(['customer-contacts']);
+        toast.success('Kapcsolattartó törölve');
+        navigate('/contacts');
+      },
+      onError: (error) => {
+        toast.error('Hiba történt a kapcsolattartó törlése során');
+        console.error('Delete contact error:', error);
+      }
+    }
+  );
+
+  const handleDelete = () => {
+    if (window.confirm('Biztosan törölni szeretné ezt a kapcsolattartót?')) {
+      deleteContactMutation.mutate();
+    }
+  };
+
+  useEffect(() => {
+    console.log('ContactForm - customers changed:', customers);
+    console.log('ContactForm - customers length:', customers?.length);
+    console.log('ContactForm - customersLoading:', customersLoading);
+    console.log('ContactForm - customersError:', customersError);
+  }, [customers, customersLoading, customersError]);
+
   useEffect(() => {
     if (contact) {
+      console.log('ContactForm - Loading contact data:', contact);
+      console.log('ContactForm - Contact customer ID:', contact.customer);
       setValue('customer', contact.customer);
       setValue('first_name', contact.first_name);
       setValue('last_name', contact.last_name);
@@ -524,10 +563,20 @@ const ContactForm = () => {
           {isEdit ? 'Kapcsolattartó szerkesztése' : 'Új kapcsolattartó'}
         </Title>
         <ButtonGroup>
-          <Button variant="secondary" onClick={() => navigate('/contacts')}>
+          <Button variant="secondary" onClick={() => navigate(-1)}>
             <ArrowLeft size={16} />
             Vissza
           </Button>
+          {isEdit && (
+            <Button 
+              variant="danger" 
+              onClick={handleDelete}
+              disabled={deleteContactMutation.isLoading}
+            >
+              <Trash2 size={16} />
+              Törlés
+            </Button>
+          )}
           <Button
             variant="primary"
             onClick={handleSubmit(onSubmit)}
@@ -542,10 +591,16 @@ const ContactForm = () => {
       <form onSubmit={handleSubmit(onSubmit)}>
         <FormGroup>
           <Label htmlFor="customer">Ügyfél *</Label>
+          {console.log('ContactForm - Rendering customer field, value:', watch('customer'))}
+          {console.log('ContactForm - Rendering customer field, options:', customers)}
+          {console.log('ContactForm - Rendering customer field, options length:', customers?.length)}
           <SearchableSelectComponent
             id="customer"
             value={watch('customer') || ''}
-            onChange={(value) => setValue('customer', value)}
+            onChange={(value) => {
+              console.log('ContactForm - Customer changed to:', value);
+              setValue('customer', value);
+            }}
             options={customers || []}
             placeholder="Válasszon ügyfelet..."
             className={errors.customer ? 'error' : ''}

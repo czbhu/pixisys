@@ -42,6 +42,8 @@ class Customer(models.Model):
     is_hungarian_taxpayer = models.BooleanField(default=True, verbose_name="Hungarian Taxpayer")
     eu_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="EU Tax Number")
     payment_due_days = models.PositiveIntegerField(default=8, verbose_name="Payment Due Days")
+    is_supplier = models.BooleanField(default=False, verbose_name="Beszállító")
+    is_customer = models.BooleanField(default=True, verbose_name="Vevő")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -149,6 +151,7 @@ class IncomingInvoiceDigest(models.Model):
     invoice_category = models.CharField(max_length=20, blank=True, null=True)
     invoice_issue_date = models.DateField(blank=True, null=True)
     invoice_delivery_date = models.DateField(blank=True, null=True)
+    due_date = models.DateField(blank=True, null=True)
     supplier_tax_number = models.CharField(max_length=20, blank=True, null=True)
     supplier_name = models.CharField(max_length=300, blank=True, null=True)
     customer_tax_number = models.CharField(max_length=20, blank=True, null=True)

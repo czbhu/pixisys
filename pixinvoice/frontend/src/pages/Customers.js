@@ -351,6 +351,7 @@ const Customers = () => {
   const [currentPage, setCurrentPage] = useState(savedPrefs.currentPage);
   const [viewMode, setViewMode] = useState(savedPrefs.viewMode);
   const [pageSize, setPageSize] = useState(savedPrefs.pageSize);
+  const [customerTypeFilter, setCustomerTypeFilter] = useState(savedPrefs.customerTypeFilter || 'all');
   
   const queryClient = useQueryClient();
 
@@ -360,14 +361,15 @@ const Customers = () => {
       viewMode,
       pageSize,
       currentPage,
-      searchTerm
+      searchTerm,
+      customerTypeFilter
     };
     try {
       localStorage.setItem('customersPagePreferences', JSON.stringify(preferences));
     } catch (e) {
       console.error('Error saving preferences:', e);
     }
-  }, [viewMode, pageSize, currentPage, searchTerm]);
+  }, [viewMode, pageSize, currentPage, searchTerm, customerTypeFilter]);
 
   const { data: customers, isLoading, error } = useQuery(
     ['customers', { search: searchTerm, page: currentPage, pageSize }],
@@ -378,7 +380,16 @@ const Customers = () => {
     }),
     {
       keepPreviousData: true,
-      select: (response) => response.data,
+      select: (response) => {
+        let results = response.data.results || [];
+        // Client-side filter by customer type
+        if (customerTypeFilter === 'customers') {
+          results = results.filter(c => c.is_customer);
+        } else if (customerTypeFilter === 'suppliers') {
+          results = results.filter(c => c.is_supplier);
+        }
+        return { ...response.data, results };
+      },
       onError: (error) => {
         console.error('Customers page error:', error);
       }
@@ -459,6 +470,11 @@ const Customers = () => {
       <CustomersHeader>
         <Title>Ügyfelek</Title>
         <SearchContainer>
+          <PageSizeSelect value={customerTypeFilter} onChange={(e) => setCustomerTypeFilter(e.target.value)}>
+            <option value="all">Mind</option>
+            <option value="customers">Vevők</option>
+            <option value="suppliers">Beszállítók</option>
+          </PageSizeSelect>
           <SearchInput
             type="text"
             placeholder="Keresés név, adószám vagy email alapján..."

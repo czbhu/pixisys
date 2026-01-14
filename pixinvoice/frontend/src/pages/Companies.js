@@ -11,10 +11,12 @@ import {
   Building2,
   ArrowLeft,
   Eye,
-  EyeOff
+  EyeOff,
+  RefreshCw
 } from 'lucide-react';
 import styled from 'styled-components';
-import { companyAPI, customerAPI } from '../services/api';
+import { companyAPI } from '../services/api';
+import api from '../services/api';
 
 const Container = styled.div`
   background: white;
@@ -182,6 +184,11 @@ const ActionButton = styled.button`
       background-color: ${props => props.active ? '#229954' : '#7f8c8d'};
     }
   }
+
+  &.sync {
+    background-color: #6c5ce7;
+    &:hover { background-color: #5848c2; }
+  }
 `;
 
 const StatusBadge = styled.span`
@@ -224,6 +231,7 @@ const Companies = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [regenLoading, setRegenLoading] = useState({});
+  const [syncLoading, setSyncLoading] = useState({});
 
   const handleRegenerateApiKey = async (company) => {
     setRegenLoading(l => ({ ...l, [company.id]: true }));
@@ -235,6 +243,26 @@ const Companies = () => {
       toast.error('API-kulcs újragenerálása sikertelen');
     } finally {
       setRegenLoading(l => ({ ...l, [company.id]: false }));
+    }
+  };
+
+  const handleFullSync = async (company) => {
+    setSyncLoading(l => ({ ...l, [company.id]: true }));
+    try {
+      await api.get('/api/invoices/incoming/', {
+        params: {
+          company_id: company.id,
+          refresh: 1,
+          backfill_all: 1,
+          page: 1,
+        }
+      });
+      toast.success('NAV visszatöltés elindítva');
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Hiba a visszatöltés indításakor';
+      toast.error(msg);
+    } finally {
+      setSyncLoading(l => ({ ...l, [company.id]: false }));
     }
   };
 
@@ -411,6 +439,14 @@ const Companies = () => {
                       title={company.is_active ? 'Deaktiválás' : 'Aktiválás'}
                     >
                       {company.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
+                    </ActionButton>
+                    <ActionButton
+                      className="sync"
+                      onClick={() => handleFullSync(company)}
+                      title="Bejövő számlák letöltése a NAV-tól"
+                      disabled={syncLoading[company.id]}
+                    >
+                      {syncLoading[company.id] ? '…' : <RefreshCw size={16} />}
                     </ActionButton>
                     <ActionButton
                       className="edit"

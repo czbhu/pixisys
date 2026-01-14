@@ -1,14 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Plus, Search, Edit, Trash2, Star, StarOff, UserCheck, UserX, Phone, Mail, Building } from 'lucide-react';
+import { Plus, Edit, Eye, Star, StarOff, UserCheck, UserX, Phone, Mail, Building, Grid, List, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
 import { contactAPI } from '../services/api';
 
 const Container = styled.div`
   padding: 24px;
-  max-width: 1200px;
+  max-width: 1400px;
   margin: 0 auto;
 `;
 
@@ -19,6 +19,8 @@ const Header = styled.div`
   margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid #ecf0f1;
+  flex-wrap: wrap;
+  gap: 16px;
 `;
 
 const Title = styled.h1`
@@ -28,9 +30,37 @@ const Title = styled.h1`
   color: #2c3e50;
 `;
 
-const ButtonGroup = styled.div`
+const HeaderRight = styled.div`
   display: flex;
   gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+`;
+
+const ViewToggle = styled.div`
+  display: flex;
+  gap: 4px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  padding: 4px;
+`;
+
+const ViewButton = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border: none;
+  background: ${props => props.active ? '#3498db' : 'transparent'};
+  color: ${props => props.active ? 'white' : '#7f8c8d'};
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+
+  &:hover {
+    background: ${props => props.active ? '#3498db' : '#ecf0f1'};
+  }
 `;
 
 const Button = styled.button`
@@ -38,7 +68,7 @@ const Button = styled.button`
   align-items: center;
   gap: 8px;
   padding: 10px 20px;
-  background-color: ${props => props.variant === 'primary' ? '#3498db' : props.variant === 'danger' ? '#e74c3c' : '#95a5a6'};
+  background-color: ${props => props.variant === 'primary' ? '#3498db' : '#95a5a6'};
   color: white;
   border: none;
   border-radius: 6px;
@@ -48,7 +78,7 @@ const Button = styled.button`
   transition: all 0.2s;
 
   &:hover {
-    background-color: ${props => props.variant === 'primary' ? '#2980b9' : props.variant === 'danger' ? '#c0392b' : '#7f8c8d'};
+    background-color: ${props => props.variant === 'primary' ? '#2980b9' : '#7f8c8d'};
     transform: translateY(-1px);
   }
 
@@ -64,10 +94,12 @@ const SearchContainer = styled.div`
   gap: 12px;
   margin-bottom: 24px;
   align-items: center;
+  flex-wrap: wrap;
 `;
 
 const SearchInput = styled.input`
   flex: 1;
+  min-width: 250px;
   padding: 12px 16px;
   border: 1px solid #ddd;
   border-radius: 6px;
@@ -99,6 +131,7 @@ const ContactsGrid = styled.div`
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
   gap: 20px;
+  margin-bottom: 24px;
 `;
 
 const ContactCard = styled.div`
@@ -108,6 +141,7 @@ const ContactCard = styled.div`
   padding: 20px;
   transition: all 0.2s;
   border-left: 4px solid ${props => props.isPrimary ? '#f39c12' : props.isActive ? '#27ae60' : '#95a5a6'};
+  cursor: pointer;
 
   &:hover {
     transform: translateY(-2px);
@@ -149,6 +183,11 @@ const ActionButton = styled.button`
   &:hover {
     background-color: #ecf0f1;
     color: ${props => props.variant === 'primary' ? '#3498db' : props.variant === 'danger' ? '#e74c3c' : '#2c3e50'};
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 `;
 
@@ -202,6 +241,111 @@ const StatusBadge = styled.span`
   margin-left: 8px;
 `;
 
+const Table = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
+  border-radius: 8px;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+`;
+
+const TableHead = styled.thead`
+  background: #f8f9fa;
+  border-bottom: 2px solid #dee2e6;
+`;
+
+const TableRow = styled.tr`
+  border-bottom: 1px solid #ecf0f1;
+  cursor: pointer;
+  
+  &:hover {
+    background-color: #f8f9fa;
+  }
+
+  &:last-child {
+    border-bottom: none;
+  }
+`;
+
+const TableHeader = styled.th`
+  padding: 16px;
+  text-align: left;
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 14px;
+`;
+
+const TableCell = styled.td`
+  padding: 16px;
+  color: #34495e;
+  font-size: 14px;
+`;
+
+const PaginationContainer = styled.div`
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+  padding: 16px 0;
+  flex-wrap: wrap;
+  gap: 16px;
+`;
+
+const PageSizeSelector = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  color: #34495e;
+`;
+
+const PageSizeSelect = styled.select`
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  background-color: white;
+
+  &:focus {
+    outline: none;
+    border-color: #3498db;
+  }
+`;
+
+const PaginationControls = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 12px;
+`;
+
+const PageInfo = styled.span`
+  font-size: 14px;
+  color: #7f8c8d;
+`;
+
+const PaginationButton = styled.button`
+  padding: 8px 16px;
+  border: 1px solid #ddd;
+  background-color: white;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s;
+
+  &:hover:not(:disabled) {
+    background-color: #3498db;
+    color: white;
+    border-color: #3498db;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+`;
+
 const LoadingSpinner = styled.div`
   display: flex;
   justify-content: center;
@@ -233,24 +377,64 @@ const EmptyDescription = styled.p`
   margin: 0;
 `;
 
+const ITEMS_PER_PAGE_OPTIONS = [20, 50, 100, 200];
+
 const Contacts = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  
+  // Load preferences from localStorage
+  const getSavedPreferences = () => {
+    const saved = localStorage.getItem('contactsViewPreferences');
+    if (saved) {
+      try {
+        return JSON.parse(saved);
+      } catch (e) {
+        return { viewMode: 'grid', pageSize: 20 };
+      }
+    }
+    return { viewMode: 'grid', pageSize: 20 };
+  };
+
+  const savedPrefs = getSavedPreferences();
+  const [viewMode, setViewMode] = useState(savedPrefs.viewMode);
+  const [pageSize, setPageSize] = useState(savedPrefs.pageSize);
+  const [currentPage, setCurrentPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [contactTypeFilter, setContactTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  const { data: contacts, isLoading, error } = useQuery(
-    ['contacts', { search: searchTerm, contact_type: contactTypeFilter, is_active: statusFilter }],
+  // Save preferences to localStorage
+  useEffect(() => {
+    localStorage.setItem('contactsViewPreferences', JSON.stringify({
+      viewMode,
+      pageSize
+    }));
+  }, [viewMode, pageSize]);
+
+  const { data: response, isLoading, error } = useQuery(
+    ['contacts', { 
+      search: searchTerm, 
+      contact_type: contactTypeFilter, 
+      is_active: statusFilter,
+      page: currentPage,
+      page_size: pageSize
+    }],
     () => contactAPI.getContacts({
       search: searchTerm || undefined,
       contact_type: contactTypeFilter || undefined,
-      is_active: statusFilter || undefined
+      is_active: statusFilter || undefined,
+      page: currentPage,
+      page_size: pageSize
     }),
     {
-      select: (response) => response.data?.results || []
+      keepPreviousData: true
     }
   );
+
+  const contacts = response?.data?.results || [];
+  const totalCount = response?.data?.count || 0;
+  const totalPages = Math.ceil(totalCount / pageSize);
 
   const deleteContactMutation = useMutation(
     (id) => contactAPI.deleteContact(id),
@@ -294,18 +478,40 @@ const Contacts = () => {
     }
   );
 
-  const handleDelete = (id, name) => {
+  const handleDelete = (e, id, name) => {
+    e.stopPropagation();
     if (window.confirm(`Biztosan törölni szeretné a kapcsolattartót: ${name}?`)) {
       deleteContactMutation.mutate(id);
     }
   };
 
-  const handleSetPrimary = (id) => {
+  const handleSetPrimary = (e, id) => {
+    e.stopPropagation();
     setPrimaryMutation.mutate(id);
   };
 
-  const handleToggleActive = (id) => {
+  const handleToggleActive = (e, id) => {
+    e.stopPropagation();
     toggleActiveMutation.mutate(id);
+  };
+
+  const handleEdit = (e, id) => {
+    e.stopPropagation();
+    navigate(`/contacts/${id}/edit`);
+  };
+
+  const handleView = (id) => {
+    navigate(`/contacts/${id}`);
+  };
+
+  const handleDoubleClick = (id) => {
+    navigate(`/contacts/${id}`);
+  };
+
+  const handlePageSizeChange = (e) => {
+    const newSize = parseInt(e.target.value);
+    setPageSize(newSize);
+    setCurrentPage(1); // Reset to first page when changing page size
   };
 
   const getContactTypeLabel = (type) => {
@@ -320,7 +526,38 @@ const Contacts = () => {
     return labels[type] || type;
   };
 
-  if (isLoading) {
+  const renderPagination = () => (
+    <PaginationContainer>
+      <PageSizeSelector>
+        <span>Sorok száma oldalanként:</span>
+        <PageSizeSelect value={pageSize} onChange={handlePageSizeChange}>
+          {ITEMS_PER_PAGE_OPTIONS.map(option => (
+            <option key={option} value={option}>{option}</option>
+          ))}
+        </PageSizeSelect>
+      </PageSizeSelector>
+
+      <PaginationControls>
+        <PageInfo>
+          {currentPage}. oldal / {totalPages} ({totalCount} kapcsolattartó)
+        </PageInfo>
+        <PaginationButton
+          onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+          disabled={currentPage === 1}
+        >
+          Előző
+        </PaginationButton>
+        <PaginationButton
+          onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+          disabled={currentPage === totalPages || totalPages === 0}
+        >
+          Következő
+        </PaginationButton>
+      </PaginationControls>
+    </PaginationContainer>
+  );
+
+  if (isLoading && !contacts.length) {
     return (
       <Container>
         <LoadingSpinner>Kapcsolattartók betöltése...</LoadingSpinner>
@@ -340,12 +577,30 @@ const Contacts = () => {
     <Container>
       <Header>
         <Title>Kapcsolattartók</Title>
-        <ButtonGroup>
+        <HeaderRight>
+          <ViewToggle>
+            <ViewButton 
+              active={viewMode === 'grid'} 
+              onClick={() => setViewMode('grid')}
+              title="Kártyás nézet"
+            >
+              <Grid size={16} />
+              Kártyás
+            </ViewButton>
+            <ViewButton 
+              active={viewMode === 'list'} 
+              onClick={() => setViewMode('list')}
+              title="Listás nézet"
+            >
+              <List size={16} />
+              Listás
+            </ViewButton>
+          </ViewToggle>
           <Button variant="primary" onClick={() => navigate('/contacts/new')}>
             <Plus size={16} />
             Új kapcsolattartó
           </Button>
-        </ButtonGroup>
+        </HeaderRight>
       </Header>
 
       <SearchContainer>
@@ -353,11 +608,17 @@ const Contacts = () => {
           type="text"
           placeholder="Keresés név, e-mail, pozíció vagy osztály szerint..."
           value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+          onChange={(e) => {
+            setSearchTerm(e.target.value);
+            setCurrentPage(1);
+          }}
         />
         <FilterSelect
           value={contactTypeFilter}
-          onChange={(e) => setContactTypeFilter(e.target.value)}
+          onChange={(e) => {
+            setContactTypeFilter(e.target.value);
+            setCurrentPage(1);
+          }}
         >
           <option value="">Minden típus</option>
           <option value="primary">Elsődleges</option>
@@ -369,7 +630,10 @@ const Contacts = () => {
         </FilterSelect>
         <FilterSelect
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
+          onChange={(e) => {
+            setStatusFilter(e.target.value);
+            setCurrentPage(1);
+          }}
         >
           <option value="">Minden státusz</option>
           <option value="true">Aktív</option>
@@ -377,99 +641,186 @@ const Contacts = () => {
         </FilterSelect>
       </SearchContainer>
 
-      {contacts && contacts.length > 0 ? (
-        <ContactsGrid>
-          {contacts.map((contact) => (
-            <ContactCard key={contact.id} isPrimary={contact.is_primary} isActive={contact.is_active}>
-              <ContactHeader>
-                <ContactName>
-                  {contact.full_name}
-                  {contact.is_primary && <Star size={16} color="#f39c12" />}
-                </ContactName>
-                <ContactActions>
-                  <ActionButton
-                    onClick={() => handleSetPrimary(contact.id)}
-                    title={contact.is_primary ? "Már elsődleges" : "Elsődlegessé tétel"}
-                    disabled={contact.is_primary}
-                  >
-                    {contact.is_primary ? <Star size={16} /> : <StarOff size={16} />}
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() => handleToggleActive(contact.id)}
-                    title={contact.is_active ? "Deaktiválás" : "Aktiválás"}
-                  >
-                    {contact.is_active ? <UserCheck size={16} /> : <UserX size={16} />}
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() => navigate(`/contacts/${contact.id}/edit`)}
-                    title="Szerkesztés"
-                  >
-                    <Edit size={16} />
-                  </ActionButton>
-                  <ActionButton
-                    onClick={() => handleDelete(contact.id, contact.full_name)}
-                    title="Törlés"
-                    variant="danger"
-                  >
-                    <Trash2 size={16} />
-                  </ActionButton>
-                </ContactActions>
-              </ContactHeader>
+      {/* Top pagination */}
+      {totalPages > 1 && renderPagination()}
 
-              <ContactInfo>
-                <InfoRow>
-                  <InfoLabel>Ügyfél:</InfoLabel>
-                  <span>{contact.customer_name}</span>
-                </InfoRow>
-                
-                {contact.position && (
+      {contacts && contacts.length > 0 ? (
+        viewMode === 'grid' ? (
+          <ContactsGrid>
+            {contacts.map((contact) => (
+              <ContactCard 
+                key={contact.id} 
+                isPrimary={contact.is_primary} 
+                isActive={contact.is_active}
+                onDoubleClick={() => handleDoubleClick(contact.id)}
+              >
+                <ContactHeader>
+                  <ContactName>
+                    {contact.full_name}
+                    {contact.is_primary && <Star size={16} color="#f39c12" />}
+                  </ContactName>
+                  <ContactActions>
+                    <ActionButton
+                      onClick={(e) => handleSetPrimary(e, contact.id)}
+                      title={contact.is_primary ? "Már elsődleges" : "Elsődlegessé tétel"}
+                      disabled={contact.is_primary}
+                    >
+                      {contact.is_primary ? <Star size={16} /> : <StarOff size={16} />}
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleToggleActive(e, contact.id)}
+                      title={contact.is_active ? "Deaktiválás" : "Aktiválás"}
+                    >
+                      {contact.is_active ? <UserCheck size={16} /> : <UserX size={16} />}
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleView(contact.id)}
+                      title="Megtekintés"
+                      variant="primary"
+                    >
+                      <Eye size={16} />
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleEdit(e, contact.id)}
+                      title="Szerkesztés"
+                      variant="primary"
+                    >
+                      <Edit size={16} />
+                    </ActionButton>
+                    <ActionButton
+                      onClick={(e) => handleDelete(e, contact.id, contact.full_name)}
+                      title="Törlés"
+                      variant="danger"
+                    >
+                      <Trash2 size={16} />
+                    </ActionButton>
+                  </ContactActions>
+                </ContactHeader>
+
+                <ContactInfo>
                   <InfoRow>
-                    <InfoLabel>Pozíció:</InfoLabel>
-                    <span>{contact.position}</span>
+                    <InfoLabel>Ügyfél:</InfoLabel>
+                    <span>{contact.customer_name}</span>
                   </InfoRow>
-                )}
-                
-                {contact.department && (
+                  
+                  {contact.position && (
+                    <InfoRow>
+                      <InfoLabel>Pozíció:</InfoLabel>
+                      <span>{contact.position}</span>
+                    </InfoRow>
+                  )}
+                  
+                  {contact.department && (
+                    <InfoRow>
+                      <InfoLabel>Osztály:</InfoLabel>
+                      <span>{contact.department}</span>
+                    </InfoRow>
+                  )}
+                  
                   <InfoRow>
-                    <InfoLabel>Osztály:</InfoLabel>
-                    <span>{contact.department}</span>
+                    <InfoLabel>Típus:</InfoLabel>
+                    <ContactType type={contact.contact_type}>
+                      {getContactTypeLabel(contact.contact_type)}
+                    </ContactType>
+                    <StatusBadge isActive={contact.is_active}>
+                      {contact.is_active ? 'Aktív' : 'Inaktív'}
+                    </StatusBadge>
                   </InfoRow>
-                )}
-                
-                <InfoRow>
-                  <InfoLabel>Típus:</InfoLabel>
-                  <ContactType type={contact.contact_type}>
-                    {getContactTypeLabel(contact.contact_type)}
-                  </ContactType>
-                  <StatusBadge isActive={contact.is_active}>
-                    {contact.is_active ? 'Aktív' : 'Inaktív'}
-                  </StatusBadge>
-                </InfoRow>
-                
-                {contact.email && (
-                  <InfoRow>
-                    <Mail size={14} />
-                    <span>{contact.email}</span>
-                  </InfoRow>
-                )}
-                
-                {contact.phone && (
-                  <InfoRow>
-                    <Phone size={14} />
-                    <span>{contact.phone}</span>
-                  </InfoRow>
-                )}
-                
-                {contact.mobile && (
-                  <InfoRow>
-                    <Phone size={14} />
-                    <span>{contact.mobile} (mobil)</span>
-                  </InfoRow>
-                )}
-              </ContactInfo>
-            </ContactCard>
-          ))}
-        </ContactsGrid>
+                  
+                  {contact.email && (
+                    <InfoRow>
+                      <Mail size={14} />
+                      <span>{contact.email}</span>
+                    </InfoRow>
+                  )}
+                  
+                  {contact.phone && (
+                    <InfoRow>
+                      <Phone size={14} />
+                      <span>{contact.phone}</span>
+                    </InfoRow>
+                  )}
+                  
+                  {contact.mobile && (
+                    <InfoRow>
+                      <Phone size={14} />
+                      <span>{contact.mobile} (mobil)</span>
+                    </InfoRow>
+                  )}
+                </ContactInfo>
+              </ContactCard>
+            ))}
+          </ContactsGrid>
+        ) : (
+          <Table>
+            <TableHead>
+              <tr>
+                <TableHeader>Név</TableHeader>
+                <TableHeader>Ügyfél</TableHeader>
+                <TableHeader>Pozíció</TableHeader>
+                <TableHeader>Típus</TableHeader>
+                <TableHeader>E-mail</TableHeader>
+                <TableHeader>Telefon</TableHeader>
+                <TableHeader>Státusz</TableHeader>
+                <TableHeader>Műveletek</TableHeader>
+              </tr>
+            </TableHead>
+            <tbody>
+              {contacts.map((contact) => (
+                <TableRow 
+                  key={contact.id}
+                  onDoubleClick={() => handleDoubleClick(contact.id)}
+                >
+                  <TableCell>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {contact.full_name}
+                      {contact.is_primary && <Star size={14} color="#f39c12" fill="#f39c12" />}
+                    </div>
+                  </TableCell>
+                  <TableCell>{contact.customer_name}</TableCell>
+                  <TableCell>{contact.position || '-'}</TableCell>
+                  <TableCell>
+                    <ContactType type={contact.contact_type}>
+                      {getContactTypeLabel(contact.contact_type)}
+                    </ContactType>
+                  </TableCell>
+                  <TableCell>{contact.email || '-'}</TableCell>
+                  <TableCell>{contact.phone || contact.mobile || '-'}</TableCell>
+                  <TableCell>
+                    <StatusBadge isActive={contact.is_active}>
+                      {contact.is_active ? 'Aktív' : 'Inaktív'}
+                    </StatusBadge>
+                  </TableCell>
+                  <TableCell>
+                    <ContactActions>
+                      <ActionButton
+                        onClick={(e) => handleView(contact.id)}
+                        title="Megtekintés"
+                        variant="primary"
+                      >
+                        <Eye size={16} />
+                      </ActionButton>
+                      <ActionButton
+                        onClick={(e) => handleEdit(e, contact.id)}
+                        title="Szerkesztés"
+                        variant="primary"
+                      >
+                        <Edit size={16} />
+                      </ActionButton>
+                      <ActionButton
+                        onClick={(e) => handleDelete(e, contact.id, contact.full_name)}
+                        title="Törlés"
+                        variant="danger"
+                      >
+                        <Trash2 size={16} />
+                      </ActionButton>
+                    </ContactActions>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </tbody>
+          </Table>
+        )
       ) : (
         <EmptyState>
           <EmptyIcon>👥</EmptyIcon>
@@ -482,6 +833,9 @@ const Contacts = () => {
           </EmptyDescription>
         </EmptyState>
       )}
+
+      {/* Bottom pagination */}
+      {totalPages > 1 && renderPagination()}
     </Container>
   );
 };

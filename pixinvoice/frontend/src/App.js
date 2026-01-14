@@ -17,6 +17,7 @@ import Customers from './pages/Customers';
 import CustomerDetail from './pages/CustomerDetail';
 import CustomerForm from './pages/CustomerForm';
 import Contacts from './pages/Contacts';
+import ContactDetail from './pages/ContactDetail';
 import ContactForm from './pages/ContactForm';
 import Settings from './pages/Settings';
 import EmailSettings from './pages/EmailSettings';
@@ -97,6 +98,7 @@ function AppContent() {
                 <Route path="/customers/:id/edit" element={<CustomerForm />} />
                 <Route path="/contacts" element={<Contacts />} />
                 <Route path="/contacts/new" element={<ContactForm />} />
+                <Route path="/contacts/:id" element={<ContactDetail />} />
                 <Route path="/contacts/:id/edit" element={<ContactForm />} />
                 <Route path="/settings" element={<Settings />} />
                 <Route path="/settings/vat-types" element={<VATTypes />} />

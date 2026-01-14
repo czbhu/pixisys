@@ -3,6 +3,7 @@ CSV Import views for customers and contacts
 """
 import csv
 import io
+import html
 from django.http import HttpResponse, StreamingHttpResponse
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
@@ -114,6 +115,7 @@ def import_customers_streaming(request):
             
             created_count = 0
             updated_count = 0
+            duplicate_count = 0
             error_count = 0
             errors = []
             nav_found_count = 0
@@ -122,15 +124,26 @@ def import_customers_streaming(request):
             for row_num, row in enumerate(rows, start=2):
                 try:
                     # Flexible field name mapping
-                    tax_number = (row.get('Adószám (8 jegyű)') or row.get('tax_number') or '').strip()
+                    raw_tax = (row.get('Adószám (8 jegyű)') or row.get('tax_number') or '').strip()
+                    tax_number = raw_tax.replace('-', '').replace(' ', '')[:8]
                     
                     if not tax_number:
                         errors.append(f"Sor {row_num}: Adószám hiányzik")
                         error_count += 1
                         continue
+
+                    if len(tax_number) != 8:
+                        errors.append(f"Sor {row_num}: Az adószámnak 8 számjegyből kell állnia")
+                        error_count += 1
+                        continue
                     
-                    # Check if customer exists
+                    # Check if customer exists (duplicate jelzés import/szinkron esetén)
                     customer = Customer.objects.filter(tax_number=tax_number).first()
+                    if customer:
+                        duplicate_count += 1
+                        errors.append(f"Sor {row_num}: Már létezik ügyfél ezzel az adószámmal ({customer.name})")
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'nav_queries': nav_found_count, 'updated': updated_count, 'created': created_count, 'duplicates': duplicate_count, 'errors': error_count})}\n\n"
+                        continue
                     
                     customer_data = {'tax_number': tax_number}
                     
@@ -325,7 +338,8 @@ def import_customers_streaming(request):
                 'error_details': errors[:20],
                 'nav_found': nav_found_count,
                 'nav_not_found_count': len(nav_not_found),
-                'nav_not_found': nav_not_found
+                'nav_not_found': nav_not_found,
+                'duplicates': duplicate_count
             }
             
             yield f"data: {json.dumps(result)}\n\n"
@@ -368,6 +382,7 @@ def import_customers(request):
         
         created_count = 0
         updated_count = 0
+        duplicate_count = 0
         error_count = 0
         errors = []
         nav_found_count = 0
@@ -375,15 +390,25 @@ def import_customers(request):
         
         for row_num, row in enumerate(csv_reader, start=2):  # Start from 2 (header is 1)
             try:
-                tax_number = row.get('Adószám (8 jegyű)', '').strip()
+                raw_tax = row.get('Adószám (8 jegyű)', '').strip()
+                tax_number = raw_tax.replace('-', '').replace(' ', '')[:8]
                 
                 if not tax_number:
                     errors.append(f"Sor {row_num}: Adószám hiányzik")
                     error_count += 1
                     continue
+
+                if len(tax_number) != 8:
+                    errors.append(f"Sor {row_num}: Az adószámnak 8 számjegyből kell állnia")
+                    error_count += 1
+                    continue
                 
                 # Check if customer exists
                 customer = Customer.objects.filter(tax_number=tax_number).first()
+                if customer:
+                    duplicate_count += 1
+                    errors.append(f"Sor {row_num}: Már létezik ügyfél ezzel az adószámmal ({customer.name})")
+                    continue
                 
                 # Initialize customer_data with basic CSV data
                 customer_data = {
@@ -644,6 +669,7 @@ def import_customers(request):
             'updated': updated_count,
             'total': created_count + updated_count,
             'errors': error_count,
+            'duplicates': duplicate_count,
             'error_details': errors[:20],  # Limit to first 20 errors
         }
         
@@ -685,6 +711,7 @@ def import_contacts(request):
         
         created_count = 0
         updated_count = 0
+        duplicate_count = 0
         error_count = 0
         skipped_count = 0
         errors = []
@@ -711,15 +738,15 @@ def import_contacts(request):
                         skipped_count += 1
                         continue
                 
-                # Check if contact exists (by email or name+customer)
-                existing_contact = None
-                if email:
-                    existing_contact = Contact.objects.filter(email=email).first()
-                elif customer:
-                    existing_contact = Contact.objects.filter(
+                # Check if contact exists (by email or name+customer) - automatizálásnál ne hozzunk létre duplikátumot
+                duplicate_contact = None
+                if email and customer:
+                    duplicate_contact = Contact.objects.filter(customer=customer, email=email).first()
+                if not duplicate_contact and customer:
+                    duplicate_contact = Contact.objects.filter(
                         customer=customer,
-                        first_name=first_name,
-                        last_name=last_name
+                        first_name__iexact=first_name,
+                        last_name__iexact=last_name
                     ).first()
                 
                 contact_data = {
@@ -746,24 +773,20 @@ def import_contacts(request):
                     skipped_count += 1
                     continue
                 
-                if existing_contact:
-                    # Update existing contact
-                    serializer = ContactSerializer(existing_contact, data=contact_data, partial=False)
-                    if serializer.is_valid():
-                        serializer.save()
-                        updated_count += 1
-                    else:
-                        errors.append(f"Sor {row_num}: {serializer.errors}")
-                        error_count += 1
+                if duplicate_contact:
+                    duplicate_count += 1
+                    errors.append(f"Sor {row_num}: Már van ilyen nevű/emailű kapcsolattartó ennél az ügyfélnél ({duplicate_contact.full_name})")
+                    skipped_count += 1
+                    continue
+
+                # Create new contact (nincs duplikátum)
+                serializer = ContactSerializer(data=contact_data)
+                if serializer.is_valid():
+                    serializer.save()
+                    created_count += 1
                 else:
-                    # Create new contact
-                    serializer = ContactSerializer(data=contact_data)
-                    if serializer.is_valid():
-                        serializer.save()
-                        created_count += 1
-                    else:
-                        errors.append(f"Sor {row_num}: {serializer.errors}")
-                        error_count += 1
+                    errors.append(f"Sor {row_num}: {serializer.errors}")
+                    error_count += 1
                         
             except Exception as e:
                 errors.append(f"Sor {row_num}: {str(e)}")
@@ -775,6 +798,7 @@ def import_contacts(request):
             'created': created_count,
             'updated': updated_count,
             'skipped': skipped_count,
+            'duplicates': duplicate_count,
             'errors': error_count,
             'error_details': errors[:20]  # Limit to first 20 errors
         })
@@ -782,3 +806,696 @@ def import_contacts(request):
     except Exception as e:
         logger.error(f"Error importing contacts: {e}", exc_info=True)
         return Response({'error': f'Hiba az importálás során: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def import_contacts_streaming(request):
+    """
+    Streaming contact import with SSE for real-time progress
+    """
+    if 'file' not in request.FILES:
+        return StreamingHttpResponse(
+            iter([f"data: {json.dumps({'type': 'error', 'message': 'Nincs fájl feltöltve'})}\n\n"]),
+            content_type='text/event-stream'
+        )
+    
+    csv_file = request.FILES['file']
+    
+    if not csv_file.name.endswith('.csv'):
+        return StreamingHttpResponse(
+            iter([f"data: {json.dumps({'type': 'error', 'message': 'Csak CSV fájl tölthető fel'})}\n\n"]),
+            content_type='text/event-stream'
+        )
+    
+    def generate():
+        try:
+            # Read CSV file
+            decoded_file = csv_file.read().decode('utf-8-sig')
+            csv_reader = csv.DictReader(io.StringIO(decoded_file))
+            rows = list(csv_reader)
+            total_count = len(rows)
+            
+            # Send initial progress
+            yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': 0, 'updated': 0, 'created': 0, 'errors': 0})}\n\n"
+            
+            created_count = 0
+            updated_count = 0
+            duplicate_count = 0
+            error_count = 0
+            skipped_count = 0
+            errors = []
+            missing_customers = []  # Hiányzó ügyfelek listája
+            
+            for row_num, row in enumerate(rows, start=2):
+                try:
+                    # Flexible field name mapping with HTML entity decoding
+                    full_name = html.unescape((row.get('Kapcsolattartó neve') or row.get('Név') or '').strip())
+                    first_name = html.unescape((row.get('Keresztnév') or row.get('first_name') or '').strip())
+                    last_name = html.unescape((row.get('Vezetéknév') or row.get('last_name') or '').strip())
+                    
+                    # If full name provided but not first/last, try to split
+                    if full_name and not (first_name and last_name):
+                        name_parts = full_name.split(' ', 1)
+                        if len(name_parts) == 2:
+                            last_name = name_parts[0]
+                            first_name = name_parts[1]
+                        elif len(name_parts) == 1:
+                            last_name = name_parts[0]
+                            first_name = ''
+                    
+                    if not last_name:
+                        errors.append(f"Sor {row_num}: Név hiányzik")
+                        error_count += 1
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count})}\n\n"
+                        continue
+                    
+                    tax_number = (row.get('Ügyfél adószáma (8 jegyű, opcionális)') or row.get('Adószám') or row.get('tax_number') or '').strip()
+                    email = (row.get('E-mail') or row.get('Email') or row.get('email') or '').strip()
+                    company_name = html.unescape((row.get('Cégnév') or row.get('Cég neve') or row.get('company_name') or '').strip())
+                    
+                    customer = None
+                    if tax_number:
+                        # Az első 8 számjegyet vegye figyelembe
+                        clean_tax = tax_number.replace('-', '').replace(' ', '')[:8]
+                        customer = Customer.objects.filter(tax_number=clean_tax).first()
+                        
+                        if not customer:
+                            # Ne hozzon létre automatikusan új ügyfelet, helyette gyűjtse össze
+                            missing_customer_entry = {
+                                'row': row_num,
+                                'tax_number': clean_tax,
+                                'company_name': company_name,
+                                'contact_name': full_name or f"{last_name} {first_name}".strip(),
+                                'email': email
+                            }
+                            # Ellenőrizze, hogy már van-e ilyen a listában
+                            if not any(mc['tax_number'] == clean_tax for mc in missing_customers):
+                                missing_customers.append(missing_customer_entry)
+                            
+                            errors.append(f"Sor {row_num}: Nem található ügyfél {clean_tax} adószámmal")
+                            skipped_count += 1
+                            yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count, 'skipped': skipped_count})}\n\n"
+                            continue
+                    
+                    duplicate_contact = None
+                    if email and customer:
+                        duplicate_contact = Contact.objects.filter(customer=customer, email=email).first()
+                    if not duplicate_contact and customer and last_name:
+                        duplicate_contact = Contact.objects.filter(
+                            customer=customer,
+                            first_name__iexact=first_name,
+                            last_name__iexact=last_name
+                        ).first()
+                    
+                    # Validálás és tisztítás
+                    phone_raw = (row.get('Telefon') or row.get('phone') or '').strip()
+                    mobile_raw = (row.get('Mobil') or row.get('mobile') or '').strip()
+                    fax_raw = (row.get('Fax') or row.get('fax') or '').strip()
+                    
+                    # Telefonszámok levágása 20 karakterre
+                    phone_clean = phone_raw[:20] if phone_raw else None
+                    mobile_clean = mobile_raw[:20] if mobile_raw else None
+                    fax_clean = fax_raw[:20] if fax_raw else None
+                    
+                    # Email validálás
+                    email_clean = None
+                    if email:
+                        # Egyszerű email validálás
+                        if '@' in email and '.' in email.split('@')[-1]:
+                            email_clean = email
+                    
+                    contact_data = {
+                        'first_name': first_name if first_name else '-',  # Ha nincs keresztnév, kötőjel
+                        'last_name': last_name,
+                        'position': (row.get('Pozíció') or row.get('position') or '').strip() or None,
+                        'department': (row.get('Osztály') or row.get('department') or '').strip() or None,
+                        'contact_type': (row.get('Típus') or row.get('contact_type') or 'other').strip() or 'other',
+                        'email': email_clean,
+                        'phone': phone_clean,
+                        'mobile': mobile_clean,
+                        'fax': fax_clean,
+                        'notes': (row.get('Megjegyzések') or row.get('notes') or '').strip() or None,
+                        'is_primary': (row.get('Pénzügyes') or row.get('is_primary') or '').strip() in ['1', 'true', 'True'],
+                        'is_active': (row.get('Hírlevél') or row.get('is_active') or '1').strip() in ['1', 'true', 'True'],
+                    }
+                    
+                    if customer:
+                        contact_data['customer'] = customer.id
+                    else:
+                        errors.append(f"Sor {row_num}: Nincs megadva ügyfél adószám")
+                        skipped_count += 1
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count, 'skipped': skipped_count, 'duplicates': duplicate_count})}\n\n"
+                        continue
+
+                    if duplicate_contact:
+                        duplicate_count += 1
+                        errors.append(f"Sor {row_num}: Már van ilyen nevű/emailű kapcsolattartó ennél az ügyfélnél ({duplicate_contact.full_name})")
+                        skipped_count += 1
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count, 'skipped': skipped_count, 'duplicates': duplicate_count})}\n\n"
+                        continue
+
+                    serializer = ContactSerializer(data=contact_data)
+                    if serializer.is_valid():
+                        serializer.save()
+                        created_count += 1
+                    else:
+                        errors.append(f"Sor {row_num}: {serializer.errors}")
+                        error_count += 1
+                    
+                    yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count, 'skipped': skipped_count, 'duplicates': duplicate_count})}\n\n"
+                    
+                except Exception as e:
+                    errors.append(f"Sor {row_num}: {str(e)}")
+                    error_count += 1
+                    logger.error(f"Error importing contact row {row_num}: {e}", exc_info=True)
+                    yield f"data: {json.dumps({'type': 'progress', 'total': total_count, 'imported': row_num - 1, 'updated': updated_count, 'created': created_count, 'errors': error_count, 'skipped': skipped_count, 'duplicates': duplicate_count})}\n\n"
+            
+            result_data = {
+                'type': 'complete', 
+                'success': True, 
+                'message': f'Import befejezve: {created_count + updated_count} kapcsolat importálva', 
+                'created': created_count, 
+                'updated': updated_count, 
+                'total': total_count, 
+                'errors': error_count,
+                'skipped': skipped_count,
+                'duplicates': duplicate_count,
+                'error_details': errors[:20],
+                'missing_customers': missing_customers
+            }
+            yield f"data: {json.dumps(result_data)}\n\n"
+            
+        except Exception as e:
+            logger.error(f"Error in streaming contact import: {e}", exc_info=True)
+            yield f"data: {json.dumps({'type': 'error', 'message': f'Hiba az importálás során: {str(e)}'})}\n\n"
+    
+    return StreamingHttpResponse(generate(), content_type='text/event-stream')
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def export_missing_customers_csv(request):
+    """
+    Hiányzó ügyfelek exportálása CSV fájlba
+    A frontend küldi a missing_customers listát a request body-ban
+    """
+    try:
+        missing_customers = request.data.get('missing_customers', [])
+        
+        if not missing_customers:
+            return Response({'error': 'Nincs hiányzó ügyfél adat'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="hianyzó_ugyfelek.csv"'
+        response.write('\ufeff')  # UTF-8 BOM for Excel
+        
+        writer = csv.writer(response)
+        writer.writerow([
+            'Adószám (8 jegyű)', 'Cégnév', 'Kapcsolattartó neve', 'E-mail', 'Megjegyzés'
+        ])
+        
+        for customer in missing_customers:
+            writer.writerow([
+                customer.get('tax_number', ''),
+                customer.get('company_name', ''),
+                customer.get('contact_name', ''),
+                customer.get('email', ''),
+                f"Sor {customer.get('row', '')} - Kapcsolattartó importáláskor nem található"
+            ])
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error exporting missing customers: {e}", exc_info=True)
+        return Response({'error': f'Hiba az exportálás során: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def import_suppliers_from_invoices(request):
+    """
+    Import suppliers from incoming invoices
+    - Extracts unique domestic tax numbers from IncomingInvoiceData
+    - Queries NAV API for each tax number
+    - Creates new Customer with is_supplier=True if not exists
+    - Updates existing Customer and sets is_supplier=True if exists
+    - Preserves is_customer flag if already set
+    - Adds bank account if found in invoice XML
+    """
+    try:
+        company_id = request.data.get('company_id')
+        if not company_id:
+            return Response({'error': 'Cégazonosító kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from invoices.models import IncomingInvoiceData, CustomerBankAccount
+        import re
+        from xml.etree import ElementTree as ET
+        
+        # Get NAV configuration for the company
+        try:
+            nav_config = CompanyNAVConfiguration.objects.get(company_id=company_id)
+        except CompanyNAVConfiguration.DoesNotExist:
+            return Response({'error': 'NAV konfiguráció nem található'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Extract unique domestic supplier tax numbers from incoming invoices
+        invoices = IncomingInvoiceData.objects.filter(company_id=company_id).exclude(supplier_tax_number__isnull=True)
+        
+        tax_numbers_with_bank = {}  # {tax_number: [bank_accounts]}
+        
+        for invoice in invoices:
+            tax_num = (invoice.supplier_tax_number or '').strip()
+            if not tax_num:
+                continue
+            
+            # Extract first 8 digits for domestic tax numbers
+            if tax_num.startswith('HU'):
+                tax_num = tax_num[2:]
+            tax_num = re.sub(r'[^0-9]', '', tax_num)[:8]
+            
+            if len(tax_num) != 8:
+                continue
+            
+            # Extract bank accounts from XML
+            if invoice.xml_text and tax_num not in tax_numbers_with_bank:
+                try:
+                    root = ET.fromstring(invoice.xml_text)
+                    # Find all bank account numbers
+                    bank_accounts = []
+                    for elem in root.iter():
+                        if 'bankAccountNumber' in elem.tag.lower() or 'supplierbankaccount' in elem.tag.lower():
+                            acc = (elem.text or '').strip()
+                            if acc and len(acc) > 10:  # Basic validation
+                                bank_accounts.append(acc)
+                    
+                    if bank_accounts:
+                        tax_numbers_with_bank[tax_num] = list(set(bank_accounts))
+                except Exception as e:
+                    logger.warning(f"Failed to parse XML for invoice {invoice.invoice_number}: {e}")
+            
+            if tax_num not in tax_numbers_with_bank:
+                tax_numbers_with_bank[tax_num] = []
+        
+        unique_tax_numbers = list(tax_numbers_with_bank.keys())
+        
+        if not unique_tax_numbers:
+            return Response({
+                'success': True,
+                'created': 0,
+                'updated': 0,
+                'skipped': 0,
+                'total': 0,
+                'message': 'Nincs feldolgozható belföldi beszállító'
+            })
+        
+        # Initialize NAV service
+        nav_service = NAVService(config=nav_config)
+        
+        created = 0
+        updated = 0
+        skipped = 0
+        error_details = []
+        
+        for tax_number in unique_tax_numbers:
+            try:
+                # Query NAV API
+                result = nav_service.query_taxpayer(tax_number)
+                
+                if not result or not result.get('success'):
+                    error_details.append(f"{tax_number}: NAV lekérdezési hiba")
+                    skipped += 1
+                    continue
+                
+                # Parse XML response
+                xml_response = result.get('response')
+                if not xml_response:
+                    error_details.append(f"{tax_number}: Üres NAV válasz")
+                    skipped += 1
+                    continue
+                
+                # Parse NAV response to extract taxpayer data
+                parsed = parse_nav_taxpayer_response(xml_response)
+                
+                if not parsed or not parsed.get('taxpayer_name'):
+                    error_details.append(f"{tax_number}: Nincs adózói adat")
+                    skipped += 1
+                    continue
+                
+                # Check if customer exists
+                existing = Customer.objects.filter(tax_number=tax_number).first()
+                
+                if existing:
+                    # Update existing customer
+                    old_is_customer = existing.is_customer
+                    
+                    # Update fields from NAV data
+                    if parsed.get('taxpayer_name'):
+                        existing.name = parsed['taxpayer_name']
+                    if parsed.get('taxpayer_short_name'):
+                        existing.short_name = parsed['taxpayer_short_name']
+                    
+                    # Address data
+                    address_list = parsed.get('taxpayer_address_list', [])
+                    if address_list:
+                        hq_address = next((addr for addr in address_list if addr.get('taxpayerAddressType') == 'HQ'), address_list[0])
+                        if hq_address:
+                            existing.street_name = hq_address.get('streetName', existing.street_name)
+                            existing.public_place_category = hq_address.get('publicPlaceCategory', existing.public_place_category)
+                            existing.street_number = hq_address.get('number', existing.street_number)
+                            existing.city = hq_address.get('city', existing.city)
+                            existing.postal_code = hq_address.get('postalCode', existing.postal_code)
+                    
+                    # Tax details
+                    tax_detail = parsed.get('tax_number_detail')
+                    if tax_detail:
+                        if tax_detail.get('vatCode'):
+                            existing.vat_code = tax_detail['vatCode']
+                        if tax_detail.get('countyCode'):
+                            existing.county_code = tax_detail['countyCode']
+                        
+                        # Build full tax number (e.g., 12345678-2-01)
+                        vat_code = tax_detail.get('vatCode', '')
+                        county_code = tax_detail.get('countyCode', '')
+                        if vat_code and county_code:
+                            existing.full_tax_number = f"{tax_number}-{vat_code}-{county_code}"
+                    
+                    existing.country = 'Magyarország'
+                    existing.vat_status = 'DOMESTIC'
+                    existing.is_hungarian_taxpayer = True
+                    existing.is_supplier = True  # Mark as supplier
+                    existing.is_customer = old_is_customer  # Preserve customer flag
+                    existing.save()
+                    
+                    updated += 1
+                    
+                    # Add bank accounts if found in invoice
+                    bank_accounts = tax_numbers_with_bank.get(tax_number, [])
+                    for bank_acc in bank_accounts:
+                        if not CustomerBankAccount.objects.filter(customer=existing, account_number=bank_acc).exists():
+                            CustomerBankAccount.objects.create(
+                                customer=existing,
+                                account_number=bank_acc,
+                                bank_name='',
+                                is_primary=CustomerBankAccount.objects.filter(customer=existing).count() == 0
+                            )
+                    
+                else:
+                    # Create new customer from NAV data
+                    customer_data = {
+                        'tax_number': tax_number,
+                        'name': parsed.get('taxpayer_name', f'Beszállító {tax_number}'),
+                        'short_name': parsed.get('taxpayer_short_name') or parsed.get('taxpayer_name', f'Beszállító {tax_number}')[:50],
+                        'country': 'Magyarország',
+                        'vat_status': 'DOMESTIC',
+                        'is_hungarian_taxpayer': True,
+                        'is_supplier': True,
+                        'is_customer': False,
+                    }
+                    
+                    # Address data
+                    address_list = parsed.get('taxpayer_address_list', [])
+                    if address_list:
+                        hq_address = next((addr for addr in address_list if addr.get('taxpayerAddressType') == 'HQ'), address_list[0])
+                        if hq_address:
+                            customer_data['street_name'] = hq_address.get('streetName', '')
+                            customer_data['public_place_category'] = hq_address.get('publicPlaceCategory', '')
+                            customer_data['street_number'] = hq_address.get('number', '')
+                            customer_data['city'] = hq_address.get('city', '')
+                            customer_data['postal_code'] = hq_address.get('postalCode', '')
+                    
+                    # Tax details
+                    tax_detail = parsed.get('tax_number_detail')
+                    if tax_detail:
+                        if tax_detail.get('vatCode'):
+                            customer_data['vat_code'] = tax_detail['vatCode']
+                        if tax_detail.get('countyCode'):
+                            customer_data['county_code'] = tax_detail['countyCode']
+                        
+                        # Build full tax number (e.g., 12345678-2-01)
+                        vat_code = tax_detail.get('vatCode', '')
+                        county_code = tax_detail.get('countyCode', '')
+                        if vat_code and county_code:
+                            customer_data['full_tax_number'] = f"{tax_number}-{vat_code}-{county_code}"
+                    
+                    new_customer = Customer.objects.create(**customer_data)
+                    created += 1
+                    
+                    # Add bank accounts if found in invoice
+                    bank_accounts = tax_numbers_with_bank.get(tax_number, [])
+                    for idx, bank_acc in enumerate(bank_accounts):
+                        CustomerBankAccount.objects.create(
+                            customer=new_customer,
+                            account_number=bank_acc,
+                            bank_name='',
+                            is_primary=(idx == 0)
+                        )
+                
+            except Exception as e:
+                logger.error(f"Error processing tax number {tax_number}: {e}", exc_info=True)
+                error_details.append(f"{tax_number}: {str(e)}")
+                skipped += 1
+                continue
+        
+        return Response({
+            'success': True,
+            'created': created,
+            'updated': updated,
+            'skipped': skipped,
+            'total': len(unique_tax_numbers),
+            'error_details': error_details if error_details else None
+        })
+        
+    except Exception as e:
+        logger.error(f"Error importing suppliers from invoices: {e}", exc_info=True)
+        return Response({'error': f'Hiba történt: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def import_suppliers_from_invoices_streaming(request):
+    """
+    Import suppliers from incoming invoices with real-time progress updates (Server-Sent Events)
+    """
+    try:
+        company_id = request.data.get('company_id')
+        if not company_id:
+            return Response({'error': 'Cégazonosító kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        from invoices.models import IncomingInvoiceData, CustomerBankAccount
+        import re
+        from xml.etree import ElementTree as ET
+        
+        def generate():
+            try:
+                # Get NAV configuration
+                try:
+                    nav_config = CompanyNAVConfiguration.objects.get(company_id=company_id)
+                except CompanyNAVConfiguration.DoesNotExist:
+                    yield f"data: {json.dumps({'error': 'NAV konfiguráció nem található'})}\n\n"
+                    return
+                
+                # Extract unique domestic supplier tax numbers
+                invoices = IncomingInvoiceData.objects.filter(company_id=company_id).exclude(supplier_tax_number__isnull=True)
+                
+                tax_numbers_with_bank = {}
+                
+                for invoice in invoices:
+                    tax_num = (invoice.supplier_tax_number or '').strip()
+                    if not tax_num:
+                        continue
+                    
+                    if tax_num.startswith('HU'):
+                        tax_num = tax_num[2:]
+                    tax_num = re.sub(r'[^0-9]', '', tax_num)[:8]
+                    
+                    if len(tax_num) != 8:
+                        continue
+                    
+                    # Extract bank accounts from XML
+                    if invoice.xml_text and tax_num not in tax_numbers_with_bank:
+                        try:
+                            root = ET.fromstring(invoice.xml_text)
+                            bank_accounts = []
+                            for elem in root.iter():
+                                if 'bankAccountNumber' in elem.tag.lower() or 'supplierbankaccount' in elem.tag.lower():
+                                    acc = (elem.text or '').strip()
+                                    if acc and len(acc) > 10:
+                                        bank_accounts.append(acc)
+                            
+                            if bank_accounts:
+                                tax_numbers_with_bank[tax_num] = list(set(bank_accounts))
+                        except Exception:
+                            pass
+                    
+                    if tax_num not in tax_numbers_with_bank:
+                        tax_numbers_with_bank[tax_num] = []
+                
+                unique_tax_numbers = list(tax_numbers_with_bank.keys())
+                total = len(unique_tax_numbers)
+                
+                if total == 0:
+                    yield f"data: {json.dumps({'success': True, 'created': 0, 'updated': 0, 'skipped': 0, 'total': 0})}\n\n"
+                    return
+                
+                # Initialize NAV service
+                nav_service = NAVService(config=nav_config)
+                
+                created = 0
+                updated = 0
+                skipped = 0
+                processed = 0
+                
+                # Send initial progress
+                yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': 0, 'created': 0, 'updated': 0, 'skipped': 0})}\n\n"
+                
+                for tax_number in unique_tax_numbers:
+                    try:
+                        # Send current tax number
+                        yield f"data: {json.dumps({'type': 'current', 'tax_number': tax_number})}\n\n"
+                        
+                        # Query NAV API
+                        result = nav_service.query_taxpayer(tax_number)
+                        
+                        if not result or not result.get('success'):
+                            skipped += 1
+                            processed += 1
+                            yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': processed, 'created': created, 'updated': updated, 'skipped': skipped})}\n\n"
+                            continue
+                        
+                        xml_response = result.get('response')
+                        if not xml_response:
+                            skipped += 1
+                            processed += 1
+                            yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': processed, 'created': created, 'updated': updated, 'skipped': skipped})}\n\n"
+                            continue
+                        
+                        parsed = parse_nav_taxpayer_response(xml_response)
+                        
+                        if not parsed or not parsed.get('taxpayer_name'):
+                            skipped += 1
+                            processed += 1
+                            yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': processed, 'created': created, 'updated': updated, 'skipped': skipped})}\n\n"
+                            continue
+                        
+                        existing = Customer.objects.filter(tax_number=tax_number).first()
+                        
+                        if existing:
+                            old_is_customer = existing.is_customer
+                            
+                            if parsed.get('taxpayer_name'):
+                                existing.name = parsed['taxpayer_name']
+                            if parsed.get('taxpayer_short_name'):
+                                existing.short_name = parsed['taxpayer_short_name']
+                            
+                            address_list = parsed.get('taxpayer_address_list', [])
+                            if address_list:
+                                hq_address = next((addr for addr in address_list if addr.get('taxpayerAddressType') == 'HQ'), address_list[0])
+                                if hq_address:
+                                    existing.street_name = hq_address.get('streetName', existing.street_name)
+                                    existing.public_place_category = hq_address.get('publicPlaceCategory', existing.public_place_category)
+                                    existing.street_number = hq_address.get('number', existing.street_number)
+                                    existing.city = hq_address.get('city', existing.city)
+                                    existing.postal_code = hq_address.get('postalCode', existing.postal_code)
+                            
+                            tax_detail = parsed.get('tax_number_detail')
+                            if tax_detail:
+                                if tax_detail.get('vatCode'):
+                                    existing.vat_code = tax_detail['vatCode']
+                                if tax_detail.get('countyCode'):
+                                    existing.county_code = tax_detail['countyCode']
+                                
+                                # Build full tax number
+                                vat_code = tax_detail.get('vatCode', '')
+                                county_code = tax_detail.get('countyCode', '')
+                                if vat_code and county_code:
+                                    existing.full_tax_number = f"{tax_number}-{vat_code}-{county_code}"
+                            
+                            existing.country = 'Magyarország'
+                            existing.vat_status = 'DOMESTIC'
+                            existing.is_hungarian_taxpayer = True
+                            existing.is_supplier = True
+                            existing.is_customer = old_is_customer
+                            existing.save()
+                            
+                            updated += 1
+                            
+                            bank_accounts = tax_numbers_with_bank.get(tax_number, [])
+                            for bank_acc in bank_accounts:
+                                if not CustomerBankAccount.objects.filter(customer=existing, account_number=bank_acc).exists():
+                                    CustomerBankAccount.objects.create(
+                                        customer=existing,
+                                        account_number=bank_acc,
+                                        bank_name='',
+                                        is_primary=CustomerBankAccount.objects.filter(customer=existing).count() == 0
+                                    )
+                        else:
+                            customer_data = {
+                                'tax_number': tax_number,
+                                'name': parsed.get('taxpayer_name', f'Beszállító {tax_number}'),
+                                'short_name': parsed.get('taxpayer_short_name') or parsed.get('taxpayer_name', f'Beszállító {tax_number}')[:50],
+                                'country': 'Magyarország',
+                                'vat_status': 'DOMESTIC',
+                                'is_hungarian_taxpayer': True,
+                                'is_supplier': True,
+                                'is_customer': False,
+                            }
+                            
+                            address_list = parsed.get('taxpayer_address_list', [])
+                            if address_list:
+                                hq_address = next((addr for addr in address_list if addr.get('taxpayerAddressType') == 'HQ'), address_list[0])
+                                if hq_address:
+                                    customer_data['street_name'] = hq_address.get('streetName', '')
+                                    customer_data['public_place_category'] = hq_address.get('publicPlaceCategory', '')
+                                    customer_data['street_number'] = hq_address.get('number', '')
+                                    customer_data['city'] = hq_address.get('city', '')
+                                    customer_data['postal_code'] = hq_address.get('postalCode', '')
+                            
+                            tax_detail = parsed.get('tax_number_detail')
+                            if tax_detail:
+                                if tax_detail.get('vatCode'):
+                                    customer_data['vat_code'] = tax_detail['vatCode']
+                                if tax_detail.get('countyCode'):
+                                    customer_data['county_code'] = tax_detail['countyCode']
+                                
+                                # Build full tax number
+                                vat_code = tax_detail.get('vatCode', '')
+                                county_code = tax_detail.get('countyCode', '')
+                                if vat_code and county_code:
+                                    customer_data['full_tax_number'] = f"{tax_number}-{vat_code}-{county_code}"
+                            
+                            new_customer = Customer.objects.create(**customer_data)
+                            created += 1
+                            
+                            bank_accounts = tax_numbers_with_bank.get(tax_number, [])
+                            for idx, bank_acc in enumerate(bank_accounts):
+                                CustomerBankAccount.objects.create(
+                                    customer=new_customer,
+                                    account_number=bank_acc,
+                                    bank_name='',
+                                    is_primary=(idx == 0)
+                                )
+                        
+                        processed += 1
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': processed, 'created': created, 'updated': updated, 'skipped': skipped})}\n\n"
+                        
+                    except Exception as e:
+                        logger.error(f"Error processing {tax_number}: {e}", exc_info=True)
+                        skipped += 1
+                        processed += 1
+                        yield f"data: {json.dumps({'type': 'progress', 'total': total, 'processed': processed, 'created': created, 'updated': updated, 'skipped': skipped})}\n\n"
+                
+                # Final result
+                yield f"data: {json.dumps({'type': 'complete', 'success': True, 'created': created, 'updated': updated, 'skipped': skipped, 'total': total})}\n\n"
+                
+            except Exception as e:
+                logger.error(f"Streaming error: {e}", exc_info=True)
+                yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        
+        response = StreamingHttpResponse(generate(), content_type='text/event-stream')
+        response['Cache-Control'] = 'no-cache'
+        response['X-Accel-Buffering'] = 'no'
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error: {e}", exc_info=True)
+        return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

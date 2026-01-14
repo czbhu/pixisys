@@ -7,12 +7,12 @@ from invoices.views.views import (
     BackupConfigurationViewSet, BackupFileViewSet
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
-from invoices.views.import_views import import_customers, import_customers_streaming, import_contacts, export_customer_sample_csv, export_contact_sample_csv
+from invoices.views.import_views import import_customers, import_customers_streaming, import_contacts, import_contacts_streaming, export_customer_sample_csv, export_contact_sample_csv, export_missing_customers_csv, import_suppliers_from_invoices, import_suppliers_from_invoices_streaming
 from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view
 from invoices.backup_views import export_database_view, import_database_view
 from invoices.views_emergency import emergency_login_view
 
-router = DefaultRouter()
+router = DefaultRouter(trailing_slash=True)
 router.register(r'customers', CustomerViewSet)
 router.register(r'invoices', InvoiceViewSet)
 router.register(r'invoice-items', InvoiceItemViewSet)
@@ -49,8 +49,12 @@ urlpatterns = [
     path('api/import/customers/', import_customers, name='import_customers'),
     path('api/import/customers/streaming/', import_customers_streaming, name='import_customers_streaming'),
     path('api/import/contacts/', import_contacts, name='import_contacts'),
+    path('api/import/contacts/streaming/', import_contacts_streaming, name='import_contacts_streaming'),
     path('api/import/sample/customers/', export_customer_sample_csv, name='export_customer_sample_csv'),
     path('api/import/sample/contacts/', export_contact_sample_csv, name='export_contact_sample_csv'),
+    path('api/import/missing-customers/export/', export_missing_customers_csv, name='export_missing_customers_csv'),
+    path('api/import/suppliers-from-invoices/', import_suppliers_from_invoices, name='import_suppliers_from_invoices'),
+    path('api/import/suppliers-from-invoices/streaming/', import_suppliers_from_invoices_streaming, name='import_suppliers_from_invoices_streaming'),
     path('api/', include(router.urls)),
     path('api/api-access/', ApiAccessViewSet.as_view({'get': 'get', 'put': 'save'})),
 ]
