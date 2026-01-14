@@ -61,6 +61,7 @@ const Button = styled.button`
     switch (props.variant) {
       case 'primary': return '#3498db';
       case 'secondary': return '#6c757d';
+      case 'danger': return '#e74c3c';
       default: return '#f8f9fa';
     }
   }};
@@ -916,6 +917,26 @@ const CustomerForm = () => {
     }
   );
 
+  const deleteCustomerMutation = useMutation(
+    () => customerAPI.deleteCustomer(id),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['customers']);
+        toast.success('Ügyfél törölve');
+        navigate('/customers');
+      },
+      onError: () => {
+        toast.error('Hiba történt az ügyfél törlése során');
+      },
+    }
+  );
+
+  const handleDelete = () => {
+    if (window.confirm(`Biztosan törölni szeretné az ügyfelet: ${getValues('name')}?`)) {
+      deleteCustomerMutation.mutate();
+    }
+  };
+
 
 
   const retryLookupTaxpayer = async (taxNumber, attempt = 1) => {
@@ -1271,6 +1292,17 @@ const CustomerForm = () => {
       <FormHeader>
         <Title>{isEdit ? 'Ügyfél szerkesztése' : 'Új ügyfél'}</Title>
         <ButtonGroup>
+          {isEdit && (
+            <Button
+              variant="danger"
+              type="button"
+              onClick={handleDelete}
+              disabled={deleteCustomerMutation.isLoading}
+            >
+              <Trash2 size={16} />
+              {deleteCustomerMutation.isLoading ? 'Törlés...' : 'Törlés'}
+            </Button>
+          )}
           <Button
             variant="secondary"
             onClick={() => navigate('/customers')}

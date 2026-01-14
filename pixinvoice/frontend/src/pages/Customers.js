@@ -1,18 +1,18 @@
 import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
+import { useQuery, useQueryClient } from 'react-query';
 import { Link } from 'react-router-dom';
 import { 
   Search, 
   Plus, 
   Edit, 
-  Trash2, 
   Eye,
   MapPin,
   Phone,
-  Mail
+  Mail,
+  Grid,
+  List
 } from 'lucide-react';
 import styled from 'styled-components';
-import { toast } from 'react-toastify';
 import { customerAPI } from '../services/api';
 
 const CustomersContainer = styled.div`
@@ -43,6 +43,33 @@ const SearchContainer = styled.div`
   display: flex;
   gap: 12px;
   align-items: center;
+  flex-wrap: wrap;
+`;
+
+const ViewToggle = styled.div`
+  display: flex;
+  gap: 4px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  padding: 4px;
+`;
+
+const ViewButton = styled.button`
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 12px;
+  border: none;
+  background: ${props => props.active ? '#3498db' : 'transparent'};
+  color: ${props => props.active ? 'white' : '#7f8c8d'};
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+
+  &:hover {
+    background: ${props => props.active ? '#3498db' : '#ecf0f1'};
+  }
 `;
 
 const SearchInput = styled.input`
@@ -217,9 +244,51 @@ const PaginationButton = styled.button`
   }
 `;
 
+const ListView = styled.div`
+  padding: 0;
+`;
+
+const ListTable = styled.table`
+  width: 100%;
+  border-collapse: collapse;
+`;
+
+const TableHeader = styled.thead`
+  background: #f8f9fa;
+  border-bottom: 2px solid #ecf0f1;
+`;
+
+const TableRow = styled.tr`
+  border-bottom: 1px solid #ecf0f1;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: #f8f9fa;
+  }
+`;
+
+const TableHead = styled.th`
+  text-align: left;
+  padding: 16px 24px;
+  font-weight: 600;
+  color: #2c3e50;
+  font-size: 14px;
+`;
+
+const TableCell = styled.td`
+  padding: 16px 24px;
+  color: #2c3e50;
+  font-size: 14px;
+`;
+
+const TableActions = styled(TableCell)`
+  text-align: right;
+`;
+
 const Customers = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' or 'list'
   
   const queryClient = useQueryClient();
 
@@ -237,25 +306,6 @@ const Customers = () => {
       }
     }
   );
-
-  const deleteCustomerMutation = useMutation(
-    (id) => customerAPI.deleteCustomer(id),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('customers');
-        toast.success('Ügyfél törölve');
-      },
-      onError: () => {
-        toast.error('Hiba történt az ügyfél törlése során');
-      },
-    }
-  );
-
-  const handleDelete = (id, name) => {
-    if (window.confirm(`Biztosan törölni szeretné az ügyfelet: ${name}?`)) {
-      deleteCustomerMutation.mutate(id);
-    }
-  };
 
   if (isLoading) {
     return <LoadingSpinner>Betöltés...</LoadingSpinner>;
@@ -280,6 +330,22 @@ const Customers = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          <ViewToggle>
+            <ViewButton 
+              active={viewMode === 'grid'}
+              onClick={() => setViewMode('grid')}
+              title="Kártyás nézet"
+            >
+              <Grid size={16} />
+            </ViewButton>
+            <ViewButton 
+              active={viewMode === 'list'}
+              onClick={() => setViewMode('list')}
+              title="Listás nézet"
+            >
+              <List size={16} />
+            </ViewButton>
+          </ViewToggle>
           <ActionButton to="/customers/new">
             <Plus size={16} />
             Új ügyfél
@@ -287,7 +353,7 @@ const Customers = () => {
         </SearchContainer>
       </CustomersHeader>
 
-      {!isLoading && !error && (
+      {!isLoading && !error && viewMode === 'grid' && (
         <div>
           <CustomersGrid>
             {customers?.results?.map((customer) => (
@@ -301,6 +367,8 @@ const Customers = () => {
                 <IconButton
                   variant="view"
                   title="Megtekintés"
+                  as={Link}
+                  to={`/customers/${customer.id}`}
                 >
                   <Eye size={16} />
                 </IconButton>
@@ -311,13 +379,6 @@ const Customers = () => {
                   to={`/customers/${customer.id}/edit`}
                 >
                   <Edit size={16} />
-                </IconButton>
-                <IconButton
-                  variant="delete"
-                  title="Törlés"
-                  onClick={() => handleDelete(customer.id, customer.name)}
-                >
-                  <Trash2 size={16} />
                 </IconButton>
               </ActionButtons>
             </CustomerHeader>
@@ -352,6 +413,56 @@ const Customers = () => {
         ))}
           </CustomersGrid>
         </div>
+      )}
+
+      {!isLoading && !error && viewMode === 'list' && (
+        <ListView>
+          <ListTable>
+            <TableHeader>
+              <tr>
+                <TableHead>Név</TableHead>
+                <TableHead>Adószám</TableHead>
+                <TableHead>Cím</TableHead>
+                <TableHead>Email</TableHead>
+                <TableHead>Telefon</TableHead>
+                <TableHead style={{ textAlign: 'right' }}>Műveletek</TableHead>
+              </tr>
+            </TableHeader>
+            <tbody>
+              {customers?.results?.map((customer) => (
+                <TableRow key={customer.id}>
+                  <TableCell>
+                    <strong>{customer.name}</strong>
+                  </TableCell>
+                  <TableCell>{customer.tax_number}</TableCell>
+                  <TableCell>{customer.city} {customer.postal_code}</TableCell>
+                  <TableCell>{customer.email || '-'}</TableCell>
+                  <TableCell>{customer.phone || '-'}</TableCell>
+                  <TableActions>
+                    <ActionButtons>
+                      <IconButton
+                        variant="view"
+                        title="Megtekintés"
+                        as={Link}
+                        to={`/customers/${customer.id}`}
+                      >
+                        <Eye size={16} />
+                      </IconButton>
+                      <IconButton
+                        variant="edit"
+                        title="Szerkesztés"
+                        as={Link}
+                        to={`/customers/${customer.id}/edit`}
+                      >
+                        <Edit size={16} />
+                      </IconButton>
+                    </ActionButtons>
+                  </TableActions>
+                </TableRow>
+              ))}
+            </tbody>
+          </ListTable>
+        </ListView>
       )}
 
       {!isLoading && !error && (!customers?.results || customers.results.length === 0) && (

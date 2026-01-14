@@ -14,6 +14,7 @@ import Dashboard from './pages/Dashboard';
 import Invoices from './pages/Invoices';
 import InvoiceForm from './pages/InvoiceForm';
 import Customers from './pages/Customers';
+import CustomerDetail from './pages/CustomerDetail';
 import CustomerForm from './pages/CustomerForm';
 import Contacts from './pages/Contacts';
 import ContactForm from './pages/ContactForm';
@@ -92,6 +93,7 @@ function AppContent() {
                 <Route path="/proformas/:id/edit" element={<InvoiceForm />} />
                 <Route path="/customers" element={<Customers />} />
                 <Route path="/customers/new" element={<CustomerForm />} />
+                <Route path="/customers/:id" element={<CustomerDetail />} />
                 <Route path="/customers/:id/edit" element={<CustomerForm />} />
                 <Route path="/contacts" element={<Contacts />} />
                 <Route path="/contacts/new" element={<ContactForm />} />
