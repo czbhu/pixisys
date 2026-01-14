@@ -358,6 +358,52 @@ const Customers = () => {
     window.location.href = `/customers/${customerId}/edit`;
   };
 
+  const renderPagination = () => (
+    <Pagination>
+      <PageSizeSelector>
+        <span>Sorok száma:</span>
+        <PageSizeSelect value={pageSize} onChange={(e) => handlePageSizeChange(e.target.value)}>
+          <option value={20}>20</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+          <option value={200}>200</option>
+        </PageSizeSelect>
+      </PageSizeSelector>
+
+      <PaginationControls>
+        <PaginationButton
+          onClick={() => setCurrentPage(currentPage - 1)}
+          disabled={!customers.previous}
+        >
+          Előző
+        </PaginationButton>
+        
+        {Array.from({ length: totalPages }, (_, i) => i + 1)
+          .slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))
+          .map((page) => (
+            <PaginationButton
+              key={page}
+              className={page === currentPage ? 'active' : ''}
+              onClick={() => setCurrentPage(page)}
+            >
+              {page}
+            </PaginationButton>
+          ))}
+        
+        <PaginationButton
+          onClick={() => setCurrentPage(currentPage + 1)}
+          disabled={!customers.next}
+        >
+          Következő
+        </PaginationButton>
+      </PaginationControls>
+
+      <PageInfo>
+        {currentPage}. oldal / {totalPages} oldal összesen
+      </PageInfo>
+    </Pagination>
+  );
+
   if (isLoading) {
     return <LoadingSpinner>Betöltés...</LoadingSpinner>;
   }
@@ -403,6 +449,8 @@ const Customers = () => {
           </ActionButton>
         </SearchContainer>
       </CustomersHeader>
+
+      {!isLoading && !error && customers?.count > 0 && renderPagination()}
 
       {!isLoading && !error && viewMode === 'grid' && (
         <div>
@@ -534,51 +582,7 @@ const Customers = () => {
         </EmptyState>
       )}
 
-      {!isLoading && !error && customers?.count > 0 && (
-        <Pagination>
-          <PageSizeSelector>
-            <span>Sorok száma:</span>
-            <PageSizeSelect value={pageSize} onChange={(e) => handlePageSizeChange(e.target.value)}>
-              <option value={20}>20</option>
-              <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={200}>200</option>
-            </PageSizeSelect>
-          </PageSizeSelector>
-
-          <PaginationControls>
-            <PaginationButton
-              onClick={() => setCurrentPage(currentPage - 1)}
-              disabled={!customers.previous}
-            >
-              Előző
-            </PaginationButton>
-            
-            {Array.from({ length: totalPages }, (_, i) => i + 1)
-              .slice(Math.max(0, currentPage - 3), Math.min(totalPages, currentPage + 2))
-              .map((page) => (
-                <PaginationButton
-                  key={page}
-                  className={page === currentPage ? 'active' : ''}
-                  onClick={() => setCurrentPage(page)}
-                >
-                  {page}
-                </PaginationButton>
-              ))}
-            
-            <PaginationButton
-              onClick={() => setCurrentPage(currentPage + 1)}
-              disabled={!customers.next}
-            >
-              Következő
-            </PaginationButton>
-          </PaginationControls>
-
-          <PageInfo>
-            {currentPage}. oldal / {totalPages} oldal összesen
-          </PageInfo>
-        </Pagination>
-      )}
+      {!isLoading && !error && customers?.count > 0 && renderPagination()}
     </CustomersContainer>
   );
 };
