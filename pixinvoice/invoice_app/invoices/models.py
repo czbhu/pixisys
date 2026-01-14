@@ -652,6 +652,7 @@ class SystemUser(models.Model):
     email = models.EmailField(unique=True, verbose_name="Email")
     password_hash = models.CharField(max_length=255, verbose_name="Password Hash")
     is_active = models.BooleanField(default=True, verbose_name="Active")
+    last_login = models.DateTimeField(null=True, blank=True, verbose_name="Last Login")
     companies = models.ManyToManyField(Company, related_name='users', verbose_name="Companies")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

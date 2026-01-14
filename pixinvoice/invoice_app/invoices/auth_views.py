@@ -133,6 +133,11 @@ def login_view(request):
     try:
         system_user = SystemUser.objects.get(email=email, is_active=True)
         if system_user.check_password(password):
+            # Update last login time
+            from django.utils import timezone
+            system_user.last_login = timezone.now()
+            system_user.save(update_fields=['last_login'])
+            
             # Get or create corresponding Django user for JWT
             django_user, created = User.objects.get_or_create(
                 email=email,

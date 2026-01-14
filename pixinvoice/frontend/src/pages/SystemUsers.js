@@ -213,6 +213,18 @@ const StatusBadge = styled.span`
   }
 `;
 
+const StatusContainer = styled.div`
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+`;
+
+const LastLogin = styled.div`
+  font-size: 11px;
+  color: #7f8c8d;
+  font-weight: 400;
+`;
+
 const CompanyTags = styled.div`
   display: flex;
   flex-wrap: wrap;
@@ -318,6 +330,23 @@ const SystemUsers = () => {
     }
   };
 
+  const formatLastLogin = (lastLogin) => {
+    if (!lastLogin) return 'Még nem lépett be';
+    
+    try {
+      const date = new Date(lastLogin);
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, '0');
+      const day = String(date.getDate()).padStart(2, '0');
+      const hours = String(date.getHours()).padStart(2, '0');
+      const minutes = String(date.getMinutes()).padStart(2, '0');
+      
+      return `${year}.${month}.${day}. ${hours}:${minutes}`;
+    } catch (e) {
+      return 'Nem elérhető';
+    }
+  };
+
   if (isLoading) {
     return (
       <Container>
@@ -412,9 +441,14 @@ const SystemUsers = () => {
                   </CompanyTags>
                 </TableCell>
                 <TableCell>
-                  <StatusBadge className={user.is_active ? 'active' : 'inactive'}>
-                    {user.is_active ? 'Aktív' : 'Inaktív'}
-                  </StatusBadge>
+                  <StatusContainer>
+                    <StatusBadge className={user.is_active ? 'active' : 'inactive'}>
+                      {user.is_active ? 'Aktív' : 'Inaktív'}
+                    </StatusBadge>
+                    <LastLogin>
+                      Utolsó belépés: {formatLastLogin(user.last_login)}
+                    </LastLogin>
+                  </StatusContainer>
                 </TableCell>
                 <TableCell>
                   <ActionButtons>

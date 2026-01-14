@@ -1005,9 +1005,9 @@ class SystemUserSerializer(serializers.ModelSerializer):
         model = SystemUser
         fields = [
             'id', 'first_name', 'last_name', 'full_name', 'email',
-            'is_active', 'companies', 'company_ids', 'created_at', 'updated_at'
+            'is_active', 'last_login', 'companies', 'company_ids', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'last_login', 'created_at', 'updated_at']
         extra_kwargs = {
             'password_hash': {'write_only': True},
         }
