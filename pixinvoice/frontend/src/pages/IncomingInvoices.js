@@ -319,7 +319,8 @@ export default function IncomingInvoices() {
     if (!companyId) return;
     if (lastAutoRefreshCompany.current === companyId) return;
     lastAutoRefreshCompany.current = companyId;
-    fetchDigest(1, { refresh: 1, replace: true });
+    // Load cached list first to avoid long initial waits; manual refresh button still triggers NAV sync
+    fetchDigest(1, { replace: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
