@@ -2299,6 +2299,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 approver_name = None
 
+            # Only transfer invoices require explicit approval; others are treated as approved
+            pm_val = (r.payment_method or '').upper()
+            auto_approved = pm_val and pm_val != 'TRANSFER'
+
             items_all.append({
                 'invoiceNumber': r.invoice_number,
                 'invoiceIssueDate': date_val.isoformat() if date_val else None,
@@ -2319,7 +2323,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'isPaid': is_paid,
                 'isPartial': is_partial,
                 'inPaymentBatch': pay_key in pay_map,
-                'isApproved': bool(getattr(r, 'is_approved', False)),
+                'isApproved': bool(getattr(r, 'is_approved', False) or auto_approved),
                 'approvedBy': approver_name,
                 'approvedAt': (r.approved_at.isoformat() if getattr(r, 'approved_at', None) else None),
             })
@@ -2695,6 +2699,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         obj = qs.order_by('-ins_date').first()
         if not obj:
             return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        pm_val = (obj.payment_method or '').upper()
+        # Only transfer invoices require explicit approval; others are considered approved by default
+        if pm_val and pm_val != 'TRANSFER':
+            obj.is_approved = True
+            obj.approved_by = None
+            obj.approved_at = None
+            obj.save(update_fields=['is_approved', 'approved_by', 'approved_at'])
+            return Response({
+                'success': True,
+                'is_approved': True,
+                'approved_at': None,
+                'approved_by_id': None,
+                'approved_by_name': None,
+            })
 
         approver = sys_user if approved else None
 

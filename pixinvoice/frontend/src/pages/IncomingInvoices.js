@@ -1298,24 +1298,31 @@ export default function IncomingInvoices() {
                 <TableCell className="text-right">{row.vatAmount}</TableCell>
                 <TableCell className="text-right">{row.grossAmount}</TableCell>
                 <TableCell>
-                  {canApproveInvoices ? (
-                    <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
-                      <input
-                        type="checkbox"
-                        checked={isRowApproved(row)}
-                        onChange={()=>toggleApproval(row)}
-                        disabled={!!approvalSaving[rowKey(row)]}
-                      />
+                  {isTransfer ? (
+                    canApproveInvoices ? (
+                      <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+                        <input
+                          type="checkbox"
+                          checked={isRowApproved(row)}
+                          onChange={()=>toggleApproval(row)}
+                          disabled={!!approvalSaving[rowKey(row)]}
+                        />
+                        <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                          <span>Jóváhagyó: {row.approvedBy || '—'}</span>
+                          <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                        </SmallMuted>
+                      </label>
+                    ) : (
                       <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                        <span>{isRowApproved(row) ? 'Jóváhagyva' : '—'}</span>
                         <span>Jóváhagyó: {row.approvedBy || '—'}</span>
                         <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
                       </SmallMuted>
-                    </label>
+                    )
                   ) : (
                     <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
-                      <span>{isRowApproved(row) ? 'Jóváhagyva' : '—'}</span>
-                      <span>Jóváhagyó: {row.approvedBy || '—'}</span>
-                      <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                      <span>Nem szükséges</span>
+                      <span>Fizetési mód: {formatPaymentMethod(row.paymentMethod)}</span>
                     </SmallMuted>
                   )}
                 </TableCell>
