@@ -306,13 +306,28 @@ const Roles = () => {
                 </TableCell>
                 <TableCell>
                   <ActionButtons>
-                    <IconButton className="edit" onClick={() => navigate(`/settings/roles/${role.id}/edit`)}>
+                    <IconButton
+                      className="edit"
+                      onClick={() => navigate(`/settings/roles/${role.id}/edit`)}
+                      title="Szerkesztés"
+                      aria-label="Szerkesztés"
+                    >
                       <Edit size={16} />
                     </IconButton>
-                    <IconButton className="toggle" onClick={() => handleToggle(role)}>
+                    <IconButton
+                      className="toggle"
+                      onClick={() => handleToggle(role)}
+                      title={role.is_active ? 'Inaktiválás' : 'Aktiválás'}
+                      aria-label={role.is_active ? 'Inaktiválás' : 'Aktiválás'}
+                    >
                       {role.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
                     </IconButton>
-                    <IconButton className="delete" onClick={() => handleDelete(role)}>
+                    <IconButton
+                      className="delete"
+                      onClick={() => handleDelete(role)}
+                      title="Törlés"
+                      aria-label="Törlés"
+                    >
                       <Trash2 size={16} />
                     </IconButton>
                   </ActionButtons>

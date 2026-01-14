@@ -1392,11 +1392,11 @@ export default function IncomingInvoices() {
                 </TableCell>
                 <TableCell>
                   <IconButton onClick={()=>openXmlInline(row.invoiceNumber, row.supplierTaxNumber)} title="Megnyitás">
-                    <Eye size={16}/> Megnyitás
+                    <Eye size={16}/>
                   </IconButton>
                   <div style={{ height: 6 }} />
                   <IconButton onClick={()=>openAttachments(row.invoiceNumber, row.supplierTaxNumber)} title="Csatolmányok">
-                    <Upload size={16}/> Csatolmányok
+                    <Upload size={16}/>
                   </IconButton>
                 </TableCell>
               </TableRow>
