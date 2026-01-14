@@ -6,7 +6,8 @@ import {
   FileText, 
   Settings as SettingsIcon,
   ChevronRight,
-  Database 
+  Database,
+  Upload
 } from 'lucide-react';
 import styled from 'styled-components';
 
@@ -142,6 +143,12 @@ const Settings = () => {
       icon: Database,
       title: 'Backup - Visszaállítás',
       description: 'Adatbázis mentés, visszaállítás és automatikus backup beállítások'
+    },
+    {
+      path: '/settings/data-import',
+      icon: Upload,
+      title: 'Adat Import',
+      description: 'Tömeges ügyfél és kapcsolattartó importálás CSV fájlból'
     }
   ];
 

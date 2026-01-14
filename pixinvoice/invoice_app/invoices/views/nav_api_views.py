@@ -10,11 +10,88 @@ from django.views.decorators.http import require_http_methods
 import json
 import logging
 import requests
+import xml.etree.ElementTree as ET
 
 from invoices.nav_api_config import NavApiConfig
 from invoices.nav_api_reporter import NavApiReporter
 
 logger = logging.getLogger(__name__)
+
+
+def parse_nav_taxpayer_response(xml_string):
+    """
+    Parse NAV QueryTaxpayer XML response and extract taxpayer data
+    
+    This function is used by both lookup_taxpayer view and CSV import
+    to ensure consistent data extraction from NAV API responses.
+    
+    Args:
+        xml_string: XML response string from NAV API
+        
+    Returns:
+        dict: Parsed taxpayer data with keys:
+            - taxpayer_name
+            - taxpayer_short_name
+            - tax_number_detail (dict with taxpayerId, vatCode, countyCode)
+            - taxpayer_address_list (list of address dicts)
+            - vat_group_membership (dict with vatGroupId, vatGroupMemberTaxNumber)
+    """
+    parsed_data = {}
+    
+    try:
+        root = ET.fromstring(xml_string)
+        
+        # Extract taxpayer data - using full namespace URI in find()
+        taxpayer_data_elem = root.find('.//{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerData')
+        
+        if taxpayer_data_elem is not None:
+            # Extract taxpayer name and short name using findtext with full namespace
+            parsed_data['taxpayer_name'] = taxpayer_data_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerName')
+            parsed_data['taxpayer_short_name'] = taxpayer_data_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerShortName')
+            
+            # Tax number detail
+            tax_detail_elem = taxpayer_data_elem.find('{http://schemas.nav.gov.hu/OSA/3.0/api}taxNumberDetail')
+            if tax_detail_elem is not None:
+                parsed_data['tax_number_detail'] = {
+                    'taxpayerId': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}taxpayerId'),
+                    'vatCode': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}vatCode'),
+                    'countyCode': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}countyCode')
+                }
+            
+            # Taxpayer addresses
+            address_list = []
+            for addr_item in taxpayer_data_elem.findall('.//{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddressItem'):
+                addr_elem = addr_item.find('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddress')
+                if addr_elem is not None:
+                    address_list.append({
+                        'taxpayerAddressType': addr_item.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddressType'),
+                        'countryCode': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}countryCode'),
+                        'postalCode': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}postalCode'),
+                        'city': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}city'),
+                        'streetName': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}streetName'),
+                        'publicPlaceCategory': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}publicPlaceCategory'),
+                        'number': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}number'),
+                        'building': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}building'),
+                        'staircase': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}staircase'),
+                        'floor': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}floor'),
+                        'door': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}door')
+                    })
+            if address_list:
+                parsed_data['taxpayer_address_list'] = address_list
+            
+            # VAT group membership
+            vat_group_elem = taxpayer_data_elem.find('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupMembership')
+            if vat_group_elem is not None:
+                parsed_data['vat_group_membership'] = {
+                    'vatGroupId': vat_group_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupId'),
+                    'vatGroupMemberTaxNumber': vat_group_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupMemberTaxNumber')
+                }
+                
+    except Exception as e:
+        logger.error(f"NAV XML parsing error: {e}")
+        raise
+    
+    return parsed_data
 
 @csrf_exempt
 @require_api_key
@@ -172,68 +249,12 @@ def lookup_taxpayer(request):
         # Debug logolás
         logger.info(f"NAV API válasz ({nav_config.name}): {result}")
         
-        # Parse XML response to extract taxpayer data
+        # Parse XML response to extract taxpayer data using common parsing function
         parsed_data = {}
         if result.get('success') and result.get('response'):
             try:
-                import xml.etree.ElementTree as ET
                 xml_string = result['response']
-                root = ET.fromstring(xml_string)
-                
-                # Define namespaces
-                ns = {
-                    '': 'http://schemas.nav.gov.hu/OSA/3.0/api',
-                    'ns2': 'http://schemas.nav.gov.hu/NTCA/1.0/common',
-                    'ns3': 'http://schemas.nav.gov.hu/OSA/3.0/base',
-                    'ns4': 'http://schemas.nav.gov.hu/OSA/3.0/data'
-                }
-                
-                # Extract taxpayer data - without namespace prefix in find()
-                taxpayer_data_elem = root.find('.//{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerData')
-                # Extract taxpayer data - without namespace prefix in find()
-                taxpayer_data_elem = root.find('.//{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerData')
-                if taxpayer_data_elem is not None:
-                    parsed_data['taxpayer_name'] = taxpayer_data_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerName')
-                    parsed_data['taxpayer_short_name'] = taxpayer_data_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerShortName')
-                    
-                    # Tax number detail
-                    tax_detail_elem = taxpayer_data_elem.find('{http://schemas.nav.gov.hu/OSA/3.0/api}taxNumberDetail')
-                    if tax_detail_elem is not None:
-                        parsed_data['tax_number_detail'] = {
-                            'taxpayerId': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}taxpayerId'),
-                            'vatCode': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}vatCode'),
-                            'countyCode': tax_detail_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}countyCode')
-                        }
-                    
-                    # Taxpayer addresses
-                    address_list = []
-                    for addr_item in taxpayer_data_elem.findall('.//{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddressItem'):
-                        addr_elem = addr_item.find('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddress')
-                        if addr_elem is not None:
-                            address_list.append({
-                                'taxpayerAddressType': addr_item.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}taxpayerAddressType'),
-                                'countryCode': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}countryCode'),
-                                'postalCode': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}postalCode'),
-                                'city': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}city'),
-                                'streetName': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}streetName'),
-                                'publicPlaceCategory': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}publicPlaceCategory'),
-                                'number': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}number'),
-                                'building': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}building'),
-                                'staircase': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}staircase'),
-                                'floor': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}floor'),
-                                'door': addr_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/base}door')
-                            })
-                    if address_list:
-                        parsed_data['taxpayer_address_list'] = address_list
-                    
-                    # VAT group membership
-                    vat_group_elem = taxpayer_data_elem.find('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupMembership')
-                    if vat_group_elem is not None:
-                        parsed_data['vat_group_membership'] = {
-                            'vatGroupId': vat_group_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupId'),
-                            'vatGroupMemberTaxNumber': vat_group_elem.findtext('{http://schemas.nav.gov.hu/OSA/3.0/api}vatGroupMemberTaxNumber')
-                        }
-                        
+                parsed_data = parse_nav_taxpayer_response(xml_string)
             except Exception as e:
                 logger.error(f"XML parsing error: {e}")
         

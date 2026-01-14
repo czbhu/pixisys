@@ -423,4 +423,20 @@ export const proformaAPI = {
   createAdvanceInvoice: (id, data) => api.post(`/api/proformas/${id}/create_advance_invoice/`, data),
 };
 
+export const importAPI = {
+  importCustomers: (formData) => api.post('/api/import/customers/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  importContacts: (formData) => api.post('/api/import/contacts/', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+  downloadCustomerSample: () => api.get('/api/import/sample/customers/', {
+    responseType: 'blob'
+  }),
+  downloadContactSample: () => api.get('/api/import/sample/contacts/', {
+    responseType: 'blob'
+  }),
+};
+
 export default api;
+

@@ -36,6 +36,7 @@ import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
 import BackupRestore from './pages/Settings/BackupRestore';
 import ApiAccess from './pages/ApiAccess';
+import DataImport from './pages/DataImport';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -113,6 +114,7 @@ function AppContent() {
                 <Route path="/nav-config" element={<NAVConfig />} />
                 <Route path="/settings/backup" element={<BackupRestore />} />
                 <Route path="/settings/api-access" element={<ApiAccess />} />
+                <Route path="/settings/data-import" element={<DataImport />} />
                 <Route path="/reports" element={<Reports />} />
               </Routes>
             </Layout>
