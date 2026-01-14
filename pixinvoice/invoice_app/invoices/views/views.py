@@ -5454,10 +5454,10 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
         dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
         if debtor_account.iban:
-            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = debtor_account.iban
+            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = debtor_account.iban.replace(' ', '').replace('-', '')
         elif debtor_account.account_number:
             othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
-            ET.SubElement(othr, ET.QName(ns, 'Id')).text = debtor_account.account_number
+            ET.SubElement(othr, ET.QName(ns, 'Id')).text = debtor_account.account_number.replace(' ', '').replace('-', '')
         else:
             raise ValueError(f'{batch.company.name}: A bankszámlának IBAN vagy számlaszám szükséges')
         ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV'
@@ -5476,10 +5476,10 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
             cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
             if it['acct_type'] == 'IBAN':
-                ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account']
+                ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account'].replace(' ', '').replace('-', '')
             else:
                 othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
-                ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account']
+                ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
             rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
             ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
 
