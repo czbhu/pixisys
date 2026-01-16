@@ -13,7 +13,12 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-from apps.core.permissions import OwnDataFilterMixin
+from apps.core.permissions import (
+    OwnDataFilterMixin,
+    HasPermission,
+    check_permission,
+    has_own_data_permission,
+)
 from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog
 from .serializers import (
     DepartmentSerializer, PositionSerializer, EmployeeSerializer,
@@ -33,9 +38,13 @@ class PositionViewSet(viewsets.ModelViewSet):
     serializer_class = PositionSerializer
 
 
-class EmployeeViewSet(viewsets.ModelViewSet):
+class EmployeeViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Employee.objects.order_by('user__last_name', 'user__first_name', 'employee_id')
     serializer_class = EmployeeSerializer
+    permission_classes = [HasPermission]
+    permission_module = 'hr'
+    permission_resource = 'hr.employees'
+    own_data_user_field = 'user'
     
     @action(detail=True, methods=['get', 'post'])
     def custom_permissions(self, request, pk=None):
@@ -160,6 +169,7 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
 class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
+    permission_classes = [HasPermission]
     permission_module = 'hr'
     permission_resource = 'hr.attendance'
     own_data_user_field = 'employee__user'  # Attendance -> Employee -> User
@@ -183,7 +193,9 @@ class AttendanceReportViewSet(viewsets.ViewSet):
     ViewSet for attendance reports based on AccessLog data
     Provides daily attendance records with check-in/check-out times
     """
-    permission_classes = [AllowAny]  # Később módosítható jogosultságra
+    permission_classes = [HasPermission]
+    permission_module = 'hr'
+    permission_resource = 'hr.attendance'
     
     def list(self, request):
         """
@@ -199,6 +211,18 @@ class AttendanceReportViewSet(viewsets.ViewSet):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
         month_filter = request.query_params.get('month', 'current')
+
+        user = request.user
+        can_view_all = check_permission(user, self.permission_module, self.permission_resource, 'view')
+        can_view_own = has_own_data_permission(user, self.permission_module, self.permission_resource)
+        can_edit = check_permission(user, self.permission_module, self.permission_resource, 'edit')
+
+        # Deny access if the user has no relevant permission
+        if not (can_view_all or can_view_own):
+            return Response(
+                {'detail': 'Nincs jogosultság a jelenlét adatok megtekintéséhez.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         
         # Calculate date range
         today = date.today()
@@ -225,9 +249,26 @@ class AttendanceReportViewSet(viewsets.ViewSet):
             end_date = date(today.year, today.month, last_day)
         
         # Build query
+        # Decide which employee(s) the user is allowed to see
+        if can_view_all:
+            target_employee_id = employee_id
+        else:
+            user_employee = Employee.objects.filter(user=user, is_active=True).first()
+            if not user_employee:
+                return Response({
+                    'results': [],
+                    'summary': {
+                        'total_days_worked': 0,
+                        'total_hours': 0,
+                        'start_date': start_date,
+                        'end_date': end_date,
+                    }
+                })
+            target_employee_id = user_employee.id
+
         filters = Q(check_in_time__date__gte=start_date, check_in_time__date__lte=end_date)
-        if employee_id:
-            filters &= Q(employee_id=employee_id)
+        if target_employee_id:
+            filters &= Q(employee_id=target_employee_id)
         
         # Get all access logs in the date range
         access_logs = AccessLog.objects.filter(filters).select_related('employee', 'employee__user')
@@ -243,8 +284,8 @@ class AttendanceReportViewSet(viewsets.ViewSet):
         report_data = []
         
         # Get all employees in the filter
-        if employee_id:
-            employees = Employee.objects.filter(id=employee_id, is_active=True)
+        if target_employee_id:
+            employees = Employee.objects.filter(id=target_employee_id, is_active=True)
         else:
             employees = Employee.objects.filter(is_active=True)
         
@@ -292,7 +333,7 @@ class AttendanceReportViewSet(viewsets.ViewSet):
                     'check_out': check_out,
                     'hours_worked': hours_worked,
                     'notes': notes,
-                    'is_editable': True
+                    'is_editable': can_edit
                 })
                 
                 current_date += timedelta(days=1)

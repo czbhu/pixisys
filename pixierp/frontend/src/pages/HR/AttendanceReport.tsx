@@ -92,9 +92,14 @@ const AttendanceReport: React.FC = () => {
         try {
             const response = await api.get('/hr/employees/');
             setEmployees(response.data.results || response.data);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error fetching employees:', error);
-            message.error('Hiba az alkalmazottak betöltésekor');
+            if (error?.response?.status === 403) {
+                message.error('Nincs jogosultság az alkalmazottak betöltéséhez');
+                setEmployees([]);
+            } else {
+                message.error('Hiba az alkalmazottak betöltésekor');
+            }
         }
     };
 
@@ -124,9 +129,15 @@ const AttendanceReport: React.FC = () => {
             
             setAttendanceData(data.results || []);
             setSummary(data.summary || null);
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error fetching attendance data:', error);
-            message.error('Hiba a jelenlét adatok betöltésekor');
+            if (error?.response?.status === 403) {
+                message.error('Nincs jogosultság a jelenlét adatok megtekintéséhez');
+                setAttendanceData([]);
+                setSummary(null);
+            } else {
+                message.error('Hiba a jelenlét adatok betöltésekor');
+            }
         } finally {
             setLoading(false);
         }
@@ -179,9 +190,13 @@ const AttendanceReport: React.FC = () => {
             setEditingRecord(null);
             form.resetFields();
             fetchAttendanceData();
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error saving attendance record:', error);
-            message.error('Hiba a mentés során');
+            if (error?.response?.status === 403) {
+                message.error('Nincs jogosultság a jelenlét módosításához');
+            } else {
+                message.error('Hiba a mentés során');
+            }
         }
     };
 
@@ -241,9 +256,13 @@ const AttendanceReport: React.FC = () => {
                 setEditingCell(null);
                 fetchAttendanceData();
             }
-        } catch (error) {
+        } catch (error: any) {
             console.error('Error updating time:', error);
-            message.error('Hiba a mentés során');
+            if (error?.response?.status === 403) {
+                message.error('Nincs jogosultság a jelenlét módosításához');
+            } else {
+                message.error('Hiba a mentés során');
+            }
         }
     };
 
