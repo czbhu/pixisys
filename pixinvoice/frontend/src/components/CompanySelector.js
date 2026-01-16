@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useQuery } from 'react-query';
 import { ChevronDown, Building2 } from 'lucide-react';
 import styled from 'styled-components';
 import { companyAPI } from '../services/api';
+import { useAuth } from '../contexts/AuthContext';
 
 const CompanySelectorContainer = styled.div`
   padding: 16px;
@@ -10,17 +11,23 @@ const CompanySelectorContainer = styled.div`
   background: #f8f9fa;
 `;
 
+const DropdownWrapper = styled.div`
+  position: relative;
+  z-index: 2000;
+`;
+
 const SelectorButton = styled.button`
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 12px 16px;
+  justify-content: ${(p) => (p.$collapsed ? 'center' : 'flex-start')};
+  gap: ${(p) => (p.$collapsed ? '4px' : '8px')};
+  padding: ${(p) => (p.$collapsed ? '10px' : '12px 16px')};
   background: white;
   border: 1px solid #ddd;
   border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: ${(p) => (p.$collapsed ? '13px' : '14px')};
+  font-weight: 600;
   color: #2c3e50;
   cursor: pointer;
   transition: all 0.2s;
@@ -39,7 +46,7 @@ const SelectorButton = styled.button`
 
 const CompanyName = styled.span`
   flex: 1;
-  text-align: left;
+  text-align: ${(p) => (p.$collapsed ? 'center' : 'left')};
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -48,14 +55,16 @@ const CompanyName = styled.span`
 const Dropdown = styled.div`
   position: absolute;
   top: 100%;
-  left: 16px;
-  right: 16px;
+  left: 12px;
+  right: 12px;
+  transform: none;
+  min-width: ${(p) => (p.$collapsed ? '220px' : 'auto')};
   background: white;
   border: 1px solid #ddd;
   border-radius: 6px;
   box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-  z-index: 1000;
-  max-height: 200px;
+  z-index: 12000;
+  max-height: 260px;
   overflow-y: auto;
 `;
 
@@ -113,8 +122,9 @@ const ErrorMessage = styled.div`
 
 const STORAGE_KEY = 'selectedCompanyId';
 
-const CompanySelector = ({ selectedCompany, onCompanyChange }) => {
+const CompanySelector = ({ selectedCompany, onCompanyChange, collapsed = false }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const { user } = useAuth();
 
   const { data: companies, isLoading, error } = useQuery(
     ['companies'],
@@ -124,8 +134,27 @@ const CompanySelector = ({ selectedCompany, onCompanyChange }) => {
     }
   );
 
+  const allowedCompanies = useMemo(() => {
+    if (!companies) return [];
+    const allowedIds = new Set((user?.companies || []).map(c => c?.id || c));
+    if (!allowedIds.size) return companies;
+    return companies.filter(c => allowedIds.has(c.id));
+  }, [companies, user]);
+
+  const getInitials = (name = '') => {
+    const words = name.trim().split(/\s+/).filter(Boolean);
+    if (!words.length) return '';
+    const first = words[0];
+    if (words.length >= 2 && (words[1] || '').length > 2) {
+      return `${first[0] || ''}${words[1][0] || ''}`.toUpperCase();
+    }
+    // Second word missing or very short: use first and 3rd char of first word if possible, else first two
+    const secondChar = first.length > 2 ? first[2] : (first[1] || '');
+    return `${first[0] || ''}${secondChar || ''}`.toUpperCase();
+  };
+
   useEffect(() => {
-    if (!companies || companies.length === 0) return;
+    if (!allowedCompanies || allowedCompanies.length === 0) return;
     // If we already have a selected company, ensure it is persisted
     if (selectedCompany) {
       try { localStorage.setItem(STORAGE_KEY, selectedCompany.id); } catch {}
@@ -134,14 +163,14 @@ const CompanySelector = ({ selectedCompany, onCompanyChange }) => {
     // Try restore from localStorage
     let storedId = null;
     try { storedId = localStorage.getItem(STORAGE_KEY); } catch {}
-    const restored = storedId ? companies.find(c => c.id === storedId) : null;
+    const restored = storedId ? allowedCompanies.find(c => c.id === storedId) : null;
     if (restored) {
       onCompanyChange(restored);
     } else {
       // Fallback to first active company
-      onCompanyChange(companies[0]);
+      onCompanyChange(allowedCompanies[0]);
     }
-  }, [companies, selectedCompany, onCompanyChange]);
+  }, [allowedCompanies, selectedCompany, onCompanyChange]);
 
   const handleCompanySelect = (company) => {
     onCompanyChange(company);
@@ -174,24 +203,36 @@ const CompanySelector = ({ selectedCompany, onCompanyChange }) => {
     );
   }
 
+  if (!allowedCompanies || allowedCompanies.length === 0) {
+    return (
+      <CompanySelectorContainer>
+        <ErrorMessage>Nincs elérhető cég ehhez a felhasználóhoz</ErrorMessage>
+      </CompanySelectorContainer>
+    );
+  }
+
   return (
     <CompanySelectorContainer>
-      <div style={{ position: 'relative' }}>
+      <DropdownWrapper>
         <SelectorButton
           onClick={handleButtonClick}
           onBlur={handleBlur}
           type="button"
+          title={selectedCompany ? selectedCompany.name : 'Válasszon céget'}
+          $collapsed={collapsed}
         >
-          <Building2 size={16} />
-          <CompanyName>
-            {selectedCompany ? selectedCompany.name : 'Válasszon céget...'}
+          {!collapsed && <Building2 size={16} />}
+          <CompanyName $collapsed={collapsed}>
+            {selectedCompany
+              ? (collapsed ? getInitials(selectedCompany.name) : selectedCompany.name)
+              : 'Válasszon céget...'}
           </CompanyName>
-          <ChevronDown size={16} />
+          {!collapsed && <ChevronDown size={16} />}
         </SelectorButton>
 
-        {isOpen && companies && companies.length > 0 && (
-          <Dropdown>
-            {companies.map((company) => (
+        {isOpen && allowedCompanies && allowedCompanies.length > 0 && (
+          <Dropdown $collapsed={collapsed}>
+            {allowedCompanies.map((company) => (
               <DropdownItem
                 key={company.id}
                 onClick={() => handleCompanySelect(company)}
@@ -207,7 +248,7 @@ const CompanySelector = ({ selectedCompany, onCompanyChange }) => {
             ))}
           </Dropdown>
         )}
-      </div>
+      </DropdownWrapper>
     </CompanySelectorContainer>
   );
 };
