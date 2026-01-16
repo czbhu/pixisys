@@ -18,6 +18,7 @@ from django.utils import timezone
 from django.utils.translation import gettext as _
 from django.utils.encoding import force_bytes
 from django.core.management import call_command
+from django.db import transaction
 from django.http import HttpResponse
 from .serializers import (
     UserSerializer,
@@ -40,6 +41,7 @@ from .models import (
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
     BackupFile, UserPreference, Role, Permission, UserRole
 )
+from apps.hr.models import Employee
 import traceback
 import requests
 import json
@@ -55,6 +57,14 @@ class CompanyViewSet(viewsets.ModelViewSet):
     queryset = Company.objects.all()
     serializer_class = CompanySerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        """Return only active companies by default; allow opt-in to all."""
+        qs = super().get_queryset()
+        include_inactive = self.request.query_params.get('include_inactive')
+        if include_inactive in ('1', 'true', 'True'):
+            return qs
+        return qs.filter(is_active=True)
     
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
@@ -132,6 +142,10 @@ def login_view(request):
         user = authenticate(username=email, password=password)
     
     if user:
+        # Frissítsük a last_login mezőt, mert JWT auth alapból nem teszi meg
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+
         refresh = RefreshToken.for_user(user)
         return Response({
             'user': UserSerializer(user).data,
@@ -160,22 +174,34 @@ def register_view(request):
             status=status.HTTP_400_BAD_REQUEST
         )
     
-    # Create user with email as username
-    user = User.objects.create(
-        username=email,  # Use email as username
-        email=email,
-        first_name=data.get('first_name', ''),
-        last_name=data.get('last_name', ''),
-        password=make_password(data.get('password'))
-    )
+    with transaction.atomic():
+        # Create user with email as username, mark inactive and no privileges
+        user = User.objects.create(
+            username=email,
+            email=email,
+            first_name=data.get('first_name', ''),
+            last_name=data.get('last_name', ''),
+            password=make_password(data.get('password')),
+            is_active=False,
+            is_staff=False,
+            is_superuser=False,
+        )
+
+        employee = Employee.objects.create(
+            user=user,
+            employee_id=Employee.generate_employee_id(),
+            is_active=False,
+            permission_level='basic',
+        )
     
-    refresh = RefreshToken.for_user(user)
     return Response({
         'user': UserSerializer(user).data,
-        'tokens': {
-            'access': str(refresh.access_token),
-            'refresh': str(refresh)
-        }
+        'employee': {
+            'id': employee.id,
+            'employee_id': employee.employee_id,
+            'is_active': employee.is_active,
+        },
+        'pending_activation': True
     }, status=status.HTTP_201_CREATED)
 
 @api_view(['POST'])
@@ -769,28 +795,61 @@ class BackupFileViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def create_backup(self, request):
-        """Create a manual backup"""
+        """Create a manual backup. Supports PostgreSQL (pg_dump) and falls back to SQLite copy."""
         import os
+        import subprocess
         from django.conf import settings
-        
+		
         try:
             # Create backups directory if not exists
             backup_dir = os.path.join(settings.BASE_DIR, 'backups')
             os.makedirs(backup_dir, exist_ok=True)
-            
-            # Generate filename
+			
+            db_settings = settings.DATABASES['default']
+            engine = db_settings.get('ENGINE', '')
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'manual_backup_{timestamp}.sqlite3'
-            filepath = os.path.join(backup_dir, filename)
-            
-            # Copy database file
-            import shutil
-            db_path = settings.DATABASES['default']['NAME']
-            shutil.copy2(db_path, filepath)
-            
+
+            if 'postgresql' in engine:
+                # PostgreSQL: use pg_dump
+                filename = f'manual_backup_{timestamp}.dump'
+                filepath = os.path.join(backup_dir, filename)
+                host = db_settings.get('HOST') or 'localhost'
+                port = str(db_settings.get('PORT') or 5432)
+                user = db_settings.get('USER') or ''
+                password = db_settings.get('PASSWORD') or ''
+                db_name = db_settings.get('NAME')
+                if not db_name:
+                    raise ValueError('Adatbázis név nincs beállítva (DATABASES["default"]["NAME"]).')
+
+                cmd = [
+                    'pg_dump',
+                    '-h', host,
+                    '-p', port,
+                    '-U', user,
+                    '-F', 'c',  # custom format
+                    '-f', filepath,
+                    db_name,
+                ]
+                env = {**os.environ, 'PGPASSWORD': password}
+                try:
+                    subprocess.check_call(cmd, env=env)
+                except FileNotFoundError:
+                    raise RuntimeError('pg_dump nem található. Telepítsd a PostgreSQL klienst a szerveren.')
+                except subprocess.CalledProcessError as e:
+                    raise RuntimeError(f'pg_dump hiba: {e}')
+            else:
+                # SQLite fallback (legacy)
+                import shutil
+                filename = f'manual_backup_{timestamp}.sqlite3'
+                filepath = os.path.join(backup_dir, filename)
+                db_path = db_settings.get('NAME')
+                if not db_path or not os.path.exists(db_path):
+                    raise RuntimeError('SQLite adatbázis fájl nem található.')
+                shutil.copy2(db_path, filepath)
+
             # Get file size
             file_size = os.path.getsize(filepath)
-            
+			
             # Create backup record
             backup = BackupFile.objects.create(
                 filename=filename,
@@ -799,7 +858,7 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 created_by=request.user,
                 is_manual=True
             )
-            
+			
             serializer = self.get_serializer(backup)
             return Response({
                 'message': 'Backup sikeresen létrehozva',
@@ -822,31 +881,30 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 return Response({
                     'error': 'Nincs fájl feltöltve'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
-            # Validate file extension
-            if not uploaded_file.name.endswith('.sqlite3'):
+			
+            # Validate file extension (allow pg_dump custom or SQL)
+            if not (uploaded_file.name.endswith('.dump') or uploaded_file.name.endswith('.sql') or uploaded_file.name.endswith('.sqlite3')):
                 return Response({
-                    'error': 'Csak .sqlite3 kiterjesztésű fájlok tölthetők fel'
+                    'error': 'Csak .dump, .sql vagy .sqlite3 kiterjesztésű fájlok tölthetők fel'
                 }, status=status.HTTP_400_BAD_REQUEST)
-            
+			
             # Create backups directory if not exists
             backup_dir = os.path.join(settings.BASE_DIR, 'backups')
             os.makedirs(backup_dir, exist_ok=True)
-            
+			
             # Generate unique filename
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-            original_name = uploaded_file.name.rsplit('.', 1)[0]
-            filename = f'uploaded_{original_name}_{timestamp}.sqlite3'
+            filename = f'uploaded_{uploaded_file.name}_{timestamp}'
             filepath = os.path.join(backup_dir, filename)
-            
+			
             # Save uploaded file
             with open(filepath, 'wb+') as destination:
                 for chunk in uploaded_file.chunks():
                     destination.write(chunk)
-            
+			
             # Get file size
             file_size = os.path.getsize(filepath)
-            
+			
             # Create backup record
             backup = BackupFile.objects.create(
                 filename=filename,
@@ -855,13 +913,13 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 created_by=request.user,
                 is_manual=True
             )
-            
+			
             serializer = self.get_serializer(backup)
             return Response({
                 'message': 'Backup fájl sikeresen feltöltve',
                 'backup': serializer.data
             }, status=status.HTTP_201_CREATED)
-            
+			
         except Exception as e:
             import traceback
             return Response({
@@ -896,28 +954,62 @@ class BackupFileViewSet(viewsets.ModelViewSet):
         """Restore from a backup file"""
         import os
         import shutil
+        import subprocess
         from django.conf import settings
         
         try:
             backup = self.get_object()
-            
+			
             if not os.path.exists(backup.filepath):
                 return Response({
                     'error': 'A backup fájl nem található'
                 }, status=status.HTTP_404_NOT_FOUND)
-            
-            # Create a backup of current database before restore
-            db_path = settings.DATABASES['default']['NAME']
-            current_backup = f"{db_path}.before-restore-{timezone.now().strftime('%Y%m%d_%H%M%S')}"
-            shutil.copy2(db_path, current_backup)
-            
-            # Restore from backup
-            shutil.copy2(backup.filepath, db_path)
-            
+			
+            db_settings = settings.DATABASES['default']
+            engine = db_settings.get('ENGINE', '')
+            host = db_settings.get('HOST') or 'localhost'
+            port = str(db_settings.get('PORT') or 5432)
+            user = db_settings.get('USER') or ''
+            password = db_settings.get('PASSWORD') or ''
+            db_name = db_settings.get('NAME')
+
+            if 'postgresql' in engine:
+                # Create pre-restore backup
+                pre_filename = f"pre_restore_{timezone.now().strftime('%Y%m%d_%H%M%S')}.dump"
+                pre_path = os.path.join(settings.BASE_DIR, 'backups', pre_filename)
+                os.makedirs(os.path.dirname(pre_path), exist_ok=True)
+                env = {**os.environ, 'PGPASSWORD': password}
+                pre_cmd = [
+                    'pg_dump', '-h', host, '-p', port, '-U', user, '-F', 'c', '-f', pre_path, db_name
+                ]
+                subprocess.check_call(pre_cmd, env=env)
+
+                # Restore using pg_restore (clean + if-exists)
+                restore_cmd = [
+                    'pg_restore',
+                    '--clean', '--if-exists',
+                    '-h', host,
+                    '-p', port,
+                    '-U', user,
+                    '-d', db_name,
+                    backup.filepath,
+                ]
+                subprocess.check_call(restore_cmd, env=env)
+                current_backup = pre_path
+            else:
+                # SQLite fallback
+                current_backup = f"{db_name}.before-restore-{timezone.now().strftime('%Y%m%d_%H%M%S')}"
+                shutil.copy2(db_name, current_backup)
+                shutil.copy2(backup.filepath, db_name)
+
             return Response({
                 'message': 'Adatbázis sikeresen visszaállítva. Kérjük jelentkezzen be újra.',
                 'current_backup': current_backup
             })
+        except FileNotFoundError:
+            return Response({
+                'error': 'pg_dump/pg_restore nem található. Telepítsd a PostgreSQL klienst a szerveren.'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         except Exception as e:
             return Response({
                 'error': f'Hiba a visszaállítás során: {str(e)}'

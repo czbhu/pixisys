@@ -30,7 +30,11 @@ const Login = () => {
         try {
             const result = await register(values);
             if (result.success) {
-                navigate('/dashboard');
+                if (result.pendingActivation) {
+                    message.info('Regisztráció rögzítve, aktiválásra vársz. Kérjük, várd meg az admin jóváhagyását.');
+                } else {
+                    navigate('/dashboard');
+                }
             }
         } catch (error) {
             message.error('Regisztrációs hiba történt');

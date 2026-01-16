@@ -68,12 +68,18 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             const response = await authService.register(userData);
             const { user: newUser, tokens } = response;
 
-            localStorage.setItem('access_token', tokens.access);
-            localStorage.setItem('refresh_token', tokens.refresh);
-            setUser(newUser);
+            if (tokens?.access && tokens?.refresh) {
+                localStorage.setItem('access_token', tokens.access);
+                localStorage.setItem('refresh_token', tokens.refresh);
+                setUser(newUser);
+                message.success('Sikeres regisztráció!');
+                return { success: true, pendingActivation: false };
+            }
 
-            message.success('Sikeres regisztráció!');
-            return { success: true };
+            // No tokens returned: registration created, awaiting activation
+            setUser(null);
+            message.success('Regisztráció rögzítve, aktiválásra vár.');
+            return { success: true, pendingActivation: true };
         } catch (error: any) {
             message.error(error.message || 'Regisztrációs hiba');
             return { success: false, error: error.message };
