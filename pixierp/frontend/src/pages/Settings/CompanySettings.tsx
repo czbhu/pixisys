@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Modal, Form, Input, Switch, message, Space, Popconfirm, Tabs, Select } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, BankOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import { settingsService } from '../../services/settingsService';
 
 const { TabPane } = Tabs;
 
@@ -35,6 +36,7 @@ interface Company {
   email: string;
   website: string;
   is_default: boolean;
+  is_active: boolean;
   bank_accounts: BankAccount[];
 }
 
@@ -49,11 +51,23 @@ const CompanySettings: React.FC = () => {
   const [selectedCompanyId, setSelectedCompanyId] = useState<number | null>(null);
   const [form] = Form.useForm();
   const [bankForm] = Form.useForm();
+  const [hasPixinvoiceConfig, setHasPixinvoiceConfig] = useState(false);
+  const [importing, setImporting] = useState(false);
 
   useEffect(() => {
     loadCompanies();
     loadCurrencies();
+    loadPixInvoiceConfig();
   }, []);
+
+  const loadPixInvoiceConfig = async () => {
+    try {
+      const configs = await settingsService.getPixinvoiceConfigs();
+      setHasPixinvoiceConfig((configs || []).length > 0);
+    } catch (e) {
+      setHasPixinvoiceConfig(false);
+    }
+  };
 
   const loadCompanies = async () => {
     setLoading(true);
@@ -61,7 +75,10 @@ const CompanySettings: React.FC = () => {
       const response = await api.get('/companies/');
       // Handle paginated response
       const data = response.data.results || response.data;
-      setCompanies(Array.isArray(data) ? data : []);
+      const normalized = Array.isArray(data)
+        ? data.map((c: any) => ({ ...c, is_active: c.is_active !== false }))
+        : [];
+      setCompanies(normalized);
     } catch (error) {
       message.error('Hiba a cégek betöltése közben');
       console.error(error);
@@ -84,6 +101,7 @@ const CompanySettings: React.FC = () => {
   const handleAdd = () => {
     setEditingCompany(null);
     form.resetFields();
+    form.setFieldsValue({ is_active: true, is_default: false });
     setModalVisible(true);
   };
 
@@ -141,6 +159,29 @@ const CompanySettings: React.FC = () => {
     setEditingBankAccount(null);
     bankForm.resetFields();
     setBankModalVisible(true);
+  };
+
+  const handleImportFromPixinvoice = async () => {
+    Modal.confirm({
+      title: 'PixInvoice cégek átvétele',
+      content: 'Átveszi a PixInvoice-ban lévő cégeket és bankszámlákat. Folytatod?',
+      okText: 'Igen',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          setImporting(true);
+          const res = await api.post('/finance/pixinvoice/companies/import/');
+          const c = res?.data?.companies || {};
+          const b = res?.data?.bank_accounts || {};
+          message.success(`Import kész. Cégek: +${c.created || 0}/${c.updated || 0}, Bankszámlák: ${b.created_or_updated || 0}`);
+          loadCompanies();
+        } catch (e: any) {
+          message.error(e?.response?.data?.error || e?.message || 'Import hiba');
+        } finally {
+          setImporting(false);
+        }
+      },
+    });
   };
 
   const handleEditBankAccount = (account: BankAccount) => {
@@ -211,6 +252,14 @@ const CompanySettings: React.FC = () => {
       key: 'eu_tax_number',
     },
     {
+      title: 'Aktív',
+      dataIndex: 'is_active',
+      key: 'is_active',
+      render: (isActive: boolean) => (
+        isActive ? <CheckCircleOutlined style={{ color: '#52c41a', fontSize: 16 }} /> : 'Nem'
+      ),
+    },
+    {
       title: 'Cím',
       dataIndex: 'address',
       key: 'address',
@@ -277,9 +326,16 @@ const CompanySettings: React.FC = () => {
       <Card
         title="Alap adatok - Cégek"
         extra={
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
-            Új cég
-          </Button>
+          <Space>
+            {hasPixinvoiceConfig && (
+              <Button loading={importing} onClick={handleImportFromPixinvoice}>
+                PixInvoice átvétel
+              </Button>
+            )}
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleAdd}>
+              Új cég
+            </Button>
+          </Space>
         }
       >
         <Table
@@ -453,6 +509,14 @@ const CompanySettings: React.FC = () => {
             name="website"
           >
             <Input />
+          </Form.Item>
+
+          <Form.Item
+            label="Aktív"
+            name="is_active"
+            valuePropName="checked"
+          >
+            <Switch />
           </Form.Item>
 
           <Form.Item

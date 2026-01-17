@@ -14,6 +14,7 @@ import {
   BarChartOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { Sider } = Layout;
 
@@ -24,9 +25,11 @@ interface SidebarProps {
 
 const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
+  const [openKeys, setOpenKeys] = useState<string[]>([]);
   const navigate = useNavigate();
   const location = useLocation();
   const siderRef = useRef<HTMLDivElement>(null);
+  const { user } = useAuth();
   
   const collapsed = propCollapsed !== undefined ? propCollapsed : internalCollapsed;
   const setCollapsed = onCollapse || setInternalCollapsed;
@@ -40,7 +43,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     const allMenuKeys = [
       '/dashboard',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
-      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/invoicing',
+      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/invoicing', '/sales/projects',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/product-classes', '/manufacturing/services',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
@@ -48,7 +51,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       '/orders/orders', '/orders/returns',
       '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
       '/pos/transactions', '/pos/products', '/pos/inventory',
-      '/settings/access-control', '/settings/companies', '/settings/email-server', '/settings/email-templates', '/settings/signatures'
+      '/pos/sales', '/pos/customers', '/pos/reports',
+      '/orders/shipments', '/orders/suppliers',
+      '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports',
+      '/settings/access-control', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/backup'
     ];
     
     // Find the longest matching prefix
@@ -96,6 +102,28 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
 
     scrollToActiveMenuItem();
   }, [location.pathname]);
+
+  // Keep only the current section open; start closed by default
+  useEffect(() => {
+    if (collapsed) {
+      setOpenKeys([]);
+      return;
+    }
+    const sel = getSelectedKey();
+    if (!sel.startsWith('/')) {
+      setOpenKeys([]);
+      return;
+    }
+    const top = '/' + (sel.split('/')[1] || '');
+    // Special-case PixInvoice SSO which lives under finance
+    const parent = sel === 'pixinvoice-sso' ? '/finance' : top;
+    setOpenKeys(parent ? [parent] : []);
+  }, [location.pathname, collapsed]);
+
+  const handleOpenChange = (keys: string[]) => {
+    if (collapsed) return;
+    setOpenKeys(keys);
+  };
 
   const menuItems = [
     {
@@ -161,7 +189,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
           ),
         },
         {
-          key: '/manufacturing/projects',
+          key: '/sales/projects',
           label: 'Projektek',
         },
       ],
@@ -363,6 +391,46 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     },
   ];
 
+  const mapKeyToModule = (key: string) => {
+    if (key === '/dashboard') return 'dashboard';
+    if (key === 'pixinvoice-sso') return 'finance';
+    const trimmed = key.startsWith('/') ? key.slice(1) : key;
+    const [module] = trimmed.split('/') as string[];
+    return module || 'dashboard';
+  };
+
+  const hasModuleAccess = (moduleKey: string) => {
+    if (moduleKey === 'dashboard') return true;
+
+    const perms = Array.isArray(user?.permissions) ? user.permissions : [];
+    if (!perms.length) return false;
+
+    return perms.some((p: any) => {
+      if (!p?.allowed) return false;
+      if (p?.module !== moduleKey) return false;
+      // Treat manage/view/view_own as visible
+      return p?.action === 'manage' || p?.action === 'view' || p?.action === 'view_own' || !p?.action;
+    });
+  };
+
+  const filterMenuItems = (items: any[]): any[] => {
+    return items
+      .map((item) => {
+        const moduleKey = mapKeyToModule(item.key);
+        const filteredChildren = item.children ? filterMenuItems(item.children) : undefined;
+        const hasChildren = filteredChildren && filteredChildren.length > 0;
+        const visible = hasModuleAccess(moduleKey) || hasChildren;
+        if (!visible) return null;
+        return {
+          ...item,
+          children: filteredChildren,
+        };
+      })
+      .filter(Boolean);
+  };
+
+  const accessibleMenuItems = filterMenuItems(menuItems);
+
   const handlePixInvoiceSSO = async () => {
     try {
       // Get SSO token from ERP backend
@@ -403,7 +471,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
   };
 
   // Map labels to clickable anchors preserving new-tab behavior
-  const itemsWithLinks = menuItems.map((mi: any) => ({
+  const itemsWithLinks = accessibleMenuItems.map((mi: any) => ({
     ...mi,
     label: renderItemLabel(mi.key, mi.label),
     children: mi.children ? mi.children.map((ch: any) => ({
@@ -448,7 +516,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
           theme="dark"
           mode="inline"
           selectedKeys={[getSelectedKey()]}
-          defaultOpenKeys={['/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings']}
+          openKeys={openKeys}
+          onOpenChange={handleOpenChange}
           items={itemsWithLinks}
         />
       </div>

@@ -37,6 +37,7 @@ const Companies: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [companies, setCompanies] = useState<any[]>([]);
+    const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
@@ -55,7 +56,8 @@ const Companies: React.FC = () => {
     const [navDebug, setNavDebug] = useState<boolean>(false);
 
     useEffect(() => {
-        loadCompanies();
+        loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     // Check for action=create query parameter
@@ -66,13 +68,17 @@ const Companies: React.FC = () => {
         }
     }, [location.search]);
 
-    const loadCompanies = async () => {
+    const loadCompanies = async ({ page, pageSize, search, type }: { page: number; pageSize: number; search?: string; type?: string; }) => {
         try {
             setLoading(true);
-            const response = await crmService.getCompanies();
-            // Handle paginated response
+            const params: Record<string, any> = { page, page_size: pageSize };
+            if (search) params.search = search;
+            if (type === 'customer') params.is_customer = true;
+            if (type === 'supplier') params.is_supplier = true;
+            const response = await crmService.getCompanies(params);
             const companies = response.results || response;
             setCompanies(Array.isArray(companies) ? companies : []);
+            setPagination({ current: page, pageSize, total: response.count || companies.length || 0 });
             setError(null);
         } catch (err) {
             console.error('Error loading companies:', err);
@@ -122,7 +128,7 @@ const Companies: React.FC = () => {
         setSelectedCountry(company.country || 'Magyarország');
         form.setFieldsValue({
             name: company.name,
-            tax_number: company.tax_number || '',
+            tax_number: company.tax_number || company.full_tax_number || '',
             group_tax_number: company.group_tax_number || '',
             eu_tax_number: company.eu_tax_number || '',
             country: company.country || 'Magyarország',
@@ -159,7 +165,7 @@ const Companies: React.FC = () => {
             }
             setIsModalVisible(false);
             form.resetFields();
-            loadCompanies();
+            loadCompanies({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
         } catch (err) {
             console.error('Error saving company:', err);
             message.error('Hiba történt a cég mentése során');
@@ -180,7 +186,7 @@ const Companies: React.FC = () => {
             message.success('Cég sikeresen törölve!');
             setIsDeleteModalVisible(false);
             setDeletingCompany(null);
-            loadCompanies();
+            loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
         } catch (err) {
             console.error('Error deleting company:', err);
             message.error('Hiba történt a cég törlése során');
@@ -196,7 +202,7 @@ const Companies: React.FC = () => {
             setIsReassignModalVisible(false);
             setDeletingCompany(null);
             setReassignCompanyId(null);
-            loadCompanies();
+            loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
         } catch (err) {
             console.error('Error deleting company:', err);
             message.error('Hiba történt a cég törlése során');
@@ -272,40 +278,35 @@ const Companies: React.FC = () => {
         },
     ];
 
-    const filteredCompanies = (companies || []).filter(company => {
-        const matchesSearch = company.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            company.country.toLowerCase().includes(searchQuery.toLowerCase()) ||
-            (company.tax_number && company.tax_number.includes(searchQuery)) ||
-            (company.group_tax_number && company.group_tax_number.includes(searchQuery)) ||
-            (company.eu_tax_number && company.eu_tax_number.includes(searchQuery));
-        
-        const matchesType = typeFilter === 'all' || 
-            (typeFilter === 'customer' && company.is_customer) ||
-            (typeFilter === 'supplier' && company.is_supplier);
-        
-        return matchesSearch && matchesType;
-    });
-
-    if (loading) {
-        return <Spin size="large" style={{ display: 'block', margin: '50px auto' }} />;
-    }
+    const handleTableChange = (page: number, pageSize?: number) => {
+        const nextPageSize = pageSize || pagination.pageSize;
+        loadCompanies({ page, pageSize: nextPageSize, search: searchQuery, type: typeFilter });
+    };
 
     return (
         <div>
             <Card
                 title="Cégek kezelése"
+                loading={loading}
                 extra={
                     <Space>
                         <Input
                             placeholder="Keresés..."
                             prefix={<SearchOutlined />}
                             value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
+                            onChange={(e) => {
+                                const q = e.target.value;
+                                setSearchQuery(q);
+                                loadCompanies({ page: 1, pageSize: pagination.pageSize, search: q, type: typeFilter });
+                            }}
                             style={{ width: 200 }}
                         />
                         <Select
                             value={typeFilter}
-                            onChange={setTypeFilter}
+                            onChange={(val) => {
+                                setTypeFilter(val);
+                                loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: val });
+                            }}
                             style={{ width: 120 }}
                         >
                             <Option value="all">Mind</Option>
@@ -334,9 +335,17 @@ const Companies: React.FC = () => {
 
                 <Table
                     columns={columns}
-                    dataSource={filteredCompanies}
+                    dataSource={companies}
                     rowKey="id"
-                    pagination={{ pageSize: 10 }}
+                    loading={loading}
+                    pagination={{
+                        current: pagination.current,
+                        pageSize: pagination.pageSize,
+                        total: pagination.total,
+                        showSizeChanger: true,
+                        pageSizeOptions: ['10', '20', '50', '100'],
+                    }}
+                    onChange={(pg) => handleTableChange(pg.current || 1, pg.pageSize)}
                     onRow={(record) => ({
                         onDoubleClick: () => showEditModal(record),
                         style: { cursor: 'pointer' }
@@ -833,6 +842,11 @@ const Companies: React.FC = () => {
                         {viewingCompany.eu_tax_number && (
                             <Descriptions.Item label="EU adószám">
                                 <Tag color="orange">{viewingCompany.eu_tax_number}</Tag>
+                            </Descriptions.Item>
+                        )}
+                        {!viewingCompany.tax_number && viewingCompany.full_tax_number && (
+                            <Descriptions.Item label="Teljes adószám">
+                                <Tag color="blue">{viewingCompany.full_tax_number}</Tag>
                             </Descriptions.Item>
                         )}
                         <Descriptions.Item label="Ország">{viewingCompany.country}</Descriptions.Item>

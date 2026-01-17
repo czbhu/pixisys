@@ -97,6 +97,27 @@ const Input = styled.input`
   }
 `;
 
+const TextArea = styled.textarea`
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 90px;
+  resize: vertical;
+  transition: border-color 0.2s;
+
+  &:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.25);
+  }
+
+  &.error {
+    border-color: #e74c3c;
+  }
+`;
+
 const Select = styled.select`
   width: 100%;
   padding: 12px 16px;
@@ -139,6 +160,12 @@ const ErrorMessage = styled.span`
   font-size: 12px;
   margin-top: 4px;
   display: block;
+`;
+
+const SmallHelpText = styled.div`
+  color: #6b7280;
+  font-size: 12px;
+  margin-top: 4px;
 `;
 
 const InfoBox = styled.div`
@@ -195,6 +222,7 @@ const InvoiceBlockForm = () => {
       is_active: true,
       nav_configuration_id: '',
       invoice_appearance: 'ELECTRONIC',
+      footer_note: '',
     }
   });
 
@@ -309,6 +337,7 @@ const InvoiceBlockForm = () => {
       setValue('start_number', block.start_number);
       setValue('is_active', block.is_active);
       setValue('invoice_appearance', block.invoice_appearance || 'ELECTRONIC');
+      setValue('footer_note', block.footer_note || '');
     }
   }, [block, setValue]);
 
@@ -434,6 +463,16 @@ const InvoiceBlockForm = () => {
               </Select>
             )}
           />
+        </FormGroup>
+
+        <FormGroup>
+          <Label htmlFor="footer_note">Lábjegyzék</Label>
+          <TextArea
+            id="footer_note"
+            {...register('footer_note')}
+            placeholder="A megadott szöveg minden ebben a számlatömbben kiállított számlán megjelenik."
+          />
+          <SmallHelpText>Egyedi záradékok, fizetési információk vagy figyelmeztetések megadásához.</SmallHelpText>
         </FormGroup>
 
         <FormGroup>

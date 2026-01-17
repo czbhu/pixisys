@@ -461,18 +461,19 @@ const CompanyForm = () => {
     {
       enabled: isEdit,
       select: (res) => res.data?.results || res.data || [],
-      onSuccess: (rows) => {
-        setBankAccounts(rows.map(r => ({
-          id: r.id,
-          bank_name: r.bank_name || '',
-          account_number: r.account_number || '',
-          iban: r.iban || '',
-          swift_bic: r.swift_bic || '',
-          currency: r.currency || 'HUF',
-          is_primary: !!r.is_primary,
-        })));
-        originalCompanyBankAccountIdsRef.current = new Set(rows.map(r => r.id));
-      }
+        onSuccess: (rows) => {
+          setBankAccounts(rows.map(r => ({
+            id: r.id,
+            bank_name: r.bank_name || '',
+            account_number: r.account_number || '',
+            iban: r.iban || '',
+            swift_bic: r.swift_bic || '',
+            currency: r.currency || 'HUF',
+            is_primary: !!r.is_primary,
+            round_transfer_to_whole: !!r.round_transfer_to_whole,
+          })));
+          originalCompanyBankAccountIdsRef.current = new Set(rows.map(r => r.id));
+        }
     }
   );
 
@@ -740,6 +741,7 @@ const CompanyForm = () => {
         swift_bic: r.swift_bic || '',
         currency: r.currency || 'HUF',
         is_primary: !!r.is_primary,
+        round_transfer_to_whole: !!r.round_transfer_to_whole,
       })));
       originalCompanyBankAccountIdsRef.current = new Set(rows.map(r => r.id));
       toast.success('Adatok átvétele kész');
@@ -958,7 +960,7 @@ const CompanyForm = () => {
             <BankActions>
               <Button type="button" variant="secondary" onClick={() => setBankAccounts([
                 ...bankAccounts,
-                { bank_name: '', account_number: '', iban: '', swift_bic: '', currency: 'HUF', is_primary: bankAccounts.length === 0 }
+                { bank_name: '', account_number: '', iban: '', swift_bic: '', currency: 'HUF', is_primary: bankAccounts.length === 0, round_transfer_to_whole: false }
               ])}>
                 Új bankszámla
               </Button>
@@ -977,6 +979,19 @@ const CompanyForm = () => {
                     {b.is_primary && <PrimaryBadge>PRIMARY</PrimaryBadge>}
                   </div>
                   <Button type="button" variant="danger" onClick={() => setBankAccounts(bankAccounts.filter((_, i) => i !== idx))}>Törlés</Button>
+                </div>
+                <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="checkbox"
+                    id={`round_transfer_to_whole_${idx}`}
+                    checked={!!b.round_transfer_to_whole}
+                    onChange={(e) => {
+                      const v = [...bankAccounts];
+                      v[idx] = { ...v[idx], round_transfer_to_whole: e.target.checked };
+                      setBankAccounts(v);
+                    }}
+                  />
+                  <label htmlFor={`round_transfer_to_whole_${idx}`}>Csak egész számos utalás</label>
                 </div>
                 <BankRow>
                   <SmallInput placeholder="Bank neve" value={b.bank_name} onChange={e => { const v=[...bankAccounts]; v[idx]={...v[idx], bank_name:e.target.value}; setBankAccounts(v); }} />

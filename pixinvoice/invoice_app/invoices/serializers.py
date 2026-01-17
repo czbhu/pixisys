@@ -957,7 +957,7 @@ class CompanySerializer(serializers.ModelSerializer):
             'id', 'name', 'short_name', 'tax_number', 'full_tax_number',
             'vat_code', 'county_code', 'eu_tax_number', 'vat_group_id', 'vat_group_member_tax_number',
             'address', 'street_name', 'public_place_category', 'street_number', 'building', 'staircase', 'floor', 'door',
-            'city', 'postal_code', 'country', 'email', 'phone', 'xml_logging_enabled',
+            'city', 'postal_code', 'country', 'email', 'phone', 'xml_logging_enabled', 'round_transfer_to_whole',
             'is_active', 'created_at', 'updated_at', 'bank_accounts'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
@@ -973,6 +973,7 @@ class CompanySerializer(serializers.ModelSerializer):
                 'swift_bic': a.swift_bic,
                 'currency': a.currency,
                 'is_primary': a.is_primary,
+                'round_transfer_to_whole': getattr(a, 'round_transfer_to_whole', False),
             }
             for a in accounts
         ]
@@ -980,7 +981,7 @@ class CompanySerializer(serializers.ModelSerializer):
 class CompanyBankAccountSerializer(serializers.ModelSerializer):
     class Meta:
         model = CompanyBankAccount
-        fields = ['id', 'company', 'bank_name', 'account_number', 'iban', 'swift_bic', 'currency', 'is_primary', 'created_at', 'updated_at']
+        fields = ['id', 'company', 'bank_name', 'account_number', 'iban', 'swift_bic', 'currency', 'is_primary', 'round_transfer_to_whole', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 

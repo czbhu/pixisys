@@ -123,6 +123,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 Q(tax_number__icontains=search) |
                 Q(email__icontains=search)
             )
+        type_filter = self.request.query_params.get('type') or self.request.query_params.get('kind')
+        if type_filter == 'supplier':
+            queryset = queryset.filter(is_supplier=True)
+        elif type_filter == 'customer':
+            queryset = queryset.filter(is_customer=True)
         return queryset
 
     def create(self, request, *args, **kwargs):
@@ -1772,8 +1777,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 return Response({'error': 'Nincs aktív NAV konfiguráció a céghez'}, status=status.HTTP_400_BAD_REQUEST)
             nav_service = NAVService(cfg)
 
-            # Determine fetch window: incremental by insDate from last refresh to now; otherwise a default backfill window
+            # Determine fetch window: use explicit date range if provided, otherwise incremental by insDate from last refresh
             fetch_by_insdate = sync.last_refreshed_at is not None and has_any
+            if date_from and date_to:
+                # Always prefer the requested explicit window (even if we already have some data in it)
+                fetch_by_insdate = False
             if fetch_by_insdate:
                 df = sync.last_refreshed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
                 dt = timezone.now().astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
@@ -3710,7 +3718,10 @@ class ContactViewSet(viewsets.ModelViewSet):
                 Q(last_name__icontains=search) |
                 Q(email__icontains=search) |
                 Q(position__icontains=search) |
-                Q(department__icontains=search)
+                Q(department__icontains=search) |
+                Q(customer__name__icontains=search) |
+                Q(customer__short_name__icontains=search) |
+                Q(customer__tax_number__icontains=search)
             )
         
         if contact_type:
@@ -5404,13 +5415,37 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         mismatched = []
         not_approved = []
         valid_items = []
-        is_super = getattr(request.user, 'is_superuser', False)
+        def _can_skip_approval():
+            user = getattr(request, 'user', None)
+            if getattr(user, 'is_superuser', False) or getattr(user, 'is_staff', False):
+                return True
+            sys_user = None
+            try:
+                if isinstance(user, SystemUser):
+                    sys_user = user
+                else:
+                    email = getattr(user, 'email', None) or getattr(user, 'username', None)
+                    if email:
+                        sys_user = SystemUser.objects.filter(email=email, is_active=True).prefetch_related('roles').first()
+            except Exception:
+                sys_user = None
+            if not sys_user:
+                # If we cannot resolve a SystemUser, trust the authenticated caller (UI superadmin cases)
+                return True
+            allowed = []
+            for r in sys_user.roles.filter(is_active=True):
+                allowed.extend(r.menu_permissions or [])
+            if not allowed:
+                return True
+            return 'payment_batch_without_approval' in allowed
+
+        skip_approval_check = _can_skip_approval()
         for it in items:
             inv = (it or {})
             if inv.get('currency') and batch.currency and inv.get('currency') != batch.currency:
                 mismatched.append(inv.get('invoice_number'))
                 continue
-            if not is_super:
+            if not skip_approval_check:
                 tax = inv.get('supplier_tax_number')
                 digest_qs = IncomingInvoiceDigest.objects.filter(
                     company=batch.company,
@@ -5423,7 +5458,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     not_approved.append(inv.get('invoice_number') or digest.invoice_number)
                     continue
             valid_items.append(inv)
-        if not_approved and not is_super:
+        if not_approved and not skip_approval_check:
             return Response(
                 {
                     'error': 'Csak jóváhagyott számlák adhatók fizetési csomaghoz',
@@ -5475,7 +5510,8 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             except Exception:
                 sys_user = None
             if not sys_user:
-                return False
+                # If we cannot resolve a SystemUser, trust the authenticated caller (UI superadmin cases)
+                return True
             allowed = []
             for r in sys_user.roles.filter(is_active=True):
                 allowed.extend(r.menu_permissions or [])
@@ -5542,13 +5578,37 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             exec_date = datetime.strptime(exec_date_str, '%Y-%m-%d').date() if exec_date_str else timezone.now().date()
         except Exception:
             return Response({'error': 'execution_date formátum: YYYY-MM-DD'}, status=status.HTTP_400_BAD_REQUEST)
-
+        skip_missing = False
+        try:
+            raw_skip = request.data.get('skip_missing') if hasattr(request, 'data') else None
+            if raw_skip is None:
+                raw_skip = request.query_params.get('skip_missing')
+            skip_missing = str(raw_skip).lower() in ('1', 'true', 'yes', 'on')
+        except Exception:
+            skip_missing = False
         sepa_aliases = ('sepa', 'pain.001', 'pain001', 'pain')
         if fmt not in (*sepa_aliases, 'csv'):
             return Response({'error': 'Nem támogatott export formátum (engedélyezett: pain.001, csv)'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Determine debtor account - use batch account or company's primary/first account
+        debtor_account = batch.bank_account
+        if not debtor_account:
+            debtor_account = batch.company.bank_accounts.filter(is_primary=True).first() or batch.company.bank_accounts.first()
+        if not debtor_account:
+            return Response({'error': f'{batch.company.name}: Nincs bankszámla megadva a csomaghoz vagy a céghez'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Debtor account level rounding flag (fallback to company setting)
+        round_to_whole = getattr(batch.company, 'round_transfer_to_whole', False)
+        try:
+            if getattr(debtor_account, 'round_transfer_to_whole', None) is not None:
+                round_to_whole = bool(debtor_account.round_transfer_to_whole)
+        except Exception:
+            pass
+
         # Build items with supplier account numbers from cached NAV XML if available
         missing_accounts = []
+        missing_items = []
+        skipped_missing = []
         tx_items = []
         for it in batch.items.all():
             acct_type = None
@@ -5561,21 +5621,30 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     q = q.filter(supplier_tax_number=it.supplier_tax_number)
                 invdata = q.order_by('-created_at').first()
                 if invdata and invdata.xml_text:
-                    acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, it.supplier_tax_number)
+                    acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, it.supplier_tax_number, it.currency or batch.currency)
                 elif invdata:
                     # Nincs XML cache, de van supplier_tax_number -> próbáljuk az ügyféltörzsből
-                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number)
+                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number, it.currency or batch.currency)
                 else:
                     # Nincs invdata se -> próbáljuk az ügyféltörzsből
-                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number)
+                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number, it.currency or batch.currency)
             except Exception:
                 pass
             if not account:
-                missing_accounts.append({'invoice_number': it.invoice_number, 'supplier': it.supplier_name})
+                missing_accounts.append({
+                    'invoice_number': it.invoice_number,
+                    'supplier': it.supplier_name,
+                    'supplier_tax_number': it.supplier_tax_number,
+                    'company': batch.company.name,
+                })
+                missing_items.append(it)
                 continue
+            amount_val = decimal.Decimal(str(it.amount_gross))
+            if round_to_whole:
+                amount_val = amount_val.quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP)
             tx_items.append({
                 'end_to_end': it.invoice_number,
-                'amount': str(it.amount_gross),
+                'amount': str(amount_val),
                 'currency': it.currency or batch.currency or 'HUF',
                 'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
                 'acct_type': acct_type or 'IBAN',
@@ -5583,21 +5652,60 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 'remittance': f"Számla {it.invoice_number}",
             })
 
-        if not tx_items:
-            error_details = '\n'.join([f"{m['supplier']}: Bankszámlaszám üres!" for m in missing_accounts])
+        if missing_accounts and not skip_missing:
+            error_details = '\n'.join([
+                f"{m.get('supplier') or 'Ismeretlen partner'} (adószám: {m.get('supplier_tax_number') or 'n/a'}, cég: {m.get('company')}): Bankszámlaszám üres!"
+                for m in missing_accounts
+            ])
             return Response({'error': f'Hiányzó bankszámlaszámok:\n{error_details}', 'missing': missing_accounts}, status=status.HTTP_400_BAD_REQUEST)
+        if missing_accounts and skip_missing:
+            skipped_missing = missing_accounts[:]
+            # Move missing items to a new pending batch so they stay actionable
+            try:
+                from django.utils import timezone as dj_tz
+                ts = dj_tz.now().strftime('%Y%m%d_%H%M%S')
+                new_batch = PaymentBatch.objects.create(
+                    company=batch.company,
+                    name=f"Kihagyott_{ts}",
+                    bank_account=batch.bank_account,
+                    currency=batch.currency,
+                    status='PENDING',
+                    created_by=getattr(batch, 'created_by', None),
+                )
+                for it in missing_items:
+                    PaymentBatchItem.objects.create(
+                        batch=new_batch,
+                        invoice_number=it.invoice_number,
+                        supplier_tax_number=it.supplier_tax_number,
+                        supplier_name=it.supplier_name,
+                        amount_gross=it.amount_gross,
+                        currency=it.currency,
+                    )
+                # Remove the missing items from the exported batch
+                PaymentBatchItem.objects.filter(id__in=[m.id for m in missing_items]).delete()
+            except Exception:
+                # If moving fails, keep behavior but still skip in export
+                pass
+
+        if not tx_items:
+            error_details = '\n'.join([
+                f"{m.get('supplier') or 'Ismeretlen partner'} (adószám: {m.get('supplier_tax_number') or 'n/a'}, cég: {m.get('company')}): Bankszámlaszám üres!"
+                for m in missing_accounts
+            ])
+            return Response({'error': f'Nem exportálható: hiányzó bankszámlaszámok.\n{error_details}', 'missing': missing_accounts}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             if fmt in sepa_aliases:
-                content = self._build_pain_001(batch, tx_items, exec_date)
+                content = self._build_pain_001(batch, tx_items, exec_date, debtor_account)
                 content_type = 'application/xml'
                 filename = f"payment_batch_{(batch.name or str(batch.id)).replace(' ', '_')}_pain.001.xml"
             else:
                 header = ['account','account_type','beneficiary_name','amount','currency','remittance','execution_date','end_to_end']
                 rows = []
                 for it in tx_items:
+                    amount_for_csv = decimal.Decimal(it['amount']).quantize(decimal.Decimal('0.01'))
                     rows.append([
-                        it['account'], it['acct_type'], it['name'], f"{decimal.Decimal(it['amount']):.2f}", it['currency'], it['remittance'], exec_date.strftime('%Y-%m-%d'), it['end_to_end']
+                        it['account'], it['acct_type'], it['name'], f"{amount_for_csv:.2f}", it['currency'], it['remittance'], exec_date.strftime('%Y-%m-%d'), it['end_to_end']
                     ])
                 csv = ';'.join(header) + '\n' + '\n'.join([';'.join([str(col).replace(';', ',') for col in r]) for r in rows])
                 content = ("\ufeff" + csv).encode('utf-8')
@@ -5619,9 +5727,14 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
 
         resp = HttpResponse(content, content_type=content_type)
         resp['Content-Disposition'] = f'attachment; filename="{filename}"'
+        if skipped_missing:
+            try:
+                resp['X-Missing-Accounts'] = json.dumps(skipped_missing)
+            except Exception:
+                resp['X-Missing-Accounts'] = ','.join([str(m.get('invoice_number') or '') for m in skipped_missing])
         return resp
 
-    def _extract_supplier_account(self, xml_text: str, company=None, supplier_tax_number: str = None):
+    def _extract_supplier_account(self, xml_text: str, company=None, supplier_tax_number: str = None, preferred_currency: str = None):
         """
         Kinyeri a beszállító bankszámlaszámát.
         1. Először az XML-ből próbálja
@@ -5630,7 +5743,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not xml_text:
             # Ha nincs XML, próbáljuk az ügyféltörzsből
             if company and supplier_tax_number:
-                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '')
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, '', preferred_currency)
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')
@@ -5655,7 +5768,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             
             # Ha nincs az XML-ben, próbáljuk az ügyféltörzsből
             if company and supplier_tax_number:
-                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text)
+                account = get_supplier_bank_account_for_invoice(company, supplier_tax_number, xml_text, preferred_currency)
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')
@@ -5669,7 +5782,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             pass
         return None, None
 
-    def _build_pain_001(self, batch: PaymentBatch, items: list, execution_date: date):
+    def _build_pain_001(self, batch: PaymentBatch, items: list, execution_date: date, debtor_account):
         ns = 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03'
         ET.register_namespace('', ns)
         d = ET.Element(ET.QName(ns, 'Document'))
@@ -5700,17 +5813,6 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
         dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
         ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
-        
-        # Determine debtor account - use batch account or company's primary/first account
-        debtor_account = batch.bank_account
-        if not debtor_account:
-            # Try to find primary account or first available
-            debtor_account = batch.company.bank_accounts.filter(is_primary=True).first()
-            if not debtor_account:
-                debtor_account = batch.company.bank_accounts.first()
-        
-        if not debtor_account:
-            raise ValueError(f'{batch.company.name}: Nincs bankszámla megadva a csomaghoz vagy a céghez')
         
         dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
         dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))

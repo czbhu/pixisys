@@ -2,8 +2,8 @@ import api from './api';
 
 export const crmService = {
     // Companies
-    async getCompanies() {
-        const response = await api.get('/crm/companies/');
+    async getCompanies(params?: Record<string, any>) {
+        const response = await api.get('/crm/companies/', { params });
         return response.data;
     },
 
@@ -147,8 +147,8 @@ export const crmService = {
     },
 
     // Contacts
-    async getContacts() {
-        const response = await api.get('/crm/contacts/');
+    async getContacts(params?: Record<string, any>) {
+        const response = await api.get('/crm/contacts/', { params });
         return response.data;
     },
 

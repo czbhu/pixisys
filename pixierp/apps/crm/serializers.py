@@ -20,9 +20,10 @@ class CompanySerializer(serializers.ModelSerializer):
         model = Company
         fields = [
             'id', 'name', 'is_customer', 'is_supplier', 'company_type_display',
-            'tax_number', 'group_tax_number', 'eu_tax_number', 
-            'country', 'postal_code', 'city', 'street_name', 'street_type', 
-            'house_number', 'address', 'full_address',
+            'short_name', 'tax_number', 'full_tax_number', 'group_tax_number', 'eu_tax_number', 'vat_code', 'county_code', 'vat_group_id', 'vat_group_member_tax_number',
+            'country', 'postal_code', 'city', 'street_name', 'street_type', 'public_place_category',
+            'house_number', 'street_number', 'building', 'staircase', 'floor', 'door',
+            'address', 'email', 'phone', 'full_address', 'is_active',
             'created_at', 'updated_at', 'created_by', 'created_by_name'
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']

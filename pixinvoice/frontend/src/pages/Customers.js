@@ -10,7 +10,8 @@ import {
   Phone,
   Mail,
   Grid,
-  List
+  List,
+  X
 } from 'lucide-react';
 import styled from 'styled-components';
 import { customerAPI } from '../services/api';
@@ -95,6 +96,25 @@ const ActionButton = styled(Link)`
 
   &:hover {
     background-color: #2980b9;
+  }
+`;
+
+const ClearButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background: #ecf0f1;
+  color: #34495e;
+  border: 1px solid #dcdfe3;
+  border-radius: 4px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background-color 0.2s, color 0.2s;
+
+  &:hover {
+    background: #e4e8ec;
+    color: #2c3e50;
   }
 `;
 
@@ -352,6 +372,7 @@ const Customers = () => {
   const [viewMode, setViewMode] = useState(savedPrefs.viewMode);
   const [pageSize, setPageSize] = useState(savedPrefs.pageSize);
   const [customerTypeFilter, setCustomerTypeFilter] = useState(savedPrefs.customerTypeFilter || 'all');
+  const hasActiveFilters = Boolean((searchTerm && searchTerm.length > 0) || (customerTypeFilter && customerTypeFilter !== 'all'));
   
   const queryClient = useQueryClient();
 
@@ -371,15 +392,22 @@ const Customers = () => {
     }
   }, [viewMode, pageSize, currentPage, searchTerm, customerTypeFilter]);
 
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, customerTypeFilter]);
+
   const { data: customers, isLoading, error } = useQuery(
-    ['customers', { search: searchTerm, page: currentPage, pageSize }],
+    ['customers', { search: searchTerm, page: currentPage, pageSize, customerTypeFilter }],
     () => customerAPI.getCustomers({
       search: searchTerm || undefined,
       page: currentPage,
       page_size: pageSize,
+      type: customerTypeFilter === 'customers' ? 'customer' : (customerTypeFilter === 'suppliers' ? 'supplier' : undefined),
     }),
     {
       keepPreviousData: true,
+      // Avoid retry loops on page overflow; handle page reset manually
+      retry: (failureCount, err) => err?.response?.status !== 404 && failureCount < 2,
       select: (response) => {
         let results = response.data.results || [];
         // Client-side filter by customer type
@@ -390,8 +418,13 @@ const Customers = () => {
         }
         return { ...response.data, results };
       },
-      onError: (error) => {
-        console.error('Customers page error:', error);
+      onError: (err) => {
+        if (err?.response?.status === 404 && currentPage > 1) {
+          // If the page is out of range (common after filtering), jump back to page 1
+          setCurrentPage(1);
+          return;
+        }
+        console.error('Customers page error:', err);
       }
     }
   );
@@ -481,6 +514,20 @@ const Customers = () => {
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
           />
+          {hasActiveFilters && (
+            <ClearButton
+              type="button"
+              onClick={() => {
+                setSearchTerm('');
+                setCustomerTypeFilter('all');
+                setCurrentPage(1);
+              }}
+              title="Szűrők törlése"
+            >
+              <X size={14} />
+              Szűrők törlése
+            </ClearButton>
+          )}
           <ViewToggle>
             <ViewButton 
               active={viewMode === 'grid'}
@@ -628,11 +675,26 @@ const Customers = () => {
 
       {!isLoading && !error && (!customers?.results || customers.results.length === 0) && (
         <EmptyState>
-          <p>Nincsenek ügyfelek</p>
-          <ActionButton to="/customers/new" style={{ marginTop: '16px' }}>
-            <Plus size={16} />
-            Új ügyfél létrehozása
-          </ActionButton>
+          <p>{hasActiveFilters ? 'Nincs találat a jelenlegi szűrőkkel' : 'Nincsenek ügyfelek'}</p>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '16px', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {hasActiveFilters && (
+              <ClearButton
+                type="button"
+                onClick={() => {
+                  setSearchTerm('');
+                  setCustomerTypeFilter('all');
+                  setCurrentPage(1);
+                }}
+              >
+                <X size={14} />
+                Szűrők törlése
+              </ClearButton>
+            )}
+            <ActionButton to="/customers/new">
+              <Plus size={16} />
+              Új ügyfél létrehozása
+            </ActionButton>
+          </div>
         </EmptyState>
       )}
 

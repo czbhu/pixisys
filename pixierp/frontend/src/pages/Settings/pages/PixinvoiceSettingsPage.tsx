@@ -147,7 +147,7 @@ const PixinvoiceSettingsPage: React.FC = () => {
   return (
     <Card title="PIXINVOICE beállítások">
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
-        <Form form={form} layout="vertical" initialValues={{ is_active: true }}>
+        <Form form={form} layout="vertical" initialValues={{ is_active: true }} autoComplete="off">
           <Form.Item name="id" hidden><Input /></Form.Item>
           <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Név kötelező' }]}>
             <Input placeholder="Alapértelmezett" />
@@ -158,6 +158,7 @@ const PixinvoiceSettingsPage: React.FC = () => {
           <Form.Item label="Cég azonosító (company_id)" name="company_id" tooltip="Opcionális. Ha nincs megadva, a PixInvoice API a kulcs jogosultságai alapján listáz.">
             <Input 
               placeholder="<cég UUID> (opcionális)" 
+              autoComplete="off"
               onChange={(e) => {
                 const configId = form.getFieldValue('id');
                 if (configId && e.target.value) {

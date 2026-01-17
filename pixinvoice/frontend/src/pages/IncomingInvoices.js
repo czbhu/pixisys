@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
-import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw } from 'lucide-react';
+import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar } from 'lucide-react';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -94,8 +94,9 @@ const TableBody = styled.tbody``;
 
 const TableRow = styled.tr`
   &:hover { background-color: #f8f9fa; }
-  ${props => props.$paid ? 'background: #eafaf1;' : ''}
+  ${props => props.$paid ? 'background: #E6F7ED;' : ''}
   ${props => (!props.$paid && props.$unpaid) ? 'background: #f3e8ff;' : ''}
+  ${props => props.$selected ? 'background: rgb(214,230,211);' : ''}
 `;
 
 const TableCell = styled.td`
@@ -219,6 +220,9 @@ export default function IncomingInvoices() {
   const [companyId, setCompanyId] = useState(() => localStorage.getItem('selectedCompanyId') || '');
   const [dateFrom, setDateFrom] = useState(null);
   const [dateTo, setDateTo] = useState(null);
+  const [showDateModal, setShowDateModal] = useState(false);
+  const [dateDraftFrom, setDateDraftFrom] = useState(null);
+  const [dateDraftTo, setDateDraftTo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -265,6 +269,55 @@ export default function IncomingInvoices() {
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
   const searchTimer = useRef(null);
   const [approvalSaving, setApprovalSaving] = useState({});
+  const formatDate = (d) => {
+    if (!d) return '';
+    const dt = d instanceof Date ? d : new Date(d);
+    if (Number.isNaN(dt.getTime())) return '';
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const day = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  };
+
+  const applyRange = (from, to, opts = {}) => {
+    setDateFrom(from);
+    setDateTo(to);
+    setPage(1);
+    setItems([]);
+    setHasMore(true);
+    const doBackfill = opts.backfillAll || (!!from && !!to);
+    fetchDigest(1, { replace: true, refresh: opts.refresh ? 1 : 0, backfillAll: doBackfill });
+  };
+
+  const presetRange = (key) => {
+    const today = new Date();
+    const todayStr = formatDate(today);
+    const daysAgo = (n) => {
+      const d = new Date();
+      d.setDate(d.getDate() - n);
+      return formatDate(d);
+    };
+    if (key === 'today') return { from: todayStr, to: todayStr, opts: { refresh: 1 } };
+    if (key === 'last7') return { from: daysAgo(6), to: todayStr, opts: { refresh: 1 } };
+    if (key === 'last30') return { from: daysAgo(29), to: todayStr, opts: { refresh: 1 } };
+    if (key === 'last365') return { from: daysAgo(364), to: todayStr, opts: { refresh: 1, backfillAll: 1 } };
+    if (key === 'prevMonth') {
+      const first = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const last = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { from: formatDate(first), to: formatDate(last), opts: { refresh: 1, backfillAll: 1 } };
+    }
+    if (key === 'clear') return { from: null, to: null, opts: { refresh: 0 } };
+    return null;
+  };
+
+  const applyPreset = (key, { closeModal = false } = {}) => {
+    const preset = presetRange(key);
+    if (!preset) return;
+    setDateDraftFrom(preset.from);
+    setDateDraftTo(preset.to);
+    applyRange(preset.from, preset.to, preset.opts || {});
+    if (closeModal) setShowDateModal(false);
+  };
 
   const { allowedMenus, user } = useAuth();
   const allowAllMenus = !allowedMenus || allowedMenus.length === 0;
@@ -300,7 +353,7 @@ export default function IncomingInvoices() {
   }, []);
 
   // Reset page and items when filters change
-  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter, approvalFilter]);
+  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
 
   // Poll pending batch count lightly when company changes
   useEffect(() => {
@@ -372,7 +425,7 @@ export default function IncomingInvoices() {
     }, 400);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter]);
+  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
 
   // Infinite scroll sentinel
   useEffect(() => {
@@ -1021,7 +1074,30 @@ export default function IncomingInvoices() {
     } catch (e) { toast.error('Export hiba'); }
   };
 
-  const exportBatchBankFile = async (b) => {
+  const parseExportError = async (err) => {
+    const resp = err?.response;
+    if (!resp) return {};
+    const data = resp.data;
+    // Axios with responseType 'blob' gives Blob on both success and error; try to parse
+    if (data instanceof Blob) {
+      try {
+        const text = await data.text();
+        try {
+          return JSON.parse(text);
+        } catch (e) {
+          return { error: text };
+        }
+      } catch (e) {
+        return {};
+      }
+    }
+    if (typeof data === 'string') {
+      try { return JSON.parse(data); } catch (e) { return { error: data }; }
+    }
+    return data || {};
+  };
+
+  const exportBatchBankFile = async (b, opts = {}) => {
     try {
       const execDate = new Date();
       const y = execDate.getFullYear();
@@ -1029,6 +1105,9 @@ export default function IncomingInvoices() {
       const d = String(execDate.getDate()).padStart(2, '0');
       let res;
       const params = { format: 'pain.001', execution_date: `${y}-${m}-${d}`, company_id: companyId };
+      if (opts.skipMissing) {
+        params.skip_missing = '1';
+      }
       try {
         res = await api.get(`/api/payment-batches/${b.id}/bank-export/`, { responseType: 'blob', params });
       } catch (err) {
@@ -1045,10 +1124,31 @@ export default function IncomingInvoices() {
       a.href = url;
       a.download = `payment_batch_${(b.name||b.id)}_pain.001.xml`;
       document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
-      toast.success('Banki export elkészült');
+      const skippedInfo = res?.headers?.['x-missing-accounts'];
+      if (skippedInfo) {
+        let skippedList = [];
+        try { skippedList = JSON.parse(skippedInfo); } catch { skippedList = String(skippedInfo || '').split(',').filter(Boolean); }
+        const label = Array.isArray(skippedList) && skippedList.length ? ` (kihagyva: ${skippedList.length} tétel)` : '';
+        toast.warn(`Banki export elkészült${label}, hiányzó bankszámlaszámok miatt néhány tétel kimaradt.`);
+      } else {
+        toast.success('Banki export elkészült');
+      }
       try { await fetchBatchLists(); } catch {}
     } catch (e) {
-      const msg = e?.response?.data?.error || 'Banki export hiba';
+      const parsed = await parseExportError(e);
+      const resp = parsed || {};
+      if (resp?.missing?.length) {
+        const details = resp.missing.map(m => `${m.supplier || 'Partner'} (${m.supplier_tax_number || 'n/a'}) - ${m.invoice_number || 'számla'}`).join('\n');
+        if (!opts.skipMissing) {
+          const proceed = window.confirm(`Hiányzó bankszámlaszámok:\n${details}\n\nKihagyjuk ezeket és exportáljuk a többit?`);
+          if (proceed) {
+            return exportBatchBankFile(b, { skipMissing: true });
+          }
+          toast.info('Export megszakítva hiányzó bankszámlaszám miatt');
+          return;
+        }
+      }
+      const msg = resp?.error || parsed?.error || e?.message || 'Banki export hiba';
       toast.error(msg);
     }
   };
@@ -1213,6 +1313,13 @@ export default function IncomingInvoices() {
               <option value="unapproved">Csak nem jóváhagyott</option>
             </select>
           </div>
+          <SecondaryButton
+            onClick={()=>{ setDateDraftFrom(dateFrom); setDateDraftTo(dateTo); setShowDateModal(true); }}
+            style={{ marginLeft:'auto' }}
+          >
+            <Calendar size={16}/>
+            {dateFrom || dateTo ? `${dateFrom || '…'} – ${dateTo || '…'}` : 'Dátumszűrés'}
+          </SecondaryButton>
           <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading}>
             <RefreshCw size={16}/> Frissítés
           </PrimaryButton>
@@ -1271,15 +1378,32 @@ export default function IncomingInvoices() {
           <TableBody>
             {items.map((row, idx) => {
               const key = rowKey(row);
-              const isPaid = !!row.isPaid || (!!row.paymentDate && !row.remainingAmount);
-              const isUnpaid = !isPaid && String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
+              const toNumber = (v) => {
+                if (v === null || v === undefined || v === '') return 0;
+                const s = String(v).replace(/\s+/g, '').replace(',', '.');
+                const n = parseFloat(s);
+                return Number.isFinite(n) ? n : 0;
+              };
+              const remaining = toNumber(row.remainingAmount);
+              const overpaid = toNumber(row.overpaidAmount);
               const paymentDisplayDate = row.paymentDisplayDate || row.paymentDate;
+              const hasPaymentDate = !!paymentDisplayDate;
+              const isTransfer = String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
+              const hasBalance = remaining > 0.0001;
+              const hasOverpay = overpaid > 0.0001;
+              const isPaid = !!row.isPaid || (!isTransfer ? hasPaymentDate : hasPaymentDate || (!hasBalance));
+              const isUnpaid = !isPaid && isTransfer;
+              const hasPaidTag = isTransfer ? !isUnpaid : hasPaymentDate;
               const remainingAmount = row.remainingAmount;
               const overpaidAmount = row.overpaidAmount;
-              const isTransfer = String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
               const dueText = row.dueDate ? row.dueDate : '-';
               return (
-              <TableRow key={`${row.invoiceNumber||'row'}_${idx}`} $paid={isPaid} $unpaid={isUnpaid}>
+              <TableRow
+                key={`${row.invoiceNumber||'row'}_${idx}`}
+                $paid={hasPaidTag}
+                $unpaid={isUnpaid}
+                $selected={selected.has(rowKey(row))}
+              >
                 <TableCell style={{width:40}}>
                   {canSelect(row) ? (
                     <CheckboxBtn onClick={(e)=>toggleSelect(row, idx, e)} title="Kijelölés">
@@ -1370,7 +1494,7 @@ export default function IncomingInvoices() {
                         )}
                       </div>
                       {isTransfer ? (
-                        remainingAmount || overpaidAmount ? (
+                        isUnpaid ? (
                           <>
                             <StatusPill variant="unpaid">
                               Esedékes: {dueText}
@@ -1378,11 +1502,11 @@ export default function IncomingInvoices() {
                             {paymentDisplayDate && (
                               <SmallMuted>Utolsó fizetés: {paymentDisplayDate}</SmallMuted>
                             )}
-                            {remainingAmount && (
-                              <SmallMuted>Fennmaradó összeg: {formatMoney(remainingAmount)} {row.currency}</SmallMuted>
+                            {hasBalance && (
+                              <SmallMuted>Fennmaradó összeg: {formatMoney(remaining)} {row.currency}</SmallMuted>
                             )}
-                            {overpaidAmount && (
-                              <SmallMuted>Túlfizetés: {formatMoney(overpaidAmount)} {row.currency}</SmallMuted>
+                            {hasOverpay && (
+                              <SmallMuted>Túlfizetés: {formatMoney(overpaid)} {row.currency}</SmallMuted>
                             )}
                           </>
                         ) : (
@@ -1391,9 +1515,13 @@ export default function IncomingInvoices() {
                           </StatusPill>
                         )
                       ) : (
-                        <StatusPill variant="paid">
-                          Kifizetve: {paymentDisplayDate || row.invoiceIssueDate || '-'}
-                        </StatusPill>
+                        paymentDisplayDate ? (
+                          <StatusPill variant="paid">
+                            Kifizetve: {paymentDisplayDate}
+                          </StatusPill>
+                        ) : (
+                          <SmallMuted>Nincs fizetési dátum</SmallMuted>
+                        )
                       )}
                     </>
                   )}
@@ -1583,6 +1711,44 @@ export default function IncomingInvoices() {
               {!xmlLoading && !parsed && (
                 <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#f8f9fa', padding: 12, borderRadius: 6 }}>{xmlText}</pre>
               )}
+            </ModalBody>
+          </ModalContent>
+        </ModalOverlay>
+      )}
+
+      {/* Dátumszűrés Modal */}
+      {showDateModal && (
+        <ModalOverlay onClick={()=>setShowDateModal(false)}>
+          <ModalContent onClick={(e)=>e.stopPropagation()} style={{ maxWidth: 520 }}>
+            <ModalHeader>
+              <ModalTitle>Dátumszűrés</ModalTitle>
+              <CloseBtn onClick={()=>setShowDateModal(false)}>Bezárás</CloseBtn>
+            </ModalHeader>
+            <ModalBody>
+              <div style={{ display:'flex', gap:12, flexWrap:'wrap' }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:4, flex:1 }}>
+                  <label style={{ fontWeight:500 }}>Dátum -tól</label>
+                  <input type="date" value={dateDraftFrom || ''} onChange={(e)=>setDateDraftFrom(e.target.value || null)} />
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:4, flex:1 }}>
+                  <label style={{ fontWeight:500 }}>Dátum -ig</label>
+                  <input type="date" value={dateDraftTo || ''} onChange={(e)=>setDateDraftTo(e.target.value || null)} />
+                </div>
+              </div>
+              <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginTop:12 }}>
+                <SecondaryButton onClick={()=>applyPreset('today', { closeModal: true })}>Ma</SecondaryButton>
+                <SecondaryButton onClick={()=>applyPreset('last7', { closeModal: true })}>Elmúlt 7 nap</SecondaryButton>
+                <SecondaryButton onClick={()=>applyPreset('last30', { closeModal: true })}>Elmúlt 30 nap</SecondaryButton>
+                <SecondaryButton onClick={()=>applyPreset('last365', { closeModal: true })}>Elmúlt 365 nap</SecondaryButton>
+                <SecondaryButton onClick={()=>applyPreset('prevMonth', { closeModal: true })}>Előző hónap</SecondaryButton>
+                <SecondaryButton onClick={()=>applyPreset('clear', { closeModal: true })}>Szűrés törlés</SecondaryButton>
+              </div>
+              <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:14 }}>
+                <SecondaryButton onClick={()=>setShowDateModal(false)}>Mégse</SecondaryButton>
+                <PrimaryButton onClick={()=>{ applyRange(dateDraftFrom || null, dateDraftTo || null, { refresh: 1, backfillAll: dateDraftFrom && dateDraftTo ? 1 : 0 }); setShowDateModal(false); }}>
+                  Szűrés alkalmazása
+                </PrimaryButton>
+              </div>
             </ModalBody>
           </ModalContent>
         </ModalOverlay>

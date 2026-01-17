@@ -24,6 +24,7 @@ class Company(models.Model):
     """Cég modell"""
     
     name = models.CharField(max_length=200, verbose_name="Cégnév")
+    short_name = models.CharField(max_length=100, blank=True, default='', verbose_name="Rövid név")
     
     # Többszörös szerep támogatás
     is_customer = models.BooleanField(default=True, verbose_name="Ügyfél")
@@ -38,6 +39,9 @@ class Company(models.Model):
         validators=[validate_hungarian_tax_number],
         help_text="Magyar adószám: 12345678-1-41"
     )
+    full_tax_number = models.CharField(max_length=50, blank=True, default='', verbose_name="Teljes adószám")
+    vat_code = models.CharField(max_length=10, blank=True, default='', verbose_name="ÁFA kód")
+    county_code = models.CharField(max_length=10, blank=True, default='', verbose_name="Megye kód")
     group_tax_number = models.CharField(
         max_length=20, 
         blank=True,
@@ -54,6 +58,8 @@ class Company(models.Model):
         validators=[validate_eu_tax_number],
         help_text="EU adószám: HU11956541"
     )
+    vat_group_id = models.CharField(max_length=50, blank=True, default='', verbose_name="ÁFA csoport azonosító")
+    vat_group_member_tax_number = models.CharField(max_length=20, blank=True, default='', verbose_name="ÁFA csoport tag adószám")
     
     country = models.CharField(max_length=100, default="Magyarország", verbose_name="Ország")
     
@@ -63,14 +69,23 @@ class Company(models.Model):
     street_name = models.CharField(max_length=200, blank=True, verbose_name="Közterület neve")
     street_type = models.CharField(max_length=50, blank=True, verbose_name="Közterület típusa", default="utca")
     house_number = models.CharField(max_length=20, blank=True, verbose_name="Házszám")
+    public_place_category = models.CharField(max_length=50, blank=True, default='', verbose_name="Közterület jellege")
+    street_number = models.CharField(max_length=20, blank=True, default='', verbose_name="Közterület szám")
+    building = models.CharField(max_length=50, blank=True, default='', verbose_name="Épület")
+    staircase = models.CharField(max_length=20, blank=True, default='', verbose_name="Lépcsőház")
+    floor = models.CharField(max_length=10, blank=True, default='', verbose_name="Emelet")
+    door = models.CharField(max_length=10, blank=True, default='', verbose_name="Ajtó")
     
     # Nem magyarország esetén egyszerű cím
     address = models.TextField(blank=True, verbose_name="Cím")
+    email = models.EmailField(blank=True, null=True, verbose_name="E-mail")
+    phone = models.CharField(max_length=20, blank=True, default='', verbose_name="Telefon")
     
     # Meta adatok
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
     created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
     
     class Meta:
         verbose_name = "Cég"
@@ -92,9 +107,13 @@ class Company(models.Model):
         """Teljes cím formázása"""
         if self.is_hungary:
             if self.postal_code and self.city and self.street_name:
-                house_part = f" {self.house_number}" if self.house_number else ""
-                return f"{self.postal_code} {self.city}, {self.street_name} {self.street_type}{house_part}"
-            return ""
+                house = self.house_number or self.street_number or ''
+                plc = self.public_place_category or self.street_type
+                extra = " ".join([self.building, self.staircase, self.floor, self.door]).strip()
+                house_part = f" {house}" if house else ""
+                base = f"{self.postal_code} {self.city}, {self.street_name} {plc}{house_part}".strip()
+                return f"{base} {extra}".strip()
+            return self.address or ""
         else:
             return self.address or ""
     
@@ -139,6 +158,7 @@ class Contact(models.Model):
     )
     position = models.CharField(max_length=100, blank=True, verbose_name="Pozíció")
     notes = models.TextField(blank=True, verbose_name="Megjegyzések")
+    external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Külső azonosító")
     
     # Meta adatok
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")

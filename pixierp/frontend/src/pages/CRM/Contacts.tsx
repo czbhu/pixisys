@@ -38,6 +38,7 @@ const Contacts: React.FC = () => {
     const [error, setError] = useState<string | null>(null);
     const [contacts, setContacts] = useState<any[]>([]);
     const [companies, setCompanies] = useState<any[]>([]);
+    const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
     const [editingContact, setEditingContact] = useState<any>(null);
@@ -51,7 +52,8 @@ const Contacts: React.FC = () => {
     const [selectedCountry, setSelectedCountry] = useState('Magyarország');
 
     useEffect(() => {
-        loadData();
+        loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter || undefined });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
     
     // URL paraméter alapján cég szűrő beállítása
@@ -66,16 +68,21 @@ const Contacts: React.FC = () => {
         }
     }, [location.search]);
 
-    const loadData = async () => {
+    const loadData = async ({ page, pageSize, search, company }: { page: number; pageSize: number; search?: string; company?: number | null; }) => {
         try {
             setLoading(true);
             setError(null);
+            const params: Record<string, any> = { page, page_size: pageSize };
+            if (search) params.search = search;
+            if (company) params.company = company;
             const [contactsResponse, companiesResponse] = await Promise.all([
-                crmService.getContacts(),
-                crmService.getCompanies()
+                crmService.getContacts(params),
+                crmService.getCompanies({ page_size: 500 })
             ]);
-            setContacts(contactsResponse.results || []);
-            setCompanies(companiesResponse.results || []);
+            const cont = contactsResponse.results || contactsResponse;
+            setContacts(cont || []);
+            setPagination({ current: page, pageSize, total: contactsResponse.count || cont.length || 0 });
+            setCompanies(companiesResponse.results || companiesResponse || []);
         } catch (err) {
             console.error('Error loading data:', err);
             setError('Hiba történt az adatok betöltése során');
@@ -86,8 +93,8 @@ const Contacts: React.FC = () => {
 
     const refreshCompanies = async () => {
         try {
-            const companiesResponse = await crmService.getCompanies();
-            setCompanies(companiesResponse.results || []);
+            const companiesResponse = await crmService.getCompanies({ page_size: 500 });
+            setCompanies(companiesResponse.results || companiesResponse || []);
         } catch (e) {
             // ignore
         }
@@ -104,7 +111,7 @@ const Contacts: React.FC = () => {
             message.success('Kapcsolattartó sikeresen létrehozva');
             setIsModalVisible(false);
             form.resetFields();
-            loadData();
+            loadData({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
         } catch (err) {
             message.error('Hiba történt a kapcsolattartó létrehozása során');
         }
@@ -122,7 +129,7 @@ const Contacts: React.FC = () => {
             setIsModalVisible(false);
             form.resetFields();
             setEditingContact(null);
-            loadData();
+            loadData({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
         } catch (err) {
             message.error('Hiba történt a kapcsolattartó frissítése során');
         }
@@ -132,7 +139,7 @@ const Contacts: React.FC = () => {
         try {
             await crmService.deleteContact(id);
             message.success('Kapcsolattartó sikeresen törölve');
-            loadData();
+            loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
         } catch (err) {
             message.error('Hiba történt a kapcsolattartó törlése során');
         }
@@ -140,20 +147,7 @@ const Contacts: React.FC = () => {
 
     const handleSearch = async (query: string) => {
         setSearchQuery(query);
-        try {
-            setLoading(true);
-            if (query.trim()) {
-                const response = await crmService.searchContacts(query);
-                setContacts(response);
-            } else {
-                loadData();
-            }
-        } catch (err) {
-            console.error('Error searching contacts:', err);
-            setError('Hiba történt a keresés során');
-        } finally {
-            setLoading(false);
-        }
+        loadData({ page: 1, pageSize: pagination.pageSize, search: query, company: companyFilter });
     };
 
     const showViewModal = (contact: any) => {
@@ -272,14 +266,6 @@ const Contacts: React.FC = () => {
         );
     }
     
-    // Szűrt kapcsolattartók
-    const filteredContacts = contacts.filter(contact => {
-        if (companyFilter) {
-            return contact.company === companyFilter;
-        }
-        return true;
-    });
-    
     // Kiválasztott cég neve
     const selectedCompany = companyFilter 
         ? companies.find(c => c.id === companyFilter) 
@@ -311,9 +297,11 @@ const Contacts: React.FC = () => {
                             optionFilterProp="children"
                             value={companyFilter}
                             onChange={(value) => {
-                                setCompanyFilter(value || null);
-                                if (value) {
-                                    navigate(`/crm/contacts?company=${value}`);
+                                const cid = value || null;
+                                setCompanyFilter(cid);
+                                loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: cid });
+                                if (cid) {
+                                    navigate(`/crm/contacts?company=${cid}`);
                                 } else {
                                     navigate('/crm/contacts');
                                 }
@@ -353,8 +341,15 @@ const Contacts: React.FC = () => {
                 )}
                 <Table
                     columns={columns}
-                    dataSource={filteredContacts}
-                    pagination={{ pageSize: 10 }}
+                    dataSource={contacts}
+                    pagination={{
+                        current: pagination.current,
+                        pageSize: pagination.pageSize,
+                        total: pagination.total,
+                        showSizeChanger: true,
+                        pageSizeOptions: ['10', '20', '50', '100'],
+                    }}
+                    onChange={(pg) => loadData({ page: pg.current || 1, pageSize: pg.pageSize || pagination.pageSize, search: searchQuery, company: companyFilter })}
                     rowKey="id"
                     scroll={{ x: 900 }}
                     size="small"

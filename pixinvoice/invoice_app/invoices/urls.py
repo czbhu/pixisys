@@ -11,6 +11,7 @@ from invoices.views.import_views import import_customers, import_customers_strea
 from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view
 from invoices.backup_views import export_database_view, import_database_view
 from invoices.views_emergency import emergency_login_view
+from invoices.views.erp_webhook import ERPWebhookTestView
 
 router = DefaultRouter(trailing_slash=True)
 router.register(r'customers', CustomerViewSet)
@@ -56,6 +57,7 @@ urlpatterns = [
     path('api/import/missing-customers/export/', export_missing_customers_csv, name='export_missing_customers_csv'),
     path('api/import/suppliers-from-invoices/', import_suppliers_from_invoices, name='import_suppliers_from_invoices'),
     path('api/import/suppliers-from-invoices/streaming/', import_suppliers_from_invoices_streaming, name='import_suppliers_from_invoices_streaming'),
+    path('api/erp/webhook-test/', ERPWebhookTestView.as_view(), name='erp_webhook_test'),
     path('api/', include(router.urls)),
     path('api/api-access/', ApiAccessViewSet.as_view({'get': 'get', 'put': 'save'})),
 ]

@@ -19,6 +19,7 @@ class Company(models.Model):
     website = models.URLField(blank=True, null=True, verbose_name="Weboldal")
     logo = models.ImageField(upload_to='company/logos/', blank=True, null=True, verbose_name="Logó")
     is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -202,6 +203,11 @@ class PixinvoiceConfig(models.Model):
     api_key = models.CharField(max_length=255, blank=True, default='')
     company_id = models.CharField(max_length=64, blank=True, default='')
     default_invoice_series_id = models.CharField(max_length=64, blank=True, default='', verbose_name='Alapértelmezett számlatömb')
+    sync_settings = models.JSONField(default=dict, blank=True)
+
+    def get_sync_settings(self):
+        """Return sync settings dict safely."""
+        return self.sync_settings or {}
     is_active = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

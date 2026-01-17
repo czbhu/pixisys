@@ -4,12 +4,13 @@ from rest_framework.response import Response
 from decouple import config as dconfig
 import os
 import requests
+from datetime import datetime, timezone
 from django.db import transaction
 from django.db import models
 from apps.finance.models import Invoice, InvoiceItem, Payment
-from apps.crm.models import Company
-from apps.core.models import Currency
-from apps.core.models import PixinvoiceConfig
+from apps.crm.models import Company as CrmCompany
+from apps.crm.models import Contact as CrmContact
+from apps.core.models import Currency, Company as CoreCompany, BankAccount, PixinvoiceConfig
 
 
 class PixinvoiceClient:
@@ -27,19 +28,77 @@ class PixinvoiceClient:
 			raise ValueError('PIXINVOICE_API_KEY not configured')
 		self.headers = {'X-Api-Key': self.key, 'Accept': 'application/json'}
 
-	def list_invoices(self):
-		url = f"{self.base}/invoices"
-		params = {'company_id': self.company_id} if self.company_id else None
-		r = requests.get(url, headers=self.headers, params=params, timeout=20)
-		r.raise_for_status()
-		return r.json() or []
+	def _fetch_all(self, path: str, company_id=None):
+		url = f"{self.base}/{path.strip('/')}/"
+		cid = company_id or self.company_id
+		base_params = {'page_size': 500, 'limit': 500, 'per_page': 500}
+		if cid:
+			base_params['company_id'] = cid
+		items = []
+		next_url = url
+		page = 1
+		while next_url:
+			params = None if next_url != url else {**base_params, 'page': page}
+			try:
+				r = requests.get(next_url, headers=self.headers, params=params, timeout=20)
+				r.raise_for_status()
+			except requests.HTTPError as e:
+				# Fallback: if base missing /v1 and got 404, retry once with /v1 prefix
+				if e.response is not None and e.response.status_code == 404 and '/v1/' not in next_url and next_url == url:
+					next_url = f"{self.base}/v1/{path.strip('/')}/"
+					continue
+				raise
+			data = r.json() or {}
+			if isinstance(data, dict):
+				results = data.get('results') or []
+				count = data.get('count') or 0
+				if results:
+					items.extend(results)
+				next_url = data.get('next') or None
+				if not next_url:
+					page += 1
+					if count and len(items) < count:
+						next_url = url
+					elif len(results) >= base_params['page_size']:
+						next_url = url
+					else:
+						break
+			else:
+				items = data if isinstance(data, list) else []
+				break
+		return items
 
-	def list_payments(self):
-		url = f"{self.base}/payments"
-		params = {'company_id': self.company_id} if self.company_id else None
-		r = requests.get(url, headers=self.headers, params=params, timeout=20)
+	def list_companies(self, company_id=None):
+		return self._fetch_all('companies', company_id=company_id)
+
+	def list_customers(self, company_id=None):
+		return self._fetch_all('customers', company_id=company_id)
+
+	def list_contacts(self, company_id=None):
+		return self._fetch_all('contacts', company_id=company_id)
+
+	def upsert_contact(self, payload: dict, contact_id: str = None):
+		url = f"{self.base}/contacts/"
+		if contact_id:
+			url += f"{contact_id}/"
+		r = requests.put(url, headers=self.headers, json=payload, timeout=20) if contact_id else requests.post(url, headers=self.headers, json=payload, timeout=20)
 		r.raise_for_status()
-		return r.json() or []
+		return r.json()
+
+	def delete_contact(self, contact_id: str):
+		if not contact_id:
+			return
+		url = f"{self.base}/contacts/{contact_id}/"
+		r = requests.delete(url, headers=self.headers, timeout=20)
+		if r.status_code in (404, 410):
+			return
+		r.raise_for_status()
+
+	def list_invoices(self, company_id=None):
+		return self._fetch_all('invoices', company_id=company_id)
+
+	def list_payments(self, company_id=None):
+		return self._fetch_all('payments', company_id=company_id)
 
 	def lookup_taxpayer(self, tax_number: str):
 		url = f"{self.base}/customers/lookup_taxpayer/"
@@ -53,122 +112,489 @@ class PixinvoiceClient:
 		return r.json()
 
 
+def _map_currency(code: str):
+	code = (code or 'HUF').upper()
+	try:
+		return Currency.objects.get(code=code)
+	except Currency.DoesNotExist:
+		return None
+
+
+def _compose_address(comp: dict):
+	parts = []
+	postal = comp.get('postal_code') or comp.get('postalCode') or ''
+	city = comp.get('city') or ''
+	street = comp.get('street_name') or comp.get('streetName') or comp.get('street') or ''
+	plc = comp.get('public_place_category') or comp.get('publicPlaceCategory') or ''
+	num = comp.get('street_number') or comp.get('streetNumber') or comp.get('house_number') or comp.get('houseNumber') or ''
+	building = comp.get('building') or ''
+	stair = comp.get('staircase') or ''
+	floor = comp.get('floor') or ''
+	door = comp.get('door') or ''
+	if postal:
+		parts.append(str(postal))
+	if city:
+		parts.append(city)
+	street_line = " ".join([p for p in [street, plc, num] if p]).strip()
+	if street_line:
+		parts.append(street_line)
+	extra = " ".join([p for p in [building, stair, floor, door] if p]).strip()
+	if extra:
+		parts.append(extra)
+	return ", ".join(parts) if parts else ''
+
+
+def _parse_dt(value):
+	"""Parse ISO datetime string to aware datetime in UTC; return None on failure."""
+	if not value:
+		return None
+	if isinstance(value, datetime):
+		return value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+	try:
+		text = str(value).replace('Z', '+00:00')
+		dt = datetime.fromisoformat(text)
+		return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+	except Exception:
+		return None
+
+
+def _sync_pixinvoice(req_settings=None):
+	req_settings = req_settings or {}
+	allowed_entities = {'customers', 'suppliers', 'contacts', 'invoices', 'payments'}
+	selected_entities = [e for e in req_settings.get('entities', []) if e in allowed_entities] or ['invoices', 'payments']
+	strategy = req_settings.get('strategy') or {'type': req_settings.get('strategy_type') or 'newer'}
+	company_mappings = req_settings.get('company_mappings') or []
+
+	client = PixinvoiceClient()
+
+	created, updated = 0, 0
+	pay_created, pay_updated = 0, 0
+	crm_created, crm_updated = 0, 0
+	contact_created, contact_updated = 0, 0
+	inv_contact_ids = set()
+	erp_contact_ext_ids = set()
+
+	company_ids = []
+	mapping_lookup = {}
+	for mapping in company_mappings:
+		cid = (mapping or {}).get('invoice_company_id')
+		if cid and cid not in company_ids:
+			company_ids.append(cid)
+		try:
+			erp_id = (mapping or {}).get('erp_company_id') or (mapping or {}).get('erp_company') or (mapping or {}).get('erpCompanyId')
+			if erp_id:
+				cobj = CrmCompany.objects.filter(id=erp_id).first()
+				if cobj:
+					mapping_lookup[str(cid)] = cobj
+		except Exception:
+			pass
+	if not company_ids:
+		company_ids = [client.company_id or None]
+
+	with transaction.atomic():
+		if 'invoices' in selected_entities or 'payments' in selected_entities:
+			for cid in company_ids:
+				invs = client.list_invoices(company_id=cid)
+				for inv in invs:
+					ext_id = str(inv.get('id') or inv.get('externalId') or inv.get('uuid'))
+					if not ext_id:
+						continue
+					defaults = {
+						'number': inv.get('number') or inv.get('invoiceNumber') or '',
+						'issue_date': inv.get('issueDate'),
+						'due_date': inv.get('dueDate'),
+						'paid_date': inv.get('paidDate'),
+						'net_total': inv.get('netTotal') or 0,
+						'vat_total': inv.get('vatTotal') or 0,
+						'gross_total': inv.get('GrossTotal') or inv.get('grossTotal') or 0,
+						'status': inv.get('status') or 'issued',
+					}
+					obj, was_created = Invoice.objects.update_or_create(external_id=ext_id, defaults=defaults)
+					created += 1 if was_created else 0
+					updated += 0 if was_created else 1
+
+					cur_obj = _map_currency(inv.get('currency'))
+					if obj.currency_id != (cur_obj.id if cur_obj else None):
+						obj.currency = cur_obj
+						obj.save(update_fields=['currency'])
+
+					partner_tax = (inv.get('partner') or {}).get('taxNumber')
+					partner_name = (inv.get('partner') or {}).get('name')
+					partner = None
+					if partner_tax:
+						partner = CrmCompany.objects.filter(models.Q(tax_number__icontains=partner_tax) | models.Q(eu_tax_number__icontains=partner_tax)).first()
+					if not partner and partner_name:
+						partner = CrmCompany.objects.filter(name__iexact=partner_name).first()
+					if obj.partner_id != (partner.id if partner else None):
+						obj.partner = partner
+						obj.save(update_fields=['partner'])
+
+					items = inv.get('items') or []
+					if items:
+						obj.items.all().delete()
+						for i, it in enumerate(items, start=1):
+							InvoiceItem.objects.create(
+								invoice=obj,
+								line_no=i,
+								description=it.get('description') or it.get('name') or '',
+								quantity=it.get('quantity') or 1,
+								unit=it.get('unit') or 'db',
+								unit_price=it.get('unitPrice') or it.get('netUnitPrice') or 0,
+								vat_rate=it.get('vatRate') or 27,
+								net_total=it.get('netTotal') or 0,
+								vat_total=it.get('vatTotal') or 0,
+								gross_total=it.get('grossTotal') or 0,
+							)
+
+			for cid in company_ids:
+				pays = client.list_payments(company_id=cid)
+				for p in pays:
+					ext_id = str(p.get('id') or p.get('externalId') or p.get('uuid'))
+					if not ext_id:
+						continue
+					inv_ext_id = str((p.get('invoice') or {}).get('id') or (p.get('invoice') or {}).get('externalId') or '')
+					try:
+						inv_obj = Invoice.objects.get(external_id=inv_ext_id)
+					except Invoice.DoesNotExist:
+						continue
+					defaults = {
+						'invoice': inv_obj,
+						'amount': p.get('amount') or 0,
+						'date': p.get('date'),
+						'method': p.get('method') or '',
+						'note': p.get('note') or '',
+					}
+					defaults['currency'] = _map_currency(p.get('currency'))
+
+					obj, was_created = Payment.objects.update_or_create(external_id=ext_id, defaults=defaults)
+					pay_created += 1 if was_created else 0
+					pay_updated += 0 if was_created else 1
+
+		# CRM cégek (ügyfél/beszállító)
+		if {'customers', 'suppliers'} & set(selected_entities):
+			for cid in company_ids:
+				customers = client.list_customers(company_id=cid)
+				for cust in customers:
+					name = cust.get('name') or cust.get('companyName') or ''
+					if not name:
+						continue
+					raw_tax = cust.get('full_tax_number') or cust.get('fullTaxNumber') or cust.get('tax_number') or cust.get('taxNumber') or cust.get('taxnumber') or cust.get('taxNum') or ''
+					tax = raw_tax or ''
+					eu_tax = cust.get('eu_tax_number') or cust.get('euTaxNumber') or cust.get('euTaxnumber') or ''
+					is_customer = True
+					is_supplier = bool(cust.get('is_supplier') or cust.get('supplier'))
+					qs = CrmCompany.objects.all()
+					if tax:
+						qs = qs.filter(models.Q(tax_number__iexact=tax) | models.Q(eu_tax_number__iexact=eu_tax) | models.Q(name__iexact=name))
+					else:
+						qs = qs.filter(name__iexact=name)
+					obj = qs.first()
+					defaults = {
+						'name': name,
+						'short_name': cust.get('short_name') or cust.get('shortName') or '',
+						'tax_number': tax or None,
+						'full_tax_number': raw_tax or cust.get('full_tax_number') or cust.get('fullTaxNumber') or '',
+						'eu_tax_number': eu_tax or None,
+						'vat_code': cust.get('vat_code') or cust.get('vatCode') or '',
+						'county_code': cust.get('county_code') or cust.get('countyCode') or '',
+						'vat_group_id': cust.get('vat_group_id') or cust.get('vatGroupId') or '',
+						'vat_group_member_tax_number': cust.get('vat_group_member_tax_number') or cust.get('vatGroupMemberTaxNumber') or '',
+						'country': cust.get('country') or 'Magyarország',
+						'postal_code': cust.get('postal_code') or cust.get('postalCode') or '',
+						'city': cust.get('city') or cust.get('settlement') or '',
+						'street_name': cust.get('street_name') or cust.get('streetName') or cust.get('street') or '',
+						'street_type': cust.get('street_type') or cust.get('public_place_category') or cust.get('publicPlaceCategory') or cust.get('streetType') or 'utca',
+						'house_number': cust.get('house_number') or cust.get('houseNumber') or cust.get('street_number') or cust.get('streetNumber') or '',
+						'public_place_category': cust.get('public_place_category') or cust.get('publicPlaceCategory') or cust.get('street_type') or '',
+						'street_number': cust.get('street_number') or cust.get('streetNumber') or cust.get('house_number') or cust.get('houseNumber') or '',
+						'building': cust.get('building') or '',
+						'staircase': cust.get('staircase') or '',
+						'floor': cust.get('floor') or '',
+						'door': cust.get('door') or cust.get('door_number') or cust.get('doorNumber') or '',
+						'address': cust.get('address') or cust.get('full_address') or cust.get('fullAddress') or _compose_address(cust),
+						'email': cust.get('email') or '',
+						'phone': cust.get('phone') or cust.get('mobile') or cust.get('tel') or '',
+						'is_customer': is_customer,
+						'is_supplier': is_supplier,
+						'is_active': cust.get('is_active') if cust.get('is_active') is not None else True,
+					}
+					if obj:
+						for k, v in defaults.items():
+							setattr(obj, k, v)
+						obj.save()
+						crm_updated += 1
+					else:
+						CrmCompany.objects.create(**defaults)
+						crm_created += 1
+
+		# Kapcsolattartók kétirányú szinkronnal (Invoice ↔ ERP)
+		if 'contacts' in selected_entities:
+			rev_company_map = {v.id: k for k, v in mapping_lookup.items() if v}
+			remote_contact_meta = {}
+			for cid in company_ids:
+				contacts = client.list_contacts(company_id=cid)
+				for c in contacts:
+					if not isinstance(c, dict):
+						continue
+					name = c.get('name') or c.get('full_name') or ''
+					if not name:
+						continue
+					email = (c.get('email') or '').strip()
+					phone = c.get('phone') or ''
+					ext_id = str(c.get('id') or c.get('externalId') or '')
+					remote_updated_at = _parse_dt(c.get('updated_at') or c.get('updatedAt'))
+					if ext_id:
+						inv_contact_ids.add(ext_id)
+						if remote_updated_at:
+							remote_contact_meta[ext_id] = remote_updated_at
+
+					company_field = c.get('company') or c.get('customer') or {}
+					company_ext_id = None
+					if isinstance(company_field, str):
+						company_ext_id = company_field
+						company_field = {}
+					company_name = c.get('company_name') or c.get('customer_name') or company_field.get('name') or ''
+					company_tax = company_field.get('taxNumber') or company_field.get('tax_number') or c.get('company_tax_number') or ''
+					company_ext_id = company_ext_id or company_field.get('id') or c.get('company_id') or c.get('companyId') or c.get('customer_id') or c.get('customerId') or cid
+
+					company = None
+					if company_tax:
+						company = CrmCompany.objects.filter(models.Q(tax_number__iexact=company_tax) | models.Q(eu_tax_number__iexact=company_tax)).first()
+					if not company and company_name:
+						company = CrmCompany.objects.filter(name__iexact=company_name).first()
+					if not company and company_ext_id:
+						company = mapping_lookup.get(str(company_ext_id))
+					if not company:
+						company = mapping_lookup.get(str(cid))
+
+					obj = None
+					if ext_id:
+						obj = CrmContact.objects.filter(external_id=ext_id).first()
+					if not obj and email:
+						obj = CrmContact.objects.filter(email__iexact=email, company=company).first()
+					if not obj and company and name:
+						obj = CrmContact.objects.filter(name__iexact=name, company=company).first()
+
+					defaults = {
+						'name': name,
+						'email': email or None,
+						'phone': phone or None,
+						'company': company,
+						'external_id': ext_id,
+					}
+					if obj:
+						# Domináns ERP stratégia esetén ne írjuk felül helyi módosításokat, csak external_id-t töltsük, ha kell.
+						if strategy.get('type') == 'dominant' and strategy.get('dominant_system') == 'erp':
+							if ext_id and not obj.external_id:
+								obj.external_id = ext_id
+								obj.save(update_fields=['external_id'])
+							continue
+
+						# "newer" stratégia: csak akkor írjuk felül, ha a távoli frissítés újabb
+						if strategy.get('type') == 'newer' and remote_updated_at and obj.updated_at:
+							if remote_updated_at <= obj.updated_at:
+								if ext_id and not obj.external_id:
+									obj.external_id = ext_id
+									obj.save(update_fields=['external_id'])
+								continue
+
+						for k, v in defaults.items():
+							setattr(obj, k, v)
+						obj.save()
+						contact_updated += 1
+					else:
+						CrmContact.objects.create(**defaults)
+						contact_created += 1
+
+			# ERP → Invoice upsert + törlés
+			mapped_company_ids = [c.id for c in mapping_lookup.values() if c]
+			company_mapping_configured = bool(company_mappings)
+			# Ha nincs mapping megadva, akkor minden ERP kontakt megy az alapértelmezett company_id-ra.
+			# Ha van mapping, de egyiket sem találtuk meg (hibás ID), inkább ne szinkronizáljunk/ töröljünk semmit.
+			if mapped_company_ids:
+				erp_contacts = CrmContact.objects.filter(company_id__in=mapped_company_ids)
+			elif company_mapping_configured:
+				erp_contacts = CrmContact.objects.none()
+			else:
+				erp_contacts = CrmContact.objects.all()
+			for obj in erp_contacts:
+				inv_company_id = rev_company_map.get(obj.company_id) or client.company_id or None
+				payload = {
+					'name': obj.name,
+					'email': obj.email or '',
+					'phone': obj.phone or '',
+					'company_id': inv_company_id,
+				}
+				# "newer" stratégia: ha a távoli kontakt frissebb, ne írjuk felül az Invoice-ban
+				if strategy.get('type') == 'newer' and obj.external_id:
+					remote_ts = remote_contact_meta.get(str(obj.external_id))
+					if remote_ts and remote_ts > obj.updated_at:
+						continue
+				try:
+					res = client.upsert_contact(payload, contact_id=obj.external_id or None)
+					next_id = str(res.get('id') or res.get('externalId') or obj.external_id or '')
+					if next_id and next_id != (obj.external_id or ''):
+						obj.external_id = next_id
+						obj.save(update_fields=['external_id'])
+					if obj.external_id:
+						erp_contact_ext_ids.add(obj.external_id)
+				except requests.HTTPError as e:
+					if e.response is not None and e.response.status_code == 404 and obj.external_id:
+						# Re-create if remote missing
+						try:
+							res = client.upsert_contact(payload, contact_id=None)
+							next_id = str(res.get('id') or res.get('externalId') or '')
+							if next_id:
+								obj.external_id = next_id
+								obj.save(update_fields=['external_id'])
+							erp_contact_ext_ids.add(obj.external_id)
+						except Exception:
+							pass
+					continue
+				except Exception:
+					continue
+
+			# Törlések szinkronizálása mindkét irányba
+			delete_qs = CrmContact.objects.filter(external_id__isnull=False).exclude(external_id__exact='')
+			if mapped_company_ids:
+				delete_qs = delete_qs.filter(company_id__in=mapped_company_ids)
+			elif company_mapping_configured:
+				delete_qs = delete_qs.none()
+			for obj in delete_qs:
+				if obj.external_id not in inv_contact_ids:
+					obj.delete()
+
+			if erp_contact_ext_ids:
+				for inv_id in inv_contact_ids:
+					if inv_id and inv_id not in erp_contact_ext_ids:
+						try:
+							client.delete_contact(inv_id)
+						except Exception:
+							pass
+
+	return {
+		'invoices': {'created': created, 'updated': updated},
+		'payments': {'created': pay_created, 'updated': pay_updated},
+		'crm_companies': {'created': crm_created, 'updated': crm_updated},
+		'contacts': {'created': contact_created, 'updated': contact_updated},
+		'settings': {
+			'entities': selected_entities,
+			'strategy': strategy,
+			'company_mappings': company_mappings,
+		}
+	}
+
+
 class SyncPixinvoiceView(views.APIView):
 	permission_classes = [AllowAny]
 
 	def post(self, request):
-		"""Egyszerű szinkron: számlák és kifizetések lekérése és mentése.
-		Idempotens: external_id alapján upsert.
-		"""
+		"""Szinkron: számlák, kifizetések, ügyfelek/beszállítók és kapcsolattartók."""
 		try:
-			client = PixinvoiceClient()
+			result = _sync_pixinvoice(request.data or {})
 		except ValueError as e:
 			return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+		except requests.exceptions.RequestException as e:
+			return Response({'error': 'External API error', 'details': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
-		created, updated = 0, 0
-		pay_created, pay_updated = 0, 0
+		settings_payload = result.get('settings') or {}
+		try:
+			cfg = PixinvoiceConfig.objects.filter(is_active=True).order_by('-updated_at').first()
+			if cfg and settings_payload:
+				cfg.sync_settings = settings_payload
+				cfg.save(update_fields=['sync_settings', 'updated_at'])
+				settings_payload['saved'] = True
+		except Exception:
+			pass
+		if settings_payload is not None and 'saved' not in settings_payload:
+			settings_payload['saved'] = False
+		return Response(result)
 
-		with transaction.atomic():
-			try:
-				invs = client.list_invoices()
-			except requests.exceptions.RequestException as e:
-				return Response({'error': 'Invoice fetch failed', 'details': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
-			for inv in invs:
-				ext_id = str(inv.get('id') or inv.get('externalId') or inv.get('uuid'))
-				if not ext_id:
+class PixinvoiceCompaniesImportView(views.APIView):
+	permission_classes = [AllowAny]
+
+	def get(self, request):
+		client = PixinvoiceClient()
+		companies = client.list_companies()
+		return Response({'companies': companies})
+
+	def post(self, request):
+		client = PixinvoiceClient()
+		companies = client.list_companies()
+		if isinstance(companies, dict):
+			companies = companies.get('results') or []
+		created, updated, bank_created = 0, 0, 0
+		for comp in companies:
+			name = comp.get('name') or ''
+			tax = comp.get('tax_number') or comp.get('taxNumber') or ''
+			eu_tax = comp.get('eu_tax_number') or comp.get('euTaxNumber') or ''
+			if not name and not tax:
+				continue
+			qs = CoreCompany.objects.all()
+			if tax:
+				qs = qs.filter(models.Q(tax_number__iexact=tax) | models.Q(eu_tax_number__iexact=eu_tax) | models.Q(name__iexact=name))
+			else:
+				qs = qs.filter(name__iexact=name)
+			obj = qs.first()
+			address = comp.get('address') or comp.get('full_address') or comp.get('fullAddress') or _compose_address(comp)
+			defaults = {
+				'name': name,
+				'tax_number': tax or (eu_tax or name)[:20],
+				'eu_tax_number': eu_tax or '',
+				'address': address or '',
+				'phone': comp.get('phone') or '',
+				'email': comp.get('email') or '',
+				'website': comp.get('website') or '',
+			}
+			if obj:
+				# Do not overwrite an existing non-empty address with an empty value
+				if not defaults['address'] and obj.address:
+					defaults['address'] = obj.address
+				for k, v in defaults.items():
+					setattr(obj, k, v)
+				obj.save()
+				updated += 1
+			else:
+				obj = CoreCompany.objects.create(**defaults)
+				created += 1
+
+			banks = comp.get('bank_accounts') or comp.get('bankAccounts') or []
+			for ba in banks:
+				acct = ba.get('account_number') or ba.get('accountNumber')
+				if not acct:
 					continue
-				defaults = {
-					'number': inv.get('number') or inv.get('invoiceNumber') or '',
-					'issue_date': inv.get('issueDate'),
-					'due_date': inv.get('dueDate'),
-					'paid_date': inv.get('paidDate'),
-					'net_total': inv.get('netTotal') or 0,
-					'vat_total': inv.get('vatTotal') or 0,
-					'gross_total': inv.get('grossTotal') or 0,
-					'status': inv.get('status') or 'issued',
+				cur_obj = _map_currency(ba.get('currency') or ba.get('currency_code')) or Currency.objects.first()
+				ba_defaults = {
+					'company': obj,
+					'currency': cur_obj,
+					'account_number': acct,
+					'bank_name': ba.get('bank_name') or ba.get('bankName') or '',
+					'swift': ba.get('swift') or ba.get('swift_code') or '',
+					'iban': ba.get('iban') or '',
+					'is_primary': bool(ba.get('is_primary')),
 				}
-				obj, was_created = Invoice.objects.update_or_create(external_id=ext_id, defaults=defaults)
-				created += 1 if was_created else 0
-				updated += 0 if was_created else 1
+				BankAccount.objects.update_or_create(company=obj, account_number=acct, defaults=ba_defaults)
+				bank_created += 1
+		return Response({'companies': {'created': created, 'updated': updated}, 'bank_accounts': {'created_or_updated': bank_created}})
 
-				# Currency mapping (best effort)
-				cur_code = (inv.get('currency') or 'HUF').upper()
-				try:
-					cur_obj = Currency.objects.get(code=cur_code)
-				except Currency.DoesNotExist:
-					cur_obj = None
-				if obj.currency_id != (cur_obj.id if cur_obj else None):
-					obj.currency = cur_obj
-					obj.save(update_fields=['currency'])
 
-				# Partner mapping (best effort by tax number/name)
-				partner_tax = (inv.get('partner') or {}).get('taxNumber')
-				partner_name = (inv.get('partner') or {}).get('name')
-				partner = None
-				if partner_tax:
-					partner = Company.objects.filter(models.Q(tax_number__icontains=partner_tax) | models.Q(eu_tax_number__icontains=partner_tax)).first()
-				if not partner and partner_name:
-					partner = Company.objects.filter(name__iexact=partner_name).first()
-				if obj.partner_id != (partner.id if partner else None):
-					obj.partner = partner
-					obj.save(update_fields=['partner'])
+class PixinvoiceWebhookView(views.APIView):
+	permission_classes = [AllowAny]
 
-				# Items (optional basic sync)
-				items = inv.get('items') or []
-				if items:
-					obj.items.all().delete()
-					for i, it in enumerate(items, start=1):
-						InvoiceItem.objects.create(
-							invoice=obj,
-							line_no=i,
-							description=it.get('description') or it.get('name') or '',
-							quantity=it.get('quantity') or 1,
-							unit=it.get('unit') or 'db',
-							unit_price=it.get('unitPrice') or it.get('netUnitPrice') or 0,
-							vat_rate=it.get('vatRate') or 27,
-							net_total=it.get('netTotal') or 0,
-							vat_total=it.get('vatTotal') or 0,
-							gross_total=it.get('grossTotal') or 0,
-						)
-
-			# Payments
-			try:
-				pays = client.list_payments()
-			except requests.exceptions.RequestException as e:
-				return Response({'error': 'Payment fetch failed', 'details': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
-
-			for p in pays:
-				ext_id = str(p.get('id') or p.get('externalId') or p.get('uuid'))
-				if not ext_id:
-					continue
-				inv_ext_id = str((p.get('invoice') or {}).get('id') or (p.get('invoice') or {}).get('externalId') or '')
-				try:
-					inv_obj = Invoice.objects.get(external_id=inv_ext_id)
-				except Invoice.DoesNotExist:
-					continue
-				defaults = {
-					'invoice': inv_obj,
-					'amount': p.get('amount') or 0,
-					'date': p.get('date'),
-					'method': p.get('method') or '',
-					'note': p.get('note') or '',
-				}
-				cur_code = (p.get('currency') or 'HUF').upper()
-				try:
-					cur_obj = Currency.objects.get(code=cur_code)
-				except Currency.DoesNotExist:
-					cur_obj = None
-				defaults['currency'] = cur_obj
-
-				obj, was_created = Payment.objects.update_or_create(external_id=ext_id, defaults=defaults)
-				pay_created += 1 if was_created else 0
-				pay_updated += 0 if was_created else 1
-
-		return Response({
-			'invoices': {'created': created, 'updated': updated},
-			'payments': {'created': pay_created, 'updated': pay_updated},
-		})
+	def post(self, request):
+		"""Webhook endpoint a PixInvoice értesítésekhez (event alapú szinkron)."""
+		payload = request.data or {}
+		try:
+			settings_payload = payload.get('settings') or {}
+			if not settings_payload.get('entities'):
+				settings_payload['entities'] = ['contacts']
+			if not settings_payload.get('strategy') and not settings_payload.get('strategy_type'):
+				settings_payload['strategy'] = {'type': 'newer'}
+			result = _sync_pixinvoice(settings_payload)
+		except Exception as e:
+			return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+		return Response({'ok': True, 'synced': result})
 
 
 class PixinvoiceLookupTaxpayerView(views.APIView):

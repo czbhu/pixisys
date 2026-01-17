@@ -309,7 +309,7 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
             return None, None
 
 
-def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, invoice_xml: str) -> Optional[str]:
+def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, invoice_xml: str, preferred_currency: str = None) -> Optional[str]:
     """
     Visszaadja a beszállító bankszámlaszámát a számlához.
     
@@ -333,12 +333,21 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
     if supplier_tax_number:
         customer = Customer.objects.filter(tax_number=supplier_tax_number).first()
         if customer:
-            default_bank = customer.bank_accounts.filter(is_default=True).first()
-            if default_bank and default_bank.account_number:
-                return default_bank.account_number.replace(' ', '').replace('-', '')
-            # Ha nincs default, akkor az első
-            first_bank = customer.bank_accounts.first()
-            if first_bank and first_bank.account_number:
-                return first_bank.account_number.replace(' ', '').replace('-', '')
+            qs = customer.bank_accounts
+            if preferred_currency:
+                # Prefer primary in desired currency, then any in currency, else fall back
+                bank = qs.filter(currency=preferred_currency, is_primary=True).first()
+                if bank and bank.account_number:
+                    return bank.account_number.replace(' ', '').replace('-', '')
+                bank = qs.filter(currency=preferred_currency).first()
+                if bank and bank.account_number:
+                    return bank.account_number.replace(' ', '').replace('-', '')
+            # If no currency match, pick primary
+            bank = qs.filter(is_primary=True).first()
+            if bank and bank.account_number:
+                return bank.account_number.replace(' ', '').replace('-', '')
+            bank = qs.first()
+            if bank and bank.account_number:
+                return bank.account_number.replace(' ', '').replace('-', '')
     
     return None

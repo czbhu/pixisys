@@ -38,8 +38,16 @@ class HasPermission(permissions.BasePermission):
         
         if not module or not resource:
             return False
-        
-        # Jogosultság ellenőrzés
+
+        # Olvasásnál engedjük a view_own-t is (list/retrieve)
+        if action in ['view', 'view_own']:
+            if check_permission(request.user, module, resource, 'view'):
+                return True
+            if has_own_data_permission(request.user, module, resource):
+                return True
+            return False
+
+        # Jogosultság ellenőrzés a nem-olvasó műveletekre
         return check_permission(request.user, module, resource, action)
 
 

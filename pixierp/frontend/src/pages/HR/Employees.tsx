@@ -80,6 +80,7 @@ interface Employee {
     user_email: string;
     user_username: string;
     phone?: string;
+    last_activity?: string;
 }
 
 const Employees: React.FC = () => {
@@ -241,7 +242,15 @@ const Employees: React.FC = () => {
             setError(null);
         } catch (err) {
             console.error('Error loading employees:', err);
-            setError('Hiba történt az alkalmazottak betöltése során');
+            const is403 = (err as any)?.response?.status === 403;
+            if (is403) {
+                message.error('Nincs jogosultság az alkalmazottak szerkesztéséhez, csak saját adatok láthatók.');
+                setError('Nincs jogosultság az alkalmazottak szerkesztéséhez.');
+                setEmployees([]);
+                setFiltered([]);
+            } else {
+                setError('Hiba történt az alkalmazottak betöltése során');
+            }
         } finally {
             setLoading(false);
         }
@@ -519,7 +528,13 @@ const Employees: React.FC = () => {
             loadEmployees();
         } catch (err) {
             console.error('Error saving employee:', err);
-            message.error('Hiba történt az alkalmazott mentése során');
+            const status = (err as any)?.response?.status;
+            const detail = (err as any)?.response?.data?.detail;
+            if (status === 403) {
+                message.error(detail || 'Nincs jogosultság a módosításhoz.');
+            } else {
+                message.error('Hiba történt az alkalmazott mentése során');
+            }
         }
     };
 
@@ -598,6 +613,19 @@ const Employees: React.FC = () => {
             key: 'position_name',
             width: 150,
             sorter: (a: Employee, b: Employee) => (a.position_name || '').localeCompare(b.position_name || ''),
+        },
+        {
+            title: 'Belépett',
+            dataIndex: 'last_activity',
+            key: 'last_activity',
+            width: 190,
+            render: (value: string | undefined) => value ? dayjs(value).format('YYYY.MM.DD HH:mm') : '-',
+            sorter: (a: Employee, b: Employee) => {
+                const aTime = a.last_activity ? dayjs(a.last_activity).valueOf() : 0;
+                const bTime = b.last_activity ? dayjs(b.last_activity).valueOf() : 0;
+                return aTime - bTime;
+            },
+            defaultSortOrder: 'descend' as const,
         },
         {
             title: 'Műveletek',
@@ -770,7 +798,7 @@ const Employees: React.FC = () => {
                         onShowSizeChange: (current, size) => setTablePageSize('employees', size)
                     }}
                     rowKey="id"
-                    scroll={{ x: 1200 }}
+                    scroll={{ x: 1400 }}
                     size="small"
                     loading={loading}
                     onRow={(record) => ({

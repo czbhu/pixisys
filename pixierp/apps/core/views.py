@@ -163,46 +163,8 @@ def login_view(request):
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def register_view(request):
-    """User registration endpoint"""
-    data = request.data
-    email = data.get('email')
-    
-    # Check if user already exists by email
-    if User.objects.filter(email=email).exists():
-        return Response(
-            {'error': 'Email already exists'}, 
-            status=status.HTTP_400_BAD_REQUEST
-        )
-    
-    with transaction.atomic():
-        # Create user with email as username, mark inactive and no privileges
-        user = User.objects.create(
-            username=email,
-            email=email,
-            first_name=data.get('first_name', ''),
-            last_name=data.get('last_name', ''),
-            password=make_password(data.get('password')),
-            is_active=False,
-            is_staff=False,
-            is_superuser=False,
-        )
-
-        employee = Employee.objects.create(
-            user=user,
-            employee_id=Employee.generate_employee_id(),
-            is_active=False,
-            permission_level='basic',
-        )
-    
-    return Response({
-        'user': UserSerializer(user).data,
-        'employee': {
-            'id': employee.id,
-            'employee_id': employee.employee_id,
-            'is_active': employee.is_active,
-        },
-        'pending_activation': True
-    }, status=status.HTTP_201_CREATED)
+    """User registration disabled"""
+    return Response({'error': 'Registration is disabled'}, status=status.HTTP_403_FORBIDDEN)
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])

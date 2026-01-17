@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.pagination import PageNumberPagination
 from django.shortcuts import get_object_or_404
 from django.db import models
 from .models import Company, Contact
@@ -11,11 +12,20 @@ import requests
 from decouple import config as dconfig
 from apps.finance.views import PixinvoiceClient
 
+
+class LargeResultsSetPagination(PageNumberPagination):
+    """Larger page size so CRM dropdownok ne csak 20 elemet kapjanak."""
+    page_size = 500
+    page_size_query_param = 'page_size'
+    max_page_size = 2000
+
 class CompanyViewSet(viewsets.ModelViewSet):
     """Cég ViewSet"""
     queryset = Company.objects.all()
     serializer_class = CompanySerializer
     permission_classes = [AllowAny]
+    pagination_class = LargeResultsSetPagination
+    search_fields = ['name', 'tax_number', 'group_tax_number', 'eu_tax_number', 'country', 'city']
     
     def get_queryset(self):
         """Cég queryset szűrése is_customer és is_supplier alapján"""
@@ -280,6 +290,15 @@ class ContactViewSet(viewsets.ModelViewSet):
     queryset = Contact.objects.all()
     serializer_class = ContactSerializer
     permission_classes = [AllowAny]
+    pagination_class = LargeResultsSetPagination
+    search_fields = ['name', 'email', 'phone', 'position', 'company__name']
+
+    def get_queryset(self):
+        qs = Contact.objects.all()
+        company_id = self.request.query_params.get('company')
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        return qs
     
     def get_serializer_class(self):
         """Létrehozáskor külön serializer használata"""

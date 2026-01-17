@@ -218,6 +218,11 @@ else:
     EMAIL_BACKEND = config('EMAIL_BACKEND', default='django.core.mail.backends.smtp.EmailBackend')
 
 EMAIL_HOST = _email_host
+
+# ERP webhook integration
+ERP_WEBHOOK_URL = config('ERP_WEBHOOK_URL', default='')
+ERP_WEBHOOK_TOKEN = config('ERP_WEBHOOK_TOKEN', default='')
+ERP_WEBHOOK_TIMEOUT = config('ERP_WEBHOOK_TIMEOUT', default=5, cast=int)
 EMAIL_PORT = config('EMAIL_PORT', default=587, cast=int)
 EMAIL_HOST_USER = config('EMAIL_HOST_USER', default='')
 EMAIL_HOST_PASSWORD = config('EMAIL_HOST_PASSWORD', default='')

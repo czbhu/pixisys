@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db.models import Max
 from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials
 
 User = get_user_model()
@@ -36,6 +37,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     user_last_name = serializers.CharField(source='user.last_name')
     user_email = serializers.EmailField(source='user.email', required=False, allow_blank=True)
     user_username = serializers.CharField(source='user.username', required=False, allow_blank=True)
+    last_activity = serializers.SerializerMethodField()
     
     full_name = serializers.SerializerMethodField()
     department_names = serializers.SerializerMethodField()
@@ -118,11 +120,16 @@ class EmployeeSerializer(serializers.ModelSerializer):
             }
             for p in perms
         ]
+
+    def get_last_activity(self, obj):
+        """Utolsó belépés a rendszerbe (User last_login)."""
+        return obj.user.last_login
     
     def create(self, validated_data):
         user_data = validated_data.pop('user', {})
         departments_data = validated_data.pop('departments', [])
         individual_role_ids = validated_data.pop('individual_role_ids', [])
+        from apps.core.models import UserRole, Role
         
         # Automatikus felhasználónév generálása
         first_name = user_data.get('first_name', '')
@@ -148,20 +155,8 @@ class EmployeeSerializer(serializers.ModelSerializer):
         # Many-to-many kapcsolat beállítása
         if departments_data:
             employee.departments.set(departments_data)
-        
-        # Egyéni szerepkörök hozzárendelése (opcionális)
-        if individual_role_ids:
-            from apps.core.models import UserRole, Role
-            for role_id in individual_role_ids:
-                try:
-                    role = Role.objects.get(id=role_id)
-                    UserRole.objects.create(
-                        user=user,
-                        role=role,
-                        assigned_by=self.context.get('request').user if self.context.get('request') else None
-                    )
-                except Role.DoesNotExist:
-                    pass
+        # Szinkronizáljuk a szerepköröket: osztály szerepkörök + egyéniek
+        self._sync_user_roles(user, departments_data, individual_role_ids)
         
         return employee
     
@@ -172,6 +167,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
         user_data = validated_data.pop('user', {})
         departments_data = validated_data.pop('departments', None)
         individual_role_ids = validated_data.pop('individual_role_ids', None)
+        from apps.core.models import UserRole, Role
         
         logger.info(f"EmployeeSerializer.update called for {instance.user.username}")
         logger.info(f"individual_role_ids from validated_data: {individual_role_ids}")
@@ -191,30 +187,52 @@ class EmployeeSerializer(serializers.ModelSerializer):
         if departments_data is not None:
             instance.departments.set(departments_data)
         
-        # Egyéni szerepkörök frissítése (opcionális)
-        if individual_role_ids is not None:
-            from apps.core.models import UserRole, Role
-            logger.info(f"Updating individual roles: {individual_role_ids}")
-            # Töröljük a meglévő egyéni szerepköröket
-            deleted_count = UserRole.objects.filter(user=instance.user).delete()[0]
-            logger.info(f"Deleted {deleted_count} existing user roles")
-            # Új egyéni szerepkörök hozzáadása
-            for role_id in individual_role_ids:
-                try:
-                    role = Role.objects.get(id=role_id)
-                    user_role = UserRole.objects.create(
-                        user=instance.user,
-                        role=role,
-                        assigned_by=self.context.get('request').user if self.context.get('request') else None
-                    )
-                    logger.info(f"Created UserRole: {user_role.id} - {role.name}")
-                except Role.DoesNotExist:
-                    logger.error(f"Role with id={role_id} does not exist")
-                    pass
-        else:
-            logger.info(f"individual_role_ids is None, not updating individual roles")
+        # Szerepkörök szinkronizálása: osztály szerepkörök + opcionális egyéniek
+        self._sync_user_roles(
+            instance.user,
+            departments_data if departments_data is not None else list(instance.departments.all()),
+            individual_role_ids
+        )
         
         return instance
+
+    def _sync_user_roles(self, user, departments, individual_role_ids=None):
+        """Állítsuk be a UserRole-okat az osztály szerepkörei és az egyéni szerepkörök alapján."""
+        from apps.core.models import UserRole, Role
+
+        # Department szerepkörök
+        dept_role_ids = set()
+        for dept in departments or []:
+            for role in getattr(dept, 'roles', []).all():
+                dept_role_ids.add(role.id)
+
+        # Egyéni szerepkörök: ha nincs megadva, tartsuk meg a meglévőket
+        if individual_role_ids is None:
+            current_ids = set(UserRole.objects.filter(user=user).values_list('role_id', flat=True))
+            individual_ids = current_ids - dept_role_ids
+        else:
+            individual_ids = set(individual_role_ids)
+
+        desired_ids = dept_role_ids | individual_ids
+
+        existing_ids = set(UserRole.objects.filter(user=user).values_list('role_id', flat=True))
+        to_add = desired_ids - existing_ids
+        to_remove = existing_ids - desired_ids
+
+        if to_remove:
+            UserRole.objects.filter(user=user, role_id__in=to_remove).delete()
+
+        if to_add:
+            # Bulk create for efficiency
+            roles = Role.objects.filter(id__in=to_add)
+            to_create = [
+                UserRole(
+                    user=user,
+                    role=role,
+                    assigned_by=self.context.get('request').user if self.context.get('request') else None
+                ) for role in roles
+            ]
+            UserRole.objects.bulk_create(to_create)
 
 
 class AttendanceSerializer(serializers.ModelSerializer):

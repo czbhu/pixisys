@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layout, Dropdown, Avatar, Button, Space } from 'antd';
-import { UserOutlined, LogoutOutlined, SettingOutlined, MenuOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, MenuOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate } from 'react-router-dom';
 
@@ -17,20 +17,6 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false }) => {
 
     const userMenuItems = [
         {
-            key: 'profile',
-            icon: <UserOutlined />,
-            label: 'Profil',
-        },
-        {
-            key: 'settings',
-            icon: <SettingOutlined />,
-            label: 'Beállítások',
-        },
-        {
-            key: 'divider',
-            type: 'divider' as const,
-        },
-        {
             key: 'logout',
             icon: <LogoutOutlined />,
             label: 'Kijelentkezés',
@@ -39,18 +25,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false }) => {
     ];
 
     const handleUserMenuClick = ({ key }: { key: string }) => {
-        switch (key) {
-            case 'logout':
-                logout();
-                break;
-            case 'profile':
-                // Navigate to profile page
-                break;
-            case 'settings':
-                navigate('/settings');
-                break;
-            default:
-                break;
+        if (key === 'logout') {
+            logout();
         }
     };
 

@@ -532,6 +532,14 @@ const InvoiceForm = () => {
     { enabled: !!selectedCompanyId && !isProforma, select: (res) => res.data }
   );
 
+  const selectedBlockId = watch('invoice_block_id');
+
+  const blockFootnote = React.useMemo(() => {
+    const blocks = invoiceBlocks?.results || [];
+    const blk = blocks.find((b) => b.id === selectedBlockId);
+    return blk?.footer_note || '';
+  }, [invoiceBlocks, selectedBlockId]);
+
   // Fetch primary bank account of selected company for display
   const { data: companyBankAccounts } = useQuery(
     ['company-bank-accounts', { company_id: selectedCompanyId }],
@@ -593,16 +601,25 @@ const InvoiceForm = () => {
           setValue('delivery_date', inv.delivery_date ? new Date(inv.delivery_date) : null);
           if (inv.currency) setValue('currency', inv.currency);
           if (typeof inv.exchange_rate !== 'undefined') setValue('exchange_rate', inv.exchange_rate);
+          if (inv.payment_method) setValue('payment_method', inv.payment_method);
+          if (inv.payment_date) setValue('payment_date', new Date(inv.payment_date));
           setValue('notes', inv.notes || '');
           if (Array.isArray(inv.items) && inv.items.length) {
-            setValue('items', inv.items.map(item => ({
-              description: item.description,
-              quantity: item.quantity,
-              unit_price: item.unit_price,
-              vat_rate: item.vat_rate,
-              unit_of_measure: item.unit_of_measure || 'db',
-              nature_indicator: item.nature_indicator || 'PRODUCT',
-            })));
+            setValue('items', inv.items.map((item) => {
+              const rate = Number(
+                item.vat_rate ?? item.vat_percentage ?? item.vat?.percentage ?? item.vat_type?.percentage ?? 0
+              );
+              const vatTypeId = item.vat_type_id || item.vat_type?.id || item.vat?.id || item.vat_type || undefined;
+              return {
+                description: item.description,
+                quantity: item.quantity,
+                unit_price: item.unit_price,
+                vat_rate: rate,
+                unit_of_measure: item.unit_of_measure || 'db',
+                nature_indicator: item.nature_indicator || 'PRODUCT',
+                vat_type_id: vatTypeId,
+              };
+            }));
           }
         } catch {}
       }
@@ -626,14 +643,21 @@ const InvoiceForm = () => {
         setValue('invoice_category', isAdvanceFromProforma ? 'ADVANCE' : 'SIMPLIFIED');
         setValue('order_reference', pf.proforma_number);
         if (Array.isArray(pf.items) && pf.items.length) {
-          const mapped = pf.items.map(it => ({
-            description: it.description,
-            quantity: it.quantity,
-            unit_price: it.unit_price,
-            vat_rate: it.vat_rate,
-            unit_of_measure: it.unit_of_measure || 'db',
-            nature_indicator: it.nature_indicator || 'PRODUCT',
-          }));
+          const mapped = pf.items.map(it => {
+            const rate = Number(
+              it.vat_rate ?? it.vat_percentage ?? it.vat?.percentage ?? it.vat_type?.percentage ?? 0
+            );
+            const vatTypeId = it.vat_type_id || it.vat_type?.id || it.vat?.id || it.vat_type || undefined;
+            return {
+              description: it.description,
+              quantity: it.quantity,
+              unit_price: it.unit_price,
+              vat_rate: rate,
+              unit_of_measure: it.unit_of_measure || 'db',
+              nature_indicator: it.nature_indicator || 'PRODUCT',
+              vat_type_id: vatTypeId,
+            };
+          });
           setValue('items', mapped);
         }
       } catch (e) {
@@ -663,16 +687,23 @@ const InvoiceForm = () => {
           if (base && base.payment_method) setValue('payment_method', base.payment_method);
           setValue('invoice_category', correctFrom ? 'CORRECTION' : ((base && base.invoice_category) || 'NORMAL'));
           setValue('order_reference', base.invoice_number || '');
-          let newItems = Array.isArray(base?.items) ? base.items.map((it, idx) => ({
-            description: it.description,
-            quantity: it.quantity,
-            unit_price: it.unit_price,
-            vat_rate: it.vat_rate,
-            unit_of_measure: it.unit_of_measure || 'db',
-            nature_indicator: it.nature_indicator || 'PRODUCT',
-            original_line_number: idx + 1,
-            line_operation: 'CREATE',
-          })) : [];
+          let newItems = Array.isArray(base?.items) ? base.items.map((it, idx) => {
+            const rate = Number(
+              it.vat_rate ?? it.vat_percentage ?? it.vat?.percentage ?? it.vat_type?.percentage ?? 0
+            );
+            const vatTypeId = it.vat_type_id || it.vat_type?.id || it.vat?.id || it.vat_type || undefined;
+            return {
+              description: it.description,
+              quantity: it.quantity,
+              unit_price: it.unit_price,
+              vat_rate: rate,
+              unit_of_measure: it.unit_of_measure || 'db',
+              nature_indicator: it.nature_indicator || 'PRODUCT',
+              vat_type_id: vatTypeId,
+              original_line_number: idx + 1,
+              line_operation: 'CREATE',
+            };
+          }) : [];
           if (stornoFrom) {
             newItems = newItems.map(it => ({ ...it, quantity: (Number(it.quantity) || 0) * -1 }));
             setValue('notes', `Sztornó számla az alábbi számlára: ${base.invoice_number}`);
@@ -757,6 +788,18 @@ const InvoiceForm = () => {
       return () => clearTimeout(t);
     }
   }, [isReadOnly, autoPrint, invoiceLoading]);
+
+  // Set document title so browser print/save suggests invoice-specific filename
+  React.useEffect(() => {
+    if (!isReadOnly || !invoice) return undefined;
+    const prevTitle = document.title;
+    const rawTax = invoice.customer?.tax_number || invoice.customer?.full_tax_number || '';
+    const taxDigits = (rawTax || '').replace(/\D+/g, '').slice(0, 8);
+    const invNo = invoice.invoice_number || 'szamla';
+    const title = taxDigits ? `${taxDigits}-${invNo}` : invNo;
+    document.title = title;
+    return () => { document.title = prevTitle; };
+  }, [isReadOnly, invoice]);
 
   // Subscribe to changes and persist draft (debounced) — skip in read-only/preview mode
   React.useEffect(() => {
@@ -1587,8 +1630,9 @@ const InvoiceForm = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch('issue_date')]);
 
-  // Compute due_date based on payment method and selected customer's due days
+  // Compute due_date based on payment method and selected customer's due days (new invoices only)
   React.useEffect(() => {
+    if (isEdit || isReadOnly) return;
     const issue = watch('issue_date');
     const method = watch('payment_method');
     const customerId = watch('customer_id');
@@ -1605,7 +1649,7 @@ const InvoiceForm = () => {
       setValue('due_date', issueDate);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [customers, watch('issue_date'), watch('payment_method'), watch('customer_id')]);
+  }, [customers, watch('issue_date'), watch('payment_method'), watch('customer_id'), isEdit, isReadOnly]);
 
   if (customersLoading || invoiceLoading) {
     return <LoadingSpinner>Betöltés...</LoadingSpinner>;
@@ -2597,7 +2641,7 @@ const InvoiceForm = () => {
                 <th>Megnevezés</th>
                 <th className="cen">Menny.</th>
                 <th className="cen">Egység</th>
-                <th className="num">Egységár (nettó)</th>
+                <th className="num">Egységár<br /><span className="muted">(nettó)</span></th>
                 <th className="cen">ÁFA %</th>
                 <th className="num">Nettó</th>
                 <th className="num">ÁFA</th>
@@ -2687,6 +2731,13 @@ const InvoiceForm = () => {
             <div className="inv-notes">
               <div className="inv-block-title">Megjegyzés</div>
               <div>{notesVal}</div>
+            </div>
+          )}
+
+          {blockFootnote && (
+            <div className="inv-notes">
+              <div className="inv-block-title">Lábjegyzék</div>
+              <div>{blockFootnote}</div>
             </div>
           )}
 

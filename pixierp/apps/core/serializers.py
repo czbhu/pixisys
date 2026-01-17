@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
+from django.db.models import Q
 from .models import (
     Company, BankAccount, EmailServerConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
@@ -9,10 +10,53 @@ from .models import (
 User = get_user_model()
 
 class UserSerializer(serializers.ModelSerializer):
+    roles = serializers.SerializerMethodField()
+    permissions = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'is_active', 'date_joined']
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name',
+            'is_active', 'is_staff', 'is_superuser', 'date_joined',
+            'roles', 'permissions'
+        ]
         read_only_fields = ['id', 'date_joined']
+
+    def get_roles(self, obj):
+        user_roles = obj.user_roles.select_related('role').all()
+        return [
+            {
+                'id': ur.role.id,
+                'name': ur.role.name,
+                'description': ur.role.description,
+                'is_system': ur.role.is_system,
+            }
+            for ur in user_roles
+        ]
+
+    def get_permissions(self, obj):
+        # Aggregate permissions from role assignments and user-specific overrides
+        perms_qs = Permission.objects.filter(
+            Q(user=obj) |
+            Q(role__user_assignments__user=obj)
+        ).select_related('role').distinct()
+
+        seen = set()
+        perms = []
+        for perm in perms_qs:
+            key = (perm.module, perm.resource, perm.action, perm.allowed, perm.role_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            perms.append({
+                'module': perm.module,
+                'resource': perm.resource,
+                'action': perm.action,
+                'allowed': perm.allowed,
+                'role_id': perm.role_id,
+                'role_name': perm.role.name if perm.role else None,
+            })
+        return perms
 
 
 class BankAccountSerializer(serializers.ModelSerializer):
@@ -30,7 +74,7 @@ class CompanySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Company
-        fields = ['id', 'name', 'tax_number', 'eu_tax_number', 'address', 'phone', 'email', 'website', 'logo', 'is_default', 'bank_accounts', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'tax_number', 'eu_tax_number', 'address', 'phone', 'email', 'website', 'logo', 'is_default', 'is_active', 'bank_accounts', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 

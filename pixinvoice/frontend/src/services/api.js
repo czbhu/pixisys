@@ -2,8 +2,11 @@ import axios from 'axios';
 
 // API base URL - ha REACT_APP_API_URL be van állítva, használd azt
 // Különben production módban használj relatív útvonalat, dev módban localhost-ot
-const API_BASE_URL = process.env.REACT_APP_API_URL || 
+const rawBaseUrl = process.env.REACT_APP_API_URL || 
   (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+const trimmedBaseUrl = rawBaseUrl.replace(/\/+$/, '');
+// Távolítsd el a végéről az /api-t, hogy elkerüljük a dupla /api/api hívásokat
+const API_BASE_URL = trimmedBaseUrl.endsWith('/api') ? trimmedBaseUrl.slice(0, -4) : trimmedBaseUrl;
 
 const api = axios.create({
   baseURL: API_BASE_URL,

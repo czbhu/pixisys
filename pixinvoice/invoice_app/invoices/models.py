@@ -66,6 +66,7 @@ class CustomerBankAccount(models.Model):
     swift_bic = models.CharField(max_length=11, blank=True, null=True, verbose_name="SWIFT/BIC")
     currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
     is_primary = models.BooleanField(default=False, verbose_name="Primary")
+    round_transfer_to_whole = models.BooleanField(default=False, verbose_name="Csak egész számos utalás")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -108,6 +109,7 @@ class Company(models.Model):
     email = models.EmailField(blank=True, null=True, verbose_name="Email")
     phone = models.CharField(max_length=20, blank=True, null=True, verbose_name="Phone")
     xml_logging_enabled = models.BooleanField(default=True, verbose_name="XML log mentés engedélyezve")
+    round_transfer_to_whole = models.BooleanField(default=False, verbose_name="Csak egész számos utalás")
     is_active = models.BooleanField(default=True, verbose_name="Active")
     api_key = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name="API-kulcs")
 
@@ -295,6 +297,7 @@ class CompanyBankAccount(models.Model):
     swift_bic = models.CharField(max_length=11, blank=True, null=True, verbose_name="SWIFT/BIC")
     currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
     is_primary = models.BooleanField(default=False, verbose_name="Primary")
+    round_transfer_to_whole = models.BooleanField(default=False, verbose_name="Csak egész számos utalás")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
