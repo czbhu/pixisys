@@ -250,7 +250,7 @@ export default function IncomingInvoices() {
   const fileInputRef = useRef(null);
   const lastAutoRefreshCompany = useRef(null);
   // Selection & batch state
-  const [selected, setSelected] = useState(() => new Set());
+  const [selected, setSelected] = useState(() => new Map());
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showBatches, setShowBatches] = useState(false);
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -353,7 +353,21 @@ export default function IncomingInvoices() {
   }, []);
 
   // Reset page and items when filters change
-  useEffect(() => { setPage(1); setItems([]); setHasMore(true); setSelected(new Set()); }, [companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
+  useEffect(() => { 
+    setPage(1); 
+    setItems([]); 
+    setHasMore(true); 
+    // Only clear selection if company changes, otherwise persist selection across filters/search
+    // setSelected(new Set()); 
+  }, [statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
+
+  // Clear selection explicitly when companyId changes
+  useEffect(() => {
+    setSelected(new Map());
+    setPage(1); 
+    setItems([]); 
+    setHasMore(true);
+  }, [companyId]);
 
   // Poll pending batch count lightly when company changes
   useEffect(() => {
@@ -817,27 +831,24 @@ export default function IncomingInvoices() {
     if (!canSelect(row)) return;
     const key = rowKey(row);
     const isShift = !!event?.shiftKey;
-    const isCtrl = !!(event?.ctrlKey || event?.metaKey);
     setSelected(prev => {
-      let next = new Set(Array.from(prev));
+      const next = new Map(prev);
       if (isShift && lastSelectedIndex !== null) {
         const start = Math.min(lastSelectedIndex, idx);
         const end = Math.max(lastSelectedIndex, idx);
         for (let i = start; i <= end; i++) {
           const r = items[i];
-          if (r && canSelect(r)) next.add(rowKey(r));
+          if (r && canSelect(r)) next.set(rowKey(r), r);
         }
-      } else if (isCtrl) {
-        if (next.has(key)) next.delete(key); else next.add(key);
       } else {
-        if (next.has(key)) next.delete(key); else next.add(key);
+        if (next.has(key)) next.delete(key); else next.set(key, row);
       }
       return next;
     });
     setLastSelectedIndex(idx);
   };
 
-  const selectedRows = items.filter(r => selected.has(rowKey(r)));
+  const selectedRows = Array.from(selected.values());
   const selectedCount = selectedRows.length;
   const selectedCurrencies = Array.from(new Set(selectedRows.map(r => r.currency).filter(Boolean)));
   const selectedCurrency = (selectedRows[0]?.currency) || '';
@@ -941,7 +952,7 @@ export default function IncomingInvoices() {
       } : r)));
       if (!nextVal) {
         setSelected(prev => {
-          const copy = new Set(Array.from(prev));
+          const copy = new Map(prev);
           copy.delete(key);
           return copy;
         });
@@ -1019,7 +1030,7 @@ export default function IncomingInvoices() {
       const cr = addRes.data || {};
       toast.success(`Csomag létrehozva: ${cr.created} tétel${excludedForBatch? `, kihagyva: ${excludedForBatch}`:''}`);
       setShowCreateBatch(false);
-      setSelected(new Set());
+      setSelected(new Map());
       // refresh pending count
       try { const pc = await api.post('/api/payment-batches/pending-count/', { company_id: companyId }); setPendingCount(pc.data?.count || 0); } catch {}
     } catch (e) {
@@ -1236,8 +1247,18 @@ export default function IncomingInvoices() {
       const b = res.data || batch;
       setEditingBatch(b);
       // Preselect rows based on current items (by invoice_number + supplier_tax_number)
-      const keys = new Set((b.items||[]).map(it => `${it.invoice_number||''}|${it.supplier_tax_number||''}`));
-      setSelected(new Set(keys));
+      const newMap = new Map();
+      (b.items||[]).forEach(it => {
+         const key = `${it.invoice_number||''}|${it.supplier_tax_number||''}`;
+         newMap.set(key, {
+             invoiceNumber: it.invoice_number,
+             supplierTaxNumber: it.supplier_tax_number,
+             supplierName: it.supplier_name,
+             grossAmount: it.amount_gross,
+             currency: it.currency,
+         });
+      });
+      setSelected(newMap);
       // Close batches modal to return to main list
       setShowBatches(false);
       toast.info('Csomag módosítás: jelöld a tételeket, majd mentsd.');
@@ -1814,12 +1835,13 @@ export default function IncomingInvoices() {
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Eladó</th>
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Számlaszám</th>
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:150 }}>Bruttó összeg</th>
+                        <th style={{ width: 40, borderBottom:'1px solid #eee' }}></th>
                       </tr>
                     </thead>
                     <tbody>
                       {selectedRowsForBatch.length === 0 ? (
                         <tr>
-                          <td colSpan={4} style={{ padding:10, textAlign:'center', color:'#7f8c8d' }}>Nincs megjeleníthető tétel.</td>
+                          <td colSpan={5} style={{ padding:10, textAlign:'center', color:'#7f8c8d' }}>Nincs megjeleníthető tétel.</td>
                         </tr>
                       ) : (
                         selectedRowsForBatch.map((r, idx) => (
@@ -1829,6 +1851,22 @@ export default function IncomingInvoices() {
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.invoiceNumber || '-'}</td>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>
                               {(formatMoney(r.grossAmount) ?? '-')} {effectiveBatchCurrency || ''}
+                            </td>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5', textAlign:'right' }}>
+                              <IconButton
+                                onClick={() => {
+                                  const k = rowKey(r);
+                                  setSelected(prev => {
+                                    const next = new Map(prev);
+                                    next.delete(k);
+                                    return next;
+                                  });
+                                }}
+                                style={{ background:'#e74c3c', padding:4, minWidth:24, height:24 }}
+                                title="Törlés a csomagból"
+                              >
+                                <Trash2 size={14}/>
+                              </IconButton>
                             </td>
                           </tr>
                         ))
