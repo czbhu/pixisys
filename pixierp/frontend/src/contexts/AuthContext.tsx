@@ -58,8 +58,13 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
             return { success: true };
         } catch (error: any) {
             console.error('[AuthContext] Login error:', error);
-            message.error(error.message || 'Bejelentkezési hiba');
-            return { success: false, error: error.message };
+            
+            // Extract meaningful error message from backend response if available
+            const backendError = error.response?.data?.error;
+            const errorMsg = backendError || error.message || 'Bejelentkezési hiba';
+            
+            message.error(errorMsg);
+            return { success: false, error: errorMsg };
         }
     };
 

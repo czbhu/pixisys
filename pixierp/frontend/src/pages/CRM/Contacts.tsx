@@ -1,717 +1,533 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Card,
-    Table,
     Button,
     Space,
     Modal,
     Form,
     Input,
     Select,
-    Spin,
-    Alert,
     message,
     Tag,
-    Popconfirm,
     Descriptions,
-    Checkbox,
     Row,
-    Col
+    Col,
+    Switch,
+    Pagination,
+    List,
+    Typography,
+    Divider,
 } from 'antd';
 import {
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
+    ReloadOutlined,
+    AppstoreOutlined,
+    UnorderedListOutlined,
     SearchOutlined,
-    FilterOutlined
 } from '@ant-design/icons';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
 
+type Contact = {
+    id: number | string;
+    full_name?: string;
+    name?: string;
+    email?: string;
+    phone?: string;
+    mobile?: string;
+    position?: string;
+    department?: string;
+    contact_type?: string;
+    is_primary?: boolean;
+    is_active?: boolean;
+    company?: number | string | null;
+    company_name?: string;
+    customer_name?: string;
+};
+
+type CompanyOption = { id: number; name: string };
+
 const { Option } = Select;
+const { Title, Text } = Typography;
+
+const defaultContactValues = {
+    full_name: '',
+    email: '',
+    phone: '',
+    mobile: '',
+    position: '',
+    department: '',
+    contact_type: 'other',
+    company: null,
+    is_primary: false,
+    is_active: true,
+};
 
 const Contacts: React.FC = () => {
     const location = useLocation();
-    const navigate = useNavigate();
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [contacts, setContacts] = useState<any[]>([]);
-    const [companies, setCompanies] = useState<any[]>([]);
-    const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
-    const [isModalVisible, setIsModalVisible] = useState(false);
-    const [isViewModalVisible, setIsViewModalVisible] = useState(false);
-    const [editingContact, setEditingContact] = useState<any>(null);
-    const [viewingContact, setViewingContact] = useState<any>(null);
+    const [contacts, setContacts] = useState<Contact[]>([]);
+    const [companies, setCompanies] = useState<CompanyOption[]>([]);
+    const [loading, setLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
     const [companyFilter, setCompanyFilter] = useState<number | null>(null);
+    const [typeFilter, setTypeFilter] = useState<string>('');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+    const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(12);
+    const [isModalVisible, setIsModalVisible] = useState(false);
+    const [isViewModalVisible, setIsViewModalVisible] = useState(false);
+    const [editingContact, setEditingContact] = useState<Contact | null>(null);
+    const [viewingContact, setViewingContact] = useState<Contact | null>(null);
+    const [contactParam, setContactParam] = useState<string | null>(null);
     const [form] = Form.useForm();
-    const [companyForm] = Form.useForm();
-    const [isCompanyModalVisible, setIsCompanyModalVisible] = useState(false);
-    const [creatingCompanyForContact, setCreatingCompanyForContact] = useState(false);
-    const [selectedCountry, setSelectedCountry] = useState('Magyarország');
+
+    const loadData = useCallback(async () => {
+        try {
+            setLoading(true);
+            const [contactResp, companyResp] = await Promise.all([
+                crmService.getContacts({ q: searchQuery }),
+                crmService.getCompanies(),
+            ]);
+            const cont = (contactResp as any)?.results || contactResp;
+            const comps = (companyResp as any)?.results || companyResp;
+            setContacts(Array.isArray(cont) ? cont : []);
+            setCompanies(Array.isArray(comps) ? comps : []);
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Error loading contacts:', err);
+            message.error('Hiba történt a kapcsolatok betöltésekor');
+        } finally {
+            setLoading(false);
+        }
+    }, [searchQuery]);
 
     useEffect(() => {
-        loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter || undefined });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, []);
-    
-    // URL paraméter alapján cég szűrő beállítása
+        loadData();
+    }, [loadData]);
+
+    const showCreateModal = useCallback(() => {
+        setEditingContact(null);
+        form.setFieldsValue({ ...defaultContactValues, company: companyFilter });
+        setIsModalVisible(true);
+    }, [companyFilter, form]);
+
     useEffect(() => {
         const searchParams = new URLSearchParams(location.search);
         const companyParam = searchParams.get('company');
         if (companyParam) {
-            const companyId = parseInt(companyParam, 10);
-            if (!isNaN(companyId)) {
-                setCompanyFilter(companyId);
+            const cid = parseInt(companyParam, 10);
+            if (!Number.isNaN(cid)) {
+                setCompanyFilter(cid);
             }
         }
-    }, [location.search]);
-
-    const loadData = async ({ page, pageSize, search, company }: { page: number; pageSize: number; search?: string; company?: number | null; }) => {
-        try {
-            setLoading(true);
-            setError(null);
-            const params: Record<string, any> = { page, page_size: pageSize };
-            if (search) params.search = search;
-            if (company) params.company = company;
-            const [contactsResponse, companiesResponse] = await Promise.all([
-                crmService.getContacts(params),
-                crmService.getCompanies({ page_size: 500 })
-            ]);
-            const cont = contactsResponse.results || contactsResponse;
-            setContacts(cont || []);
-            setPagination({ current: page, pageSize, total: contactsResponse.count || cont.length || 0 });
-            setCompanies(companiesResponse.results || companiesResponse || []);
-        } catch (err) {
-            console.error('Error loading data:', err);
-            setError('Hiba történt az adatok betöltése során');
-        } finally {
-            setLoading(false);
+        const contactIdParam = searchParams.get('contact');
+        if (contactIdParam) {
+            setContactParam(contactIdParam);
         }
-    };
-
-    const refreshCompanies = async () => {
-        try {
-            const companiesResponse = await crmService.getCompanies({ page_size: 500 });
-            setCompanies(companiesResponse.results || companiesResponse || []);
-        } catch (e) {
-            // ignore
+        if (searchParams.get('action') === 'create') {
+            showCreateModal();
         }
-    };
+    }, [location.search, showCreateModal]);
 
-    const handleCreateContact = async (values: any) => {
-        try {
-            // Convert "maganszemely" to null for company field
-            const payload = {
-                ...values,
-                company: values.company === 'maganszemely' ? null : values.company
-            };
-            await crmService.createContact(payload);
-            message.success('Kapcsolattartó sikeresen létrehozva');
-            setIsModalVisible(false);
-            form.resetFields();
-            loadData({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
-        } catch (err) {
-            message.error('Hiba történt a kapcsolattartó létrehozása során');
+    useEffect(() => {
+        if (contactParam && contacts.length) {
+            const found = contacts.find((c) => String(c.id) === String(contactParam));
+            if (found) {
+                showViewModal(found);
+                setContactParam(null);
+            }
         }
-    };
+    }, [contactParam, contacts]);
 
-    const handleUpdateContact = async (id: number, values: any) => {
-        try {
-            // Convert "maganszemely" to null for company field
-            const payload = {
-                ...values,
-                company: values.company === 'maganszemely' ? null : values.company
-            };
-            await crmService.updateContact(id, payload);
-            message.success('Kapcsolattartó sikeresen frissítve');
-            setIsModalVisible(false);
-            form.resetFields();
-            setEditingContact(null);
-            loadData({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
-        } catch (err) {
-            message.error('Hiba történt a kapcsolattartó frissítése során');
-        }
-    };
+    const filteredContacts = useMemo(() => {
+        const q = (searchQuery || '').trim().toLowerCase();
+        return contacts.filter((c) => {
+            const matchesCompany = companyFilter ? c.company === companyFilter : true;
+            const matchesType = typeFilter ? c.contact_type === typeFilter : true;
+            const matchesStatus = statusFilter === 'active' ? c.is_active !== false : statusFilter === 'inactive' ? c.is_active === false : true;
+            const matchesSearch = !q
+                ? true
+                : [
+                    c.full_name,
+                    c.name,
+                    c.email,
+                    c.phone,
+                    c.mobile,
+                    c.position,
+                    c.department,
+                    c.company_name,
+                    c.customer_name,
+                ]
+                    .filter(Boolean)
+                    .join(' ') 
+                    .toLowerCase()
+                    .includes(q);
+            return matchesCompany && matchesType && matchesStatus && matchesSearch;
+        });
+    }, [contacts, companyFilter, typeFilter, statusFilter, searchQuery]);
 
-    const handleDeleteContact = async (id: number) => {
-        try {
-            await crmService.deleteContact(id);
-            message.success('Kapcsolattartó sikeresen törölve');
-            loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: companyFilter });
-        } catch (err) {
-            message.error('Hiba történt a kapcsolattartó törlése során');
-        }
-    };
+    const pagedContacts = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredContacts.slice(start, start + pageSize);
+    }, [filteredContacts, page, pageSize]);
 
-    const handleSearch = async (query: string) => {
-        setSearchQuery(query);
-        loadData({ page: 1, pageSize: pagination.pageSize, search: query, company: companyFilter });
-    };
-
-    const showViewModal = (contact: any) => {
-        setViewingContact(contact);
-        setIsViewModalVisible(true);
-    };
-    
-    const showCreateModal = () => {
-        form.resetFields();
-        setEditingContact(null);
-        
-        // Ha van cég szűrő, automatikusan töltsük ki
-        if (companyFilter) {
-            form.setFieldsValue({ company: companyFilter });
-        }
-        
+    const showEditModal = (contact: Contact) => {
+        setEditingContact(contact);
+        form.setFieldsValue({ ...defaultContactValues, ...contact });
         setIsModalVisible(true);
     };
 
-    const columns = [
-        {
-            title: 'Név',
-            dataIndex: 'name',
-            key: 'name',
-            sorter: (a: any, b: any) => a.name.localeCompare(b.name),
-            width: 150,
-            fixed: 'left' as const,
-        },
-        {
-            title: 'Telefonszám',
-            dataIndex: 'phone',
-            key: 'phone',
-            width: 120,
-            render: (phone: string) => phone || '-',
-        },
-        {
-            title: 'E-mail',
-            dataIndex: 'email',
-            key: 'email',
-            width: 180,
-            render: (email: string) => email || '-',
-        },
-        {
-            title: 'Cég',
-            dataIndex: 'company_name',
-            key: 'company_name',
-            width: 150,
-            render: (companyName: string, record: any) => {
-                if (companyName) {
-                    return <Tag color="blue">{companyName}</Tag>;
-                } else if (record.company === "maganszemely") {
-                    return <Tag color="green">Magánszemély</Tag>;
-                } else {
-                    return '-';
+    const showViewModal = (contact: Contact) => {
+        setViewingContact(contact);
+        setIsViewModalVisible(true);
+    };
+
+    const handleSubmit = async () => {
+        try {
+            const values = await form.validateFields();
+            const payload = { ...values, company: values.company || null };
+            if (editingContact) {
+                await crmService.updateContact(editingContact.id, payload);
+                message.success('Kapcsolattartó frissítve');
+            } else {
+                await crmService.createContact(payload);
+                message.success('Kapcsolattartó létrehozva');
+            }
+            setIsModalVisible(false);
+            setEditingContact(null);
+            form.resetFields();
+            loadData();
+        } catch (err) {
+            message.error('Hiba történt a mentés során');
+        }
+    };
+
+    const handleDelete = (contact: Contact) => {
+        Modal.confirm({
+            title: `Biztosan törli ${contact.full_name || contact.name}?`,
+            okText: 'Igen',
+            cancelText: 'Mégse',
+            centered: true,
+            onOk: async () => {
+                try {
+                    await crmService.deleteContact(contact.id);
+                    message.success('Kapcsolattartó törölve');
+                    loadData();
+                } catch (err) {
+                    message.error('Nem sikerült törölni');
                 }
             },
-        },
-        {
-            title: 'Pozíció',
-            dataIndex: 'position',
-            key: 'position',
-            width: 120,
-            render: (position: string) => position || '-',
-        },
-        {
-            title: 'Műveletek',
-            key: 'actions',
-            width: 120,
-            fixed: 'right' as const,
-            render: (record: any): React.ReactNode => (
-                <Space size="small">
-                    <Button
-                        icon={<EyeOutlined />}
-                        size="small"
-                        title="Megtekintés"
-                        onClick={() => showViewModal(record)}
-                    />
-                    <Button
-                        icon={<EditOutlined />}
-                        size="small"
-                        title="Szerkesztés"
-                        onClick={() => {
-                            setEditingContact(record);
-                            // Ha nincs cég, akkor "maganszemely"-t állítunk be
-                            const formData = {
-                                ...record,
-                                company: record.company || 'maganszemely'
-                            };
-                            form.setFieldsValue(formData);
-                            setIsModalVisible(true);
-                        }}
-                    />
-                    <Popconfirm
-                        title="Biztosan törölni szeretné ezt a kapcsolattartót?"
-                        onConfirm={() => handleDeleteContact(record.id)}
-                        okText="Igen"
-                        cancelText="Nem"
-                    >
-                        <Button
-                            icon={<DeleteOutlined />}
-                            size="small"
-                            danger
-                            title="Törlés"
-                        />
-                    </Popconfirm>
-                </Space>
-            ),
-        },
-    ];
+        });
+    };
 
-    if (loading) {
-        return (
-            <div style={{ textAlign: 'center', padding: '50px' }}>
-                <Spin size="large" />
-            </div>
-        );
-    }
-    
-    // Kiválasztott cég neve
-    const selectedCompany = companyFilter 
-        ? companies.find(c => c.id === companyFilter) 
-        : null;
+    const handleToggleActive = async (contact: Contact) => {
+        try {
+            const nextActive = contact.is_active === false ? true : false;
+            await crmService.updateContact(contact.id, { ...contact, is_active: nextActive });
+            message.success('Státusz frissítve');
+            loadData();
+        } catch (err) {
+            message.error('Nem sikerült frissíteni a státuszt');
+        }
+    };
+
+    const handleSetPrimary = async (contact: Contact) => {
+        try {
+            await crmService.updateContact(contact.id, { ...contact, is_primary: true });
+            message.success('Elsődleges kapcsolattartó beállítva');
+            loadData();
+        } catch (err) {
+            message.error('Nem sikerült elsődlegesnek jelölni');
+        }
+    };
+
+    const renderStatus = (c: Contact) => (c.is_active === false ? <Tag color="red">Inaktív</Tag> : <Tag color="green">Aktív</Tag>);
+
+    const renderType = (c: Contact) => {
+        const labels: Record<string, string> = {
+            primary: 'Elsődleges',
+            billing: 'Számlázási',
+            technical: 'Technikai',
+            sales: 'Értékesítési',
+            support: 'Támogatási',
+            other: 'Egyéb',
+        };
+        const label = labels[c.contact_type || ''] || 'Egyéb';
+        return <Tag color="blue">{label}</Tag>;
+    };
+
+    const renderName = (c: Contact) => c.full_name || c.name || 'Név nélküli';
+
+    const renderCompany = (c: Contact) => c.customer_name || c.company_name || '-';
 
     return (
-        <div>
-            <Card
-                title={
-                    <Space>
-                        <span>Kapcsolattartók</span>
-                        {selectedCompany && (
-                            <Tag color="blue" closable onClose={() => {
-                                setCompanyFilter(null);
-                                navigate('/crm/contacts');
-                            }}>
-                                <FilterOutlined /> {selectedCompany.name}
-                            </Tag>
-                        )}
-                    </Space>
-                }
-                extra={
-                    <Space>
-                        <Select
-                            placeholder="Szűrés cégre..."
-                            style={{ width: 200 }}
-                            allowClear
-                            showSearch
-                            optionFilterProp="children"
-                            value={companyFilter}
-                            onChange={(value) => {
-                                const cid = value || null;
-                                setCompanyFilter(cid);
-                                loadData({ page: 1, pageSize: pagination.pageSize, search: searchQuery, company: cid });
-                                if (cid) {
-                                    navigate(`/crm/contacts?company=${cid}`);
-                                } else {
-                                    navigate('/crm/contacts');
-                                }
-                            }}
-                        >
-                            {companies.map(company => (
-                                <Option key={company.id} value={company.id}>
-                                    {company.name}
-                                </Option>
-                            ))}
-                        </Select>
-                        <Input.Search
-                            placeholder="Kapcsolattartó keresése..."
-                            value={searchQuery}
-                            onChange={(e) => handleSearch(e.target.value)}
-                            style={{ width: 200 }}
-                            prefix={<SearchOutlined />}
-                        />
-                        <Button
-                            type="primary"
-                            icon={<PlusOutlined />}
-                            onClick={showCreateModal}
-                        >
-                            Új kapcsolattartó
-                        </Button>
-                    </Space>
-                }
-            >
-                {error && (
-                    <Alert
-                        message="Hiba"
-                        description={error}
-                        type="error"
-                        showIcon
-                        style={{ marginBottom: '16px' }}
+        <Card
+            title={
+                <Space size="large">
+                    <Title level={4} style={{ margin: 0 }}>Kapcsolattartók</Title>
+                    <Tag color="blue">PixInvoice CRM</Tag>
+                </Space>
+            }
+            extra={
+                <Space wrap>
+                    <Input.Search
+                        allowClear
+                        placeholder="Keresés név vagy e-mail alapján"
+                        value={searchQuery}
+                        enterButton={<SearchOutlined />}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onSearch={() => { setPage(1); loadData(); }}
+                        style={{ width: 280 }}
                     />
-                )}
-                <Table
-                    columns={columns}
-                    dataSource={contacts}
-                    pagination={{
-                        current: pagination.current,
-                        pageSize: pagination.pageSize,
-                        total: pagination.total,
-                        showSizeChanger: true,
-                        pageSizeOptions: ['10', '20', '50', '100'],
-                    }}
-                    onChange={(pg) => loadData({ page: pg.current || 1, pageSize: pg.pageSize || pagination.pageSize, search: searchQuery, company: companyFilter })}
-                    rowKey="id"
-                    scroll={{ x: 900 }}
-                    size="small"
-                    onRow={(record) => ({
-                        onDoubleClick: () => {
-                            setEditingContact(record);
-                            const formData = {
-                                ...record,
-                                company: record.company || 'maganszemely'
-                            };
-                            form.setFieldsValue(formData);
-                            setIsModalVisible(true);
-                        },
-                        style: { cursor: 'pointer' }
-                    })}
+                    <Select
+                        allowClear
+                        placeholder="Szűrés cég szerint"
+                        style={{ width: 220 }}
+                        value={companyFilter || undefined}
+                        onChange={(val) => { setCompanyFilter(val || null); setPage(1); }}
+                        options={companies.map((c) => ({ label: c.name, value: c.id }))}
+                    />
+                    <Select
+                        value={typeFilter}
+                        style={{ width: 180 }}
+                        onChange={(val) => { setTypeFilter(val); setPage(1); }}
+                    >
+                        <Option value="">Minden típus</Option>
+                        <Option value="primary">Elsődleges</Option>
+                        <Option value="billing">Számlázási</Option>
+                        <Option value="technical">Technikai</Option>
+                        <Option value="sales">Értékesítési</Option>
+                        <Option value="support">Támogatási</Option>
+                        <Option value="other">Egyéb</Option>
+                    </Select>
+                    <Select
+                        value={statusFilter}
+                        style={{ width: 140 }}
+                        onChange={(val) => { setStatusFilter(val); setPage(1); }}
+                    >
+                        <Option value="all">Minden</Option>
+                        <Option value="active">Aktív</Option>
+                        <Option value="inactive">Inaktív</Option>
+                    </Select>
+                    <Button icon={<ReloadOutlined />} onClick={() => loadData()}>Frissítés</Button>
+                    <Button
+                        type="default"
+                        icon={viewMode === 'grid' ? <AppstoreOutlined /> : <UnorderedListOutlined />}
+                        onClick={() => setViewMode(viewMode === 'grid' ? 'list' : 'grid')}
+                    >
+                        {viewMode === 'grid' ? 'Listás nézet' : 'Kártyás nézet'}
+                    </Button>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>Új kapcsolattartó</Button>
+                </Space>
+            }
+            loading={loading}
+        >
+            {viewMode === 'grid' ? (
+                <List
+                    grid={{ gutter: 16, xs: 1, sm: 2, md: 3, lg: 3, xl: 4 }}
+                    dataSource={pagedContacts}
+                    locale={{ emptyText: 'Nincs kapcsolattartó' }}
+                    renderItem={(item) => (
+                        <List.Item key={item.id}>
+                            <Card
+                                size="small"
+                                title={
+                                    <Space>
+                                        <Text strong>{renderName(item)}</Text>
+                                        {item.is_primary && <Tag color="gold">Elsődleges</Tag>}
+                                        {renderStatus(item)}
+                                    </Space>
+                                }
+                                extra={renderType(item)}
+                                actions={[
+                                    <EyeOutlined key="view" onClick={() => showViewModal(item)} />,
+                                    <EditOutlined key="edit" onClick={() => showEditModal(item)} />,
+                                    <DeleteOutlined key="delete" onClick={() => handleDelete(item)} />,
+                                ]}
+                            >
+                                <Space direction="vertical" size={4}>
+                                    <Text type="secondary">{renderCompany(item)}</Text>
+                                    {item.position && <Text type="secondary">{item.position}</Text>}
+                                    {item.department && <Text type="secondary">{item.department}</Text>}
+                                    {item.email && <Text type="secondary">{item.email}</Text>}
+                                    {(item.phone || item.mobile) && <Text type="secondary">{item.phone || item.mobile}</Text>}
+                                    <Space size="small">
+                                        <Button size="small" onClick={() => handleSetPrimary(item)} disabled={item.is_primary}>Elsődleges</Button>
+                                        <Button size="small" onClick={() => handleToggleActive(item)}>
+                                            {item.is_active === false ? 'Aktiválás' : 'Deaktiválás'}
+                                        </Button>
+                                    </Space>
+                                </Space>
+                            </Card>
+                        </List.Item>
+                    )}
                 />
-            </Card>
+            ) : (
+                <List
+                    dataSource={pagedContacts}
+                    itemLayout="horizontal"
+                    locale={{ emptyText: 'Nincs kapcsolattartó' }}
+                    renderItem={(item) => (
+                        <List.Item
+                            key={item.id}
+                            actions={[
+                                <Button key="view" type="link" icon={<EyeOutlined />} onClick={() => showViewModal(item)}>Megtekintés</Button>,
+                                <Button key="edit" type="link" icon={<EditOutlined />} onClick={() => showEditModal(item)}>Szerkesztés</Button>,
+                                <Button key="delete" danger type="link" icon={<DeleteOutlined />} onClick={() => handleDelete(item)}>Törlés</Button>,
+                            ]}
+                        >
+                            <List.Item.Meta
+                                title={
+                                    <Space>
+                                        <Text strong>{renderName(item)}</Text>
+                                        {item.is_primary && <Tag color="gold">Elsődleges</Tag>}
+                                        {renderStatus(item)}
+                                    </Space>
+                                }
+                                description={
+                                    <Space direction="vertical" size={2}>
+                                        <Text type="secondary">{renderCompany(item)}</Text>
+                                        {item.email && <Text type="secondary">{item.email}</Text>}
+                                        {(item.phone || item.mobile) && <Text type="secondary">{item.phone || item.mobile}</Text>}
+                                        <Space size="small">
+                                            {renderType(item)}
+                                            <Button size="small" onClick={() => handleSetPrimary(item)} disabled={item.is_primary}>Elsődleges</Button>
+                                            <Button size="small" onClick={() => handleToggleActive(item)}>
+                                                {item.is_active === false ? 'Aktiválás' : 'Deaktiválás'}
+                                            </Button>
+                                        </Space>
+                                    </Space>
+                                }
+                            />
+                        </List.Item>
+                    )}
+                />
+            )}
+
+            <Pagination
+                style={{ marginTop: 16, textAlign: 'right' }}
+                current={page}
+                pageSize={pageSize}
+                total={filteredContacts.length}
+                showSizeChanger
+                onChange={(p, size) => { setPage(p); setPageSize(size); }}
+                showTotal={(total) => `${total} kapcsolattartó`}
+            />
 
             <Modal
-                title={editingContact ? 'Kapcsolattartó szerkesztése' : 'Új kapcsolattartó'}
                 open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                    setEditingContact(null);
-                }}
-                onOk={() => form.submit()}
-                width={600}
+                title={editingContact ? 'Kapcsolattartó szerkesztése' : 'Új kapcsolattartó'}
+                onCancel={() => { setIsModalVisible(false); setEditingContact(null); form.resetFields(); }}
+                onOk={handleSubmit}
+                okText="Mentés"
+                cancelText="Mégse"
+                width={780}
             >
-                <Form
-                    form={form}
-                    layout="vertical"
-                    onFinish={(values) => {
-                        if (editingContact) {
-                            handleUpdateContact(editingContact.id, values);
-                        } else {
-                            handleCreateContact(values);
-                        }
-                    }}
-                >
-                    <Form.Item
-                        name="name"
-                        label="Név"
-                        rules={[{ required: true, message: 'Kérjük, adja meg a nevet!' }]}
-                    >
-                        <Input />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="phone"
-                        label="Telefonszám"
-                        rules={[
-                            {
-                                pattern: /^(\+36|06)?[0-9]{1,2}[0-9]{7,8}$/,
-                                message: 'Érvényes magyar telefonszám formátum'
-                            }
-                        ]}
-                    >
-                        <Input placeholder="+36-30-123-4567" />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="email"
-                        label="E-mail cím"
-                        rules={[
-                            { type: 'email', message: 'Kérjük, adjon meg érvényes e-mail címet!' }
-                        ]}
-                    >
-                        <Input />
-                    </Form.Item>
-
-                    <Row gutter={8}>
-                        <Col flex="auto">
-                            <Form.Item
-                                name="company"
-                                label="Cég"
-                                initialValue="maganszemely"
-                            >
-                                <Select
-                                    placeholder="Válasszon céget"
-                                    allowClear
-                                    showSearch
-                                    optionFilterProp="children"
-                                    filterOption={(input, option) =>
-                                        (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                                    }
-                                >
-                                    <Option value="maganszemely">Magánszemély</Option>
-                                    {companies.map((company) => (
-                                        <Option key={company.id} value={company.id}>
-                                            {company.name}
-                                        </Option>
-                                    ))}
-                                </Select>
+                <Form form={form} layout="vertical" initialValues={defaultContactValues}>
+                    <Row gutter={16}>
+                        <Col span={12}>
+                            <Form.Item name="full_name" label="Név" rules={[{ required: true, message: 'A név kötelező' }]}>
+                                <Input placeholder="Kapcsolattartó neve" />
                             </Form.Item>
                         </Col>
-                        <Col flex="110px">
-                            <Form.Item label=" ">
-                                <Button
-                                    type="default"
-                                    onClick={() => {
-                                        setCreatingCompanyForContact(true);
-                                        setSelectedCountry('Magyarország');
-                                        companyForm.resetFields();
-                                        companyForm.setFieldsValue({ 
-                                            country: 'Magyarország', 
-                                            is_customer: true,
-                                            is_supplier: false
-                                        });
-                                        setIsCompanyModalVisible(true);
-                                    }}
-                                    style={{ width: '100%' }}
-                                >
-                                    Új cég
-                                </Button>
+                        <Col span={12}>
+                            <Form.Item name="email" label="E-mail" rules={[{ type: 'email', message: 'Érvénytelen e-mail cím' }]}> 
+                                <Input placeholder="email@example.com" />
                             </Form.Item>
                         </Col>
                     </Row>
-
-                    <Form.Item
-                        name="position"
-                        label="Pozíció"
-                    >
-                        <Input />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="notes"
-                        label="Megjegyzések"
-                    >
-                        <Input.TextArea rows={3} />
-                    </Form.Item>
-                </Form>
-            </Modal>
-
-            {/* Inline Új Cég Modal */}
-            <Modal
-                title="Új cég létrehozása"
-                open={isCompanyModalVisible}
-                onCancel={() => {
-                    setIsCompanyModalVisible(false);
-                    setCreatingCompanyForContact(false);
-                }}
-                width={800}
-                footer={null}
-                destroyOnHidden
-            >
-                <Form
-                    form={companyForm}
-                    layout="vertical"
-                    onFinish={async (values) => {
-                        try {
-                            const created = await crmService.createCompany(values);
-                            message.success('Cég sikeresen létrehozva!');
-                            setIsCompanyModalVisible(false);
-                            setCreatingCompanyForContact(false);
-                            await refreshCompanies();
-                            if (created && created.id) {
-                                form.setFieldsValue({ company: created.id });
-                            }
-                        } catch (e) {
-                            message.error('Hiba történt a cég létrehozása során');
-                        }
-                    }}
-                >
-                    <Form.Item
-                        name="name"
-                        label="Cégnév"
-                        rules={[{ required: true, message: 'Kérjük, adja meg a cégnév!' }]}
-                    >
-                        <Input />
-                    </Form.Item>
-                    <Form.Item name="tax_number" label="Adószám" help="Magyar adószám: 12345678-1-41">
-                        <Space.Compact style={{ width: '100%' }}>
-                            <Input placeholder="12345678-1-41" />
-                            <Button
-                                onClick={async () => {
-                                    try {
-                                        const raw = companyForm.getFieldValue('tax_number') || '';
-                                        const digits = String(raw).replace(/[^0-9]/g, '');
-                                        const tax8 = digits.slice(0,8);
-                                        if (tax8.length !== 8) {
-                                            message.warning('Adja meg az adószám első 8 számjegyét!');
-                                            return;
-                                        }
-                                        // eslint-disable-next-line no-console
-                                        console.log('[Contacts] NAV lookup start', { raw, digits, tax8 });
-                                        const before = companyForm.getFieldsValue();
-                                        const data = await crmService.lookupCompanyByNav(tax8, { debug: true });
-                                        // eslint-disable-next-line no-console
-                                        console.log('[Contacts] NAV lookup result', data);
-                                        const downHost = (data as any)?.debug?.finance?.host;
-                                        if (downHost) {
-                                            message.error(`Nem elérhető az API host: ${downHost}`);
-                                        }
-                                        if ((data as any)?.tax_number) {
-                                            const curTax = String((before as any).tax_number || '').trim();
-                                            const newTax = String((data as any).tax_number || '').trim();
-                                            if (newTax && newTax !== curTax) {
-                                                companyForm.setFieldsValue({ tax_number: newTax });
-                                            }
-                                        }
-                                        if (data && data.found === false) {
-                                            const base = (data as any)?.debug?.finance?.host || (data as any)?.debug?.client?.base || (data as any)?.debug?.fallback?.url;
-                                            if (base) {
-                                                message.error(`Nem elérhető az API host: ${base}`);
-                                            } else {
-                                                message.warning('Nem található cég a megadott adószám alapján');
-                                            }
-                                            return;
-                                        }
-                                        companyForm.setFieldsValue({
-                                            name: data.name || companyForm.getFieldValue('name'),
-                                            tax_number: data.tax_number || raw,
-                                            group_tax_number: data.group_tax_number || companyForm.getFieldValue('group_tax_number'),
-                                            eu_tax_number: data.eu_tax_number || companyForm.getFieldValue('eu_tax_number'),
-                                            country: data.country || companyForm.getFieldValue('country') || 'Magyarország',
-                                            postal_code: data.postal_code || companyForm.getFieldValue('postal_code'),
-                                            city: data.city || companyForm.getFieldValue('city'),
-                                            street_name: data.street_name || companyForm.getFieldValue('street_name'),
-                                            street_type: data.street_type || companyForm.getFieldValue('street_type') || 'utca',
-                                            house_number: data.house_number || companyForm.getFieldValue('house_number'),
-                                            address: data.full_address || companyForm.getFieldValue('address')
-                                        });
-                                        message.success('Adatok betöltve NAV-ból');
-                                    } catch (e: any) {
-                                        const msg = e?.response?.data?.error || 'NAV lekérdezés sikertelen';
-                                        message.error(msg);
-                                    }
-                                }}
-                            >
-                                NAV-tól
-                            </Button>
-                        </Space.Compact>
-                    </Form.Item>
-                    <Form.Item label="Szerepkörök">
-                        <Space direction="vertical">
-                            <Form.Item
-                                name="is_customer"
-                                valuePropName="checked"
-                                noStyle
-                            >
-                                <Checkbox>Ügyfél</Checkbox>
-                            </Form.Item>
-                            <Form.Item
-                                name="is_supplier"
-                                valuePropName="checked"
-                                noStyle
-                            >
-                                <Checkbox>Beszállító</Checkbox>
-                            </Form.Item>
-                        </Space>
-                    </Form.Item>
-                    <Form.Item
-                        name="country"
-                        label="Ország"
-                        initialValue="Magyarország"
-                        rules={[{ required: true, message: 'Kérjük, válassza ki az országot!' }]}
-                    >
-                        <Select
-                            showSearch
-                            placeholder="Válasszon országot"
-                            optionFilterProp="children"
-                            filterOption={(input, option) =>
-                                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                            }
-                            onChange={(v) => setSelectedCountry(v)}
-                        >
-                            <Option value="Magyarország">Magyarország</Option>
-                            <Option value="Ausztria">Ausztria</Option>
-                            <Option value="Szlovákia">Szlovákia</Option>
-                            <Option value="Románia">Románia</Option>
-                        </Select>
-                    </Form.Item>
-                    {selectedCountry === 'Magyarország' ? (
-                        <>
-                            <Form.Item name="postal_code" label="Irányítószám">
-                                <Input placeholder="1051" />
-                            </Form.Item>
-                            <Form.Item name="city" label="Város">
-                                <Input placeholder="Budapest" />
-                            </Form.Item>
-                            <Form.Item name="street_name" label="Közterület neve">
+                    <Row gutter={16}>
+                        <Col span={12}>
+                            <Form.Item name="phone" label="Telefon">
                                 <Input />
                             </Form.Item>
-                            <Form.Item name="street_type" label="Közterület típusa" initialValue="utca">
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item name="mobile" label="Mobil">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col span={12}>
+                            <Form.Item name="position" label="Pozíció">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item name="department" label="Osztály">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col span={12}>
+                            <Form.Item name="contact_type" label="Kapcsolat típusa">
                                 <Select>
-                                    <Option value="utca">utca</Option>
-                                    <Option value="út">út</Option>
-                                    <Option value="tér">tér</Option>
+                                    <Option value="primary">Elsődleges</Option>
+                                    <Option value="billing">Számlázási</Option>
+                                    <Option value="technical">Technikai</Option>
+                                    <Option value="sales">Értékesítési</Option>
+                                    <Option value="support">Támogatási</Option>
+                                    <Option value="other">Egyéb</Option>
                                 </Select>
                             </Form.Item>
-                            <Form.Item name="house_number" label="Házszám">
-                                <Input placeholder="1." />
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item name="company" label="Cég">
+                                <Select
+                                    allowClear
+                                    showSearch
+                                    placeholder="Válasszon céget"
+                                    optionFilterProp="label"
+                                    options={companies.map((c) => ({ label: c.name, value: c.id }))}
+                                />
                             </Form.Item>
-                        </>
-                    ) : (
-                        <Form.Item name="address" label="Cím">
-                            <Input.TextArea rows={3} placeholder="Teljes cím" />
-                        </Form.Item>
-                    )}
-                    <Form.Item style={{ textAlign: 'right' }}>
-                        <Space>
-                            <Button onClick={() => {
-                                setIsCompanyModalVisible(false);
-                                setCreatingCompanyForContact(false);
-                            }}>Mégse</Button>
-                            <Button type="primary" onClick={() => companyForm.submit()}>Létrehozás</Button>
-                        </Space>
-                    </Form.Item>
+                        </Col>
+                    </Row>
+                    <Divider orientation="left">Státusz</Divider>
+                    <Row gutter={16}>
+                        <Col span={8}>
+                            <Form.Item name="is_primary" label="Elsődleges" valuePropName="checked">
+                                <Switch />
+                            </Form.Item>
+                        </Col>
+                        <Col span={8}>
+                            <Form.Item name="is_active" label="Aktív" valuePropName="checked">
+                                <Switch />
+                            </Form.Item>
+                        </Col>
+                    </Row>
                 </Form>
             </Modal>
 
-            {/* Megtekintés Modal */}
             <Modal
-                title="Kapcsolattartó részletei"
                 open={isViewModalVisible}
-                onCancel={() => {
-                    setIsViewModalVisible(false);
-                    setViewingContact(null);
-                }}
-                footer={[
-                    <Button key="close" onClick={() => setIsViewModalVisible(false)}>
-                        Bezárás
-                    </Button>
-                ]}
-                width={600}
+                footer={null}
+                onCancel={() => setIsViewModalVisible(false)}
+                title="Kapcsolattartó adatlap"
+                width={720}
             >
                 {viewingContact && (
-                    <Descriptions bordered column={1}>
-                        <Descriptions.Item label="Név">
-                            {viewingContact.name}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Telefonszám">
-                            {viewingContact.phone || '-'}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="E-mail cím">
-                            {viewingContact.email || '-'}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Cég">
-                            {viewingContact.company_name ? (
-                                <Tag color="blue">{viewingContact.company_name}</Tag>
-                            ) : (
-                                <Tag color="green">Magánszemély</Tag>
-                            )}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Pozíció">
-                            {viewingContact.position || '-'}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Megjegyzések">
-                            {viewingContact.notes || '-'}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Létrehozva">
-                            {new Date(viewingContact.created_at).toLocaleString('hu-HU')}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Módosítva">
-                            {new Date(viewingContact.updated_at).toLocaleString('hu-HU')}
-                        </Descriptions.Item>
+                    <Descriptions bordered column={2} size="small">
+                        <Descriptions.Item label="Név">{renderName(viewingContact)}</Descriptions.Item>
+                        <Descriptions.Item label="Típus">{renderType(viewingContact)}</Descriptions.Item>
+                        <Descriptions.Item label="Cég">{renderCompany(viewingContact)}</Descriptions.Item>
+                        <Descriptions.Item label="Státusz">{renderStatus(viewingContact)}</Descriptions.Item>
+                        <Descriptions.Item label="E-mail">{viewingContact.email || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="Telefon">{viewingContact.phone || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="Mobil">{viewingContact.mobile || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="Pozíció">{viewingContact.position || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="Osztály">{viewingContact.department || '-'}</Descriptions.Item>
+                        <Descriptions.Item label="Elsődleges">{viewingContact.is_primary ? 'Igen' : 'Nem'}</Descriptions.Item>
                     </Descriptions>
                 )}
             </Modal>
-        </div>
+        </Card>
     );
 };
 

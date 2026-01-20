@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete } from 'antd';
+import { useSearchParams } from 'react-router-dom';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -36,6 +37,7 @@ interface Service {
   internal_price_per_area: number;
   internal_price_per_weight: number;
   internal_price_per_time: number;
+  calculation_unit?: string;
 }
 
 interface Supplier {
@@ -63,9 +65,11 @@ interface CostItem {
   selling_price?: number;
   currency: string;
   is_active: boolean;
+  rounding_step?: number;
 }
 
 const Services: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
@@ -118,6 +122,10 @@ const Services: React.FC = () => {
     fetchServices();
     fetchSuppliers();
     fetchDepartments();
+    
+    if (searchParams.get('create') === 'true') {
+      handleCreate();
+    }
   }, []);
 
   const fetchServices = async () => {
@@ -255,15 +263,32 @@ const Services: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
+      let savedService: any;
       if (editingService) {
-        await api.patch(`/manufacturing/services/${editingService.id}/`, values);
+        const res = await api.patch(`/manufacturing/services/${editingService.id}/`, values);
+        savedService = res.data;
         message.success('Szolgáltatás frissítve');
       } else {
-        await api.post('/manufacturing/services/', values);
+        const res = await api.post('/manufacturing/services/', values);
+        savedService = res.data;
         message.success('Szolgáltatás létrehozva');
       }
       setModalVisible(false);
       fetchServices();
+      
+      if (searchParams.get('from_rfq') === 'true' && savedService) {
+        Modal.confirm({
+          title: 'Visszatérés az ajánlathoz',
+          content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a szolgáltatást?',
+          okText: 'Igen',
+          cancelText: 'Nem',
+          onOk: () => {
+            const channel = new BroadcastChannel('pixi_rfq_item_creation');
+            channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedService, itemType: 'service' } });
+            window.close();
+          }
+        });
+      }
     } catch (error: any) {
       message.error(error.response?.data?.detail || 'Hiba a mentés során');
       console.error(error);
@@ -446,6 +471,35 @@ const Services: React.FC = () => {
     if (total === 0) return 0;
     const totalSelling = getTotalSelling();
     return ((totalSelling - total) / total * 100).toFixed(2);
+  };
+
+  const handleTransferPrices = () => {
+    // Determine conversion factor
+    const baseUnit = form.getFieldValue('unit');
+    const calcUnit = form.getFieldValue('calculation_unit') || baseUnit;
+    let factor = 1;
+
+    // Mapping: unit name -> value relative to base (arbitrary, just for conversion logic)
+    // We only support simple time/dimension conversions that are common
+    if (baseUnit !== calcUnit) {
+      if (baseUnit === 'hour' && calcUnit === 'minute') factor = 60; // 1 hour = 60 minutes. If price is X/min, price/hour = X*60
+      else if (baseUnit === 'minute' && calcUnit === 'hour') factor = 1/60;
+      else if (baseUnit === 'm' && calcUnit === 'mm') factor = 1000;
+      else if (baseUnit === 'mm' && calcUnit === 'm') factor = 1/1000;
+      // Add more as needed. If Unknown, assume 1.
+    }
+
+    const cost = getTotalCost() * factor;
+    const selling = getTotalSelling() * factor;
+    const markup = cost > 0 ? ((selling - cost) / cost * 100) : 0;
+    
+    form.setFieldsValue({
+      unit_cost_price: Number(cost.toFixed(2)),
+      unit_selling_price: Number(selling.toFixed(2)),
+      markup_percentage: Number(markup.toFixed(2))
+    });
+    
+    message.success(`Árak átvezetve az alapadatokhoz (Faktor: ${factor})`);
   };
 
   const columns = [
@@ -644,6 +698,10 @@ const Services: React.FC = () => {
                 <Input placeholder="pl. Nyomtatás, Utómunka" />
               </Form.Item>
 
+              <Form.Item name="is_active" label="Aktív" valuePropName="checked">
+                <Switch />
+              </Form.Item>
+
               <Form.Item
                 name="unit"
                 label="Mértékegység"
@@ -653,35 +711,36 @@ const Services: React.FC = () => {
                   <Option value="db">darab</Option>
                   <Option value="m2">négyzetméter</Option>
                   <Option value="m">folyóméter</Option>
+                  <Option value="hour">óra</Option>
                   <Option value="perimeter">kerület (méter)</Option>
                 </Select>
               </Form.Item>
 
-              <Form.Item
-                name="unit_price"
-                label="Egységár (régi, kompatibilitás)"
-                hidden
-              >
+              <Form.Item name="unit_price" label="Egységár (régi, kompatibilitás)" hidden>
                 <InputNumber style={{ width: '100%' }} />
               </Form.Item>
 
-              <div style={{ 
-                marginTop: 16, 
-                marginBottom: 16, 
-                padding: '12px 16px', 
-                background: '#f5f5f5', 
-                borderRadius: 4,
-                border: '1px solid #d9d9d9'
-              }}>
-                <strong>1 egységre vonatkozó tájékoztató ár:</strong>
-                <div style={{ marginTop: 8, fontSize: '13px' }}>
-                  Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
-                  {' | '}
-                  Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
-                  {' | '}
-                  Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
-                </div>
-              </div>
+              <Form.Item shouldUpdate noStyle>
+                {() => (
+                  <div style={{ 
+                    marginTop: 16, 
+                    marginBottom: 16, 
+                    padding: '12px 16px', 
+                    background: '#f5f5f5', 
+                    borderRadius: 4,
+                    border: '1px solid #d9d9d9'
+                  }}>
+                    <strong>1 egységre vonatkozó tájékoztató ár:</strong>
+                    <div style={{ marginTop: 8, fontSize: '13px' }}>
+                      Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
+                      {' | '}
+                      Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
+                      {' | '}
+                      Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
+                    </div>
+                  </div>
+                )}
+              </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden initialValue={0}>
                 <InputNumber />
@@ -693,6 +752,21 @@ const Services: React.FC = () => {
               
               <Form.Item name="unit_selling_price" hidden initialValue={0}>
                 <InputNumber />
+              </Form.Item>
+
+              <Form.Item 
+                name="calculation_unit" 
+                label="Kalkulációs mértékegység (ha eltér)"
+                tooltip="Ha a kalkuláció részleteit más egységben adod meg (pl. perc), mint az alap egység (pl. óra), itt állítsd be a kalkuláció egységét. Átvételkor a rendszer konvertál."
+              >
+                <Select allowClear>
+                  <Option value="db">darab</Option>
+                  <Option value="m2">négyzetméter</Option>
+                  <Option value="m">folyóméter</Option>
+                  <Option value="hour">óra</Option>
+                  <Option value="minute">perc</Option>
+                  <Option value="perimeter">kerület (méter)</Option>
+                </Select>
               </Form.Item>
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók</h4>
@@ -802,13 +876,6 @@ const Services: React.FC = () => {
                   </Select>
                 </Form.Item>
               )}
-
-              <Form.Item name="is_active" label="Státusz" valuePropName="checked">
-                <Select>
-                  <Option value={true}>Aktív</Option>
-                  <Option value={false}>Inaktív</Option>
-                </Select>
-              </Form.Item>
             </Form>
           </TabPane>
 
@@ -845,11 +912,16 @@ const Services: React.FC = () => {
                 </div>
                 
                 {selectedSourceForCost && (
-                  <div style={{ padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
-                    <strong>1 egységre vonatkozó összesítés:</strong> 
-                    {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
-                    {' | '}Haszon: {getAverageMarkup()}%
-                    {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
+                    <div style={{ flex: 1 }}>
+                      <strong>1 egységre vonatkozó összesítés:</strong> 
+                      {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
+                      {' | '}Haszon: {getAverageMarkup()}%
+                      {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
+                    </div>
+                    <Button onClick={handleTransferPrices}>
+                      Árak átvétele az alapadatokhoz
+                    </Button>
                   </div>
                 )}
               </Space>
@@ -931,6 +1003,15 @@ const Services: React.FC = () => {
                 <Option key={unit} value={unit}>{unit}</Option>
               ))}
             </Select>
+          </Form.Item>
+
+          <Form.Item
+             name="rounding_step"
+             label="Elszámolási egység (kerekítés)"
+             initialValue={1}
+             help="Pl. 0.5 = minden megkezdett fél egység. 1 = egészre kerekítés. 10 = tizesével. Mindig felfelé kerekít."
+          >
+            <InputNumber min={0.0001} step={0.1} style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item

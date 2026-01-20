@@ -120,6 +120,12 @@ const Settings = () => {
       description: 'Cég-specifikus NAV konfigurációk kezelése'
     },
     {
+      path: '/settings/nav-audit',
+      icon: FileText,
+      title: 'Adóhatósági ellenőrzés',
+      description: 'NAV XML export (23/2014. NGM rendelet)'
+    },
+    {
       path: '/settings/api-access',
       icon: SettingsIcon,
       title: 'API hozzáférés',

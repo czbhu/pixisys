@@ -21,6 +21,8 @@ import {
     UserOutlined,
     ClockCircleOutlined,
     EditOutlined,
+    PlusOutlined,
+    DeleteOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import 'dayjs/locale/hu';
@@ -35,6 +37,14 @@ const { RangePicker } = DatePicker;
 const { Option } = Select;
 const { TextArea } = Input;
 
+interface AttendanceSegment {
+    id: number;
+    check_in: string | null;
+    check_out: string | null;
+    duration: number;
+    notes: string;
+}
+
 interface AttendanceRecord {
     id: number | null;
     employee_id: number;
@@ -45,6 +55,7 @@ interface AttendanceRecord {
     hours_worked: number;
     notes: string;
     is_editable: boolean;
+    segments?: AttendanceSegment[];
 }
 
 interface Employee {
@@ -78,6 +89,11 @@ const AttendanceReport: React.FC = () => {
     const [timeModalVisible, setTimeModalVisible] = useState(false);
     const [selectedHour, setSelectedHour] = useState<number>(0);
     const [selectedMinute, setSelectedMinute] = useState<number>(0);
+    
+    // Multi-segment Management
+    const [segmentsModalVisible, setSegmentsModalVisible] = useState(false);
+    const [selectedSegmentsRecord, setSelectedSegmentsRecord] = useState<AttendanceRecord | null>(null);
+    const [addSegmentForm] = Form.useForm();
 
     useEffect(() => {
         fetchEmployees();
@@ -199,6 +215,66 @@ const AttendanceReport: React.FC = () => {
             }
         }
     };
+
+    // --- Multi-segment Handlers ---
+    const handleOpenSegments = (record: AttendanceRecord) => {
+        setSelectedSegmentsRecord(record);
+        setSegmentsModalVisible(true);
+    };
+
+    const handleAddSegment = async () => {
+        try {
+            const values = await addSegmentForm.validateFields();
+            if (!selectedSegmentsRecord) return;
+            
+            // Construct datetime from TimePicker and record date
+            const dateStr = selectedSegmentsRecord.date;
+            const checkIn = values.check_in 
+                ? dayjs(dateStr).hour(values.check_in.hour()).minute(values.check_in.minute()).second(0).toISOString()
+                : null;
+            const checkOut = values.check_out 
+                ? dayjs(dateStr).hour(values.check_out.hour()).minute(values.check_out.minute()).second(0).toISOString()
+                : null;
+
+            if (!checkIn) {
+                message.error("Belépés ideje kötelező");
+                return;
+            }
+
+            await api.post('/hr/access-logs/', {
+                employee: selectedSegmentsRecord.employee_id,
+                check_in_time: checkIn,
+                check_out_time: checkOut,
+                location: 'Kézi rögzítés',
+                notes: values.notes || 'Kézi rögzítés'
+            });
+            
+            message.success('Szakasz hozzáadva');
+            addSegmentForm.resetFields();
+            fetchAttendanceData();
+            setSegmentsModalVisible(false); // Close or refresh? If refresh, we need to update selectedSegmentsRecord
+            
+            // If we want to keep modal open, we'd need to re-fetch locally mostly. 
+            // Currently fetchAttendanceData refreshes the main table. We can assume the modal closes.
+            
+        } catch (error) {
+            console.error("Add segment error", error);
+            message.error("Hiba a hozzáadáskor");
+        }
+    };
+
+    const handleDeleteSegment = async (segmentId: number) => {
+        try {
+            await api.delete(`/hr/access-logs/${segmentId}/`);
+            message.success('Szakasz törölve');
+            fetchAttendanceData();
+            setSegmentsModalVisible(false);
+        } catch (error) {
+             console.error("Delete segment error", error);
+            message.error("Hiba a törléskor");
+        }
+    };
+
 
     const handleTimeChange = async (recordId: string, field: 'check_in' | 'check_out', time: dayjs.Dayjs | null) => {
         try {
@@ -403,26 +479,106 @@ const AttendanceReport: React.FC = () => {
             width: 200,
             ellipsis: true,
         },
+
         {
-            title: 'Művelet',
+            title: 'Műveletek',
             key: 'action',
-            width: 100,
-            fixed: 'right' as const,
             render: (_: any, record: AttendanceRecord) => (
-                <Button
-                    type="link"
-                    icon={<EditOutlined />}
-                    onClick={() => handleEdit(record)}
-                    disabled={!record.is_editable}
-                >
-                    Szerkesztés
-                </Button>
+                <Space>
+                    <Button
+                        type="default"
+                        size="small"
+                        icon={<PlusOutlined />}
+                        onClick={() => handleOpenSegments(record)}
+                        disabled={!record.is_editable}
+                        title="Több szakasz kezelése"
+                    />
+                    <Button
+                        type="primary"
+                        ghost
+                        size="small"
+                        icon={<EditOutlined />}
+                        onClick={() => handleEdit(record)}
+                        disabled={!record.is_editable}
+                    >
+                        Szerkesztés
+                    </Button>
+                </Space>
             ),
         },
     ];
 
     return (
         <div style={{ padding: '24px' }}>
+             {/* Segments Management Modal */}
+            <Modal
+                title={`Részletes Jelenlét - ${selectedSegmentsRecord?.date} (${selectedSegmentsRecord?.employee_name})`}
+                open={segmentsModalVisible}
+                onCancel={() => setSegmentsModalVisible(false)}
+                footer={null}
+                width={800}
+                destroyOnClose
+            >
+                <div style={{ marginBottom: 16, background: '#f5f5f5', padding: 12, borderRadius: 4 }}>
+                    <h4>Új szakasz hozzáadása</h4>
+                    <Form layout="inline" form={addSegmentForm} onFinish={handleAddSegment}>
+                        <Form.Item name="check_in" rules={[{ required: true, message: 'Kötelező' }]}>
+                            <TimePicker format="HH:mm" placeholder="Belépés" />
+                        </Form.Item>
+                        <Form.Item name="check_out">
+                            <TimePicker format="HH:mm" placeholder="Kilépés" />
+                        </Form.Item>
+                        <Form.Item name="notes">
+                            <Input placeholder="Megjegyzés" />
+                        </Form.Item>
+                        <Form.Item>
+                            <Button type="primary" htmlType="submit" icon={<PlusOutlined />}>
+                                Hozzáadás
+                            </Button>
+                        </Form.Item>
+                    </Form>
+                </div>
+                
+                <Table
+                    dataSource={selectedSegmentsRecord?.segments || []}
+                    rowKey="id"
+                    pagination={false}
+                    columns={[
+                        {
+                            title: 'Belépés',
+                            dataIndex: 'check_in',
+                            render: (val: string) => val ? dayjs(val).format('HH:mm') : '-'
+                        },
+                        {
+                             title: 'Kilépés',
+                             dataIndex: 'check_out',
+                             render: (val: string) => val ? dayjs(val).format('HH:mm') : '-'
+                        },
+                        {
+                            title: 'Időtartam',
+                            dataIndex: 'duration',
+                            render: (val: number) => val > 0 ? `${val.toFixed(2)} óra` : '-'
+                        },
+                        {
+                            title: 'Megjegyzés',
+                            dataIndex: 'notes'
+                        },
+                        {
+                            title: '',
+                            key: 'actions',
+                            render: (_: any, record: any) => (
+                                <Button 
+                                    danger 
+                                    size="small" 
+                                    icon={<DeleteOutlined />} 
+                                    onClick={() => handleDeleteSegment(record.id)}
+                                />
+                            )
+                        }
+                    ]}
+                />
+            </Modal>
+
             <Card
                 title={
                     <Space>

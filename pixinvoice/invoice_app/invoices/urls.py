@@ -12,6 +12,7 @@ from invoices.auth_views import login_view, password_reset_request_view, passwor
 from invoices.backup_views import export_database_view, import_database_view
 from invoices.views_emergency import emergency_login_view
 from invoices.views.erp_webhook import ERPWebhookTestView
+from invoices.views.audit_export_views import nav_audit_export
 
 router = DefaultRouter(trailing_slash=True)
 router.register(r'customers', CustomerViewSet)
@@ -48,6 +49,7 @@ urlpatterns = [
     path('api/customers/test_nav_connection/', test_nav_connection, name='test_nav_connection'),
     path('api/customers/lookup_taxpayer/', lookup_taxpayer, name='lookup_taxpayer'),
     path('api/utils/exchange_rate/', get_exchange_rate, name='get_exchange_rate'),
+    path('api/nav-audit-export/', nav_audit_export, name='nav_audit_export'),
     path('api/import/customers/', import_customers, name='import_customers'),
     path('api/import/customers/streaming/', import_customers_streaming, name='import_customers_streaming'),
     path('api/import/contacts/', import_contacts, name='import_contacts'),

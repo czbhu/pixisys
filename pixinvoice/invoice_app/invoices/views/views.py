@@ -2008,12 +2008,24 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     logger.info(f"Incoming: upserted digests count={upsert_count} for range {src_from}..{src_to}")
                 except Exception:
                     pass
-                sync.last_refreshed_at = timezone.now()
-                sync.save(update_fields=['last_refreshed_at'])
+                
+                # FIX: Only update the global sync timestamp if we did a continuous incremental sync (fetch_by_insdate)
+                # or if this was a default/full sync without restricting date ranges.
+                # If we updated based on a manually filtered date range, we must NOT advance the global pointer,
+                # as that would cause the system to skip the period between the previous sync and this custom range.
+                if not (date_from and date_to):
+                    sync.last_refreshed_at = timezone.now()
+                    sync.save(update_fields=['last_refreshed_at'])
+                elif fetch_by_insdate:
+                    # Should not be reachable if (date_from and date_to) forces fetch_by_insdate=False, 
+                    # but kept for logical completeness.
+                    sync.last_refreshed_at = timezone.now()
+                    sync.save(update_fields=['last_refreshed_at'])
+
                 did_refresh = True
 
         # Serve from DB
-        qs = IncomingInvoiceDigest.objects.filter(company=company)
+        qs = IncomingInvoiceDigest.objects.filter(company=company).select_related('approved_by')
         if date_from and date_to:
             qs = qs.filter(
                 Q(invoice_issue_date__gte=date_from, invoice_issue_date__lte=date_to)
@@ -2113,7 +2125,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         fetched_due_cache = {}
 
-        def fetch_due_date_from_nav(inv_number, supplier_tax_number=None, digest_index=None):
+        def fetch_due_date_from_nav(inv_number, supplier_tax_number=None, digest_index=None, allow_network=True):
             key = f"{inv_number}|{supplier_tax_number or ''}"
             if key in fetched_due_cache:
                 return fetched_due_cache[key]
@@ -2125,6 +2137,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     fetched_due_cache[key] = None
                     return None
                 nav_service = NAVService(cfg)
+                
+                # Check Local DB (IncomingInvoiceData) again to be sure (already checked by caller usually, but let's be safe)
+                # (Skipped as caller does it)
+
+                if not allow_network:
+                     fetched_due_cache[key] = None
+                     return None
 
                 def _decode_invoice_data(response_text: str):
                     try:
@@ -2232,7 +2251,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             if not due_date_str:
                 due_date_str = extract_due_date_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None))
             if not due_date_str:
-                due_date_str = fetch_due_date_from_nav(r.invoice_number, getattr(r, 'supplier_tax_number', None), getattr(r, 'index', None))
+                # Disable network fetch for due dates in list view for performance (allow_network=False)
+                # Users can view details to fetch the full XML
+                due_date_str = fetch_due_date_from_nav(r.invoice_number, getattr(r, 'supplier_tax_number', None), getattr(r, 'index', None), allow_network=False)
             # If still no dueDate, fallback to recorded payment date
             if not due_date_str and getattr(r, 'payment_date', None):
                 try:
@@ -2244,7 +2265,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             payment_method = (r.payment_method or '').lower()
             payment_date = r.payment_date
             pay_key = f"{r.invoice_number or ''}|{r.supplier_tax_number or ''}"
-            paid_amount = pay_map.get(pay_key, {}).get('total') or decimal.Decimal('0')
+            batch_paid_amount = pay_map.get(pay_key, {}).get('total') or decimal.Decimal('0')
+            reconciled_paid_amount = r.amount_paid or decimal.Decimal('0')
+            paid_amount = max(batch_paid_amount, reconciled_paid_amount)
             last_payment_dt = pay_map.get(pay_key, {}).get('last_payment')
             # For card, cash, voucher, other: always paid, payment date = issue date
             if payment_method in ['card', 'cash', 'voucher', 'other']:
@@ -2271,6 +2294,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     is_paid = bool(payment_date) or payment_method in ['card','cash','voucher','other']
             except Exception:
                 pass
+            
+            # Force paid if model says so
+            if getattr(r, 'payment_status', '') == 'paid':
+                is_paid = True
+                remaining_amount = decimal.Decimal('0')
 
             # payment display date: NAV/issue for instant methods, mark-paid date or last payment for transfers
             payment_display_date = None
@@ -2303,7 +2331,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             approver_name = None
             try:
                 if getattr(r, 'approved_by', None):
-                    approver_name = getattr(r.approved_by, 'full_name', None) or f"{r.approved_by.last_name} {r.approved_by.first_name}".strip()
+                    u = r.approved_by
+                    approver_name = u.full_name.strip()
+                    if not approver_name:
+                        approver_name = u.email
             except Exception:
                 approver_name = None
 
@@ -2328,6 +2359,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'remainingAmount': (str(remaining_amount) if (remaining_amount is not None and remaining_amount > decimal.Decimal('0')) else None),
                 'overpaidAmount': (str(overpaid_amount) if overpaid_amount is not None else None),
                 'paymentDisplayDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
+                'paymentReference': getattr(r, 'payment_reference', None),
                 'isPaid': is_paid,
                 'isPartial': is_partial,
                 'inPaymentBatch': pay_key in pay_map,
@@ -2342,6 +2374,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'success': True,
             'page': page_obj.number,
             'pageCount': paginator.num_pages,
+            'totalItems': paginator.count,
             'hasMore': page_obj.has_next(),
             'items': page_items,
             'lastRefreshedAt': sync.last_refreshed_at.isoformat() if sync.last_refreshed_at else None,
@@ -2733,10 +2766,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         approver_name = None
         if obj.approved_by:
             try:
-                approver_name = getattr(obj.approved_by, 'full_name', None) or f"{obj.approved_by.last_name} {obj.approved_by.first_name}".strip()
+                # Use the property method if available, else construct manually
+                approver_name = obj.approved_by.full_name.strip()
+                if not approver_name:
+                    approver_name = f"{obj.approved_by.last_name} {obj.approved_by.first_name}".strip()
+                if not approver_name:
+                    approver_name = obj.approved_by.email
             except Exception:
-                approver_name = None
-        if not approver_name and req_user:
+                pass
+
+        if not approver_name and req_user and approved:
+            # Fallback to request user details if SystemUser name is somehow empty but we know someone approved it
             name_parts = [getattr(req_user, 'last_name', '') or '', getattr(req_user, 'first_name', '') or '']
             fallback_name = ' '.join([p for p in name_parts if p]).strip() or getattr(req_user, 'email', None) or getattr(req_user, 'username', None)
             approver_name = fallback_name
@@ -4920,6 +4960,434 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 continue
         return data.decode('latin1', errors='ignore')
 
+    def _parse_stm_txt(self, content: bytes):
+        text = None
+        # Try encodings in order
+        for enc in ['cp852', 'latin2', 'cp1250', 'utf-8']:
+            try:
+                text = content.decode(enc)
+                try:
+                    # Quick heuristic check if it looks right (no garbage chars like unknown replacement char)
+                    # But Python usually raises error on strict. Let's use it.
+                    # Or check for '86DEB' header
+                    if '86DEB' in text:
+                         break
+                except:
+                    pass
+            except:
+                pass
+        
+        if not text:
+             # Fallback
+             text = content.decode('utf-8', errors='ignore')
+
+        lines = text.splitlines()
+        headers_found = []
+        current_header = None
+        current_item = None
+        items = [] # current header items
+        import datetime
+
+        for line_idx, line in enumerate(lines):
+            if len(line) < 4: continue
+            rec_type = line[0:2]
+
+            if rec_type == '86':
+                acc = line[6:30].strip()
+                stmt_date_raw = line[30:38]
+                seq = line[38:42]
+                
+                currency = 'HUF' # Default
+                if 'EUR' in line: currency = 'EUR'
+                elif 'USD' in line: currency = 'USD'
+                
+                item_list = []
+                current_header = {
+                    'account_raw': acc,
+                    'statement_date': f"{stmt_date_raw[:4]}-{stmt_date_raw[4:6]}-{stmt_date_raw[6:]}",
+                    'sequence_number': seq,
+                    'currency': currency,
+                    'items': item_list
+                }
+                headers_found.append(current_header)
+                items = item_list
+                current_item = None
+            
+            elif rec_type == '87':
+                if line[6:30].strip() == '':
+                     # Continuation
+                     if len(line) > 61:
+                         text_part = line[61:].strip()
+                         # Clean garbage zeros often found at end of continuation lines
+                         # Example: "Benzink t                          00000000"
+                         # Split by multiple spaces if possible to isolate the text?
+                         # Or just heuristics.
+                         if '   00000' in text_part:
+                             text_part = text_part.split('   00000')[0].strip()
+                     else:
+                         text_part = ''
+                         
+                     if current_item and text_part:
+                          current_item['remittance_parts'].append(text_part)
+                else:
+                    bk_date = line[45:53]
+                    # Value date usually at 96:104, BUT for shorter lines (Brutto Interest) it might be shifted?
+                    # Analysis of Line 31 (Brutto Interest):
+                    # 87D...684100032025123100000162025122200375800Brutto Interest                    2025122220251229 000000008856822
+                    # Ruler shows:
+                    # Brutto Interest starts at 63.
+                    # Date 20251222 is at ... index 112? No.
+                    # Let's count from end.
+                    # End: ' 000000008856822' (Length 16) -> Amount + sign?
+                    # The amount part seems consistently at the end for these special lines?
+                    
+                    # Standard parsing first
+                    sign_char = line[112] if len(line) > 112 else ''
+                    amount_str = line[113:128] if len(line) > 128 else '0'
+                    
+                    # Special Case: "Brutto Interest", "BETÉT", "POS" lines
+                    # These lines seem to often have the amount at the very end of the line.
+                    # Line 31 length: 144
+                    # Amount is at 128:144?
+                    # Let's check if the standard Amount parsing yielded 0 but the line has numbers at the end.
+                    # Or simpler: The amount format in these special lines is:
+                    # 2025122220251229 000000008856822 (Date1 Date2 Amount)
+                    # Standard:
+                    # 2025121520251215-000000000518193
+                    # It seems ALL lines have amount at the end, but the offset might be shifted if spaces are missing/added?
+                    # The Standard Lines in debug analysis (Lines 311, 313) perfectly align with the tail.
+                    # Tail 16: '-000000000518193'
+                    # So Sign is -16, Amount is -15..end.
+                    
+                    # Let's try parsing from the tail of the line if the standard fixed pos failed or is 0?
+                    # Or just always parse from tail?
+                    # Standard line length is usually 128? No, looking at debug, Line 31 is 144 chars long.
+                    # Standard lines are also long.
+                    # My previous logic used fixed pos: `line[113:128]`.
+                    # If the line is longer, 113:128 might be in the middle of text?
+                    # Let's check Line 31.
+                    # 0..128: ...Brutto Interest                    2025122220251229 00
+                    # 113 is '20251229 00'. So float conversion failed or returned garbage (if handled).
+                    
+                    # NEW STRATEGY: Amount is always the last 15 characters. Sign is the one before it.
+                    if len(line) >= 16:
+                        amount_str = line[-15:]
+                        sign_char = line[-16]
+                    
+                    try:
+                        amt = float(amount_str) / 100.0
+                        if sign_char == '-': amt = -amt
+                    except:
+                        amt = 0.0
+                    
+                    val_date_raw = line[96:104]
+                    # On the special lines, value date position might be different?
+                    # Line 31: ...Brutto Interest... 20251222 20251229
+                    # 20251229 is Value Date? It is just before the amount. 
+                    # If I read from end: Amount (15), Sign (1), ValueDate (8), BookingDate (8) ?
+                    # -15: Amount
+                    # -16: Sign
+                    # -24:-16: ValueDate (20251229)
+                    # -32:-24: BookingDate (20251222)
+                    
+                    # Let's use this tail-based logic if the line is a "Special" generic transaction line
+                    # How to detect? They don't have +IZV?
+                    # Standard line 84: ...+IZV...
+                    # Special line 31: ...Brutto Interest...
+                    
+                    # Let's check if the standard fixed pos logic works for 84?
+                    # Line 84 ends with '...20251212 000000003537000'
+                    # It also matches the tail pattern!
+                    # So I will switch to using tail-based parsing for Amount and Value Date for ALL 87 lines.
+                    
+                    if len(line) >= 32:
+                         # Last 15 digits is amount
+                         amount_str = line[-15:]
+                         sign_char = line[-16]
+                         
+                         val_date_raw = line[-24:-16]
+                         # bk_date_2 = line[-32:-24] # redundancy check?
+                    
+                    def to_date_obj(ds):
+                        try:
+                            return datetime.date(int(ds[:4]), int(ds[4:6]), int(ds[6:]))
+                        except:
+                            return None
+
+                    # Use original Booking Date from beginning of line (45:53) as primary?
+                    # Or the one from the tail?
+                    # Line 84: 45:53 is 20251212. Tail is 20251212. Matches.
+                    # Line 31: 45:53 is 20251222. Tail is 20251222. Matches.
+                    b_date = to_date_obj(bk_date)
+                    v_date = to_date_obj(val_date_raw)
+                    
+                    tx_id = f"{current_header['statement_date']}-{current_header['sequence_number']}-{len(items)+1}"
+                    
+                    raw_desc = line[61:96].strip()
+                    digit_count = sum(c.isdigit() for c in raw_desc)
+                    desc_candidate = ''
+                    if len(raw_desc) > 0 and (digit_count / len(raw_desc)) < 0.8:
+                        desc_candidate = raw_desc
+
+                    current_item = {
+                        'amount': amt,
+                        'currency': current_header.get('currency', 'HUF'),
+                        'booking_date': b_date,
+                        'value_date': v_date, 
+                        'remittance_parts': [],
+                        'counterparty_name': '',
+                        'counterparty_account': '',
+                        'transaction_id': tx_id,
+                        'line_87_desc': desc_candidate
+                    }
+                    items.append(current_item)
+
+            elif rec_type == '91':
+                if current_item:
+                    acc_raw = line[27:51].strip()
+                    acc_final = ''
+                    if len(acc_raw) == 24:
+                        acc_final = f"{acc_raw[0:8]}-{acc_raw[8:16]}-{acc_raw[16:24]}"
+                    elif len(acc_raw) == 16:
+                        acc_final = f"{acc_raw[0:8]}-{acc_raw[8:16]}"
+                    else:
+                        acc_final = acc_raw
+                    
+                    current_item['counterparty_account'] = acc_final
+                    
+                    name_1 = line[118:150].strip()
+                    name_2 = line[170:210]
+                    # Fix: Remove date if accidentally captured at the end of Name 2
+                    # Example raw: 'Kissné Varga Bettina            20251231'
+                    if len(name_2) > 8 and name_2[-8:].isdigit() and name_2[-8:].startswith('20'):
+                         name_2 = name_2[:-8]
+                    name_2 = name_2.strip()
+                    
+                    # Logic Check from debug_stm_fix:
+                    # Line 322 (91) - Sign '-' (Outgoing)
+                    #   N1: 'CEZE ÚT...' (True)
+                    #   N2: 'OMV HUNGÁRIA...' (False)
+                    # So for Outgoing, Partner is Name2.
+                    
+                    # Line 310 (91) - Sign '-' (Outgoing Pos Comission?)
+                    #   N1: 'CEZE ÚT...'
+                    #   N2: 'Kupon Portfólió...'
+                    # Partner is Name2.
+                    
+                    # Line 2 (91) - Sign ' ' (Incoming)
+                    #   N1: 'MASTER MELDOR...'
+                    #   N2: 'Ceze Kft...'
+                    # Partner is Name1.
+                    
+                    # Revised Rule:
+                    if current_item['amount'] < 0:
+                        current_item['counterparty_name'] = name_2
+                    else:
+                        current_item['counterparty_name'] = name_1
+                    
+                    rem_cand = line[210:].strip()
+                    # Often the line ends with many 0s used as padding. Remove them.
+                    # We start looking for '0000' from the end backwards or logic?
+                    # In debug, the 0s are spaces separated? No, debug showed " CZ...   00000...".
+                    # Let's clean up: split by '00000' and take the first part
+                    if '000000' in rem_cand:
+                        rem_cand = rem_cand.split('000000')[0].strip()
+                        
+                    current_item['remittance_parts'].append(rem_cand)
+
+        # Post process items
+        for h in headers_found:
+            for it in h['items']:
+                parts = [p for p in it.pop('remittance_parts') if p]
+                it['remittance'] = " ".join(parts)
+                
+                # Check line_87_desc
+                l87_desc = it.pop('line_87_desc', '').strip()
+                
+                # Ensure fields exist
+                if not it.get('counterparty_name'):
+                     # Fallback to description if available
+                     if l87_desc:
+                         it['counterparty_name'] = l87_desc
+                     else:
+                         it['counterparty_name'] = ''
+                     
+                else:
+                    # If we have a name, but also a description from 87, prepend/append it to remittance?
+                    # Or check if regex like "POS..."
+                    if l87_desc and l87_desc not in it['remittance']:
+                         it['remittance'] = (l87_desc + " " + it['remittance']).strip()
+                         
+                if not it.get('counterparty_account'):
+                     it['counterparty_account'] = ''
+                
+                # Convert dates to string YYYY-MM-DD to match XML parser
+                if it.get('booking_date'):
+                    d = it['booking_date']
+                    if hasattr(d, 'strftime'):
+                        it['booking_date'] = d.strftime('%Y-%m-%d')
+                
+                if it.get('value_date'):
+                    d = it['value_date']
+                    if hasattr(d, 'strftime'):
+                        it['value_date'] = d.strftime('%Y-%m-%d')
+
+        return headers_found
+
+    def _parse_camt053_xml(self, content: bytes):
+        import xml.etree.ElementTree as ET
+        try:
+            root = ET.fromstring(content)
+        except Exception:
+            return []
+
+        ns_map = {}
+        if root.tag.startswith('{'):
+            uri = root.tag.split('}')[0].strip('{')
+            ns_map = {'ns': uri}
+        
+        def find(node, path):
+            if ns_map:
+                # convert 'A/B' to 'ns:A/ns:B'
+                p = '/'.join(('ns:' + x) for x in path.split('/'))
+                return node.find(p, ns_map)
+            return node.find(path)
+
+        def findall(node, path):
+            if ns_map:
+                p = '/'.join(('ns:' + x) for x in path.split('/'))
+                return node.findall(p, ns_map)
+            return node.findall(path)
+
+        def get_text(node, path):
+            el = find(node, path)
+            return el.text.strip() if el is not None and el.text else None
+
+        # Find BkToCstmrStmt
+        bk_node = find(root, 'BkToCstmrStmt')
+        if bk_node is None and 'BkToCstmrStmt' in root.tag:
+            bk_node = root
+        
+        parsed_stmts = []
+        if bk_node is None:
+            return []
+
+        for stmt in findall(bk_node, 'Stmt'):
+            # Header
+            lgl_seq_nb = get_text(stmt, 'LglSeqNb')
+            acct_id = get_text(stmt, 'Acct/Id/IBAN')
+            if not acct_id:
+                acct_id = get_text(stmt, 'Acct/Id/Othr/Id')
+            
+            curr = get_text(stmt, 'Acct/Ccy')
+            
+            # Statement Date from Closing Balance (CLBD)
+            stmt_date = None
+            for bal in findall(stmt, 'Bal'):
+                tp = get_text(bal, 'Tp/CdOrPrtry/Cd')
+                if tp == 'CLBD':
+                    stmt_date = get_text(bal, 'Dt/Dt')
+                    break
+            if not stmt_date:
+                # Fallback to CreDtTm
+                cre_dt = get_text(stmt, 'CreDtTm')
+                if cre_dt:
+                    stmt_date = cre_dt[:10]
+
+            items = []
+            header = {
+                'account_raw': acct_id,
+                'currency': curr or 'HUF',
+                'statement_date': stmt_date,
+                'sequence_number': lgl_seq_nb,
+                'items': items
+            }
+            parsed_stmts.append(header)
+            
+            # Entries
+            for ntry in findall(stmt, 'Ntry'):
+                # Check Reversal? If Sts == 'RVSD', maybe skip?
+                # For now assume all booked
+                
+                # Amount
+                amt_node = find(ntry, 'Amt')
+                amt_val = 0.0
+                if amt_node is not None and amt_node.text:
+                    try:
+                        amt_val = float(amt_node.text)
+                    except:
+                        pass
+                
+                # CRDT or DBIT
+                ind = get_text(ntry, 'CdtDbtInd')
+                if ind == 'DBIT':
+                    amt_val = -abs(amt_val)
+                else:
+                    amt_val = abs(amt_val)
+                
+                # Dates
+                bk_dt = get_text(ntry, 'BookgDt/Dt')
+                val_dt = get_text(ntry, 'ValDt/Dt')
+                
+                # Details
+                remittance_parts = []
+                cp_name = None
+                cp_acct = None
+                
+                ntry_dtls = find(ntry, 'NtryDtls')
+                if ntry_dtls:
+                    tx_dtls = find(ntry_dtls, 'TxDtls')
+                    if tx_dtls:
+                        # Remittance
+                        rmt = find(tx_dtls, 'RmtInf')
+                        if rmt:
+                            for ustrd in findall(rmt, 'Ustrd'):
+                                if ustrd.text:
+                                    remittance_parts.append(ustrd.text)
+                        
+                        # Parties
+                        partner_tag = 'Cdtr' if ind == 'DBIT' else 'Dbtr'
+                        rltd = find(tx_dtls, 'RltdPties')
+                        if rltd:
+                            p_node = find(rltd, partner_tag)
+                            if p_node:
+                                cp_name = get_text(p_node, 'Nm')
+                            
+                            # Account
+                            acc_tag = partner_tag + 'Acct'
+                            acc_node = find(rltd, acc_tag)
+                            if acc_node:
+                                cp_acct = get_text(acc_node, 'Id/IBAN') or get_text(acc_node, 'Id/Othr/Id')
+                        
+                        add_tx_inf = get_text(tx_dtls, 'AddtlTxInf')
+                        if add_tx_inf:
+                              remittance_parts.append(add_tx_inf)
+
+                # Add AddtlNtryInf (Comment/Megjegyzés) if available
+                addtl_info = get_text(ntry, 'AddtlNtryInf')
+                if addtl_info and addtl_info not in remittance_parts:
+                     # For safety, if remittance is empty, we definitely want this
+                     # But user asked to see it if remittance is empty.
+                     pass 
+
+                # Combine everything into remittance for display if needed because
+                # sometimes 'Brutto Interest' is the ONLY text.
+                full_remittance = ' '.join(remittance_parts)
+                
+                items.append({
+                    'booking_date': bk_dt,
+                    'value_date': val_dt,
+                    'amount': amt_val,
+                    'currency': header['currency'],
+                    'remittance': full_remittance,
+                    'comment': addtl_info or '', # Added specific comment from AddtlNtryInf
+                    'counterparty_name': cp_name or '',
+
+                    'counterparty_account': cp_acct or '',
+                    'raw': []
+                })
+        return parsed_stmts
+
     def _parse_stm(self, text: str):
         import re
         lines = [ln.rstrip('\n') for ln in text.splitlines()]
@@ -5032,7 +5500,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
 
     def _propose_matches(self, company: Company, stmt_currency: str, items: list):
         # Build quick lookups
-        from invoices.models import Customer, CustomerBankAccount, Invoice
+        from invoices.models import Customer, CustomerBankAccount, Invoice, IncomingInvoiceDigest
         proposals = []
         def norm_digits(s):
             import re
@@ -5069,7 +5537,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 scored = []
                 for c in all_customers[:1000]:
                     ratio = difflib.SequenceMatcher(None, nname[:40], norm_name(c.name)[:40]).ratio()
-                    if ratio >= 0.75:
+                    if ratio >= 0.85:
                         scored.append((ratio, c))
                 scored.sort(key=lambda x: x[0], reverse=True)
                 top = [c for _, c in scored[:5]]
@@ -5082,7 +5550,13 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                     seen.add(c.id)
                     cand_list.append({'id': str(c.id), 'name': c.name})
                 customer_candidates = cand_list
-                customer = all_customers[0] if (top and top[0] in all_customers and top[0] not in []) else (contains[0] if contains else None)
+                # Fix: Don't pick random top customer if fuzzy match is weak or empty.
+                if top:
+                    customer = top[0]
+                elif contains:
+                    customer = contains[0]
+                else:
+                    customer = None
             # Extract invoice token from remittance
             rem = it.get('remittance') or ''
             token = None
@@ -5098,26 +5572,83 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 m = re.search(r'(\d{4}/\d{1,6})', rem)
                 if m:
                     token = m.group(1)
-            invoice = None
+            
             candidates = []
+            best_candidate = None
+
+            # Determine direction
+            try:
+                amt_val = float(it.get('amount') or 0)
+            except:
+                amt_val = 0
+            
+            # Search by token (both incoming and outgoing)
             if token:
+                # Outgoing
                 qs = Invoice.objects.filter(company=company, invoice_number__icontains=token).order_by('-issue_date')[:5]
-                candidates = [{'id': str(inv.id), 'invoice_number': inv.invoice_number, 'customer_id': str(inv.customer_id), 'amount': float(inv.total_gross_amount)} for inv in qs]
-                if len(qs) == 1:
-                    invoice = qs[0]
-            # Amount check: match by amount when possible
-            if not invoice and customer and (it.get('amount') is not None):
-                amt = it['amount']
-                qs = Invoice.objects.filter(company=company, customer=customer).order_by('-issue_date')[:50]
                 for inv in qs:
-                    try:
-                        total = float(inv.total_gross_amount)
-                    except Exception:
-                        continue
-                    if abs(total - float(amt)) <= 1.0:
-                        invoice = inv
-                        break
-            can_auto = bool(customer and invoice)
+                    candidates.append({
+                        'id': str(inv.id), 
+                        'invoice_number': inv.invoice_number, 
+                        'customer_id': str(inv.customer_id), 
+                        'amount': float(inv.total_gross_amount),
+                        'type': 'outgoing'
+                    })
+                # Incoming
+                qs_in = IncomingInvoiceDigest.objects.filter(company=company, invoice_number__icontains=token).order_by('-invoice_issue_date')[:5]
+                for inv in qs_in:
+                    gross = float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0))
+                    candidates.append({
+                        'id': str(inv.id),
+                        'invoice_number': inv.invoice_number,
+                        'supplier_name': inv.supplier_name,
+                        'amount': gross,
+                        'type': 'incoming'
+                    })
+
+            # Search by Amount (if no token match or to supplement)
+            # Prioritize based on sign
+            if not candidates and amt_val != 0:
+                abs_amt = abs(amt_val)
+                # If negative (payment out) -> IncomingInvoice (Supplier bill)
+                # If positive (payment in) -> Invoice (Customer bill)
+                
+                if amt_val > 0: # Payment IN -> Invoice
+                    qs = Invoice.objects.filter(company=company).order_by('-issue_date')[:100]
+                    # Filter for amount match
+                    for inv in qs:
+                        if abs(float(inv.total_gross_amount) - abs_amt) <= 1.0:
+                             candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'customer_id': str(inv.customer_id),
+                                'amount': float(inv.total_gross_amount),
+                                'type': 'outgoing'
+                             })
+                elif amt_val < 0: # Payment OUT -> IncomingInvoice
+                    qs_in = IncomingInvoiceDigest.objects.filter(company=company).order_by('-invoice_issue_date')[:100]
+                    for inv in qs_in:
+                        gross = float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0))
+                        if abs(gross - abs_amt) <= 1.0:
+                             candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'supplier_name': inv.supplier_name,
+                                'amount': gross,
+                                'type': 'incoming'
+                             })
+            
+            # Select best candidate
+            if candidates:
+                # Prefer exact amount match
+                exact_matches = [c for c in candidates if abs(c['amount'] - abs(amt_val)) < 1.0]
+                if exact_matches:
+                    best_candidate = exact_matches[0]
+                else:
+                    best_candidate = candidates[0]
+
+            can_auto = bool(best_candidate and (customer or best_candidate.get('type')=='incoming')) # Incoming doesn't require customer match strictly
+
             proposals.append({
                 'index': idx,
                 'amount': it.get('amount'),
@@ -5128,7 +5659,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 'counterparty_name': it.get('counterparty_name'),
                 'counterparty_account': it.get('counterparty_account'),
                 'proposed_customer': {'id': str(customer.id), 'name': customer.name} if customer else None,
-                'proposed_invoice': {'id': str(invoice.id), 'invoice_number': invoice.invoice_number} if invoice else None,
+                'proposed_invoice': best_candidate, # Contains id, invoice_number, type
                 'candidates': candidates,
                 'customer_candidates': customer_candidates,
                 'can_auto': can_auto,
@@ -5151,10 +5682,23 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         from invoices.models import CompanyBankAccount, CustomerBankAccount, BankStatement, BankStatementItem, Customer, Invoice
         for f in files:
             try:
-                text = self._decode_bytes(f.read())
+                content = f.read()
             except Exception as e:
                 return Response({'error': f'Fájl olvasási hiba: {getattr(f, "name", "?")} - {e}'}, status=status.HTTP_400_BAD_REQUEST)
-            stmts = self._parse_stm(text)
+            
+            is_xml = getattr(f, 'name', '').lower().endswith('.xml')
+            if not is_xml:
+                 if content.strip().startswith(b'<') and b'camt.053' in content:
+                     is_xml = True
+
+            if is_xml:
+                stmts = self._parse_camt053_xml(content)
+            else:
+                try:
+                    stmts = self._parse_stm_txt(content)
+                except Exception as e:
+                    return Response({'error': f'Nem sikerült feldolgozni a TXT/STM fájlt: {e}'}, status=400)
+            
             # Map header to company bank account
             for st in stmts:
                 acct_raw = st.get('account_raw') or ''
@@ -5173,6 +5717,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                     'account_id': str(bank_acc.id) if bank_acc else None,
                     'account_label': (f"{bank_acc.bank_name or ''} {(bank_acc.iban or bank_acc.account_number or '')}".strip()) if bank_acc else acct_raw,
                     'statement_date': st.get('statement_date'),
+                    'sequence_number': st.get('sequence_number'),
                     'currency': st.get('currency') or 'HUF',
                     'items': proposals,
                 }
@@ -5209,30 +5754,46 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 currency = st.get('currency') or bank_acc.currency or 'HUF'
                 header = BankStatement.objects.filter(company=company, bank_account=bank_acc, statement_date=stmt_date).first()
                 if not header:
-                    header = BankStatement(company=company, bank_account=bank_acc, statement_date=stmt_date, sequence_number=f"{stmt_date}-{str(bank_acc.id)[:6]}", currency=currency)
+                    seq_num = st.get('sequence_number') or f"{stmt_date}-{str(bank_acc.id)[:6]}"
+                    header = BankStatement(company=company, bank_account=bank_acc, statement_date=stmt_date, sequence_number=seq_num, currency=currency)
                     if request.user and request.user.is_authenticated:
                         header.created_by = request.user
                     header.save()
                     created_headers += 1
                 # Items
+                from invoices.models import IncomingInvoiceDigest
                 for it in (st.get('items') or []):
                     if not it.get('approved'):
                         continue
                     cust_id = it.get('customer_id') or (it.get('proposed_customer') or {}).get('id')
-                    inv_id = it.get('invoice_id') or (it.get('proposed_invoice') or {}).get('id')
+                    
+                    prop_inv = it.get('proposed_invoice') or {}
+                    inv_id = it.get('invoice_id') or prop_inv.get('id')
+                    inv_type = it.get('invoice_type') or prop_inv.get('type') or 'outgoing'
+                    
                     customer = Customer.objects.filter(id=cust_id).first() if cust_id else None
-                    invoice = Invoice.objects.filter(id=inv_id, company=company).first() if inv_id else None
+                    
+                    invoice = None
+                    incoming_invoice = None
+                    
+                    if inv_id:
+                        if inv_type == 'outgoing':
+                            invoice = Invoice.objects.filter(id=inv_id, company=company).first()
+                        elif inv_type == 'incoming':
+                            incoming_invoice = IncomingInvoiceDigest.objects.filter(id=inv_id, company=company).first()
+
                     amount = it.get('amount')
                     note = it.get('remittance') or ''
                     bsi = BankStatementItem.objects.create(
                         bank_statement=header,
                         customer=customer if customer else (invoice.customer if invoice else None),
                         invoice=invoice,
+                        incoming_invoice=incoming_invoice,
                         amount=amount or 0,
                         note=note[:500]
                     )
                     created_items += 1
-                    # Reconcile invoice payment
+                    # Reconcile Outgoing Invoice
                     if invoice and amount:
                         try:
                             from decimal import Decimal
@@ -5253,12 +5814,86 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                         elif invoice.amount_paid > 0:
                             invoice.status = 'partially_paid'
                         invoice.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
+                    
+                    # Reconcile Incoming Invoice
+                    if incoming_invoice and amount:
+                        try:
+                             from decimal import Decimal
+                             val = Decimal(str(amount))
+                        except:
+                             val = amount
+                        pay_amt = abs(val) 
+                        
+                        gross = float((incoming_invoice.invoice_net_amount or 0) + (incoming_invoice.invoice_vat_amount or 0))
+                        current_paid = float(incoming_invoice.amount_paid or 0)
+                        
+                        new_paid = current_paid + pay_amt
+                        
+                        from decimal import Decimal
+                        incoming_invoice.amount_paid = Decimal(new_paid)
+                        
+                        # Status update
+                        if new_paid >= (gross - 1.0): 
+                            incoming_invoice.payment_status = 'paid'
+                            incoming_invoice.payment_date = header.statement_date
+                        elif new_paid > 0:
+                            incoming_invoice.payment_status = 'partially_paid'
+                            
+                        # Save Sequence Number
+                        seq_info = f"{header.sequence_number}"
+                        if incoming_invoice.payment_reference:
+                             if seq_info not in incoming_invoice.payment_reference:
+                                  incoming_invoice.payment_reference = f"{incoming_invoice.payment_reference}, {seq_info}"[:100]
+                        else:
+                             incoming_invoice.payment_reference = seq_info[:100]
+                        
+                        incoming_invoice.save(update_fields=['amount_paid', 'payment_status', 'payment_date', 'payment_reference'])
                     # Save new customer bank account if requested
                     if it.get('save_bank_account') and customer and it.get('counterparty_account'):
-                        acct = it.get('counterparty_account')
-                        exists = CustomerBankAccount.objects.filter(customer=customer).filter(models.Q(iban__iexact=acct) | models.Q(account_number__icontains=acct)).exists()
-                        if not exists:
-                            CustomerBankAccount.objects.create(customer=customer, iban=acct if acct[:2].isalpha() else None, account_number=None if acct[:2].isalpha() else acct, currency=currency)
+                        acct = it.get('counterparty_account').strip().upper()
+                        import re
+                        is_iban = bool(re.match(r'^[A-Z]{2}', acct))
+                        existing_acc = None
+                        
+                        if is_iban:
+                            # If iban, and the last 16 characters matches the non-iban, then update
+                            suffix = re.sub(r'\D', '', acct)[-16:]
+                            # Try find candidate by account_number suffix match (only if IBAN is empty on that record)
+                            # Or exact match on IBAN
+                            matches = CustomerBankAccount.objects.filter(customer=customer)
+                            for cand in matches:
+                                c_iban = (cand.iban or '').replace(' ', '').upper()
+                                # Exact IBAN match?
+                                if c_iban == acct.replace(' ', ''):
+                                    existing_acc = cand
+                                    break
+                                # Match suffix of non-IBAN account
+                                c_num = re.sub(r'\D', '', cand.account_number or '')
+                                if not c_iban and len(c_num) >= 16 and c_num.endswith(suffix):
+                                    # Found match to update
+                                    cand.iban = acct
+                                    cand.currency = currency
+                                    cand.save()
+                                    existing_acc = cand
+                                    saved_accounts += 1
+                                    break
+                        else:
+                            # Non-IBAN
+                            c_num_search = re.sub(r'\D', '', acct)
+                            matches = CustomerBankAccount.objects.filter(customer=customer)
+                            for cand in matches:
+                                c_num = re.sub(r'\D', '', cand.account_number or '')
+                                if c_num == c_num_search:
+                                    existing_acc = cand
+                                    break
+                        
+                        if not existing_acc:
+                            CustomerBankAccount.objects.create(
+                                customer=customer, 
+                                iban=acct if is_iban else None, 
+                                account_number=None if is_iban else acct, 
+                                currency=currency
+                            )
                             saved_accounts += 1
         return Response({'success': True, 'created_headers': created_headers, 'created_items': created_items, 'saved_accounts': saved_accounts})
 

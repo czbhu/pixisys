@@ -27,6 +27,7 @@ import {
     ReloadOutlined,
     SearchOutlined
 } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { manufacturingService, ManufacturingProduct, ProductClass, Project, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -53,6 +54,7 @@ const STATUS_COLORS: { [key: string]: string } = {
 };
 
 const Products: React.FC = () => {
+    const [searchParams] = useSearchParams();
     const [products, setProducts] = useState<ManufacturingProduct[]>([]);
     const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
@@ -76,6 +78,12 @@ const Products: React.FC = () => {
         loadContacts();
         loadCurrencies();
     }, []);
+
+    useEffect(() => {
+        if (searchParams.get('create') === 'true') {
+            showModal();
+        }
+    }, [searchParams]);
 
     const loadProducts = async () => {
         try {
@@ -197,17 +205,32 @@ const Products: React.FC = () => {
                 deadline: values.deadline.format('YYYY-MM-DD'),
             };
 
+            let savedProduct: ManufacturingProduct | undefined;
             if (editingProduct) {
-                await manufacturingService.updateProduct(editingProduct.id, data);
+                savedProduct = await manufacturingService.updateProduct(editingProduct.id, data);
                 message.success('Egyedi gyártás sikeresen frissítve!');
             } else {
-                await manufacturingService.createProduct(data);
+                savedProduct = await manufacturingService.createProduct(data);
                 message.success('Egyedi gyártás sikeresen létrehozva!');
             }
 
             setIsModalVisible(false);
             form.resetFields();
             loadProducts();
+
+            if (searchParams.get('from_rfq') === 'true' && savedProduct) {
+                Modal.confirm({
+                    title: 'Visszatérés az ajánlathoz',
+                    content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a terméket?',
+                    okText: 'Igen',
+                    cancelText: 'Nem',
+                    onOk: () => {
+                        const channel = new BroadcastChannel('pixi_rfq_item_creation');
+                        channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedProduct, itemType: 'product' } });
+                        window.close();
+                    }
+                });
+            }
         } catch (err) {
             console.error('Error saving product:', err);
             message.error('Hiba történt az egyedi gyártás mentése során');

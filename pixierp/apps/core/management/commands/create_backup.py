@@ -4,6 +4,7 @@ from django.conf import settings
 from apps.core.models import BackupConfiguration, BackupFile
 import os
 import shutil
+import subprocess
 from datetime import timedelta
 
 
@@ -35,6 +36,19 @@ class Command(BaseCommand):
         backup_dir = os.path.join(settings.BASE_DIR, 'backups')
         os.makedirs(backup_dir, exist_ok=True)
         
+        # Get database configuration
+        db_config = settings.DATABASES['default']
+        db_name = db_config['NAME']
+        db_user = db_config['USER']
+        db_host = db_config.get('HOST', 'localhost')
+        db_port = db_config.get('PORT', '5432')
+        db_password = db_config.get('PASSWORD', '')
+        
+        # Set environment variable for password
+        env = os.environ.copy()
+        if db_password:
+            env['PGPASSWORD'] = db_password
+        
         for config in configs:
             # Check if backup is needed based on interval
             if config.last_backup:
@@ -53,12 +67,27 @@ class Command(BaseCommand):
             try:
                 # Generate filename
                 timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'{config.interval}_backup_{timestamp}.sqlite3'
+                filename = f'{config.interval}_backup_{timestamp}.sql'
                 filepath = os.path.join(backup_dir, filename)
                 
-                # Copy database file
-                db_path = settings.DATABASES['default']['NAME']
-                shutil.copy2(db_path, filepath)
+                # Run pg_dump
+                cmd = [
+                    'pg_dump',
+                    '-h', db_host,
+                    '-p', str(db_port),
+                    '-U', db_user,
+                    '-F', 'c',  # Custom format (compressed)
+                    '-f', filepath,
+                    db_name
+                ]
+                
+                subprocess.run(
+                    cmd,
+                    env=env,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
                 
                 # Get file size
                 file_size = os.path.getsize(filepath)

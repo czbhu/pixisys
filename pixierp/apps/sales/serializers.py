@@ -1,12 +1,12 @@
 from rest_framework import serializers
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
-    Order, OrderItem, Lead, Opportunity, Forecast, Service, QuoteLog,
+    Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
-    CustomerOrder, CustomerOrderItem
+    CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog
 )
-from apps.manufacturing.models import ManufacturingProduct, Project
-from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer
+from apps.manufacturing.models import ManufacturingProduct, Project, Service
+from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer, ServiceSerializer as ManufacturingServiceSerializer
 from apps.crm.serializers import CompanySerializer, ContactSerializer
 from apps.core.serializers import EmailServerConfigSerializer, EmailTemplateSerializer, SignatureTemplateSerializer
 
@@ -59,6 +59,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     material_code = serializers.CharField(source='material.code', read_only=True)
     manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
     service_name = serializers.CharField(source='service.name', read_only=True)
+    service_code = serializers.CharField(source='service.code', read_only=True)
     net_unit_price = serializers.DecimalField(max_digits=12, decimal_places=2)
     net_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     gross_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
@@ -87,11 +88,13 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     public_token = serializers.CharField(read_only=True)
     public_order_url = serializers.SerializerMethodField()
     assignee_names = serializers.SerializerMethodField()
+    assignee_details = serializers.SerializerMethodField()
     assignees = serializers.PrimaryKeyRelatedField(many=True, read_only=True)
     owner_id = serializers.PrimaryKeyRelatedField(source='owner', read_only=True)
     owner_name = serializers.SerializerMethodField()
     invitations_pending = serializers.SerializerMethodField()
     total_amount = serializers.SerializerMethodField()
+    total_net_amount = serializers.SerializerMethodField()
     
     class Meta:
         model = QuoteRequest
@@ -122,6 +125,12 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return ", ".join([u.get_full_name() or u.username for u in obj.assignees.all()])
         except Exception:
             return ""
+
+    def get_assignee_details(self, obj):
+        try:
+            return [{'id': u.id, 'name': u.get_full_name() or u.username} for u in obj.assignees.all()]
+        except Exception:
+            return []
 
     def get_owner_name(self, obj):
         try:
@@ -161,21 +170,69 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return float(total)
         except Exception:
             return 0.00
+    
+    def get_total_net_amount(self, obj):
+        """Calculate total net amount from items"""
+        try:
+            from decimal import Decimal
+            total = Decimal('0.00')
+            for item in obj.items.all():
+                # Use discounted_net_total if discount exists, otherwise net_total
+                if item.discount_percent and item.discount_percent > 0:
+                    total += item.discounted_net_total or Decimal('0.00')
+                else:
+                    total += item.net_total or Decimal('0.00')
+            return float(total)
+        except Exception:
+            return 0.00
 
 class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     invitee_name = serializers.SerializerMethodField()
     quote_request_number = serializers.CharField(source='quote_request.number', read_only=True)
+    
+    # Tooltip fields
+    company_name = serializers.SerializerMethodField()
+    contact_names = serializers.SerializerMethodField()
+    qr_title = serializers.CharField(source='quote_request.title', read_only=True)
+    qr_description = serializers.CharField(source='quote_request.description', read_only=True)
+    qr_internal_description = serializers.CharField(source='quote_request.internal_description', read_only=True)
+    item_count = serializers.SerializerMethodField()
+    issue_date = serializers.DateField(source='quote_request.issue_date', read_only=True)
+    qr_deadline = serializers.DateField(source='quote_request.deadline', read_only=True)
+
     class Meta:
         model = QuoteRequestInvitation
-        fields = ['id', 'quote_request', 'quote_request_number', 'invitee', 'invitee_name', 'invited_by', 'status', 'created_at', 'responded_at']
+        fields = ['id', 'quote_request', 'quote_request_number', 'invitee', 'invitee_name', 
+                  'invited_by', 'status', 'created_at', 'responded_at',
+                  'company_name', 'contact_names', 'qr_title', 'qr_description', 
+                  'qr_internal_description', 'item_count', 'issue_date', 'qr_deadline']
 
     def get_invitee_name(self, obj):
         return obj.invitee.get_full_name() or obj.invitee.username
 
-class ServiceSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Service
-        fields = '__all__'
+    def get_company_name(self, obj):
+        if obj.quote_request and obj.quote_request.company:
+            return obj.quote_request.company.name
+        if obj.quote_request and obj.quote_request.customer:
+             return obj.quote_request.customer.company
+        return ""
+
+    def get_contact_names(self, obj):
+        try:
+             if obj.quote_request:
+                return ", ".join([str(c) for c in obj.quote_request.contacts.all()])
+        except:
+             pass
+        return ""
+    
+    def get_item_count(self, obj):
+        if obj.quote_request:
+            return obj.quote_request.items.count()
+        return 0
+
+class ServiceSerializer(ManufacturingServiceSerializer):
+    class Meta(ManufacturingServiceSerializer.Meta):
+        pass
 
 class QuoteLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
@@ -245,6 +302,7 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     material_code = serializers.SerializerMethodField()
     manufacturing_product_name = serializers.SerializerMethodField()
     service_name = serializers.SerializerMethodField()
+    service_code = serializers.SerializerMethodField()
     item_type = serializers.SerializerMethodField()
     attachments = serializers.SerializerMethodField()
     # Price calculations
@@ -284,7 +342,9 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
         return obj.quote_item.product.name if obj.quote_item and obj.quote_item.product else None
     
     def get_product_code(self, obj):
-        # Product doesn't have a code field, return None
+        # Retrieve code from Product model if available, else None
+        if obj.quote_item and obj.quote_item.product and hasattr(obj.quote_item.product, 'code'):
+            return obj.quote_item.product.code
         return None
     
     def get_material_name(self, obj):
@@ -298,6 +358,9 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     
     def get_service_name(self, obj):
         return obj.quote_item.service.name if obj.quote_item and obj.quote_item.service else None
+
+    def get_service_code(self, obj):
+        return obj.quote_item.service.code if obj.quote_item and obj.quote_item.service else None
     
     def get_item_type(self, obj):
         return obj.quote_item.item_type if obj.quote_item else None
@@ -406,4 +469,72 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     def get_deadline(self, obj):
         """Get deadline from quote_request"""
         return obj.quote_request.deadline if obj.quote_request else None
+
+class QuoteRequestCostSerializer(serializers.ModelSerializer):
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    
+    class Meta:
+        model = QuoteRequestCost
+        fields = ['id', 'quote_request', 'material', 'material_name', 'code', 'name', 'quantity', 'unit', 'net_unit_price', 'net_total', 'supplier', 'supplier_name', 'is_stock', 'created_at']
+        read_only_fields = ['net_total', 'created_at']
+
+class WorkLogSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.get_full_name', read_only=True)
+    customer_order_number = serializers.CharField(source='customer_order.order_number', read_only=True)
+    customer_name = serializers.SerializerMethodField()
+    item_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = WorkLog
+        fields = '__all__'
+        read_only_fields = ['created_at']
+
+    def get_customer_name(self, obj):
+        try:
+            if obj.customer_order and obj.customer_order.quote_request and obj.customer_order.quote_request.company:
+                return obj.customer_order.quote_request.company.name
+        except Exception:
+            pass
+        return None
+
+    def get_item_name(self, obj):
+        try:
+            if obj.item:
+                return obj.item.description
+        except Exception:
+            pass
+        return None
+
+from .models import ChatThread, ChatMessage, ChatMessageAttachment
+
+class ChatMessageAttachmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ChatMessageAttachment
+        fields = '__all__'
+
+class ChatMessageSerializer(serializers.ModelSerializer):
+    attachments = ChatMessageAttachmentSerializer(many=True, read_only=True)
+    sender_name = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ChatMessage
+        fields = '__all__'
+        read_only_fields = ['created_at', 'sender']
+
+    def get_sender_name(self, obj):
+        if obj.sender:
+            full_name = obj.sender.get_full_name()
+            return full_name if full_name else obj.sender.username
+        return "Unknown"
+
+class ChatThreadSerializer(serializers.ModelSerializer):
+    messages = ChatMessageSerializer(many=True, read_only=True)
+    # Could optimize to not returning all messages always, but for now OK
+    
+    class Meta:
+        model = ChatThread
+        fields = '__all__'
+
+
 

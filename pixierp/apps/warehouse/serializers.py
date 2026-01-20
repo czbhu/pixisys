@@ -101,7 +101,7 @@ class MaterialSupplierSerializer(serializers.ModelSerializer):
         model = MaterialSupplier
         fields = [
             'id', 'material', 'material_name', 'supplier', 'supplier_name',
-            'supplier_code', 'unit_price', 'currency', 'is_primary', 
+            'supplier_external_id', 'supplier_code', 'unit_price', 'currency', 'is_primary', 
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at']

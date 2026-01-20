@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
-import { Layout, ConfigProvider, Drawer } from 'antd';
+import { Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { Layout, ConfigProvider, Drawer, notification } from 'antd';
 import huHU from 'antd/locale/hu_HU';
 import Sidebar from './components/Layout/Sidebar';
 import Header from './components/Layout/Header';
@@ -17,20 +17,104 @@ import OrdersModule from './pages/Orders/OrdersModule';
 import WarehouseModule from './pages/Warehouse/WarehouseModule';
 import POSModule from './pages/POS/POSModule';
 import SettingsModule from './pages/Settings/SettingsModule';
+import PersonalModule from './pages/Personal/PersonalModule';
 import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
 import PublicDelivery from './pages/Public/PublicDelivery';
+import KioskPage from './pages/Public/KioskPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
+import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
 import { manufacturingService } from './services/manufacturingService';
+import { notificationWS } from './services/notificationWebSocket';
 import './App.css';
+
+import { notificationService } from './services/notificationService';
+
+// Add this interface
+interface NotificationCounts {
+    [key: string]: number;
+}
 
 const { Content } = Layout;
 
 function AppContent() {
   const { user, loading } = useAuth();
+  const location = useLocation();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
+  const [inviteCount, setInviteCount] = useState<number>(0);
+  // Add state for generic notification counts map
+  const [notificationCounts, setNotificationCounts] = useState<NotificationCounts>({});
+  
+  const refreshCounts = () => {
+    notificationService.getUnreadCounts().then(data => {
+        setNotificationCounts(data);
+        // Also update invite count specifically if needed, or rely on this new system
+        // But for backward compatibility with pure Invite logic:
+        import('./services/salesService').then(mod => {
+            mod.salesService.getMyInvitationsCount('pending').then(cnt => setInviteCount(cnt));
+        });
+    }).catch(console.error);
+  };
+
+  // Initialize Notification WebSocket
+  useEffect(() => {
+    if (user) {
+      // Initial fetch
+      refreshCounts();
+
+      notificationWS.connect();
+      
+      const unsubscribe = notificationWS.onNotification((msg) => {
+        notification.open({
+          message: msg.title,
+          description: msg.message,
+          type: msg.level,
+          onClick: () => {
+            if (msg.link) {
+              window.location.href = msg.link;
+            }
+          },
+        });
+        // Refresh all counts on any notification
+        refreshCounts();
+      });
+      
+      return () => {
+        unsubscribe();
+      }
+    }
+  }, [user]);
+
+  // Mark notifications as read when visiting a page
+  useEffect(() => {
+    if (user) {
+        notificationService.markAsReadByLink(location.pathname)
+            .then(() => refreshCounts())
+            .catch(console.error);
+    }
+  }, [location.pathname, user]);
+
+
+
+  useEffect(() => {
+    if (!user) return;
+    
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const mod = await import('./services/salesService');
+        const cnt = await mod.salesService.getMyInvitationsCount('pending');
+        if (!cancelled) setInviteCount(cnt);
+      } catch (e) {
+        // ignore
+      }
+    };
+    load();
+    const t = setInterval(load, 60000);
+    return () => { cancelled = true; clearInterval(t); };
+  }, [user]);
 
   useEffect(() => {
     const checkMobile = () => {
@@ -81,6 +165,7 @@ function AppContent() {
         <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
         <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
         <Route path="/public/delivery/:token" element={<PublicDelivery />} />
+        <Route path="/kiosk" element={<KioskPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
@@ -99,12 +184,16 @@ function AppContent() {
           <Sidebar 
             collapsed={false}
             onCollapse={() => {}}
+            inviteCount={inviteCount}
+            notificationCounts={notificationCounts}
           />
         </Drawer>
       ) : (
         <Sidebar 
-          collapsed={sidebarCollapsed} 
-          onCollapse={setSidebarCollapsed}
+            collapsed={sidebarCollapsed} 
+            onCollapse={setSidebarCollapsed}
+            inviteCount={inviteCount}
+            notificationCounts={notificationCounts}
         />
       )}
       <Layout style={{ 
@@ -114,6 +203,7 @@ function AppContent() {
         <Header 
           onMenuClick={() => setMobileMenuVisible(true)}
           isMobile={isMobile}
+          inviteCount={inviteCount}
         />
         <Content style={{ 
           margin: isMobile ? '16px 8px' : '24px 16px', 
@@ -127,6 +217,7 @@ function AppContent() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
             <Route path="/public/delivery/:token" element={<PublicDelivery />} />
+            <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />
             <Route path="/manufacturing/*" element={<ManufacturingModule />} />
@@ -136,8 +227,10 @@ function AppContent() {
             <Route path="/warehouse/*" element={<WarehouseModule />} />
             <Route path="/pos/*" element={<POSModule />} />
             <Route path="/settings/*" element={<SettingsModule />} />
+            <Route path="/personal/*" element={<PersonalModule />} />
           </Routes>
         </Content>
+
       </Layout>
     </Layout>
   );
@@ -148,7 +241,9 @@ function App() {
     <ConfigProvider locale={huHU}>
       <SettingsProvider>
         <AuthProvider>
-          <AppContent />
+          <TimeTrackerProvider>
+            <AppContent />
+          </TimeTrackerProvider>
         </AuthProvider>
       </SettingsProvider>
     </ConfigProvider>

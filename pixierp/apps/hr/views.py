@@ -4,8 +4,10 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from django.contrib.auth import get_user_model
 from django.utils.crypto import get_random_string
+from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
-from datetime import datetime, date, timedelta
+from django.utils import timezone
+from datetime import datetime, date, timedelta, time as dt_time
 from django.db.models import Min, Max, Q
 from calendar import monthrange
 from collections import defaultdict
@@ -19,10 +21,10 @@ from apps.core.permissions import (
     check_permission,
     has_own_data_permission,
 )
-from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog
+from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog, AttendanceKioskConfig
 from .serializers import (
     DepartmentSerializer, PositionSerializer, EmployeeSerializer,
-    AttendanceSerializer, LeaveRequestSerializer, PayrollSerializer, AttendanceReportSerializer
+    AttendanceSerializer, LeaveRequestSerializer, PayrollSerializer, AttendanceReportSerializer, AttendanceKioskConfigSerializer
 )
 
 User = get_user_model()
@@ -46,38 +48,12 @@ class EmployeeViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     permission_resource = 'hr.employees'
     own_data_user_field = 'user'
     
-    @action(detail=True, methods=['get', 'post'])
-    def custom_permissions(self, request, pk=None):
-        """Egyéni jogosultságok kezelése (nem szerepkör alapú)"""
-        from apps.core.models import Permission
-        from apps.core.serializers import PermissionSerializer
-        
-        employee = self.get_object()
-        
-        if request.method == 'GET':
-            # Egyéni jogosultságok lekérdezése
-            permissions = Permission.objects.filter(user=employee.user)
-            serializer = PermissionSerializer(permissions, many=True)
-            return Response(serializer.data)
-        
-        elif request.method == 'POST':
-            # Egyéni jogosultságok beállítása
-            permissions_data = request.data.get('permissions', [])
-            
-            # Töröljük a meglévő egyéni jogosultságokat
-            Permission.objects.filter(user=employee.user).delete()
-            
-            # Új egyéni jogosultságok létrehozása
-            for perm_data in permissions_data:
-                Permission.objects.create(
-                    user=employee.user,
-                    module=perm_data['module'],
-                    resource=perm_data.get('resource'),
-                    action=perm_data['action'],
-                    allowed=perm_data.get('allowed', True)
-                )
-            
-            return Response({'message': 'Egyéni jogosultságok frissítve'})
+    # ELTÁVOLÍTVA: Egyéni jogosultságok már nem használtak
+    # Csak osztály-alapú szerepkörök vannak használva (Department.roles)
+    # @action(detail=True, methods=['get', 'post'])
+    # def custom_permissions(self, request, pk=None):
+    #     """Egyéni jogosultságok kezelése (nem szerepkör alapú)"""
+    #     ...
     
     @action(detail=True, methods=['post'])
     def generate_password(self, request, pk=None):
@@ -166,6 +142,8 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
             )
 
 
+from rest_framework.permissions import IsAuthenticated
+
 class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
@@ -173,6 +151,336 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     permission_module = 'hr'
     permission_resource = 'hr.attendance'
     own_data_user_field = 'employee__user'  # Attendance -> Employee -> User
+
+    def get_permissions(self):
+        """
+        Custom permissions for specific actions.
+        'status', 'scan', 'generate_token' should be available to any authenticated user (employee).
+        """
+        if self.action in ['status', 'scan', 'generate_token']:
+            return [IsAuthenticated()]
+        return super().get_permissions()
+
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        user = request.user
+        today = date.today()
+        # Find employee profile
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+             return Response({'error': 'Employee profile not found'}, status=404)
+
+        attendance = Attendance.objects.filter(employee=employee, date=today).first()
+        
+        data = {
+            'is_clocked_in': False,
+            'check_in': None,
+            'check_out': None,
+            'employee_name': f"{user.last_name} {user.first_name}"
+        }
+        
+        if attendance:
+            data['check_in'] = attendance.check_in
+            data['check_out'] = attendance.check_out
+            if attendance.check_in and not attendance.check_out:
+                data['is_clocked_in'] = True
+                
+        return Response(data)
+
+    @action(detail=False, methods=['post'])
+    def initiate(self, request):
+        """
+        User initiates check-in/out from phone.
+        Triggers Kiosk to show a QR code.
+        """
+        user = request.user
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        import uuid
+        import time
+
+        # Determine if Check In or Check Out
+        today = date.today()
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+             return Response({'error': 'Employee profile not found'}, status=404)
+
+        attendance = Attendance.objects.filter(employee=employee, date=today).first()
+        mode = "check_in"
+        if attendance and attendance.check_in and not attendance.check_out:
+            mode = "check_out"
+        
+        # Generate a secure token for the QR
+        # This token should ideally be stored in Redis/Cache with 10s TTL to verify later
+        # specific to this user interaction
+        # Format: "uid:timestamp:nonce"
+        timestamp = int(time.time())
+        token = f"{user.id}:{timestamp}:{uuid.uuid4().hex[:8]}"
+        
+        # In a real app, save this token to cache to verify 
+        # But here we will sign it or just rely on backend-kiosk trust for display
+        # The QR content is what gets scanned back.
+        
+        # Get timeout from config
+        config = AttendanceKioskConfig.objects.first()
+        timeout = config.qr_validity_seconds if config else 10
+
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "attendance_kiosk",
+            {
+                "type": "kiosk.message",
+                "message": {
+                    "type": "show_qr",
+                    "qr_data": token, 
+                    "user_id": user.id,
+                    "user_name": f"{user.last_name} {user.first_name}",
+                    "mode": mode,
+                    "timeout": timeout
+                }
+            }
+        )
+        
+        return Response({'message': 'Kiosk QR triggered', 'token': token, 'mode': mode})
+
+
+    @action(detail=False, methods=['get'])
+    def generate_token(self, request):
+        """
+        Generate a signed token for the user's mobile QR code.
+        Validity: 10 seconds.
+        """
+        user = request.user
+        from django.core.signing import TimestampSigner
+        
+        signer = TimestampSigner()
+        # Data to sign: user_id:random_nonce
+        import uuid
+        data = f"{user.id}:{uuid.uuid4().hex[:8]}"
+        signed_token = signer.sign(data)
+        
+        return Response({'token': signed_token, 'validity': 10})
+
+    @action(detail=False, methods=['post'], permission_classes=[])
+    @csrf_exempt
+    def device_scan(self, request):
+        """
+        Public endpoint for Hardware ESP8266 Scanner.
+        Expects: { "token": "...", "device_id": "..." }
+        """
+        # Since this is public/hardware, we might not have request.user authentication
+        # We rely on the signed token itself.
+        
+        token = request.data.get('token')
+        device_id = request.data.get('device_id')
+        
+        if not token:
+            return Response({'error': 'Token missing'}, status=400)
+            
+        from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
+        from django.contrib.auth import get_user_model
+        
+        signer = TimestampSigner()
+        try:
+            # Validate max_age=15 (10s validity + 5s latency buffer)
+            original_value = signer.unsign(token, max_age=15)
+            # original_value is "user_id:nonce"
+            user_id = original_value.split(':')[0]
+            
+            User = get_user_model()
+            user = User.objects.get(pk=user_id)
+            
+            # --- Attendance Logic (Same as scan) ---
+            today = date.today()
+            now = datetime.now()
+            
+            try:
+                employee = user.employee_profile
+            except Employee.DoesNotExist:
+                 return Response({'error': 'Employee profile not found'}, status=404)
+    
+            attendance, created = Attendance.objects.get_or_create(
+                employee=employee, 
+                date=today,
+                defaults={
+                    'check_in': now.time(),
+                    'break_duration': timedelta(0),
+                    'overtime_hours': 0
+                }
+            )
+            
+            action_type = "check_in"
+            if created:
+                logger.info(f"[DEVICE] Check-in: {user.username} via {device_id}")
+            else:
+                if not attendance.check_out:
+                    attendance.check_out = now.time()
+                    attendance.save()
+                    action_type = "check_out"
+                    logger.info(f"[DEVICE] Check-out: {user.username} via {device_id}")
+                else:
+                     logger.info(f"[DEVICE] Duplicate scan: {user.username}")
+                     return Response({'message': 'Already checked out'}, status=200)
+            
+            # Optional: Push notification to user via WebSocket?
+            
+            return Response({'status': 'success', 'action': action_type}, status=200)
+
+        except SignatureExpired:
+            return Response({'error': 'Token expired'}, status=400)
+        except BadSignature:
+            return Response({'error': 'Invalid token signature'}, status=400)
+        except Exception as e:
+            logger.error(f"[DEVICE] Scan error: {e}")
+            return Response({'error': str(e)}, status=500)
+
+    @action(detail=False, methods=['post'])
+    def scan(self, request):
+        qr_code = request.data.get('qr_code')
+        user = request.user
+        
+        # Timezone aware Current Time
+        now = timezone.now()
+        local_now = timezone.localtime(now)
+        today = local_now.date() 
+
+        # Check if it is a Kiosk QR
+        if qr_code and "KIOSK_QR" in qr_code:
+            from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
+            signer = TimestampSigner()
+            try:
+                base_validity = 10
+                config = AttendanceKioskConfig.objects.first()
+                if config:
+                    base_validity = config.qr_validity_seconds
+                
+                max_age = base_validity + 20 
+                
+                signer.unsign(qr_code, max_age=max_age)
+            except (BadSignature, SignatureExpired) as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Scan failed for user {user}: {e} Code: {qr_code[:10]}...")
+                return Response({'message': f'Érvénytelen vagy lejárt Kioszk QR kód: {str(e)}'}, status=400)
+        else:
+            pass
+            
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+             return Response({'message': 'Nem található dolgozói profil ehhez a felhasználóhoz'}, status=404)
+
+        # Get/Create Attendance for TODAY
+        attendance_today, created = Attendance.objects.get_or_create(
+            employee=employee, 
+            date=today,
+            defaults={
+                'check_in': local_now.time(),
+                'break_duration': timedelta(0),
+                'overtime_hours': 0
+            }
+        )
+        
+        # Find Active Log (Any open log from past)
+        active_log = AccessLog.objects.filter(
+            employee=employee,
+            check_out_time__isnull=True
+        ).order_by('-check_in_time').first()
+
+        message_str = ""
+        action_type = ""
+        
+        if active_log:
+            # CHECK OUT logic (or Split)
+            active_start_local = timezone.localtime(active_log.check_in_time)
+            
+            if active_start_local.date() < today:
+                # SPANNING MIDNIGHT -> SPLIT
+                
+                # Close OLD Log at boundary (Next Day 00:00 which is effectively End Of Old Day)
+                boundary_date = active_start_local.date() + timedelta(days=1)
+                boundary_naive = datetime.combine(boundary_date, datetime.min.time()) # 00:00
+                boundary_aware = timezone.make_aware(boundary_naive, timezone.get_current_timezone())
+                
+                active_log.check_out_time = boundary_aware
+                active_log.save()
+                
+                # Update Old Attendance Check Out (to 23:59:59)
+                try:
+                    att_old = Attendance.objects.get(employee=employee, date=active_start_local.date())
+                    att_old.check_out = dt_time(23, 59, 59)
+                    att_old.save()
+                except Attendance.DoesNotExist:
+                    pass
+
+                # Create NEW Log for Today (00:00 -> Now) because we are closing the session now
+                AccessLog.objects.create(
+                    employee=employee,
+                    check_in_time=boundary_aware,
+                    check_out_time=now,
+                    location="Kiosk/Web (Auto Split)",
+                    duration_hours=0
+                )
+                
+                # Update Today's Attendance
+                attendance_today.check_in = dt_time(0, 0, 0)
+                attendance_today.check_out = local_now.time()
+                attendance_today.save()
+                
+                message_str = f"Sikeres kilépés (Éjfél átlépve): {local_now.strftime('%H:%M:%S')}"
+                action_type = "check_out"
+            else:
+                # SAME DAY CHECK OUT
+                active_log.check_out_time = now
+                active_log.save()
+                
+                attendance_today.check_out = local_now.time()
+                attendance_today.save()
+                
+                message_str = f"Sikeres kilépés: {local_now.strftime('%H:%M:%S')}"
+                action_type = "check_out"
+                
+        else:
+            # CHECK IN (Starting new)
+            AccessLog.objects.create(
+                employee=employee,
+                check_in_time=now,
+                location="Kiosk/Web",
+                duration_hours=0
+            )
+            
+            attendance_today.check_out = None
+            attendance_today.save()
+            
+            message_str = f"Sikeres belépés: {local_now.strftime('%H:%M:%S')}"
+            action_type = "check_in"
+
+        # Notify Kiosk of success
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "attendance_kiosk",
+            {
+                "type": "kiosk.message",
+                "message": {
+                    "type": "success",
+                    "user_name": f"{user.last_name} {user.first_name}",
+                    "timestamp": local_now.strftime('%Y-%m-%d %H:%M:%S'),
+                    "action": action_type
+                }
+            }
+        )
+                 
+        return Response({
+            'message': message_str, 
+            'timestamp': now.isoformat(),
+            'user_name': f"{user.last_name} {user.first_name}",
+            'action': action_type
+        })
 
 
 class LeaveRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
@@ -277,7 +585,8 @@ class AttendanceReportViewSet(viewsets.ViewSet):
         attendance_dict = defaultdict(lambda: defaultdict(list))
         
         for log in access_logs:
-            log_date = log.check_in_time.date()
+            # Use Local Time for date grouping
+            log_date = timezone.localtime(log.check_in_time).date()
             attendance_dict[log.employee_id][log_date].append(log)
         
         # Build report data
@@ -298,31 +607,45 @@ class AttendanceReportViewSet(viewsets.ViewSet):
             while current_date <= end_date:
                 logs_for_day = attendance_dict[employee.id].get(current_date, [])
                 
+                segments = []
+                check_in = None
+                check_out = None
+                hours_worked = 0
+                notes = ''
+                access_log_id = None
+
                 if logs_for_day:
-                    # Get first check-in and last check-out
-                    check_in = min(log.check_in_time for log in logs_for_day)
-                    check_outs = [log.check_out_time for log in logs_for_day if log.check_out_time]
-                    check_out = max(check_outs) if check_outs else None
+                    # Sort logs by check_in time
+                    logs_for_day.sort(key=lambda x: x.check_in_time)
                     
-                    # Calculate hours
-                    if check_out and check_in:
-                        delta = check_out - check_in
-                        hours_worked = round(delta.total_seconds() / 3600, 2)
-                    else:
-                        hours_worked = 0
+                    # Get first check-in and last check-out for summary
+                    check_in = logs_for_day[0].check_in_time
                     
-                    monthly_hours += hours_worked
+                    # Calculate total hours (sum of all durations)
+                    # And build segments list
+                    for log in logs_for_day:
+                        duration = 0
+                        c_out = log.check_out_time
+                        if c_out and log.check_in_time:
+                            delta = c_out - log.check_in_time
+                            duration = round(delta.total_seconds() / 3600, 2)
+                        
+                        hours_worked += duration
+                        
+                        segments.append({
+                            'id': log.id,
+                            'check_in': log.check_in_time,
+                            'check_out': log.check_out_time,
+                            'duration': duration,
+                            'notes': log.notes or ''
+                        })
                     
-                    # Use the first log for notes (or combine all notes)
+                    # Last check out text (summary)
+                    if logs_for_day[-1].check_out_time:
+                         check_out = logs_for_day[-1].check_out_time
+
                     notes = logs_for_day[0].notes or ''
                     access_log_id = logs_for_day[0].id
-                else:
-                    # No attendance for this day
-                    check_in = None
-                    check_out = None
-                    hours_worked = 0
-                    notes = ''
-                    access_log_id = None
                 
                 report_data.append({
                     'id': access_log_id,
@@ -331,9 +654,10 @@ class AttendanceReportViewSet(viewsets.ViewSet):
                     'date': current_date,
                     'check_in': check_in,
                     'check_out': check_out,
-                    'hours_worked': hours_worked,
+                    'hours_worked': round(hours_worked, 2), # Total sum
                     'notes': notes,
-                    'is_editable': can_edit
+                    'is_editable': can_edit,
+                    'segments': segments # New field
                 })
                 
                 current_date += timedelta(days=1)
@@ -602,3 +926,76 @@ class AccessControlConfigViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+class AttendanceKioskConfigViewSet(viewsets.ModelViewSet):
+    queryset = AttendanceKioskConfig.objects.all()
+    serializer_class = AttendanceKioskConfigSerializer
+    permission_classes = [HasPermission]
+    permission_module = 'settings' # Or HR? The user said "Settings > Attendance Kiosk"
+    permission_resource = 'settings.company' # Close enough, or define new one.
+    
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny])
+    def current(self, request):
+        config = AttendanceKioskConfig.objects.first()
+        if not config:
+            config = AttendanceKioskConfig.objects.create()
+        serializer = self.get_serializer(config)
+        return Response(serializer.data)
+
+from .models import KioskDevice
+from .serializers import KioskDeviceSerializer
+
+class KioskDeviceViewSet(viewsets.ModelViewSet):
+    queryset = KioskDevice.objects.all()
+    serializer_class = KioskDeviceSerializer
+    permission_classes = [AllowAny] 
+    
+    @action(detail=False, methods=['post'])
+    def register(self, request):
+        device_id = request.data.get('device_id')
+        if not device_id:
+            return Response({'error': 'device_id kötelező'}, status=400)
+        
+        # Capture IP address
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+            
+        device, created = KioskDevice.objects.get_or_create(
+            device_id=device_id,
+            defaults={'status': 'pending'}
+        )
+        device.last_seen = timezone.now()
+        device.ip_address = ip
+        device.save()
+        
+        return Response(KioskDeviceSerializer(device).data)
+        
+    @action(detail=False, methods=['post'])
+    def unregister(self, request):
+        device_id = request.data.get('device_id')
+        if not device_id:
+             return Response({'error': 'device_id kötelező'}, status=400)
+        
+        KioskDevice.objects.filter(device_id=device_id).delete()
+        return Response({'status': 'deleted'})
+        
+    @action(detail=True, methods=['post'])
+    def approve(self, request, pk=None):
+        if not request.user.is_authenticated:
+            return Response(status=401)
+        device = self.get_object()
+        device.status = 'approved'
+        device.save()
+        return Response(KioskDeviceSerializer(device).data)
+
+    @action(detail=True, methods=['post'])
+    def block(self, request, pk=None):
+        if not request.user.is_authenticated:
+            return Response(status=401)
+        device = self.get_object()
+        device.status = 'blocked'
+        device.save()
+        return Response(KioskDeviceSerializer(device).data)

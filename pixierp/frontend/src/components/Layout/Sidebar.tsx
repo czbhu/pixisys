@@ -21,9 +21,11 @@ const { Sider } = Layout;
 interface SidebarProps {
   collapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
+  inviteCount?: number;
+  notificationCounts?: { [key: string]: number };
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, inviteCount = 0, notificationCounts = {} }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const navigate = useNavigate();
@@ -34,14 +36,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
   const collapsed = propCollapsed !== undefined ? propCollapsed : internalCollapsed;
   const setCollapsed = onCollapse || setInternalCollapsed;
 
-  const [inviteCount, setInviteCount] = useState<number>(0);
-
   // Calculate selected menu key based on current path
   const getSelectedKey = () => {
     const path = location.pathname;
     // Check for exact match first
     const allMenuKeys = [
       '/dashboard',
+      '/personal/invitations', '/personal/orders',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/invoicing', '/sales/projects',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/product-classes', '/manufacturing/services',
@@ -68,22 +69,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     }
     return bestMatch;
   };
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const mod = await import('../../services/salesService');
-        const cnt = await mod.salesService.getMyInvitationsCount('pending');
-        if (!cancelled) setInviteCount(cnt);
-      } catch (e) {
-        // ignore
-      }
-    };
-    load();
-    const t = setInterval(load, 60000);
-    return () => { cancelled = true; clearInterval(t); };
-  }, []);
 
   // Görgetés az aktív menüelemhez
   useEffect(() => {
@@ -124,6 +109,23 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     if (collapsed) return;
     setOpenKeys(keys);
   };
+  
+  // Helper to get count for a specific path key
+  const getCount = (key: string) => {
+    // If the backend returns path-based keys (e.g. "sales/orders": 5)
+    // We can match exact key or prefix?
+    // Let's assume the backend returns keys matching the route paths exactly (without leading slash potentially or with it)
+    // Based on `NotificationConsumer` or aggregator logic.
+    // Let's assume keys are like '/sales/customer-orders'
+    return notificationCounts[key] || 0;
+  };
+  
+  // Helper to sum counts for a section (e.g. '/sales')
+  const getSectionCount = (prefix: string) => {
+    return Object.entries(notificationCounts)
+        .filter(([key]) => key.startsWith(prefix))
+        .reduce((sum, [_, count]) => sum + count, 0);
+  };
 
   const menuItems = [
     {
@@ -132,9 +134,34 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       label: 'Dashboard',
     },
     {
+      key: '/personal',
+      icon: (collapsed && inviteCount > 0) ? <Badge count={inviteCount} size="small" offset={[0, 10]}><UserOutlined /></Badge> : <UserOutlined />,
+      label: 'Saját',
+      children: [
+        {
+          key: '/personal/invitations',
+           label: (
+             <span style={{ display: 'flex', alignItems: 'center' }}>
+               Meghívásaim
+               {inviteCount > 0 && <Badge count={inviteCount} size="small" style={{ marginLeft: 8 }} />}
+             </span>
+           ),
+        },
+        {
+          key: '/personal/orders',
+          label: 'Megrendelések',
+        },
+      ],
+    },
+    {
       key: '/hr',
-      icon: <TeamOutlined />,
-      label: 'HR Modul',
+      icon: (collapsed && getSectionCount('/hr') > 0) ? <Badge count={getSectionCount('/hr')} size="small" offset={[0, 10]}><TeamOutlined /></Badge> : <TeamOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+            HR Modul
+            {!collapsed && getSectionCount('/hr') > 0 && <Badge count={getSectionCount('/hr')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/hr/employees',
@@ -147,6 +174,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
         {
           key: '/hr/attendance',
           label: 'Jelenlét',
+        },
+        {
+          key: '/hr/work-logs',
+          label: 'Munkanaplók',
         },
         {
           key: '/hr/payroll',
@@ -196,8 +227,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     },
     {
       key: '/manufacturing',
-      icon: <ToolOutlined />,
-      label: 'Gyártás',
+      icon: (collapsed && getSectionCount('/manufacturing') > 0) ? <Badge count={getSectionCount('/manufacturing')} size="small" offset={[0, 10]}><ToolOutlined /></Badge> : <ToolOutlined />,
+      label: (
+        <span style={{ display: 'flex', alignItems: 'center' }}>
+            Gyártás
+            {!collapsed && getSectionCount('/manufacturing') > 0 && <Badge count={getSectionCount('/manufacturing')} size="small" style={{ marginLeft: 8 }} />}
+        </span>
+      ),
       children: [
         {
           key: '/manufacturing/products',
@@ -378,6 +414,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
       label: 'Beállítások',
       children: [
         { key: '/settings/access-control', label: 'Beléptető rendszer' },
+        { key: '/settings/attendance-kiosk', label: 'Jelenlét Kioszk' },
         { key: '/settings/companies', label: 'Alap adatok' },
         { key: '/settings/currencies', label: 'Pénznemek' },
         { key: '/settings/roles', label: 'Jogosultságok' },
@@ -400,7 +437,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
   };
 
   const hasModuleAccess = (moduleKey: string) => {
-    if (moduleKey === 'dashboard') return true;
+    if (moduleKey === 'dashboard' || moduleKey === 'personal') return true;
 
     const perms = Array.isArray(user?.permissions) ? user.permissions : [];
     if (!perms.length) return false;
@@ -408,8 +445,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse 
     return perms.some((p: any) => {
       if (!p?.allowed) return false;
       if (p?.module !== moduleKey) return false;
-      // Treat manage/view/view_own as visible
-      return p?.action === 'manage' || p?.action === 'view' || p?.action === 'view_own' || !p?.action;
+      // Any allowed action makes the module visible (including create/edit/delete/export)
+      return true;
     });
   };
 

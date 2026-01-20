@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -153,11 +154,18 @@ interface MaterialReceipt {
 }
 
 const Materials: React.FC = () => {
+  const [searchParams] = useSearchParams();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [form] = Form.useForm();
+
+  useEffect(() => {
+    if (searchParams.get('create') === 'true') {
+      handleCreate();
+    }
+  }, [searchParams]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [filteredSuppliers, setFilteredSuppliers] = useState<{ value: string }[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
@@ -607,15 +615,32 @@ const Materials: React.FC = () => {
       if (values.is_material === undefined) values.is_material = true;
       if (values.is_product === undefined) values.is_product = true;
       
+      let savedMaterial: any;
       if (editingMaterial) {
-        await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
+        const res = await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
+        savedMaterial = res.data;
         message.success('Alapanyag/Termék frissítve');
       } else {
-        await api.post('/warehouse/materials/', values);
+        const res = await api.post('/warehouse/materials/', values);
+        savedMaterial = res.data;
         message.success('Alapanyag/Termék létrehozva');
       }
       setModalVisible(false);
       fetchMaterials();
+
+      if (searchParams.get('from_rfq') === 'true' && savedMaterial) {
+        Modal.confirm({
+          title: 'Visszatérés az ajánlathoz',
+          content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a terméket?',
+          okText: 'Igen',
+          cancelText: 'Nem',
+          onOk: () => {
+            const channel = new BroadcastChannel('pixi_rfq_item_creation');
+            channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedMaterial, itemType: 'material' } });
+            window.close();
+          }
+        });
+      }
     } catch (error: any) {
       message.error(error.response?.data?.detail || 'Hiba a mentés során');
       console.error(error);
@@ -1013,20 +1038,20 @@ const Materials: React.FC = () => {
 
   const columns = [
     {
-      title: 'Kód',
-      dataIndex: 'code',
-      key: 'code',
-      width: 100,
-    },
-    {
-      title: 'Név',
-      dataIndex: 'name',
-      key: 'name',
+      title: 'Anyag',
+      key: 'main_details',
+      render: (record: Material) => (
+         <div style={{ lineHeight: '1.2' }}>
+            <div style={{ fontWeight: 600 }}>{record.code}</div>
+            <div>{record.name}</div>
+         </div>
+      ),
     },
     {
       title: 'Típus',
       key: 'type',
       width: 200,
+      responsive: ['md'] as any,
       render: (record: Material) => (
         <Space>
           {record.is_material && <Tag color="blue">Alapanyag</Tag>}
@@ -1039,6 +1064,7 @@ const Materials: React.FC = () => {
       dataIndex: 'material_group_name',
       key: 'material_group_name',
       width: 150,
+      responsive: ['lg'] as any,
       render: (groupName: string | undefined) => 
         groupName ? <Tag color="purple">{groupName}</Tag> : '-',
     },
@@ -1047,6 +1073,7 @@ const Materials: React.FC = () => {
       dataIndex: 'material_format',
       key: 'material_format',
       width: 150,
+      responsive: ['xl'] as any,
       render: (format: string) => {
         const formatMap: Record<string, string> = {
           'sheet': 'Táblás/Íves',
@@ -1064,11 +1091,13 @@ const Materials: React.FC = () => {
       dataIndex: 'unit_display',
       key: 'unit_display',
       width: 120,
+      responsive: ['sm'] as any,
     },
     {
       title: 'Beszállító',
       key: 'source',
       width: 150,
+      responsive: ['lg'] as any,
       render: (_: any, record: Material) => {
         return record.is_internal_production && record.internal_production_department_name ? (
           <Tag color="green">{record.internal_production_department_name}</Tag>
@@ -1084,6 +1113,7 @@ const Materials: React.FC = () => {
       dataIndex: 'is_active',
       key: 'is_active',
       width: 100,
+      responsive: ['sm'] as any,
       render: (is_active: boolean) => (
         <Tag color={is_active ? 'green' : 'red'}>
           {is_active ? 'Aktív' : 'Inaktív'}
@@ -1094,9 +1124,8 @@ const Materials: React.FC = () => {
       title: 'Műveletek',
       key: 'actions',
       width: 120,
-      fixed: 'right' as const,
       render: (_: any, record: Material) => (
-        <Space>
+        <Space wrap>
           <Button
             type="link"
             icon={<EditOutlined />}
@@ -1174,15 +1203,15 @@ const Materials: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h2>Alapanyagok/Termékek</h2>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
+        <h2 style={{ margin: 0 }}>Alapanyagok/Termékek</h2>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <Input
             placeholder="Keresés név, kód vagy leírás alapján..."
             prefix={<SearchOutlined />}
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
-            style={{ width: 300 }}
+            style={{ width: 300, maxWidth: '100%' }}
             allowClear
           />
           <Select
@@ -1205,7 +1234,7 @@ const Materials: React.FC = () => {
         dataSource={materials}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 1200 }}
+        scroll={{ x: 'max-content' }}
       />
 
       <Modal

@@ -105,7 +105,8 @@ if [ "$PRODUCTION_MODE" = "true" ]; then
         echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
         exit 1
     fi
-    npm run build > /tmp/pixierp_build.log 2>&1
+    # Use relative API path so nginx can proxy to backend in production
+    REACT_APP_API_URL="/api/v1" npm run build > /tmp/pixierp_build.log 2>&1
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ ERP Frontend built successfully${NC}"
     else
@@ -120,7 +121,8 @@ if [ "$PRODUCTION_MODE" = "true" ]; then
         echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
         exit 1
     fi
-    npm run build > /tmp/pixinvoice_build.log 2>&1
+    # PixInvoice frontend expects endpoints like /api/companies, so leave base empty for same-origin
+    REACT_APP_API_URL="" npm run build > /tmp/pixinvoice_build.log 2>&1
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ Invoice Frontend built successfully${NC}"
     else

@@ -1,4 +1,5 @@
 from django.db import models
+from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.db.models import Max
 from apps.core.models import BaseModel
@@ -121,19 +122,16 @@ class Employee(BaseModel):
         return f"{self.user.get_full_name()} ({self.employee_id})"
     
     def get_all_roles(self):
-        """Összes szerepkör: osztályok szerepkörei + egyéni UserRole-ok"""
-        from apps.core.models import Role, UserRole
+        """Összes szerepkör: CSAK osztályok szerepkörei (Department.roles)
+        Egyéni UserRole-ok NEM HASZNÁLTAK"""
+        from apps.core.models import Role
         
         role_ids = set()
         
-        # Osztályok szerepkörei
+        # CSAK osztályok szerepkörei
         for department in self.departments.all():
             for role in department.roles.all():
                 role_ids.add(role.id)
-        
-        # Egyéni UserRole-ok
-        for user_role in UserRole.objects.filter(user=self.user):
-            role_ids.add(user_role.role.id)
         
         return Role.objects.filter(id__in=role_ids)
     
@@ -154,9 +152,8 @@ class Employee(BaseModel):
         return [ur.role for ur in UserRole.objects.filter(user=self.user)]
     
     def get_custom_permissions(self):
-        """Egyéni jogosultságok (nem szerepkör alapú)"""
-        from apps.core.models import Permission
-        return Permission.objects.filter(user=self.user)
+        """Egyéni jogosultságok - NEM HASZNÁLT (mindig üres lista)"""
+        return []
     
     @staticmethod
     def generate_employee_id():
@@ -206,7 +203,7 @@ class Attendance(BaseModel):
     date = models.DateField()
     check_in = models.TimeField()
     check_out = models.TimeField(null=True, blank=True)
-    break_duration = models.DurationField(default=0)  # in minutes
+    break_duration = models.DurationField(default=timedelta(0))  # in minutes
     overtime_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     notes = models.TextField(blank=True, null=True)
 
@@ -402,3 +399,40 @@ class EmployeeAccessCredentials(BaseModel):
     
     def __str__(self):
         return f"{self.employee.user.get_full_name()} - {self.device_config.name} ({self.get_function_display()})"
+
+class AttendanceKioskConfig(BaseModel):
+    """Configuration for Attendance Kiosk"""
+    MODE_CHOICES = [
+        ('phone_qr', 'Mobil QR (Kioszk olvas)'),
+        ('kiosk_qr', 'Kioszk QR (Mobil olvas)'),
+    ]
+    kiosk_logo = models.ImageField(upload_to='kiosk/logos/', blank=True, null=True, verbose_name="Kioszk Logó")
+    qr_validity_seconds = models.PositiveIntegerField(default=10, verbose_name="QR kód érvényesség (mp)")
+    kiosk_mode = models.CharField(max_length=20, choices=MODE_CHOICES, default='phone_qr', verbose_name="Működési mód")
+    
+    class Meta:
+        db_table = 'attendance_kiosk_config'
+        verbose_name = "Jelenlét Kioszk Beállítás"
+        verbose_name_plural = "Jelenlét Kioszk Beállítások"
+
+class KioskDevice(BaseModel):
+    STATUS_CHOICES = [
+        ('pending', 'Függőben'),
+        ('approved', 'Engedélyezve'),
+        ('blocked', 'Letiltva'),
+    ]
+    
+    device_id = models.CharField(max_length=64, unique=True, verbose_name="Eszköz Azonosító")
+    name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Eszköz Neve")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Státusz")
+    last_seen = models.DateTimeField(null=True, blank=True, verbose_name="Utolsó aktivitás")
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP Cím")
+    
+    class Meta:
+        db_table = 'hr_kiosk_devices'
+        verbose_name = 'Kiosk Eszköz'
+        verbose_name_plural = 'Kiosk Eszközök'
+        ordering = ['-status', '-last_seen']
+        
+    def __str__(self):
+        return f"{self.name or 'Ismeretlen'} ({self.device_id}) - {self.get_status_display()}"

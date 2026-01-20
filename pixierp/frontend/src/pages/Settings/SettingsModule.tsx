@@ -6,6 +6,7 @@ import EmailTemplatesPage from './pages/EmailTemplatesPage';
 import SignaturesPage from './pages/SignaturesPage';
 import IntegrationsPage from './pages/IntegrationsPage';
 import PixinvoiceSettingsPage from './pages/PixinvoiceSettingsPage';
+import AttendanceKioskSettingsPage from './pages/AttendanceKioskSettingsPage';
 import CurrenciesPage from './pages/CurrenciesPage';
 import RolesPage from './pages/RolesPage';
 import CompanySettings from './CompanySettings';
@@ -24,6 +25,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/signatures" element={<SignaturesPage />} />
       <Route path="/integrations" element={<IntegrationsPage />} />
       <Route path="/pixinvoice" element={<PixinvoiceSettingsPage />} />
+      <Route path="/attendance-kiosk" element={<AttendanceKioskSettingsPage />} />
       <Route path="/backup" element={<Backup />} />
     </Routes>
   );

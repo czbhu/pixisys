@@ -11,6 +11,7 @@ class Invoice(models.Model):
     external_id = models.CharField(max_length=100, unique=True, db_index=True, help_text="Külső rendszer azonosító")
     number = models.CharField(max_length=50, db_index=True, verbose_name="Számlaszám")
     partner = models.ForeignKey(Company, on_delete=models.SET_NULL, null=True, blank=True, related_name='invoices', verbose_name="Partner")
+    partner_external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Partner külső azonosító")
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Pénznem")
     issue_date = models.DateField(null=True, blank=True, verbose_name="Keltezés")
     due_date = models.DateField(null=True, blank=True, verbose_name="Esedékesség")

@@ -388,6 +388,10 @@ export const salesService = {
         const response = await api.get('/sales/services/');
         return response.data;
     },
+    async getService(id: number) {
+        const response = await api.get(`/sales/services/${id}/`);
+        return response.data;
+    },
     async searchServices(q: string) {
         const response = await api.get(`/sales/services/search/?q=${encodeURIComponent(q)}`);
         return response.data;
@@ -447,4 +451,85 @@ export const salesService = {
         const response = await api.post(`/sales/quote-request-items/${itemId}/update_attachment_remark/`, { attachment_id: attachmentId, remark });
         return response.data;
     },
+
+    // Costs
+    async getQuoteRequestCosts(rfqId: number) {
+        const response = await api.get(`/sales/quote-request-costs/?quote_request=${rfqId}`);
+        return (response.data.results ?? response.data);
+    },
+    async createQuoteRequestCost(data: any) {
+        const response = await api.post('/sales/quote-request-costs/', data);
+        return response.data;
+    },
+    async updateQuoteRequestCost(id: number, data: any) {
+        const response = await api.patch(`/sales/quote-request-costs/${id}/`, data);
+        return response.data;
+    },
+    async deleteQuoteRequestCost(id: number) {
+        await api.delete(`/sales/quote-request-costs/${id}/`);
+    },
+
+    // Customer Orders - New System
+    async getCustomerOrders(params?: any) {
+        const response = await api.get('/sales/customer-orders/', { params });
+        return response.data;
+    },
+    async getCustomerOrder(id: number) {
+        const response = await api.get(`/sales/customer-orders/${id}/`);
+        return response.data;
+    },
+    
+    // Work Logs
+    async getWorkLogs(params?: any) {
+        const response = await api.get('/sales/work-logs/', { params });
+        return response.data;
+    },
+    async getActiveWorkLog() {
+        const response = await api.get('/sales/work-logs/active/');
+        return response.data;
+    },
+    async startWorkLog(data: { order_id: number; item_id?: number | null; workflow_name?: string }) {
+        const response = await api.post('/sales/work-logs/start/', data);
+        return response.data;
+    },
+    async stopWorkLog(id: number) {
+        const response = await api.post(`/sales/work-logs/${id}/stop/`, {});
+        return response.data;
+    },
+
+    // Chat
+    async getChatThread(params: { rfq_id?: number, order_id?: number }) {
+        const response = await api.get('/sales/chats/find/', { params });
+        return response.data;
+    },
+    
+    // Invitations and Assignees
+    async cancelInvitation(rfqId: number, invitationId: number) {
+        const response = await api.post(`/sales/quote-requests/${rfqId}/cancel_invitation/`, { invitation_id: invitationId });
+        return response.data;
+    },
+    async removeAssignee(rfqId: number, userId: number) {
+        const response = await api.post(`/sales/quote-requests/${rfqId}/remove_assignee/`, { user_id: userId });
+        return response.data;
+    },
+    async sendMessage(threadId: number, content: string, files?: File[]) {
+        const formData = new FormData();
+        if (content) formData.append('content', content);
+        if (files) {
+            files.forEach(f => {
+                if (f) formData.append('files', f);
+            });
+        }
+        const response = await api.post(`/sales/chats/${threadId}/message/`, formData, {
+            headers: {
+                'Content-Type': 'multipart/form-data',
+            }
+        });
+        return response.data;
+    },
+    async promoteAttachment(threadId: number, data: { attachment_id: number; target_type: 'rfq'|'rfq_item'|'order'; target_id: number }) {
+        const response = await api.post(`/sales/chats/${threadId}/promote_attachment/`, data);
+        return response.data;
+    }
 };
+

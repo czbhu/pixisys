@@ -4,7 +4,7 @@ from django.db.models import Q
 from .models import (
     Company, BankAccount, EmailServerConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
-    BackupFile, UserPreference, Role, Permission, UserRole
+    BackupFile, UserPreference, Role, Permission, UserRole, Notification
 )
 
 User = get_user_model()
@@ -23,40 +23,64 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = ['id', 'date_joined']
 
     def get_roles(self, obj):
-        user_roles = obj.user_roles.select_related('role').all()
-        return [
-            {
-                'id': ur.role.id,
-                'name': ur.role.name,
-                'description': ur.role.description,
-                'is_system': ur.role.is_system,
-            }
-            for ur in user_roles
-        ]
+        """Get user roles from department assignments (Employee → Department → Role)"""
+        from apps.hr.models import Employee
+        
+        # Check if user has an employee profile
+        try:
+            employee = Employee.objects.get(user=obj)
+            roles = employee.get_all_roles()
+            return [
+                {
+                    'id': role.id,
+                    'name': role.name,
+                    'description': role.description,
+                    'is_system': role.is_system,
+                }
+                for role in roles
+            ]
+        except Employee.DoesNotExist:
+            return []
 
     def get_permissions(self, obj):
-        # Aggregate permissions from role assignments and user-specific overrides
-        perms_qs = Permission.objects.filter(
-            Q(user=obj) |
-            Q(role__user_assignments__user=obj)
-        ).select_related('role').distinct()
-
-        seen = set()
-        perms = []
-        for perm in perms_qs:
-            key = (perm.module, perm.resource, perm.action, perm.allowed, perm.role_id)
-            if key in seen:
-                continue
-            seen.add(key)
-            perms.append({
-                'module': perm.module,
-                'resource': perm.resource,
-                'action': perm.action,
-                'allowed': perm.allowed,
-                'role_id': perm.role_id,
-                'role_name': perm.role.name if perm.role else None,
-            })
-        return perms
+        """Get permissions from department-assigned roles (Employee → Department → Role → Permission)"""
+        from apps.hr.models import Employee
+        
+        # Check if user has an employee profile
+        try:
+            employee = Employee.objects.get(user=obj)
+            # Collect all role IDs from departments
+            role_ids = set()
+            for department in employee.departments.all():
+                for role in department.roles.all():
+                    role_ids.add(role.id)
+            
+            if not role_ids:
+                return []
+            
+            # Get all permissions for these roles
+            perms_qs = Permission.objects.filter(
+                role_id__in=role_ids
+            ).select_related('role').distinct()
+            
+            seen = set()
+            perms = []
+            for perm in perms_qs:
+                key = (perm.module, perm.resource, perm.action, perm.allowed, perm.role_id)
+                if key in seen:
+                    continue
+                seen.add(key)
+                perms.append({
+                    'module': perm.module,
+                    'resource': perm.resource,
+                    'action': perm.action,
+                    'allowed': perm.allowed,
+                    'role_id': perm.role_id,
+                    'role_name': perm.role.name if perm.role else None,
+                })
+            return perms
+        except Employee.DoesNotExist:
+            return []
 
 
 class BankAccountSerializer(serializers.ModelSerializer):
@@ -65,7 +89,7 @@ class BankAccountSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = BankAccount
-        fields = ['id', 'company', 'currency', 'currency_code', 'currency_symbol', 'account_number', 'bank_name', 'swift', 'iban', 'is_primary', 'created_at', 'updated_at']
+        fields = ['id', 'company', 'company_external_id', 'currency', 'currency_code', 'currency_symbol', 'account_number', 'bank_name', 'swift', 'iban', 'is_primary', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -196,3 +220,11 @@ class UserRoleSerializer(serializers.ModelSerializer):
         if obj.assigned_by:
             return obj.assigned_by.get_full_name() or obj.assigned_by.username
         return None
+
+
+class NotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Notification
+        fields = ['id', 'title', 'message', 'link', 'type', 'is_read', 'created_at']
+        read_only_fields = ['id', 'created_at']
+

@@ -6,6 +6,7 @@ import Departments from './Departments';
 import AttendanceReport from './AttendanceReport';
 import Payroll from './Payroll';
 import Leaves from './Leaves';
+import WorkLogs from './WorkLogs';
 
 const EmployeePerformance = lazy(() => import('./EmployeePerformance'));
 
@@ -17,6 +18,7 @@ const HRModule = () => {
                 <Route path="/employees" element={<Employees />} />
                 <Route path="/departments" element={<Departments />} />
                 <Route path="/attendance" element={<AttendanceReport />} />
+                <Route path="/work-logs" element={<WorkLogs />} />
                 <Route path="/payroll" element={<Payroll />} />
                 <Route path="/leaves" element={<Leaves />} />
                 <Route path="/analytics" element={<EmployeePerformance />} />

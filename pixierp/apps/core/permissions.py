@@ -54,6 +54,9 @@ class HasPermission(permissions.BasePermission):
 def check_permission(user, module, resource, action):
     """
     Ellenőrzi, hogy a felhasználónak van-e jogosultsága az adott művelethez
+    CSAK osztály-alapú szerepköröket vesz figyelembe (Department.roles)
+    Egyéni UserRole és egyéni Permission objektumok NINCSENEK használva
+    Django is_superuser flag NINCS figyelembe véve - csak osztály-alapú jogosultságok
     
     Args:
         user: User objektum
@@ -64,29 +67,40 @@ def check_permission(user, module, resource, action):
     Returns:
         bool: Van-e jogosultsága
     """
-    # Superuser mindig mehet
-    if user.is_superuser:
-        return True
-    
-    # Szerepkör jogosultságok
-    role_permissions = Permission.objects.filter(
-        role__user_assignments__user=user,
-        module=module,
-        resource=resource,
-        action__in=[action, 'manage'],
-        allowed=True
-    )
-    
-    # Egyéni jogosultságok
-    user_permissions = Permission.objects.filter(
-        user=user,
-        module=module,
-        resource=resource,
-        action__in=[action, 'manage'],
-        allowed=True
-    )
-    
-    return role_permissions.exists() or user_permissions.exists()
+    # Resource query construction: match specific resource OR global (null/empty) resource
+    resource_query = [resource]
+    if resource:
+        resource_query.append(None)
+        resource_query.append('')
+
+    # CSAK osztály-alapú szerepkörök (Department.roles)
+    # Employee.departments.roles alapján adjuk a jogosultságokat
+    from apps.hr.models import Employee
+    try:
+        employee = Employee.objects.get(user=user)
+        # Collect all role IDs from departments
+        role_ids = set()
+        for department in employee.departments.all():
+            for role in department.roles.all():
+                role_ids.add(role.id)
+        
+        if not role_ids:
+            return False
+        
+        # Check if any of these roles have the required permission
+        role_permissions = Permission.objects.filter(
+            role_id__in=role_ids,
+            module=module,
+            resource__in=resource_query,
+            action__in=[action, 'manage'],
+        )
+        
+        if hasattr(Permission, 'allowed'):
+            role_permissions = role_permissions.filter(allowed=True)
+        
+        return role_permissions.exists()
+    except Employee.DoesNotExist:
+        return False
 
 
 def has_own_data_permission(user, module, resource):

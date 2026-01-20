@@ -54,13 +54,48 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [services, setServices] = useState<any[]>([]);
   const [top, setTop] = useState<{product:any[]; manufacturing:any[]; service:any[]}>({product:[], manufacturing:[], service:[]});
   const [form] = Form.useForm();
-  const [createMode, setCreateMode] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [productEditorOpen, setProductEditorOpen] = useState(false);
   const [serviceEditorOpen, setServiceEditorOpen] = useState(false);
   const [manuEditorOpen, setManuEditorOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFileRemarks, setPendingFileRemarks] = useState<Record<string, string>>({});
+
+  const translateUnit = (unit: string | undefined | null) => {
+    if (!unit) return '';
+    const map: Record<string, string> = {
+      'hour': 'óra',
+      'minute': 'perc',
+      'piece': 'db',
+      'pcs': 'db',
+      'day': 'nap',
+    };
+    return map[unit] || unit;
+  };
+
+  useEffect(() => {
+    const channel = new BroadcastChannel('pixi_rfq_item_creation');
+    channel.onmessage = (event) => {
+      const { type, data } = event.data;
+      if (type === 'ITEM_CREATED') {
+         const { item, itemType } = data;
+         setActiveKey(itemType);
+         
+         // Update lists
+         if (itemType === 'product') setProducts(prev => [item, ...prev]);
+         else if (itemType === 'service') setServices(prev => [item, ...prev]);
+         else if (itemType === 'manufacturing') setManuProducts(prev => [item, ...prev]);
+         
+         setSelected(item);
+         
+         let unit = item.unit || item.quantity_unit || (itemType === 'service' ? 'óra' : 'db');
+         unit = translateUnit(unit);
+         const price = item.base_price ?? item.net_unit_price ?? item.unit_selling_price ?? 0;
+         form.setFieldsValue({ unit, net_unit_price: price });
+      }
+    };
+    return () => channel.close();
+  }, []); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return;
@@ -96,8 +131,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       }
       if (rec) {
         setSelected(rec);
-        const unit = rec.unit || rec.quantity_unit || (initialSelection.item_type === 'service' ? 'óra' : 'db');
-        const price = rec.base_price ?? rec.net_unit_price ?? form.getFieldValue('net_unit_price');
+        let unit = rec.unit || rec.quantity_unit || (initialSelection.item_type === 'service' ? 'óra' : 'db');
+        unit = translateUnit(unit);
+        const price = rec.base_price ?? rec.net_unit_price ?? rec.unit_selling_price ?? form.getFieldValue('net_unit_price');
         form.setFieldsValue({ unit, net_unit_price: price });
       } else {
         setSelected({ id: initialSelection.ref_id, name: initialSelection.name, code: initialSelection.code });
@@ -118,10 +154,39 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         salesService.getTopManufacturingProducts().catch(() => []),
         salesService.getTopServices().catch(() => []),
       ]);
-      const productsData = prodRes.results ?? prodRes;
-      setProducts(productsData);
-      setManuProducts((manuRes as any));
-      setServices(svcRes.results ?? svcRes);
+      
+      let pList = prodRes.results ?? prodRes;
+      let mList = (manuRes as any).results ?? manuRes;
+      let sList = svcRes.results ?? svcRes;
+
+      // Handle specific item for editing
+      if (initialSelection && initialSelection.ref_id) {
+          try {
+              if (initialSelection.item_type === 'service') {
+                  const exists = sList.find((s: any) => s.id === initialSelection.ref_id);
+                  if (!exists) {
+                      const s = await salesService.getService(initialSelection.ref_id);
+                      if (s) sList = [s, ...sList];
+                  }
+              } else if (initialSelection.item_type === 'manufacturing') {
+                  const exists = mList.find((m: any) => m.id === initialSelection.ref_id);
+                  if (!exists) {
+                      const m = await manufacturingService.getProduct(initialSelection.ref_id);
+                      if (m) mList = [m, ...mList];
+                  }
+              } else if (initialSelection.item_type === 'product') {
+                  const exists = pList.find((p: any) => p.id === initialSelection.ref_id);
+                  if (!exists) {
+                      const p = await api.get(`/warehouse/materials/${initialSelection.ref_id}/`).then(r => r.data);
+                      if (p) pList = [p, ...pList];
+                  }
+              }
+          } catch (e) { console.error('Error fetching specific item', e); }
+      }
+
+      setProducts(pList);
+      setManuProducts(mList);
+      setServices(sList);
       setTop({ product: topProd as any[], manufacturing: topManu as any[], service: topSvc as any[] });
     } catch (e) {
       console.error('Error loading data:', e);
@@ -265,8 +330,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const handleRowClick = (record: any) => {
     setSelected(record);
     const currentType = (activeKey === 'all' ? (record.__type as any) : activeKey);
-    const unit = record.unit || record.quantity_unit || (currentType === 'service' ? 'óra' : 'db');
-    const price = record.base_price ?? record.net_unit_price ?? 0;
+    let unit = record.unit || record.quantity_unit || (currentType === 'service' ? 'óra' : 'db');
+    unit = translateUnit(unit);
+    const price = record.base_price ?? record.net_unit_price ?? record.unit_selling_price ?? 0;
     form.setFieldsValue({ unit, net_unit_price: price });
   };
 
@@ -284,7 +350,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         name: selected.name,
         code: selected.code,
         unit: v.unit,
-        base_price: selected.base_price ?? selected.net_unit_price,
+        base_price: selected.base_price ?? selected.net_unit_price ?? selected.unit_selling_price,
         quantity: v.quantity,
         net_unit_price: v.net_unit_price,
         vat_rate: v.vat_rate,
@@ -304,18 +370,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   const createNew = async () => {
     setCreateError(null);
-    try {
-      // Instead of inline creation, open proper editors from Manufacturing menu
-      if (activeKey === 'product') {
-        setProductEditorOpen(true);
-      } else if (activeKey === 'service') {
-        setServiceEditorOpen(true);
-      } else {
-        setManuEditorOpen(true);
-      }
-    } catch (e: any) {
-      if (e?.errorFields) return; // validation error
-      setCreateError('Hiba történt a létrehozás során');
+    let url = '';
+    // Open proper pages in new tab
+    if (activeKey === 'product') {
+      url = '/warehouse/materials?create=true&from_rfq=true';
+    } else if (activeKey === 'service') {
+      url = '/manufacturing/services?create=true&from_rfq=true';
+    } else {
+      url = '/manufacturing/products?create=true&from_rfq=true';
+    }
+    
+    if (url) {
+      window.open(url, '_blank');
     }
   };
 
@@ -385,28 +451,17 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             setActiveKey(k as ItemType);
             setSelected(null);
             form.resetFields();
-            setCreateMode(false);
           }}
           items={tabItems as any}
         />
         <Space align="start" style={{ gap: 8 }}>
           <Search placeholder="Gyors keresés" allowClear onSearch={setSearch as any} onChange={(e) => setSearch(e.target.value)} style={{ width: 360 }} />
           {allowCreate && mode === 'add' && (
-            <Button onClick={() => setCreateMode((v) => !v)} type={createMode ? 'default' : 'dashed'}>
-              {createMode ? 'Mégse' : (activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás')}
+            <Button onClick={createNew} type="dashed">
+              {activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás'}
             </Button>
           )}
         </Space>
-        {createMode && mode === 'add' && (
-          <>
-            {createError && <Alert type="error" message={createError} />}
-            <Space>
-              <Button type="primary" onClick={createNew}>Megnyitás</Button>
-              <span style={{ color: '#888' }}>A részletes szerkesztő modál nyílik meg.</span>
-            </Space>
-            <Divider style={{ margin: '8px 0' }} />
-          </>
-        )}
         {renderTable(activeKey)}
         <Form layout="vertical" form={form}>
           {commonFields}
@@ -419,7 +474,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setProducts((prev) => [created, ...prev]);
           setSelected(created);
           setProductEditorOpen(false);
-          setCreateMode(false);
         }}
       />
       <ServiceEditorModal
@@ -429,7 +483,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setServices((prev) => [created, ...prev]);
           setSelected(created);
           setServiceEditorOpen(false);
-          setCreateMode(false);
         }}
       />
       <ManufacturingProductEditorModal
@@ -439,7 +492,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setManuProducts((prev) => [created, ...prev]);
           setSelected(created);
           setManuEditorOpen(false);
-          setCreateMode(false);
         }}
       />
     </Modal>

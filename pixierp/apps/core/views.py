@@ -1,5 +1,9 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes, action
+import logging
+
+logger = logging.getLogger(__name__)
+
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -85,8 +89,11 @@ class BankAccountViewSet(viewsets.ModelViewSet):
         """Filter by company if company_id is provided"""
         queryset = super().get_queryset()
         company_id = self.request.query_params.get('company_id')
+        company_ext = self.request.query_params.get('company_external_id')
         if company_id:
             queryset = queryset.filter(company_id=company_id)
+        elif company_ext:
+            queryset = queryset.filter(company_external_id=company_ext)
         return queryset
     
     @action(detail=True, methods=['post'])
@@ -126,6 +133,9 @@ def login_view(request):
     email = request.data.get('email')
     password = request.data.get('password')
     
+    if email:
+        email = email.strip()
+
     if not email or not password:
         return Response(
             {'error': 'Email and password are required'}, 
@@ -134,14 +144,63 @@ def login_view(request):
     
     # Try to find user by email first, then by username (for backward compatibility)
     user = None
-    try:
-        user_obj = User.objects.get(email=email)
-        user = authenticate(username=user_obj.username, password=password)
-    except User.DoesNotExist:
-        # Fallback: try as username for backward compatibility
-        user = authenticate(username=email, password=password)
+    user_authenticated_with_current = False
     
+    # 1. Lookup by Email (Case Insensitive)
+    user_obj = User.objects.filter(email__iexact=email).first()
+    
+    if user_obj:
+        # User found by email -> Authenticate using their real username
+        user = authenticate(username=user_obj.username, password=password)
+        if user:
+            user_authenticated_with_current = True
+        
+        # Retry with stripped password if failed
+        if not user and isinstance(password, str):
+            password_stripped = password.strip()
+            if password != password_stripped:
+                user = authenticate(username=user_obj.username, password=password_stripped)
+                if user:
+                    user_authenticated_with_current = True
+                    logger.info(f"User {email} logged in with stripped password")
+    
+    else:
+        # 2. Fallback: try as username (Case Insensitive for lookup first)
+        user_obj_by_name = User.objects.filter(username__iexact=email).first()
+        if user_obj_by_name:
+             user = authenticate(username=user_obj_by_name.username, password=password)
+             if user:
+                user_authenticated_with_current = True
+             
+             # Retry with stripped password
+             if not user and isinstance(password, str):
+                password_stripped = password.strip()
+                if password != password_stripped:
+                    user = authenticate(username=user_obj_by_name.username, password=password_stripped)
+                    if user:
+                        user_authenticated_with_current = True
+
+    # 3. Check for Previous Password (if standard auth failed)
+    if not user:
+        # Check against previous password hash in UserPreference
+        # We need to find the user object first (we might have it in user_obj or user_obj_by_name)
+        target_user = user_obj or (User.objects.filter(username__iexact=email).first())
+        
+        if target_user and hasattr(target_user, 'preferences') and target_user.preferences.previous_password_hash:
+            from django.contrib.auth.hashers import check_password
+            if check_password(password, target_user.preferences.previous_password_hash):
+                logger.info(f"User {target_user.username} logged in with PREVIOUS password")
+                user = target_user
+                # Note: We do NOT set user_authenticated_with_current = True here
+
     if user:
+        # Handle password transition logic
+        if user_authenticated_with_current:
+            # If logged in with CURRENT password, clear the PREVIOUS password hash (transition complete)
+            if hasattr(user, 'preferences') and user.preferences.previous_password_hash:
+                user.preferences.previous_password_hash = None
+                user.preferences.save()
+                logger.info(f"User {user.username} logged in with new password. Cleared previous password hash.")
         # Frissítsük a last_login mezőt, mert JWT auth alapból nem teszi meg
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
@@ -155,8 +214,23 @@ def login_view(request):
             }
         })
     else:
+        # Hibaüzenet pontosítása
+        error_msg = 'Hibás felhasználónév vagy jelszó.'
+        
+        # Próbáljuk megkeresni a usert, hogy pontosabb hibát adhassunk (ha inaktív)
+        target_obj = (
+            User.objects.filter(email__iexact=email).first() or 
+            User.objects.filter(username__iexact=email).first()
+        )
+        
+        if target_obj:
+            if not target_obj.is_active:
+                error_msg = 'A felhasználói fiók inaktív. Kérjük, vegye fel a kapcsolatot az adminisztrátorral.'
+            # Itt elvileg a jelszó volt rossz, de biztonsági okokból általában nem mondjuk meg.
+            # Vállalati környezetben (ERP) viszont lehet, hogy megengedőbbek vagyunk.
+            
         return Response(
-            {'error': 'Invalid credentials'}, 
+            {'error': error_msg}, 
             status=status.HTTP_401_UNAUTHORIZED
         )
 
@@ -1008,6 +1082,61 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': f'Hiba a tisztítás során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+
+from .models import Notification
+from .serializers import NotificationSerializer
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """Értesítések kezelése"""
+    queryset = Notification.objects.all()
+    serializer_class = NotificationSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        return Notification.objects.filter(user=self.request.user)
+    
+    @action(detail=False, methods=['get'], url_path='unread-counts')
+    def unread_counts(self, request):
+        """Olvasatlan értesítések száma kategóriánként"""
+        unread = self.get_queryset().filter(is_read=False)
+        counts = {}
+        
+        # Helper to map link to menu key
+        def get_menu_key(link):
+            if not link: return '/other'
+            # Assuming links match frontend paths mostly
+            # e.g "/manufacturing/projects/1" -> "/manufacturing/projects"
+            parts = link.strip('/').split('/')
+            if len(parts) >= 2:
+                return f"/{parts[0]}/{parts[1]}"
+            if len(parts) >= 1:
+                return f"/{parts[0]}"
+            return '/other'
+
+        for note in unread:
+            key = get_menu_key(note.link)
+            counts[key] = counts.get(key, 0) + 1
+            
+        return Response(counts)
+
+    @action(detail=False, methods=['post'], url_path='mark-read-by-link')
+    def mark_read_by_link(self, request):
+        link = request.data.get('link')
+        if not link:
+            return Response({'error': 'Link required'}, status=400)
+            
+        updated = self.get_queryset().filter(link=link, is_read=False).update(is_read=True)
+        return Response({'updated': updated})
+
+    @action(detail=True, methods=['post'])
+    def read(self, request, pk=None):
+        note = self.get_object()
+        note.is_read = True
+        note.save()
+        return Response({'status': 'read'})
 
 
 class RoleViewSet(viewsets.ModelViewSet):

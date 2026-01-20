@@ -22,18 +22,14 @@ export const crmService = {
         return response.data;
     },
 
-    async deleteCompany(id: number, action: string = 'delete_all', reassignCompanyId?: number) {
-        let url = `/crm/companies/${id}/?action=${action}`;
-        if ((action === 'reassign_all' || action === 'reassign_contacts') && reassignCompanyId) {
-            url += `&reassign_to=${reassignCompanyId}`;
-        }
-        const response = await api.delete(url);
+    async deleteCompany(id: number | string) {
+        const response = await api.delete(`/crm/companies/${id}/`);
         return response.data;
     },
 
     async searchCompanies(query: string) {
-        const response = await api.get(`/crm/companies/search/?q=${encodeURIComponent(query)}`);
-        return response.data;
+        const response = await api.get('/crm/companies/', { params: { q: query } });
+        return response.data?.results || response.data;
     },
 
     async lookupCompanyByNav(tax: string, opts?: { debug?: boolean }) {
@@ -81,8 +77,7 @@ export const crmService = {
             return null;
         };
 
-        // 1) Elsődleges: Finance POST endpoint
-        let financeHostDown: string | undefined;
+        // PixInvoice/Finance lookup via backend proxy
         try {
             if (opts?.debug) {
                 // eslint-disable-next-line no-console
@@ -99,51 +94,13 @@ export const crmService = {
                 const normalized = normalizeFromNav(navPayload);
                 if (normalized) return normalized;
             }
-            // Ha success:false, essünk vissza a CRM GET-re, hogy megmaradjon a meglévő debug útvonal
         } catch (err) {
             if (opts?.debug) {
                 // eslint-disable-next-line no-console
-                console.warn('[CRM] NAV lookup (finance) ✖ error, falling back to CRM GET', err);
+                console.warn('[CRM] NAV lookup (finance) ✖ error', err);
             }
-                const host = (err as any)?.response?.data?.host;
-            if (host) financeHostDown = host;
         }
-
-        // 2) Visszaesés: CRM GET endpoint (debug info-val)
-        const params = new URLSearchParams();
-        if (tax8) params.set('tax8', tax8);
-        if (digits) params.set('tax', digits);
-        if (opts?.debug) params.set('debug', '1');
-        const url = `/crm/companies/nav_lookup/?${params.toString()}`;
-        try {
-            if (opts?.debug) {
-                // eslint-disable-next-line no-console
-                console.log('[CRM] NAV lookup (crm) → GET', url, { tax, digits, tax8 });
-            }
-            const response = await api.get(url, { validateStatus: (s) => (s >= 200 && s < 300) || s === 404 });
-            if (opts?.debug) {
-                // eslint-disable-next-line no-console
-                console.log('[CRM] NAV lookup (crm) ← response', response.status, response.data);
-            }
-            const d = response.data;
-            if (financeHostDown) {
-                (d.debug || (d.debug = {}));
-                (d.debug.finance || (d.debug.finance = {}));
-                d.debug.finance.host = financeHostDown;
-            }
-            if (d && d.found === false && d?.debug?.primary?.data) {
-                const normalized = normalizeFromNav(d.debug.primary.data);
-                if (normalized) return normalized;
-            }
-            return d;
-        } catch (err) {
-            // eslint-disable-next-line no-console
-            console.error('[CRM] NAV lookup (crm) ✖ error', { url, tax, digits, tax8, err });
-            if (financeHostDown) {
-                return { found: false, debug: { finance: { host: financeHostDown } } };
-            }
-            throw err;
-        }
+        return { found: false };
     },
 
     // Contacts
@@ -152,7 +109,7 @@ export const crmService = {
         return response.data;
     },
 
-    async getContact(id: number) {
+    async getContact(id: number | string) {
         const response = await api.get(`/crm/contacts/${id}/`);
         return response.data;
     },
@@ -162,12 +119,12 @@ export const crmService = {
         return response.data;
     },
 
-    async updateContact(id: number, data: any) {
+    async updateContact(id: number | string, data: any) {
         const response = await api.put(`/crm/contacts/${id}/`, data);
         return response.data;
     },
 
-    async deleteContact(id: number) {
+    async deleteContact(id: number | string) {
         const response = await api.delete(`/crm/contacts/${id}/`);
         return response.data;
     },
@@ -183,7 +140,7 @@ export const crmService = {
     },
 
     async searchContacts(query: string) {
-        const response = await api.get(`/crm/contacts/search/?q=${encodeURIComponent(query)}`);
-        return response.data;
+        const response = await api.get('/crm/contacts/', { params: { q: query } });
+        return response.data?.results || response.data;
     },
 };

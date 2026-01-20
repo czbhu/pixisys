@@ -208,6 +208,7 @@ class ServiceCostItemSerializer(serializers.ModelSerializer):
             'id', 'service', 'supplier', 'supplier_name', 'is_internal',
             'name', 'calculation_type', 'calculation_type_display', 'unit',
             'unit_price', 'markup_percentage', 'selling_price', 'currency',
+            'rounding_step',
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'selling_price']

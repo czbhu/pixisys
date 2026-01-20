@@ -528,6 +528,7 @@ class MaterialSupplier(models.Model):
     """Alapanyag beszállító kapcsolat modell"""
     material = models.ForeignKey(Material, on_delete=models.CASCADE, verbose_name="Alapanyag")
     supplier = models.ForeignKey(Company, on_delete=models.CASCADE, verbose_name="Beszállító")
+    supplier_external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Beszállító külső azonosító")
     supplier_code = models.CharField(max_length=50, blank=True, verbose_name="Beszállító kód")
     unit_price = models.DecimalField(
         max_digits=10, 

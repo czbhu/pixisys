@@ -8,6 +8,33 @@ from .models_emergency import EmergencyAccessToken
 # User model is handled by Django's built-in User model
 
 
+class Notification(models.Model):
+    """System notifications for users"""
+    TYPE_CHOICES = [
+        ('info', 'Információ'),
+        ('success', 'Siker'),
+        ('warning', 'Figyelmeztetés'),
+        ('error', 'Hiba'),
+    ]
+    
+    user = models.ForeignKey('auth.User', on_delete=models.CASCADE, related_name='notifications', verbose_name="Felhasználó")
+    title = models.CharField(max_length=255, verbose_name="Cím")
+    message = models.TextField(verbose_name="Üzenet")
+    link = models.CharField(max_length=500, blank=True, null=True, verbose_name="Hivatkozás")
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, default='info', verbose_name="Típus")
+    is_read = models.BooleanField(default=False, verbose_name="Olvasott")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    
+    class Meta:
+        verbose_name = "Értesítés"
+        verbose_name_plural = "Értesítések"
+        ordering = ['-created_at']
+        db_table = 'notifications'
+        
+    def __str__(self):
+        return f"{self.user.username} - {self.title}"
+
+
 class Company(models.Model):
     """Company information"""
     name = models.CharField(max_length=200, verbose_name="Cégnév")
@@ -73,6 +100,7 @@ class Currency(models.Model):
 class BankAccount(models.Model):
     """Bank account information for a company"""
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='bank_accounts', verbose_name="Cég")
+    company_external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Cég külső azonosító")
     currency = models.ForeignKey(Currency, on_delete=models.PROTECT, verbose_name="Deviza")
     account_number = models.CharField(max_length=50, verbose_name="Bankszámlaszám")
     bank_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Bank neve")
@@ -185,6 +213,7 @@ class UserPreference(models.Model):
     """User személyes beállítások"""
     user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='preferences')
     default_signature = models.ForeignKey(SignatureTemplate, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='Alapértelmezett aláírás')
+    previous_password_hash = models.CharField(max_length=255, blank=True, null=True, verbose_name="Előző jelszó hash")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

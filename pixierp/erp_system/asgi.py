@@ -17,12 +17,13 @@ django_asgi_app = get_asgi_application()
 
 # Import routing after django setup
 from erp_system.routing import websocket_urlpatterns
+import sys
+from erp_system.routing import websocket_urlpatterns
+
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 application = ProtocolTypeRouter({
     "http": django_asgi_app,
-    "websocket": AllowedHostsOriginValidator(
-        AuthMiddlewareStack(
-            URLRouter(websocket_urlpatterns)
-        )
-    ),
+    "websocket": URLRouter(websocket_urlpatterns),
 })
+

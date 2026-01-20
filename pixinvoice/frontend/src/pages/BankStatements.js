@@ -46,12 +46,12 @@ const ImportButton = styled.button`
 
 const ModalOverlay = styled.div`
   position: fixed; inset: 0; background: rgba(0,0,0,0.45);
-  display: flex; align-items: center; justify-content: center; z-index: 1000;
+  display: flex; align-items: center; justify-content: center; z-index: 10000;
 `;
 const ModalContent = styled.div`
-  width: 900px;
-  max-width: 95vw;
-  max-height: 90vh;
+  width: 90%;
+  max-width: 1600px;
+  max-height: 95vh;
   background: #fff;
   border-radius: 8px;
   overflow: hidden;
@@ -142,12 +142,14 @@ const BankStatements = () => {
   const [importing, setImporting] = React.useState(false);
   const [stmPreview, setStmPreview] = React.useState(null);
   const [zipPreview, setZipPreview] = React.useState(null);
+  const fileInputRef = React.useRef(null);
 
   const onDrop = (e) => {
     e.preventDefault(); e.stopPropagation();
     const extsOk = (nm) => {
       const n = (nm||'').toLowerCase();
-      return tab === 'zip' ? n.endsWith('.zip') : (n.endsWith('.stm') || n.endsWith('.txt'));
+      // Allow zip or xml (and stm for legacy support just in case, but prefer xml)
+      return n.endsWith('.zip') || n.endsWith('.xml') || n.endsWith('.stm');
     };
     const added = Array.from(e.dataTransfer.files || []).filter(x => extsOk(x.name));
     setFiles(prev => {
@@ -155,11 +157,17 @@ const BankStatements = () => {
       for (const f of added) byKey.set(`${f.name}::${f.size}::${f.lastModified}`, f);
       return Array.from(byKey.values());
     });
+    // Auto-detect tab mode based on first file
+    if(added.length > 0) {
+      const first = added[0].name.toLowerCase();
+      if(first.endsWith('.zip')) setTab('zip');
+      else setTab('stm'); // stm mode handles xml too via existing API
+    }
   };
   const onPick = (e) => {
     const extsOk = (nm) => {
       const n = (nm||'').toLowerCase();
-      return tab === 'zip' ? n.endsWith('.zip') : (n.endsWith('.stm') || n.endsWith('.txt'));
+      return n.endsWith('.zip') || n.endsWith('.xml') || n.endsWith('.stm');
     };
     const added = Array.from(e.target.files || []).filter(x => extsOk(x.name));
     setFiles(prev => {
@@ -167,6 +175,11 @@ const BankStatements = () => {
       for (const f of added) byKey.set(`${f.name}::${f.size}::${f.lastModified}`, f);
       return Array.from(byKey.values());
     });
+    if(added.length > 0) {
+      const first = added[0].name.toLowerCase();
+      if(first.endsWith('.zip')) setTab('zip');
+      else setTab('stm');
+    }
   };
   const removeFile = (idx) => setFiles(prev => prev.filter((_, i) => i!==idx));
   const doImport = async () => {
@@ -179,7 +192,12 @@ const BankStatements = () => {
         setZipPreview(res.data || {});
       } else {
         const res = await bankStatementsAPI.importStmDryRun(selectedCompanyId, files);
-        setStmPreview(res.data?.preview || []);
+        // Auto-approve all items by default as OK column is removed
+        const preview = (res.data?.preview || []).map(h => ({
+           ...h,
+           items: (h.items||[]).map(it => ({ ...it, approved: true }))
+        }));
+        setStmPreview(preview);
       }
     } catch (e) {
       toast.error(e?.response?.data?.error || 'Import hiba');
@@ -230,6 +248,7 @@ const BankStatements = () => {
       const payload = (stmPreview||[]).map(h => ({
         account_id: h.account_id,
         statement_date: h.statement_date,
+        sequence_number: h.sequence_number,
         currency: h.currency,
         items: (h.items||[]).map(it => ({
           approved: !!it.approved,
@@ -341,17 +360,27 @@ const BankStatements = () => {
               <CloseBtn onClick={()=>setShowImport(false)}>Bezárás</CloseBtn>
             </ModalHeader>
             <ModalBody>
-              <div style={{ display:'flex', gap:8, marginBottom: 8 }}>
+              <div style={{ display:'flex', gap:8, marginBottom: 8, display: 'none' }}>
                 <button onClick={()=>{ setTab('zip'); setStmPreview(null); setZipPreview(null); }} style={{ padding:'6px 10px', borderRadius:4, border:'1px solid #ccc', background: tab==='zip'?'#3498db':'#fff', color: tab==='zip'?'#fff':'#2c3e50' }}>ZIP</button>
                 <button onClick={()=>{ setTab('stm'); setStmPreview(null); setZipPreview(null); }} style={{ padding:'6px 10px', borderRadius:4, border:'1px solid #ccc', background: tab==='stm'?'#3498db':'#fff', color: tab==='stm'?'#fff':'#2c3e50' }}>STM</button>
               </div>
-              <div style={{ marginBottom: 8, color:'#7f8c8d' }}>{tab==='zip' ? 'Tölts fel egy vagy több ZIP-et: PDF_STATEMENT_*.pdf fájlokat tartalmazzon.' : 'Tölts fel STM fájlt/fájlokat a banktól.'}</div>
-              <DropArea onDragOver={(e)=>{e.preventDefault();}} onDrop={onDrop}>
-                {tab==='zip' ? 'Húzd ide a ZIP fájlokat, vagy válaszd ki alul.' : 'Húzd ide az STM/TXT fájlokat, vagy válaszd ki alul.'}
+              <div style={{ marginBottom: 8, color:'#7f8c8d' }}>Tölts fel ZIP archívumot vagy ISO20022 XML (camt.053) kivonatot.</div>
+              <DropArea 
+                onDragOver={(e)=>{e.preventDefault();}} 
+                onDrop={onDrop}
+                onClick={() => fileInputRef.current?.click()}
+                style={{ cursor: 'pointer', borderColor: '#3498db', background: '#f0f8ff' }}
+              >
+                Húzd ide a fájlokat (ZIP, XML), vagy klikkelj a kiválasztáshoz.
               </DropArea>
-              <div style={{ marginTop: 8 }}>
-                <input type="file" accept={tab==='zip'?'.zip':'.stm,.txt'} multiple onChange={onPick} />
-              </div>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                accept=".zip,.xml,.stm" 
+                multiple 
+                onChange={onPick} 
+                style={{ display: 'none' }} 
+              />
               {files.length>0 && (
                 <div style={{ marginTop: 12 }}>
                   <div style={{ fontWeight: 600, marginBottom: 6 }}>Kiválasztott fájlok:</div>
@@ -420,38 +449,43 @@ const BankStatements = () => {
                   {(stmPreview||[]).map((h, hIdx) => (
                     <div key={hIdx} style={{ border:'1px solid #eee', borderRadius:6, marginBottom:10, overflow:'hidden' }}>
                       <div style={{ position:'sticky', top:0, background:'#fafafa', padding:'8px 8px', borderBottom:'1px solid #eee', color:'#2c3e50', zIndex:1 }}>
-                        Számla: {h.account_label || h.account_id} | Dátum: {h.statement_date} | Deviza: {h.currency}
+                        Számla: {h.account_label || h.account_id} | Dátum: {h.statement_date} | Sorszám: {h.sequence_number || '-'} | Deviza: {h.currency}
                       </div>
                       <div style={{ padding:8 }}>
                       <table style={{ width:'100%', borderCollapse:'collapse', tableLayout:'fixed' }}>
                         <colgroup>
+                          <col style={{ width: '10%' }} />
                           <col style={{ width: '8%' }} />
-                          <col style={{ width: '12%' }} />
-                          <col style={{ width: '28%' }} />
-                          <col style={{ width: '22%' }} />
-                          <col style={{ width: '22%' }} />
-                          <col style={{ width: '8%' }} />
+                          <col style={{ width: '23%' }} />
+                          <col style={{ width: '15%' }} />
+                          <col style={{ width: '17%' }} />
+                          <col style={{ width: '17%' }} />
+                          <col style={{ width: '5%' }} />
                         </colgroup>
                         <thead>
                           <tr>
-                            <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Jóváhagy</th>
                             <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Összeg</th>
+                            <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Értéknap</th>
                             <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Közlemény</th>
+                            <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>P.Számlaszám</th>
                             <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Partner</th>
                             <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Számla</th>
-                            <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Bankszámla mentés</th>
+                            <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Mentés</th>
                           </tr>
                         </thead>
                         <tbody>
                           {(h.items||[]).map((it, iIdx) => (
                             <tr key={iIdx}>
-                              <td style={{ padding:6, borderBottom:'1px solid #f4f4f4' }}>
-                                <input type="checkbox" checked={!!it.approved || !!it.can_auto} onChange={()=>toggleApprove(hIdx, iIdx)} />
-                              </td>
                               <td style={{ padding:6, borderBottom:'1px solid #f4f4f4', whiteSpace:'nowrap' }}>{(it.amount!=null)? it.amount.toLocaleString('hu-HU', { minimumFractionDigits: 2 }): '-' } {it.currency}</td>
+                              <td style={{ padding:6, borderBottom:'1px solid #f4f4f4' }}>{it.value_date || '-'}</td>
                               <td style={{ padding:6, borderBottom:'1px solid #f4f4f4' }}>
-                                <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={it.remittance || ''}>
-                                  {it.remittance}
+                                <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={it.remittance || it.comment || ''}>
+                                  {it.remittance || it.comment || ''}
+                                </div>
+                              </td>
+                              <td style={{ padding:6, borderBottom:'1px solid #f4f4f4', fontSize: '0.85em', color: '#555' }}>
+                                <div style={{ overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }} title={it.counterparty_account || ''}>
+                                  {it.counterparty_account || '-'}
                                 </div>
                               </td>
                               <td style={{ padding:6, borderBottom:'1px solid #f4f4f4' }}>
@@ -460,7 +494,7 @@ const BankStatements = () => {
                                     {it.proposed_customer?.name || it.counterparty_name || '-'}
                                   </div>
                                   {(it.customer_candidates?.length>0) && (
-                                    <select style={{ width:'100%' }} onChange={(e)=>{
+                                    <select style={{ width:'100%', fontSize:'0.9em' }} onChange={(e)=>{
                                       const [id, name] = (e.target.value||'').split('::');
                                       if (id) setCustomer(hIdx, iIdx, { id, name });
                                     }} defaultValue="">
@@ -478,7 +512,7 @@ const BankStatements = () => {
                                     {it.proposed_invoice?.invoice_number || '-'}
                                   </div>
                                   {(it.candidates?.length>1) && (
-                                    <select style={{ width:'100%' }} onChange={(e)=>{
+                                    <select style={{ width:'100%', fontSize:'0.9em' }} onChange={(e)=>{
                                       const [id, invoice_number] = (e.target.value||'').split('::');
                                       if (id) setInvoice(hIdx, iIdx, { id, invoice_number });
                                     }} defaultValue="">
@@ -491,9 +525,9 @@ const BankStatements = () => {
                                 </div>
                               </td>
                               <td style={{ padding:6, borderBottom:'1px solid #f4f4f4' }}>
-                                <label style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                                <label style={{ display:'inline-flex', alignItems:'center', gap:6, cursor: 'pointer', whiteSpace: 'nowrap' }} title="Bankszámla mentés az ügyfélhez">
                                   <input type="checkbox" checked={!!it.save_bank_account} onChange={(e)=>setSaveBankAccount(hIdx, iIdx, e.target.checked)} />
-                                  mentés ügyfélhez
+                                  mentés
                                 </label>
                               </td>
                             </tr>

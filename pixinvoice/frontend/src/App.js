@@ -39,6 +39,7 @@ import BankStatementForm from './pages/BankStatementForm';
 import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
 import BackupRestore from './pages/Settings/BackupRestore';
+import NavAuditExport from './pages/Settings/NavAuditExport';
 import ApiAccess from './pages/ApiAccess';
 import DataImport from './pages/DataImport';
 
@@ -124,6 +125,7 @@ function AppContent() {
                 <Route path="/settings/nav-configurations/:id/edit" element={guard('settings_nav_configurations', <CompanyNAVConfigurationForm />)} />
                 <Route path="/nav-config" element={guard('settings_nav_configurations', <NAVConfig />)} />
                 <Route path="/settings/backup" element={guard('settings_backup', <BackupRestore />)} />
+                <Route path="/settings/nav-audit" element={guard('invoices', <NavAuditExport />)} />
                 <Route path="/settings/api-access" element={guard('settings_api_access', <ApiAccess />)} />
                 <Route path="/settings/data-import" element={guard('settings_data_import', <DataImport />)} />
                 <Route path="/reports" element={guard('reports', <Reports />)} />

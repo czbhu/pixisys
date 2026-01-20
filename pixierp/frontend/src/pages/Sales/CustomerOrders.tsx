@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker } from 'antd';
 import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -28,6 +28,7 @@ interface CustomerOrder {
   delivered_at: string | null;
   notes: string;
   items: any[];
+  created_by_name?: string;
 }
 
 const CustomerOrders: React.FC = () => {
@@ -36,6 +37,7 @@ const CustomerOrders: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [timestampModalOpen, setTimestampModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedTimestamp, setSelectedTimestamp] = useState<dayjs.Dayjs | null>(null);
@@ -91,11 +93,22 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'order_date',
       key: 'order_date',
       width: 120,
-      render: (date: string) => new Date(date).toLocaleDateString('hu-HU', {
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-      }),
+      render: (date: string, record: CustomerOrder) => (
+        <div>
+          <div>
+            {new Date(date).toLocaleDateString('hu-HU', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            })}
+          </div>
+          {record.created_by_name && (
+            <div style={{ fontSize: '11px', color: '#888' }}>
+              {record.created_by_name}
+            </div>
+          )}
+        </div>
+      ),
     },
     {
       title: 'Megr. szám',
@@ -113,6 +126,7 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'quote_request_title',
       key: 'quote_request_title',
       ellipsis: true,
+      responsive: ['lg'],
       render: (text: string, record: CustomerOrder) => (
         <Tooltip title={text}>
           {record.quote_request_id ? (
@@ -130,6 +144,7 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'customer_name',
       key: 'customer_name',
       ellipsis: true,
+      responsive: ['md'],
       render: (text: string) => text || 'Magánszemély',
     },
     {
@@ -137,13 +152,16 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'contact_names',
       key: 'contact_names',
       ellipsis: true,
+      hidden: true,
       width: 150,
+      responsive: ['xl'],
     },
     {
       title: 'Határidő',
       dataIndex: 'deadline',
       key: 'deadline',
       width: 110,
+      responsive: ['sm'],
       render: (date: string | null) => {
         if (!date) return '-';
         return new Date(date).toLocaleDateString('hu-HU', {
@@ -303,9 +321,17 @@ const CustomerOrders: React.FC = () => {
     },
   ];
 
+  const creators = useMemo(() => {
+    const names = orders.map(o => o.created_by_name).filter(Boolean);
+    return Array.from(new Set(names)).sort();
+  }, [orders]);
+
   const filteredOrders = orders.filter((order) => {
     // Status filter
     if (statusFilter !== 'all' && order.status !== statusFilter) return false;
+
+    // Creator filter
+    if (creatorFilter && order.created_by_name !== creatorFilter) return false;
     
     // Text search
     if (!searchText) return true;
@@ -313,7 +339,8 @@ const CustomerOrders: React.FC = () => {
     return (
       order.order_number.toLowerCase().includes(search) ||
       order.quote_request_title?.toLowerCase().includes(search) ||
-      order.customer_name?.toLowerCase().includes(search)
+      order.customer_name?.toLowerCase().includes(search) ||
+      (order.created_by_name || '').toLowerCase().includes(search)
     );
   });
 
@@ -322,6 +349,17 @@ const CustomerOrders: React.FC = () => {
       title="Megrendelések"
       extra={
         <Space>
+          <Select
+            placeholder="Szűrés rögzítőre"
+            allowClear
+            style={{ width: 150 }}
+            onChange={setCreatorFilter}
+            value={creatorFilter}
+          >
+            {creators.map((name: any) => (
+              <Select.Option key={name} value={name}>{name}</Select.Option>
+            ))}
+          </Select>
           <Select
             style={{ width: 150 }}
             value={statusFilter}
@@ -352,11 +390,11 @@ const CustomerOrders: React.FC = () => {
         dataSource={filteredOrders}
         rowKey="id"
         loading={loading}
-        scroll={{ x: 1400 }}
+        scroll={{ x: 'max-content' }}
         pagination={{
           pageSize: 20,
           showSizeChanger: true,
-          showTotal: (total) => `Összesen ${total} megrendelés`,
+          showTotal: (total) => `Összesen ${total} db`,
         }}
       />
       

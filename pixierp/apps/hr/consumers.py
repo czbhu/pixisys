@@ -5,8 +5,9 @@ import json
 import asyncio
 from channels.generic.websocket import AsyncWebsocketConsumer
 from channels.db import database_sync_to_async
-from .models import AccessControlConfig
+from .models import AccessControlConfig, AttendanceKioskConfig
 from .services.access_control_service import AccessControlService
+from django.core.signing import TimestampSigner
 
 
 class AccessControlConsumer(AsyncWebsocketConsumer):
@@ -127,8 +128,88 @@ class AccessControlConsumer(AsyncWebsocketConsumer):
         except asyncio.CancelledError:
             # Task was cancelled, clean up
             pass
+
+class AttendanceKioskConsumer(AsyncWebsocketConsumer):
+    """
+    WebSocket consumer for In/Out Kiosk
+    Handles communication between Backend (initiated by Phone) and Kiosk Display
+    """
+    async def connect(self):
+        self.group_name = "attendance_kiosk"
+        await self.channel_layer.group_add(
+            self.group_name,
+            self.channel_name
+        )
+        await self.accept()
+        self.kiosk_task = asyncio.create_task(self.kiosk_lifecycle())
+
+    async def disconnect(self, close_code):
+        if hasattr(self, 'kiosk_task'):
+            self.kiosk_task.cancel()
+        await self.channel_layer.group_discard(
+            self.group_name,
+            self.channel_name
+        )
+
+    async def receive(self, text_data):
+        try:
+            data = json.loads(text_data)
+            
+            if data.get('type') == 'request_qr':
+                token = await self.generate_kiosk_token()
+                user_name = data.get('user_name', 'Felhasználó')
+                await self.channel_layer.group_send(
+                    self.group_name,
+                    {
+                        'type': 'kiosk_message',
+                        'message': {
+                            'type': 'show_qr',
+                            'qr_data': token,
+                            'user_name': user_name
+                        }
+                    }
+                )
+            elif data.get('type') == 'stop_qr':
+                await self.channel_layer.group_send(
+                    self.group_name,
+                    {
+                        'type': 'kiosk_message',
+                        'message': {
+                            'type': 'stop_qr'
+                        }
+                    }
+                )
+                
         except Exception as e:
-            await self.send(text_data=json.dumps({
-                'type': 'error',
-                'message': f'Periodic check error: {str(e)}'
-            }))
+            print(f"Error receiving kiosk msg: {e}")
+
+    # Receive message from room group
+    async def kiosk_message(self, event):
+        # Send message to WebSocket
+        await self.send(text_data=json.dumps(event['message']))
+
+    @database_sync_to_async
+    def get_config(self):
+        return AttendanceKioskConfig.objects.first()
+
+    @database_sync_to_async
+    def generate_kiosk_token(self):
+        signer = TimestampSigner()
+        # KIOSK_QR prefix to distinguish
+        return signer.sign("KIOSK_QR")
+
+    async def kiosk_lifecycle(self):
+        try:
+            # print("[KioskWS] Starting lifecycle loop")
+            while True:
+                try:
+                    await asyncio.sleep(60) # Keep alive, but don't spam QRs
+                except Exception as e:
+                    print(f"[KioskWS] Error in loop: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    await asyncio.sleep(5)
+        except asyncio.CancelledError:
+            # print("[KioskWS] Lifecycle cancelled")
+            pass
+

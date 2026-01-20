@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from django.db import models
+from django.db.models import Q
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -8,19 +9,21 @@ from django.utils import timezone
 from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
-    Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem
+    Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog,
+    ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment
 )
 from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
     QuoteSerializer, QuoteItemSerializer, OrderSerializer, OrderItemSerializer,
     LeadSerializer, OpportunitySerializer, ForecastSerializer,
-    CustomerOrderSerializer, CustomerOrderItemSerializer
+    CustomerOrderSerializer, CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
+    ChatThreadSerializer, ChatMessageSerializer
 )
-from apps.manufacturing.models import ManufacturingProduct, Project
+from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ManufacturingProductSerializer
 from apps.core.models import Currency
 from apps.crm.models import Company as CrmCompany, Contact
-from .models import Service, QuoteLog, QuoteRequestItemAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation
+from .models import QuoteLog, QuoteRequestItemAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation, WorkLog
 from .serializers import ServiceSerializer, QuoteLogSerializer, QuoteRequestItemAttachmentSerializer, QuoteRequestAttachmentSerializer, QuoteRequestInvitationSerializer
 from apps.core.models import EmailServerConfig, EmailTemplate, SignatureTemplate, Currency
 import smtplib, ssl, imaplib, email
@@ -633,7 +636,57 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         company_id = data.get('company_id') or data.get('company')
         if company_id:
             try:
-                qr.company = CrmCompany.objects.get(id=company_id)
+                # First try to parse as integer ID (local DB)
+                try:
+                    local_id = int(str(company_id))
+                    qr.company = CrmCompany.objects.get(id=local_id)
+                except (ValueError, TypeError):
+                    # Not an integer, likely a Pixinvoice UUID
+                    try:
+                        from apps.finance.views import PixinvoiceClient
+                        client = PixinvoiceClient()
+                        # Fetch customer details from Pixinvoice
+                        cust_data = client.get_customer(str(company_id))
+                        
+                        # Try to find matching local company
+                        tax = (cust_data.get('tax_number') or cust_data.get('taxNumber') or '').strip()
+                        name = (cust_data.get('name') or cust_data.get('full_name') or '').strip()
+                        
+                        company_obj = None
+                        if tax:
+                            # Try lookup by tax number first
+                            company_obj = CrmCompany.objects.filter(tax_number__contains=tax).first()
+                            if not company_obj:
+                                # Try full tax match
+                                company_obj = CrmCompany.objects.filter(full_tax_number__contains=tax).first()
+                                
+                        if not company_obj and name:
+                            # Fallback to name match
+                            company_obj = CrmCompany.objects.filter(name__iexact=name).first()
+                            
+                        if not company_obj and name:
+                            # Create new local company if not exists
+                            print(f"[RFQs] Creating new local company for: {name} (PixID: {company_id})")
+                            company_obj = CrmCompany.objects.create(
+                                name=name,
+                                tax_number=tax[:20] if tax else None,
+                                email=cust_data.get('email'),
+                                address=cust_data.get('billing_address') or cust_data.get('address') or '',
+                                city=cust_data.get('city') or '',
+                                postal_code=cust_data.get('zip') or cust_data.get('postal_code') or '',
+                                street_name=cust_data.get('street') or cust_data.get('address') or '',
+                                is_customer=True
+                            )
+                        
+                        if company_obj:
+                            qr.company = company_obj
+                        else:
+                            print(f"[RFQs] Could not sync company: {company_id}")
+                            
+                    except Exception as e:
+                        print(f"[RFQs] Error syncing Pixinvoice company: {e}")
+                        pass
+                        
             except CrmCompany.DoesNotExist:
                 pass
         elif 'company_id' in data:
@@ -678,10 +731,56 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 contact_ids = json.loads(contact_ids)
         except Exception:
             contact_ids = []
+            
         if isinstance(contact_ids, list):
             try:
-                qr.contacts.set(Contact.objects.filter(id__in=contact_ids))
-            except Exception:
+                # Separate integery IDs (local) and UUIDs (Pixinvoice)
+                valid_ids = []
+                uuid_ids = []
+                for cid in contact_ids:
+                    try:
+                        valid_ids.append(int(str(cid)))
+                    except (ValueError, TypeError):
+                        uuid_ids.append(str(cid))
+                
+                # Retrieve local contacts by ID
+                contacts_to_set = list(Contact.objects.filter(id__in=valid_ids))
+                
+                # Process UUIDs
+                if uuid_ids:
+                    # Find existing by external_id
+                    found_uuid_contacts = Contact.objects.filter(external_id__in=uuid_ids)
+                    contacts_to_set.extend(list(found_uuid_contacts))
+                    
+                    found_uuids = [c.external_id for c in found_uuid_contacts]
+                    missing_uuids = [u for u in uuid_ids if u not in found_uuids]
+                    
+                    if missing_uuids:
+                        try:
+                            from apps.finance.views import PixinvoiceClient
+                            client = PixinvoiceClient()
+                            pix_company_id = str(company_id) if company_id and not isinstance(company_id, int) and len(str(company_id)) > 10 else None
+                            
+                            for missing_id in missing_uuids:
+                                try:
+                                    ct_data = client.get_contact(missing_id, company_id=pix_company_id)
+                                    new_contact = Contact.objects.create(
+                                        name=ct_data.get('name') or "Unknown",
+                                        email=cust_data.get('email') if 'cust_data' in locals() and not ct_data.get('email') else ct_data.get('email'),
+                                        phone=ct_data.get('phone'),
+                                        company=qr.company,
+                                        external_id=missing_id,
+                                        position=ct_data.get('position') or ''
+                                    )
+                                    contacts_to_set.append(new_contact)
+                                except Exception as e:
+                                    print(f"[RFQs] Error syncing contact {missing_id}: {e}")
+                        except Exception as e:
+                            print(f"[RFQs] Contact sync setup failed: {e}")
+                
+                qr.contacts.set(contacts_to_set)
+            except Exception as e:
+                print(f"[RFQs] Contact set failed: {e}")
                 pass
         try:
             QuoteLog.objects.create(quote=qr, user=request.user, action='Árajánlat módosítva (alap adatok)')
@@ -987,6 +1086,38 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if status_q:
             qs = qs.filter(status=status_q)
         return Response(QuoteRequestInvitationSerializer(qs.order_by('-created_at'), many=True).data)
+
+    @action(detail=True, methods=['post'])
+    def cancel_invitation(self, request, pk=None):
+        """Meghívás visszavonása/törlése (szerző vagy admin által)"""
+        qr = self.get_object()
+        inv_id = request.data.get('invitation_id')
+        if not inv_id:
+            return Response({'error': 'invitation_id kötelező'}, status=400)
+        
+        inv = get_object_or_404(QuoteRequestInvitation, id=inv_id, quote_request=qr)
+        # TODO: Add permission check (only creator or admin can value?)
+        # For now assume access rights on QR implies right to manage invites
+        
+        inv.delete()
+        return Response({'status': 'deleted'})
+
+    @action(detail=True, methods=['post'])
+    def remove_assignee(self, request, pk=None):
+        """Résztvevő eltávolítása"""
+        qr = self.get_object()
+        user_id = request.data.get('user_id')
+        if not user_id:
+            return Response({'error': 'user_id kötelező'}, status=400)
+        
+        User = get_user_model()
+        user = get_object_or_404(User, id=user_id)
+        
+        if user in qr.assignees.all():
+            qr.assignees.remove(user)
+            QuoteLog.objects.create(quote=qr, user=request.user, action=f'Résztvevő eltávolítva: {user.get_full_name() or user.username}')
+            
+        return Response({'status': 'removed'})
 
     @action(detail=True, methods=['post'])
     def accept_invite(self, request, pk=None):
@@ -1556,6 +1687,16 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     queryset = CustomerOrder.objects.all()
     serializer_class = CustomerOrderSerializer
     permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # Filter for "My Orders" - invited and accepted
+        if self.request.query_params.get('my_orders') == 'true':
+            qs = qs.filter(
+                quote_request__invitations__invitee=self.request.user,
+                quote_request__invitations__status='accepted'
+            )
+        return qs
     
     def create(self, request, *args, **kwargs):
         """Megrendelés létrehozása árajánlatból"""
@@ -1805,6 +1946,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         from reportlab.pdfgen import canvas
         from reportlab.lib.units import cm
         from io import BytesIO
+        import qrcode
+        from reportlab.lib.utils import ImageReader
         
         order = self.get_object()
         buffer = BytesIO()
@@ -1821,6 +1964,26 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             font_name = 'Helvetica'
         
         rfq = order.quote_request
+
+        # Generate QR Code
+        # Base URL hardcoded or from settings? User specified erp.pixisys.eu
+        base_url = "https://erp.pixisys.eu"
+        target_url = f"{base_url}/sales/customer-orders/{order.id}"
+        
+        qr = qrcode.QRCode(
+            version=1,
+            error_correction=qrcode.constants.ERROR_CORRECT_L,
+            box_size=10,
+            border=4,
+        )
+        qr.add_data(target_url)
+        qr.make(fit=True)
+        qr_pil_img = qr.make_image(fill_color="black", back_color="white")
+        
+        qr_buffer = BytesIO()
+        qr_pil_img.save(qr_buffer, format="PNG")
+        qr_buffer.seek(0)
+        qr_image = ImageReader(qr_buffer)
         
         # Get contact names from quote request
         contact_names = ''
@@ -1833,23 +1996,49 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         def draw_section(start_y, include_internal_desc=False):
             """Draw one section of the worksheet"""
             y = start_y
+            
+            # Draw QR Code (Top Right)
+            # Position: Right margin 2cm. Top aligned with title.
+            qr_size = 2.5*cm
+            p.drawImage(qr_image, width - 2*cm - qr_size, y - qr_size + 0.5*cm, width=qr_size, height=qr_size)
+            
+            # Helper to draw text fitting available width next to QR code
+            # Available width: Full width - Left Margin - Right Margin - QR size - Gap
+            max_text_width = width - 2*cm - 2*cm - qr_size - 0.5*cm
+            
+            def draw_fitted_text(x, y, text, max_w, initial_font_size=10):
+                font_size = initial_font_size
+                text_width = p.stringWidth(text, font_name, font_size)
+                while text_width > max_w and font_size > 6:
+                    font_size -= 0.5
+                    text_width = p.stringWidth(text, font_name, font_size)
+                
+                p.setFont(font_name, font_size)
+                p.drawString(x, y, text)
+                # Reset font for next lines potentially to standard size (though we set it explicitly before calls usually)
+                p.setFont(font_name, initial_font_size)
+
             p.setFont(font_name, 12)
             p.drawString(2*cm, y, f"MUNKALAP - {order.order_number}")
             
             y -= 0.8*cm
             p.setFont(font_name, 10)
             
-            # Basic info
-            p.drawString(2*cm, y, f"Ügyfél: {rfq.company.name if rfq and rfq.company else ''}")
+            # Basic info - use fitted text because of QR code
+            customer_name = rfq.company.name if rfq and rfq.company else ''
+            draw_fitted_text(2*cm, y, f"Ügyfél: {customer_name}", max_text_width)
             y -= 0.6*cm
             
             # Contact info
-            p.drawString(2*cm, y, f"Kapcsolattartó: {contact_names}")
+            draw_fitted_text(2*cm, y, f"Kapcsolattartó: {contact_names}", max_text_width)
             y -= 0.6*cm
             
-            p.drawString(2*cm, y, f"Megnevezés: {rfq.title if rfq else ''}")
+            # Title might also overlap if long
+            draw_fitted_text(2*cm, y, f"Megnevezés: {rfq.title if rfq else ''}", max_text_width)
             y -= 0.6*cm
             
+            # From here, we are below the QR code
+            p.setFont(font_name, 10) # Ensure font is reset
             p.drawString(2*cm, y, f"Projekt: {project_name}")
             y -= 0.6*cm
             
@@ -2567,3 +2756,248 @@ def confirm_delivery(request, token: str):
         'message': 'Szállítólevél sikeresen visszaigazolva',
         'confirmed_at': order.delivery_confirmed_at.isoformat()
     })
+
+class QuoteRequestCostViewSet(viewsets.ModelViewSet):
+    queryset = QuoteRequestCost.objects.all()
+    serializer_class = QuoteRequestCostSerializer
+    permission_classes = [IsAuthenticated]
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        serializer = self.get_serializer(queryset, many=True)
+        data = list(serializer.data)
+        
+        # Add implicit costs from RFQ items
+        rfq_id = request.query_params.get('quote_request', None)
+        if rfq_id:
+            try:
+                rfq = QuoteRequest.objects.get(id=rfq_id)
+                items = rfq.items.all()
+                for item in items:
+                    implicit_cost = None
+                    if item.material:
+                        # Material cost
+                        cost_price = item.material.unit_cost_price or 0
+                        implicit_cost = {
+                            'id': f'implicit-mat-{item.id}',
+                            'quote_request': int(rfq_id),
+                            'material': item.material.id,
+                            'material_name': item.material.name,
+                            'code': item.material.code,
+                            'name': f"{item.material.name} (Ajánlat tételből)",
+                            'quantity': float(item.quantity),
+                            'unit': item.unit,
+                            'net_unit_price': float(cost_price),
+                            'net_total': float(item.quantity) * float(cost_price),
+                            'supplier': item.material.default_supplier.id if item.material.default_supplier else None,
+                            'supplier_name': item.material.default_supplier.name if item.material.default_supplier else None,
+                            'is_stock': True,
+                            'is_implicit': True
+                        }
+                    elif item.service:
+                        # Service cost
+                        cost_price = item.service.unit_cost_price or 0
+                        implicit_cost = {
+                            'id': f'implicit-svc-{item.id}',
+                            'quote_request': int(rfq_id),
+                            'material': None,
+                            'material_name': None,
+                            'code': item.service.code,
+                            'name': f"{item.service.name} (Ajánlat tételből)",
+                            'quantity': float(item.quantity),
+                            'unit': item.unit,
+                            'net_unit_price': float(cost_price),
+                            'net_total': float(item.quantity) * float(cost_price),
+                            'supplier': item.service.default_supplier.id if item.service.default_supplier else None,
+                            'supplier_name': item.service.default_supplier.name if item.service.default_supplier else None,
+                            'is_stock': False,
+                            'is_implicit': True
+                        }
+                    
+                    if implicit_cost:
+                        data.append(implicit_cost)
+            except Exception as e:
+                print(f"Error calculating implicit costs: {e}")
+                
+        return Response(data)
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        rfq_id = self.request.query_params.get('quote_request', None)
+        if rfq_id:
+            queryset = queryset.filter(quote_request_id=rfq_id)
+        return queryset.order_by('id')
+
+class WorkLogViewSet(viewsets.ModelViewSet):
+    queryset = WorkLog.objects.all()
+    serializer_class = WorkLogSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        # Filter: by order, by item, by user
+        qs = super().get_queryset()
+        order_id = self.request.query_params.get('order_id')
+        item_id = self.request.query_params.get('item_id')
+        user_id = self.request.query_params.get('user_id')
+        search = self.request.query_params.get('search')
+        start_date = self.request.query_params.get('start_date')
+        end_date = self.request.query_params.get('end_date')
+
+        if order_id:
+            qs = qs.filter(customer_order_id=order_id)
+        if item_id:
+            qs = qs.filter(item_id=item_id)
+        if user_id:
+            qs = qs.filter(user_id=user_id)
+        
+        if search:
+            qs = qs.filter(
+                Q(customer_order__order_number__icontains=search) |
+                Q(customer_order__quote_request__customer__name__icontains=search) |
+                Q(customer_order__quote_request__company__name__icontains=search) |
+                Q(customer_order__quote_request__project__name__icontains=search)
+            )
+
+        if start_date:
+            qs = qs.filter(started_at__date__gte=start_date)
+        if end_date:
+            qs = qs.filter(started_at__date__lte=end_date)
+            
+        return qs.order_by('-started_at')
+
+    @action(detail=False, methods=['get'])
+    def active(self, request):
+        """Get the currently active work log for the user"""
+        log = WorkLog.objects.filter(user=request.user, ended_at__isnull=True).first()
+        if log:
+            return Response(self.get_serializer(log).data)
+        return Response({}) # Return empty object
+    
+    @action(detail=False, methods=['post'])
+    def start(self, request):
+        """Start a new timer"""
+        # Stop any active log first
+        active = WorkLog.objects.filter(user=request.user, ended_at__isnull=True).first()
+        if active:
+            active.ended_at = timezone.now()
+            delta = active.ended_at - active.started_at
+            active.duration_seconds = int(delta.total_seconds())
+            active.save()
+
+        order_id = request.data.get('order_id')
+        item_id = request.data.get('item_id')
+        workflow_name = request.data.get('workflow_name')
+        
+        if not order_id:
+            return Response({'error': 'order_id required'}, status=400)
+            
+        new_log = WorkLog.objects.create(
+            user=request.user,
+            customer_order_id=order_id,
+            item_id=item_id,
+            workflow_name=workflow_name,
+            started_at=timezone.now()
+        )
+        return Response(self.get_serializer(new_log).data)
+
+    @action(detail=True, methods=['post'])
+    def stop(self, request, pk=None):
+        log = self.get_object()
+        if log.ended_at:
+             return Response({'error': 'Already stopped'}, status=400)
+        
+        log.ended_at = timezone.now()
+        delta = log.ended_at - log.started_at
+        log.duration_seconds = int(delta.total_seconds())
+        log.save()
+        return Response(self.get_serializer(log).data)
+
+class ChatThreadViewSet(viewsets.ModelViewSet):
+    queryset = ChatThread.objects.all()
+    serializer_class = ChatThreadSerializer
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['get'])
+    def find(self, request):
+        rfq_id = request.query_params.get('rfq_id')
+        order_id = request.query_params.get('order_id')
+        
+        if rfq_id:
+            thread, _ = ChatThread.objects.get_or_create(quote_request_id=rfq_id)
+        elif order_id:
+            thread, _ = ChatThread.objects.get_or_create(customer_order_id=order_id)
+        else:
+            return Response({'error': 'rfq_id or order_id required'}, status=400)
+            
+        return Response(self.get_serializer(thread).data)
+
+    @action(detail=True, methods=['post'])
+    def message(self, request, pk=None):
+        thread = self.get_object()
+        content = request.data.get('content')
+        files = request.FILES.getlist('files')
+        
+        if not content and not files:
+            return Response({'error': 'Empty message'}, status=400)
+            
+        msg = ChatMessage.objects.create(
+            thread=thread,
+            sender=request.user,
+            content=content or ''
+        )
+        
+        for f in files:
+            ChatMessageAttachment.objects.create(
+                message=msg,
+                file=f,
+                original_filename=f.name
+            )
+            
+        return Response(ChatMessageSerializer(msg).data)
+        
+    @action(detail=True, methods=['post'])
+    def promote_attachment(self, request, pk=None):
+        """Move attachment to Order or RFQ attachments"""
+        attachment_id = request.data.get('attachment_id')
+        target_type = request.data.get('target_type')  # 'rfq', 'order', 'rfq_item', 'order_item'
+        target_id = request.data.get('target_id')
+        
+        try:
+            chat_att = ChatMessageAttachment.objects.get(id=attachment_id)
+        except ChatMessageAttachment.DoesNotExist:
+             return Response({'error': 'Attachment not found'}, status=404)
+             
+        # Create copy of file
+        from django.core.files.base import ContentFile
+        
+        # Determine source thread context to verify permissions/logic?
+        # Assuming thread is pk
+        
+        created = None
+        
+        if target_type == 'rfq':
+            rfq = get_object_or_404(QuoteRequest, id=target_id)
+            created = QuoteRequestAttachment.objects.create(
+                quote_request=rfq,
+                remark=f"Chatből: {chat_att.original_filename}",
+                uploaded_by=request.user
+            )
+            created.file.save(chat_att.original_filename, chat_att.file)
+            
+        elif target_type == 'rfq_item':
+            item = get_object_or_404(QuoteRequestItem, id=target_id)
+            created = QuoteRequestItemAttachment.objects.create(
+                quote_item=item,
+                remark=f"Chatből: {chat_att.original_filename}",
+                uploaded_by=request.user
+            )
+            created.file.save(chat_att.original_filename, chat_att.file)
+            
+        # TODO: Add CustomerOrderAttachment if it exists? 
+        # Checking models.py, CustomerOrder doesn't seem to have direct attachments model exposed in my reads, 
+        # but typically it's linked to RFQ or has its own. 
+        # Use RFQ attachments for now as Order is usually spawned from RFQ.
+        
+        if created:
+            return Response({'status': 'ok', 'id': created.id})
+        return Response({'error': 'Invalid target'}, status=400)

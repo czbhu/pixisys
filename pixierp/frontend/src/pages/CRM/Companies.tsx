@@ -1,931 +1,721 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
     Card,
-    Table,
     Button,
     Space,
     Modal,
     Form,
     Input,
     Select,
-    Spin,
-    Alert,
     message,
     Tag,
     Descriptions,
     Row,
     Col,
-    Checkbox,
+    Switch,
+    List,
+    Typography,
+    Divider,
+    Pagination,
+    Segmented,
+    Spin,
 } from 'antd';
 import {
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
-    SearchOutlined
+    ReloadOutlined,
+    PoweroffOutlined,
+    SearchOutlined,
 } from '@ant-design/icons';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
-import { postalCodeService } from '../../services/postalCodeService';
-import { getCountries } from '../../services/countryService';
+
+type BankAccount = {
+    id?: number;
+    bank_name?: string;
+    account_number?: string;
+    iban?: string;
+    swift_bic?: string;
+    currency?: string;
+    is_primary?: boolean;
+};
+
+type Company = {
+    id: number;
+    name: string;
+    short_name?: string;
+    tax_number?: string;
+    group_tax_number?: string;
+    eu_tax_number?: string;
+    country?: string;
+    postal_code?: string;
+    city?: string;
+    street_name?: string;
+    street_type?: string;
+    house_number?: string;
+    address?: string;
+    full_address?: string;
+    email?: string;
+    phone?: string;
+    payment_due_days?: number;
+    is_customer?: boolean;
+    is_supplier?: boolean;
+    is_active?: boolean;
+    bank_accounts?: BankAccount[];
+};
+
+type ContactSummary = {
+    id: number | string;
+    full_name?: string;
+    email?: string;
+    phone?: string;
+    contact_type?: string;
+    is_primary?: boolean;
+};
 
 const { Option } = Select;
+const { Title, Text } = Typography;
 const { TextArea } = Input;
+
+const defaultFormValues = {
+    name: '',
+    short_name: '',
+    tax_number: '',
+    group_tax_number: '',
+    eu_tax_number: '',
+    country: 'Magyarország',
+    postal_code: '',
+    city: '',
+    street_name: '',
+    street_type: 'utca',
+    house_number: '',
+    address: '',
+    payment_due_days: 8,
+    is_customer: true,
+    is_supplier: false,
+    is_active: true,
+    bank_accounts: [] as BankAccount[],
+};
+
+const STREET_TYPES = [
+    'utca', 'út', 'útja', 'tér', 'sétány', 'fasor', 'köz', 'park', 'körút', 'sor', 'lejáró', 'dűlő', 'lejtő', 'lépcső', 'rakpart', 'kert', 'halom', 'domb', 'híd', 'rkp', 'krt', 'u', 'u.', 'út.', 'útja'
+];
 
 const Companies: React.FC = () => {
     const location = useLocation();
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [companies, setCompanies] = useState<any[]>([]);
-    const [pagination, setPagination] = useState({ current: 1, pageSize: 20, total: 0 });
+    const navigate = useNavigate();
+    const [loading, setLoading] = useState(false);
+    const [companies, setCompanies] = useState<Company[]>([]);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+    const [customerTypeFilter, setCustomerTypeFilter] = useState<'all' | 'customers' | 'suppliers'>('all');
+    const [page, setPage] = useState(1);
+    const [pageSize, setPageSize] = useState(10);
     const [isModalVisible, setIsModalVisible] = useState(false);
     const [isViewModalVisible, setIsViewModalVisible] = useState(false);
-    const [isDeleteModalVisible, setIsDeleteModalVisible] = useState(false);
-    const [isReassignModalVisible, setIsReassignModalVisible] = useState(false);
-    const [editingCompany, setEditingCompany] = useState<any>(null);
-    const [viewingCompany, setViewingCompany] = useState<any>(null);
-    const [deletingCompany, setDeletingCompany] = useState<any>(null);
-    const [reassignCompanyId, setReassignCompanyId] = useState<number | null>(null);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [typeFilter, setTypeFilter] = useState('all');
+    const [editingCompany, setEditingCompany] = useState<Company | null>(null);
+    const [viewingCompany, setViewingCompany] = useState<Company | null>(null);
+    const [companyDetail, setCompanyDetail] = useState<Company | null>(null);
+    const [companyContacts, setCompanyContacts] = useState<ContactSummary[]>([]);
+    const [detailLoading, setDetailLoading] = useState(false);
     const [form] = Form.useForm();
-    const [selectedCountry, setSelectedCountry] = useState('Magyarország');
-    const [navPreviewOpen, setNavPreviewOpen] = useState(false);
-    const [navPreviewData, setNavPreviewData] = useState<any>(null);
-    const [navPreviewSel, setNavPreviewSel] = useState<Record<string, boolean>>({});
-    const [navDebug, setNavDebug] = useState<boolean>(false);
 
-    useEffect(() => {
-        loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const loadCompanies = useCallback(async (opts?: { query?: string }) => {
+        try {
+            setLoading(true);
+            const response = await crmService.getCompanies({ q: opts?.query || undefined });
+            const data = (response as any)?.results || response;
+            setCompanies(Array.isArray(data) ? data : []);
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error('Error loading companies:', err);
+            message.error('Hiba történt a cégek betöltésekor');
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    // Check for action=create query parameter
+    useEffect(() => {
+        loadCompanies();
+    }, [loadCompanies]);
+
+    const showCreateModal = useCallback(() => {
+        setEditingCompany(null);
+        form.setFieldsValue(defaultFormValues);
+        setIsModalVisible(true);
+    }, [form]);
+
     useEffect(() => {
         const searchParams = new URLSearchParams(location.search);
         if (searchParams.get('action') === 'create') {
             showCreateModal();
         }
-    }, [location.search]);
+    }, [location.search, showCreateModal]);
 
-    const loadCompanies = async ({ page, pageSize, search, type }: { page: number; pageSize: number; search?: string; type?: string; }) => {
+    const filteredCompanies = useMemo(() => {
+        const q = (searchQuery || '').trim().toLowerCase();
+        return companies.filter((c) => {
+            if (statusFilter === 'active' && c.is_active === false) return false;
+            if (statusFilter === 'inactive' && c.is_active !== false) return false;
+            if (customerTypeFilter === 'customers' && !c.is_customer) return false;
+            if (customerTypeFilter === 'suppliers' && !c.is_supplier) return false;
+            if (!q) return true;
+            const haystack = [
+                c.name,
+                c.tax_number,
+                c.group_tax_number,
+                c.eu_tax_number,
+                c.city,
+                c.email,
+                c.full_address,
+            ]
+                .filter(Boolean)
+                .join(' ') 
+                .toLowerCase();
+            return haystack.includes(q);
+        });
+    }, [companies, statusFilter, searchQuery, customerTypeFilter]);
+
+    useEffect(() => {
+        setPage(1);
+    }, [searchQuery, statusFilter, customerTypeFilter]);
+
+    const pagedCompanies = useMemo(() => {
+        const start = (page - 1) * pageSize;
+        return filteredCompanies.slice(start, start + pageSize);
+    }, [filteredCompanies, page, pageSize]);
+
+    const normalizeDetail = (detail: any): Company => {
+        if (!detail) return detail as Company;
+        const houseNumber = detail.house_number || detail.street_number || detail.streetNumber || detail.number || '';
+        const streetType = detail.street_type || detail.public_place_category || detail.publicPlaceCategory || detail.public_place_category_display || detail.street_type_display;
+        const euTax = detail.eu_tax_number || detail.euTaxNumber || detail.eu_vat_number || detail.euVatNumber;
+        const bankAccountsRaw = detail.bank_accounts || detail.bankaccount_set || detail.bankAccounts || detail.accounts || detail.bank_account_list || [];
+            const bank_accounts = (bankAccountsRaw || []).map((acc: any) => ({
+            id: acc.id,
+            bank_name: acc.bank_name || acc.bankName,
+            account_number: acc.account_number || acc.accountNumber,
+            iban: acc.iban,
+            swift_bic: acc.swift_bic || acc.swiftBic,
+            currency: acc.currency || 'HUF',
+            is_primary: acc.is_primary ?? acc.isPrimary ?? acc.primary ?? false,
+        }));
+        return {
+            ...detail,
+            house_number: houseNumber,
+            street_type: streetType,
+            bank_accounts,
+            eu_tax_number: euTax,
+            address: detail.address_extra || detail.address_other || detail.address_extra_text || '',
+        } as Company;
+    };
+
+    const showEditModal = async (company: Company) => {
         try {
             setLoading(true);
-            const params: Record<string, any> = { page, page_size: pageSize };
-            if (search) params.search = search;
-            if (type === 'customer') params.is_customer = true;
-            if (type === 'supplier') params.is_supplier = true;
-            const response = await crmService.getCompanies(params);
-            const companies = response.results || response;
-            setCompanies(Array.isArray(companies) ? companies : []);
-            setPagination({ current: page, pageSize, total: response.count || companies.length || 0 });
-            setError(null);
+            const rawDetail = await crmService.getCompany(company.id);
+            const detail = normalizeDetail(rawDetail);
+            const bankAccounts = (detail as any)?.bank_accounts || [];
+            setEditingCompany(detail);
+            form.setFieldsValue({
+                ...defaultFormValues,
+                ...company,
+                ...detail,
+                bank_accounts: bankAccounts.length ? bankAccounts : [{ currency: 'HUF', is_primary: true }],
+            });
+            setIsModalVisible(true);
         } catch (err) {
-            console.error('Error loading companies:', err);
-            setError('Hiba történt a cégek betöltése során');
+            message.error('Nem sikerült betölteni a cég részleteit');
         } finally {
             setLoading(false);
         }
     };
 
-    const handlePostalCodeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const postalCode = e.target.value;
-        if (postalCode && postalCode.length === 4) {
-            const cityData = postalCodeService.getCityByPostalCode(postalCode);
-            if (cityData) {
-                form.setFieldsValue({ city: cityData });
-            }
-        }
-    };
-
-    const handleCountryChange = (value: string) => {
-        setSelectedCountry(value);
-        // Töröljük a form mezőket ország váltáskor
-        form.setFieldsValue({
-            postal_code: '',
-            city: '',
-            street_name: '',
-            street_type: 'utca',
-            house_number: '',
-            address: ''
-        });
-    };
-
-    const showCreateModal = () => {
-        setEditingCompany(null);
-        setSelectedCountry('Magyarország');
-        form.resetFields();
-        form.setFieldsValue({ 
-            country: 'Magyarország',
-            is_customer: true,
-            is_supplier: false
-        });
-        setIsModalVisible(true);
-    };
-
-    const showEditModal = (company: any) => {
-        setEditingCompany(company);
-        setSelectedCountry(company.country || 'Magyarország');
-        form.setFieldsValue({
-            name: company.name,
-            tax_number: company.tax_number || company.full_tax_number || '',
-            group_tax_number: company.group_tax_number || '',
-            eu_tax_number: company.eu_tax_number || '',
-            country: company.country || 'Magyarország',
-            postal_code: company.postal_code || '',
-            city: company.city || '',
-            street_name: company.street_name || '',
-            street_type: company.street_type || 'utca',
-            house_number: company.house_number || '',
-            address: company.address || '',
-            is_customer: company.is_customer !== undefined ? company.is_customer : true,
-            is_supplier: company.is_supplier !== undefined ? company.is_supplier : false
-        });
-        setIsModalVisible(true);
-    };
-
-    const showViewModal = (company: any) => {
+    const openViewModal = async (company: Company) => {
         setViewingCompany(company);
         setIsViewModalVisible(true);
-    };
-
-    const showDeleteModal = (company: any) => {
-        setDeletingCompany(company);
-        setIsDeleteModalVisible(true);
-    };
-
-    const handleSubmit = async (values: any) => {
+        setDetailLoading(true);
         try {
+            const rawDetail = await crmService.getCompany(company.id);
+            const detail = normalizeDetail(rawDetail);
+            const contactsResp = await crmService.getContacts({ customer_id: company.id });
+            const contactsData = (contactsResp as any)?.results || contactsResp || [];
+            const filteredContacts = contactsData.filter((ct: any) => String(ct.customer || ct.customer_id || ct.company || ct.company_id) === String(company.id));
+            setCompanyDetail(detail);
+            setCompanyContacts(filteredContacts);
+        } catch (err) {
+            message.error('Nem sikerült lekérni a cég adatlapját');
+        } finally {
+            setDetailLoading(false);
+        }
+    };
+
+    const handleSubmit = async () => {
+        try {
+            const values = await form.validateFields();
+            const payload = {
+                ...values,
+                street_number: values.house_number || values.street_number,
+                public_place_category: values.street_type,
+            };
             if (editingCompany) {
-                await crmService.updateCompany(editingCompany.id, values);
-                message.success('Cég sikeresen frissítve!');
+                await crmService.updateCompany(editingCompany.id, payload);
+                message.success('Cég frissítve');
             } else {
-                await crmService.createCompany(values);
-                message.success('Cég sikeresen létrehozva!');
+                await crmService.createCompany(payload);
+                message.success('Cég létrehozva');
             }
             setIsModalVisible(false);
+            setEditingCompany(null);
             form.resetFields();
-            loadCompanies({ page: pagination.current, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
+            loadCompanies({ query: searchQuery });
         } catch (err) {
-            console.error('Error saving company:', err);
-            message.error('Hiba történt a cég mentése során');
+            message.error('Hiba történt a mentés során');
         }
     };
 
-    const handleDelete = async (action: string) => {
-        if (!deletingCompany) return;
+    const handleDelete = (company: Company) => {
+        Modal.confirm({
+            title: `Biztosan törli a(z) ${company.name} céget?`,
+            okText: 'Igen',
+            cancelText: 'Mégse',
+            centered: true,
+            onOk: async () => {
+                try {
+                    await crmService.deleteCompany(company.id);
+                    message.success('Cég törölve');
+                    loadCompanies({ query: searchQuery });
+                } catch (err) {
+                    message.error('Hiba történt a törlés során');
+                }
+            },
+        });
+    };
 
-        if (action === 'reassign_all') {
-            setIsDeleteModalVisible(false);
-            setIsReassignModalVisible(true);
-            return;
-        }
-
+    const handleToggleActive = async (company: Company) => {
         try {
-            await crmService.deleteCompany(deletingCompany.id, action);
-            message.success('Cég sikeresen törölve!');
-            setIsDeleteModalVisible(false);
-            setDeletingCompany(null);
-            loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
+            const nextActive = company.is_active === false ? true : false;
+            await crmService.updateCompany(company.id, { ...company, is_active: nextActive });
+            message.success('Státusz frissítve');
+            loadCompanies({ query: searchQuery });
         } catch (err) {
-            console.error('Error deleting company:', err);
-            message.error('Hiba történt a cég törlése során');
+            message.error('Nem sikerült frissíteni a státuszt');
         }
     };
 
-    const handleReassign = async () => {
-        if (!deletingCompany || !reassignCompanyId) return;
-
-        try {
-            await crmService.deleteCompany(deletingCompany.id, 'reassign_all', reassignCompanyId);
-            message.success('Cég sikeresen törölve és összes adat áthelyezve!');
-            setIsReassignModalVisible(false);
-            setDeletingCompany(null);
-            setReassignCompanyId(null);
-            loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: typeFilter });
-        } catch (err) {
-            console.error('Error deleting company:', err);
-            message.error('Hiba történt a cég törlése során');
-        }
+    const renderStatus = (c: Company) => {
+        if (c.is_active === false) return <Tag color="red">Inaktív</Tag>;
+        return <Tag color="green">Aktív</Tag>;
     };
 
-    const columns = [
-        {
-            title: 'Cégnév',
-            dataIndex: 'name',
-            key: 'name',
-            sorter: (a: any, b: any) => a.name.localeCompare(b.name),
-        },
-        {
-            title: 'Típus',
-            key: 'company_type',
-            render: (record: any): React.ReactNode => (
-                <Space>
-                    {record.is_customer && <Tag color="blue">Ügyfél</Tag>}
-                    {record.is_supplier && <Tag color="green">Beszállító</Tag>}
-                    {!record.is_customer && !record.is_supplier && <Tag>Nincs szerepkör</Tag>}
-                </Space>
-            ),
-        },
-        {
-            title: 'Adószám',
-            key: 'tax_number',
-            render: (record: any): React.ReactNode => (
-                <div>
-                    {record.tax_number && <Tag color="blue">{record.tax_number}</Tag>}
-                    {record.group_tax_number && <Tag color="green">{record.group_tax_number}</Tag>}
-                    {record.eu_tax_number && <Tag color="orange">{record.eu_tax_number}</Tag>}
-                </div>
-            ),
-        },
-        {
-            title: 'Ország',
-            dataIndex: 'country',
-            key: 'country',
-            sorter: (a: any, b: any) => a.country.localeCompare(b.country),
-        },
-        {
-            title: 'Cím',
-            dataIndex: 'full_address',
-            key: 'full_address',
-        },
-        {
-            title: 'Műveletek',
-            key: 'actions',
-            render: (record: any): React.ReactNode => (
-                <Space>
-                    <Button
-                        type="link"
-                        icon={<EyeOutlined />}
-                        onClick={() => showViewModal(record)}
-                        title="Megtekintés"
-                    />
-                    <Button
-                        type="link"
-                        icon={<EditOutlined />}
-                        onClick={() => showEditModal(record)}
-                        title="Szerkesztés"
-                    />
-                    <Button
-                        type="link"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => showDeleteModal(record)}
-                        title="Törlés"
-                    />
-                </Space>
-            ),
-        },
-    ];
+    const renderTypes = (c: Company) => (
+        <Space size="small">
+            {c.is_customer && <Tag color="blue">Ügyfél</Tag>}
+            {c.is_supplier && <Tag color="green">Beszállító</Tag>}
+            {!c.is_customer && !c.is_supplier && <Tag>Általános</Tag>}
+        </Space>
+    );
 
-    const handleTableChange = (page: number, pageSize?: number) => {
-        const nextPageSize = pageSize || pagination.pageSize;
-        loadCompanies({ page, pageSize: nextPageSize, search: searchQuery, type: typeFilter });
+    const renderAddress = (c: Company) => {
+        const house = c.house_number || (c as any).street_number || (c as any).streetNumber || (c as any).number;
+        const streetType = c.street_type || (c as any).public_place_category || (c as any).publicPlaceCategory;
+        const parts = [c.postal_code, c.city, c.street_name, streetType, house].filter(Boolean);
+        if (parts.length === 0 && c.address) {
+            parts.push(c.address);
+        }
+        return parts.join(' ') || c.full_address || '-';
     };
 
     return (
-        <div>
-            <Card
-                title="Cégek kezelése"
-                loading={loading}
-                extra={
-                    <Space>
-                        <Input
-                            placeholder="Keresés..."
-                            prefix={<SearchOutlined />}
-                            value={searchQuery}
-                            onChange={(e) => {
-                                const q = e.target.value;
-                                setSearchQuery(q);
-                                loadCompanies({ page: 1, pageSize: pagination.pageSize, search: q, type: typeFilter });
-                            }}
-                            style={{ width: 200 }}
-                        />
-                        <Select
-                            value={typeFilter}
-                            onChange={(val) => {
-                                setTypeFilter(val);
-                                loadCompanies({ page: 1, pageSize: pagination.pageSize, search: searchQuery, type: val });
-                            }}
-                            style={{ width: 120 }}
-                        >
-                            <Option value="all">Mind</Option>
-                            <Option value="customer">Ügyfél</Option>
-                            <Option value="supplier">Beszállító</Option>
-                        </Select>
-                        <Button
-                            type="primary"
-                            icon={<PlusOutlined />}
-                            onClick={showCreateModal}
-                        >
-                            Új cég
-                        </Button>
-                    </Space>
-                }
-            >
-                {error && (
-                    <Alert
-                        message="Hiba"
-                        description={error}
-                        type="error"
-                        showIcon
-                        style={{ marginBottom: 16 }}
+        <Card
+            title={
+                <Space size="large" wrap>
+                    <Title level={4} style={{ margin: 0 }}>Cégek</Title>
+                    <Tag color="blue">PixInvoice CRM</Tag>
+                </Space>
+            }
+            extra={
+                <Space wrap style={{ justifyContent: 'flex-end', maxWidth: '100%' }}>
+                    <Input.Search
+                        allowClear
+                        placeholder="Keresés..."
+                        enterButton={<SearchOutlined />}
+                        style={{ width: 200 }}
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onSearch={(val) => { setSearchQuery(val); loadCompanies({ query: val }); }}
                     />
+                    <Select
+                        value={statusFilter}
+                        style={{ width: 140 }}
+                        onChange={(val) => setStatusFilter(val)}
+                    >
+                        <Option value="all">Minden</Option>
+                        <Option value="active">Aktív</Option>
+                        <Option value="inactive">Inaktív</Option>
+                    </Select>
+                    <Button icon={<ReloadOutlined />} onClick={() => loadCompanies({ query: searchQuery })} />
+                    <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
+                        Új
+                    </Button>
+                </Space>
+            }
+            loading={loading}
+        >
+            <Space style={{ width: '100%', justifyContent: 'space-between', marginBottom: 12 }} wrap>
+                <Space>
+                    <Segmented
+                        value={customerTypeFilter}
+                        onChange={(val) => setCustomerTypeFilter(val as any)}
+                        options={[
+                            { label: 'Mind', value: 'all' },
+                            { label: 'Vevők', value: 'customers' },
+                            { label: 'Beszállítók', value: 'suppliers' },
+                        ]}
+                    />
+                    <Pagination
+                        current={page}
+                        pageSize={pageSize}
+                        total={filteredCompanies.length}
+                        showSizeChanger
+                        onChange={(p, size) => { setPage(p); setPageSize(size); }}
+                        size="small"
+                    />
+                </Space>
+                <Text type="secondary">{filteredCompanies.length} találat</Text>
+            </Space>
+
+            <List
+                dataSource={pagedCompanies}
+                locale={{ emptyText: 'Nincs megjeleníthető cég' }}
+                renderItem={(item) => (
+                    <List.Item
+                        key={item.id}
+                        actions={[
+                            <Button key="view" icon={<EyeOutlined />} onClick={() => openViewModal(item)} type="link">Megtekintés</Button>,
+                            <Button key="edit" icon={<EditOutlined />} onClick={() => showEditModal(item)} type="link">Szerkesztés</Button>,
+                            <Button key="delete" icon={<DeleteOutlined />} danger type="link" onClick={() => handleDelete(item)}>Törlés</Button>,
+                        ]}
+                    >
+                        <List.Item.Meta
+                            title={
+                                <Space size="small">
+                                    <Text strong>{item.name}</Text>
+                                    {renderStatus(item)}
+                                    {renderTypes(item)}
+                                </Space>
+                            }
+                            description={
+                                <Space direction="vertical" size={2}>
+                                    <Text type="secondary">{item.tax_number || 'Adószám nincs megadva'}</Text>
+                                    <Text type="secondary">{renderAddress(item)}</Text>
+                                    {item.email && <Text type="secondary">{item.email}</Text>}
+                                </Space>
+                            }
+                        />
+                        <Space>
+                            <Switch
+                                size="small"
+                                checkedChildren={<PoweroffOutlined />}
+                                unCheckedChildren={<PoweroffOutlined />}
+                                checked={item.is_active !== false}
+                                onChange={() => handleToggleActive(item)}
+                            />
+                        </Space>
+                    </List.Item>
                 )}
+            />
 
-                <Table
-                    columns={columns}
-                    dataSource={companies}
-                    rowKey="id"
-                    loading={loading}
-                    pagination={{
-                        current: pagination.current,
-                        pageSize: pagination.pageSize,
-                        total: pagination.total,
-                        showSizeChanger: true,
-                        pageSizeOptions: ['10', '20', '50', '100'],
-                    }}
-                    onChange={(pg) => handleTableChange(pg.current || 1, pg.pageSize)}
-                    onRow={(record) => ({
-                        onDoubleClick: () => showEditModal(record),
-                        style: { cursor: 'pointer' }
-                    })}
-                />
-            </Card>
+            <Pagination
+                style={{ marginTop: 12, textAlign: 'right' }}
+                current={page}
+                pageSize={pageSize}
+                total={filteredCompanies.length}
+                showSizeChanger
+                onChange={(p, size) => { setPage(p); setPageSize(size); }}
+                showTotal={(total) => `${total} cég`}
+            />
 
-            {/* Létrehozás/Szerkesztés Modal */}
             <Modal
-                title={editingCompany ? 'Cég szerkesztése' : 'Új cég létrehozása'}
                 open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                }}
-                footer={null}
-                width={800}
+                title={editingCompany ? 'Cég szerkesztése' : 'Új cég'}
+                onCancel={() => { setIsModalVisible(false); setEditingCompany(null); form.resetFields(); }}
+                onOk={handleSubmit}
+                okText="Mentés"
+                cancelText="Mégse"
+                width={920}
             >
                 <Form
-                    form={form}
                     layout="vertical"
-                    onFinish={handleSubmit}
+                    form={form}
+                    initialValues={defaultFormValues}
                 >
                     <Row gutter={16}>
-                        <Col span={16}>
-                            <Form.Item
-                                name="name"
-                                label="Cégnév"
-                                rules={[{ required: true, message: 'Kérjük, adja meg a cégnév!' }]}
-                            >
+                        <Col xs={24} md={12}>
+                            <Form.Item name="name" label="Cégnév" rules={[{ required: true, message: 'Kötelező mező' }]}>
+                                <Input placeholder="Cégnév" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="short_name" label="Rövid név">
+                                <Input placeholder="Rövid név" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="tax_number" label="Adószám">
+                                <Input placeholder="12345678-1-42" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="group_tax_number" label="Csoportos adószám">
                                 <Input />
                             </Form.Item>
                         </Col>
-                        <Col span={8}>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="eu_tax_number" label="EU adószám">
+                                <Input placeholder="HU..." />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="payment_due_days" label="Fizetési határidő (nap)">
+                                <Input type="number" min={0} />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+
+                    <Divider orientation="left">Cím</Divider>
+                    <Row gutter={16}>
+                        <Col xs={24} md={8}>
+                            <Form.Item name="country" label="Ország">
+                                <Input placeholder="Magyarország" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={10} md={4}>
+                            <Form.Item name="postal_code" label="Irányítószám">
+                                <Input maxLength={10} />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={14} md={12}>
+                            <Form.Item name="city" label="Város">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="street_name" label="Közterület neve">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={12} md={6}>
+                            <Form.Item name="street_type" label="Közterület jellege">
+                                <Select
+                                    allowClear
+                                    showSearch
+                                    optionFilterProp="label"
+                                    options={STREET_TYPES.map((t) => ({ label: t, value: t }))}
+                                    placeholder="pl. utca / útja"
+                                />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={12} md={6}>
+                            <Form.Item name="house_number" label="Házszám">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Form.Item name="address" label="Egyéb cím / megjegyzés">
+                        <TextArea rows={2} />
+                    </Form.Item>
+
+                    <Row gutter={16}>
+                        <Col xs={24} md={8}>
+                            <Form.Item name="email" label="E-mail">
+                                <Input type="email" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={8}>
+                            <Form.Item name="phone" label="Telefon">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={8}>
                             <Form.Item label="Szerepkörök">
-                                <Space direction="vertical">
-                                    <Form.Item
-                                        name="is_customer"
-                                        valuePropName="checked"
-                                        noStyle
-                                    >
-                                        <Checkbox>Ügyfél</Checkbox>
+                                <Space>
+                                    <Form.Item name="is_customer" valuePropName="checked" noStyle>
+                                        <Switch checkedChildren="Ügyfél" unCheckedChildren="Ügyfél" />
                                     </Form.Item>
-                                    <Form.Item
-                                        name="is_supplier"
-                                        valuePropName="checked"
-                                        noStyle
-                                    >
-                                        <Checkbox>Beszállító</Checkbox>
+                                    <Form.Item name="is_supplier" valuePropName="checked" noStyle>
+                                        <Switch checkedChildren="Beszállító" unCheckedChildren="Beszállító" />
                                     </Form.Item>
                                 </Space>
                             </Form.Item>
                         </Col>
                     </Row>
 
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item
-                                name="tax_number"
-                                label="Adószám"
-                                help="Magyar adószám: 12345678-1-41"
-                            >
-                                <Space.Compact style={{ width: '100%' }}>
-                                    <Input placeholder="12345678-1-41" />
-                                    <Button
-                                        onClick={async () => {
-                                            try {
-                                                const raw = form.getFieldValue('tax_number') || '';
-                                                const digits = String(raw).replace(/[^0-9]/g, '');
-                                                if (digits.length < 8) {
-                                                    message.warning('Adja meg az adószám első 8 számjegyét!');
-                                                    return;
-                                                }
-                                                const before = form.getFieldsValue();
-                                                if (navDebug) {
-                                                    // eslint-disable-next-line no-console
-                                                    console.log('[Companies] NAV lookup start', { raw });
-                                                }
-                                                const data = await crmService.lookupCompanyByNav(raw, { debug: navDebug });
-                                                if (navDebug) {
-                                                    // eslint-disable-next-line no-console
-                                                    console.log('[Companies] NAV lookup result', data);
-                                                }
-                                                const downHost = (data as any)?.debug?.finance?.host;
-                                                if (downHost) {
-                                                    message.error(`Nem elérhető az API host: ${downHost}`);
-                                                }
-                                                // NAV adószám azonnali frissítése, ha eltér és teljesebb
-                                                if ((data as any)?.tax_number) {
-                                                    const curTax = String((before as any).tax_number || '').trim();
-                                                    const newTax = String((data as any).tax_number || '').trim();
-                                                    if (newTax && newTax !== curTax) {
-                                                        form.setFieldsValue({ tax_number: newTax });
-                                                    }
-                                                }
-                                                if (data && data.found === false) {
-                                                    const base = data?.debug?.finance?.host || data?.debug?.client?.base || data?.debug?.fallback?.url;
-                                                    if (base) {
-                                                        message.error(`Nem elérhető az API host: ${base}`);
-                                                    } else {
-                                                        message.warning('Nem található cég a megadott adószám alapján');
-                                                    }
-                                                    setNavPreviewData(data?.debug ? data : null);
-                                                    setNavPreviewSel({});
-                                                    if (data?.debug) setNavPreviewOpen(true);
-                                                    return;
-                                                }
-                                                // Default selection: select fields that have a value and current form is empty
-                                                const fieldMap: { key: string; target: string }[] = [
-                                                    { key: 'name', target: 'name' },
-                                                    { key: 'tax_number', target: 'tax_number' },
-                                                    { key: 'group_tax_number', target: 'group_tax_number' },
-                                                    { key: 'eu_tax_number', target: 'eu_tax_number' },
-                                                    { key: 'country', target: 'country' },
-                                                    { key: 'postal_code', target: 'postal_code' },
-                                                    { key: 'city', target: 'city' },
-                                                    { key: 'street_name', target: 'street_name' },
-                                                    { key: 'street_type', target: 'street_type' },
-                                                    { key: 'house_number', target: 'house_number' },
-                                                    { key: 'full_address', target: 'address' },
-                                                ];
-                                                const sel: Record<string, boolean> = {};
-                                                fieldMap.forEach(({ key, target }) => {
-                                                    const v = (data as any)[key];
-                                                    const cur = (before as any)[target];
-                                                    sel[key] = Boolean(v) && (!cur || String(cur).trim() === '');
-                                                });
-                                                // Preferáld a NAV adószámot: ha a NAV érték formázott és eltér a jelenlegitől, előválaszd
-                                                if ((data as any).tax_number) {
-                                                    const curTax = String((before as any).tax_number || '').trim();
-                                                    const newTax = String((data as any).tax_number || '').trim();
-                                                    const fullPattern = /^\d{8}-\d-\d{2}$/;
-                                                    if (newTax && newTax !== curTax) {
-                                                        sel['tax_number'] = true;
-                                                    } else if (fullPattern.test(newTax) && !fullPattern.test(curTax)) {
-                                                        sel['tax_number'] = true;
-                                                    }
-                                                }
-                                                setNavPreviewData(data);
-                                                setNavPreviewSel(sel);
-                                                setNavPreviewOpen(true);
-                                            } catch (e: any) {
-                                                const status = e?.response?.status;
-                                                if (status === 404) {
-                                                    message.warning('Nem található cég a megadott adószám alapján');
-                                                } else {
-                                                    const msg = e?.response?.data?.error || 'NAV lekérdezés sikertelen';
-                                                    message.error(msg);
-                                                }
-                                            }
-                                        }}
-                                    >
-                                        NAV-tól
-                                    </Button>
-                                </Space.Compact>
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item
-                                name="group_tax_number"
-                                label="Csoport adószám"
-                                help="Csoport adószám: 12345678-1-12"
-                            >
-                                <Input placeholder="12345678-1-12" />
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item
-                                name="eu_tax_number"
-                                label="EU adószám"
-                                help="EU adószám: HU11956541"
-                            >
-                                <Input placeholder="HU11956541" />
-                            </Form.Item>
-                        </Col>
-                    </Row>
+                    <Divider orientation="left">Bankszámlák</Divider>
+                    <Form.List name="bank_accounts">
+                        {(fields, { add, remove }) => (
+                            <Space direction="vertical" style={{ width: '100%' }}>
+                                {fields.map((field, idx) => {
+                                    const accounts = form.getFieldValue('bank_accounts') || [];
+                                    const isPrimary = accounts[idx]?.is_primary;
+                                    return (
+                                        <Card key={field.key} size="small" title={<Space><Text strong>Számla #{idx + 1}</Text>{isPrimary && <Tag color="blue">Elsődleges</Tag>}</Space>} extra={
+                                            <Space>
+                                                <Button size="small" onClick={() => {
+                                                    const current = form.getFieldValue('bank_accounts') || [];
+                                                    const next = current.map((acc: any, index: number) => ({ ...acc, is_primary: index === idx }));
+                                                    form.setFieldsValue({ bank_accounts: next });
+                                                }}>Elsődleges</Button>
+                                                <Button size="small" danger onClick={() => remove(field.name)}>Törlés</Button>
+                                            </Space>
+                                        }>
+                                            <Row gutter={12}>
+                                                <Col xs={24} md={12}>
+                                                    <Form.Item name={[field.name, 'bank_name']} label="Bank neve">
+                                                        <Input placeholder="Bank neve" />
+                                                    </Form.Item>
+                                                </Col>
+                                                <Col xs={24} md={12}>
+                                                    <Form.Item name={[field.name, 'account_number']} label="Számlaszám">
+                                                        <Input placeholder="123-456..." />
+                                                    </Form.Item>
+                                                </Col>
+                                            </Row>
+                                            <Row gutter={12}>
+                                                <Col xs={24} md={12}>
+                                                    <Form.Item name={[field.name, 'iban']} label="IBAN">
+                                                        <Input placeholder="IBAN" />
+                                                    </Form.Item>
+                                                </Col>
+                                                <Col xs={24} md={12}>
+                                                    <Form.Item name={[field.name, 'swift_bic']} label="SWIFT/BIC">
+                                                        <Input placeholder="SWIFT/BIC" />
+                                                    </Form.Item>
+                                                </Col>
+                                            </Row>
+                                            <Row gutter={12}>
+                                                <Col xs={12} md={8}>
+                                                    <Form.Item name={[field.name, 'currency']} label="Pénznem" initialValue="HUF">
+                                                        <Select options={[
+                                                            { label: 'HUF', value: 'HUF' },
+                                                            { label: 'EUR', value: 'EUR' },
+                                                            { label: 'USD', value: 'USD' },
+                                                            { label: 'GBP', value: 'GBP' },
+                                                        ]} />
+                                                    </Form.Item>
+                                                </Col>
+                                                <Col xs={12} md={8}>
+                                                    <Form.Item name={[field.name, 'is_primary']} label="Elsődleges" valuePropName="checked">
+                                                        <Switch onChange={() => {
+                                                            const current = form.getFieldValue('bank_accounts') || [];
+                                                            const next = current.map((acc: any, index: number) => ({ ...acc, is_primary: index === idx }));
+                                                            form.setFieldsValue({ bank_accounts: next });
+                                                        }} />
+                                                    </Form.Item>
+                                                </Col>
+                                            </Row>
+                                        </Card>
+                                    );
+                                })}
+                                <Button type="dashed" onClick={() => add({ currency: 'HUF', is_primary: fields.length === 0 })} block icon={<PlusOutlined />}>Új bankszámla</Button>
+                            </Space>
+                        )}
+                    </Form.List>
 
-                    <Row gutter={16}>
-                        <Col span={24}>
-                            <Form.Item
-                                name="country"
-                                label="Ország"
-                                rules={[{ required: true, message: 'Kérjük, válassza ki az országot!' }]}
-                            >
-                                <Select
-                                    showSearch
-                                    placeholder="Válasszon országot"
-                                    optionFilterProp="children"
-                                    filterOption={(input, option) =>
-                                        (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                                    }
-                                    onChange={handleCountryChange}
-                                >
-                                    {getCountries().map(country => (
-                                        <Option key={country.value} value={country.value}>
-                                            {country.label}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    {selectedCountry === 'Magyarország' ? (
-                        <>
-                            <Row gutter={16}>
-                                <Col span={8}>
-                                    <Form.Item
-                                        name="postal_code"
-                                        label="Irányítószám"
-                                        rules={[{ required: true, message: 'Kérjük, adja meg az irányítószámot!' }]}
-                                    >
-                                        <Input
-                                            placeholder="1051"
-                                            onChange={handlePostalCodeChange}
-                                        />
-                                    </Form.Item>
-                                </Col>
-                                <Col span={16}>
-                                    <Form.Item
-                                        name="city"
-                                        label="Város"
-                                        rules={[{ required: true, message: 'Kérjük, adja meg a várost!' }]}
-                                    >
-                                        <Input placeholder="Budapest" />
-                                    </Form.Item>
-                                </Col>
-                            </Row>
-
-                            <Form.Item label="Közterület" style={{ marginBottom: 0 }}>
-                                <Space.Compact style={{ width: '100%' }}>
-                                    <Form.Item
-                                        name="street_name"
-                                        noStyle
-                                        rules={[{ required: true, message: 'Közterület neve kötelező!' }]}
-                                    >
-                                        <Input
-                                            style={{ width: '70%' }}
-                                            placeholder="Közterület neve"
-                                        />
-                                    </Form.Item>
-                                    <Form.Item
-                                        name="street_type"
-                                        noStyle
-                                        rules={[{ required: true, message: 'Kérjük, válassza ki a közterület típusát!' }]}
-                                    >
-                                        <Select
-                                            style={{ width: '30%' }}
-                                            placeholder="Típus"
-                                            showSearch
-                                            optionFilterProp="children"
-                                            filterOption={(input, option) =>
-                                                (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                                            }
-                                        >
-                                            {postalCodeService.getStreetTypes().map(type => (
-                                                <Option key={type.value} value={type.value}>
-                                                    {type.label}
-                                                </Option>
-                                            ))}
-                                        </Select>
-                                    </Form.Item>
-                                </Space.Compact>
-                            </Form.Item>
-
-                            <Form.Item
-                                name="house_number"
-                                label="Házszám"
-                            >
-                                <Input placeholder="1." />
-                            </Form.Item>
-                        </>
-                    ) : (
-                        <Form.Item
-                            name="address"
-                            label="Cím"
-                            rules={[{ required: true, message: 'Kérjük, adja meg a címet!' }]}
-                        >
-                            <TextArea
-                                rows={3}
-                                placeholder="Teljes cím (utca, házszám, város, irányítószám, ország)"
-                            />
-                        </Form.Item>
-                    )}
-
-                    <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
-                        <Space>
-                            {editingCompany && (
-                                <Button 
-                                    onClick={() => {
-                                        window.open(`/crm/contacts?company=${editingCompany.id}`, '_blank');
-                                    }}
-                                >
-                                    Kapcsolattartók
-                                </Button>
-                            )}
-                            <Button onClick={() => setIsModalVisible(false)}>
-                                Mégse
-                            </Button>
-                            <Button type="primary" htmlType="submit">
-                                {editingCompany ? 'Frissítés' : 'Létrehozás'}
-                            </Button>
-                        </Space>
+                    <Divider orientation="left">Státusz</Divider>
+                    <Form.Item name="is_active" label="Aktív" valuePropName="checked">
+                        <Switch />
                     </Form.Item>
                 </Form>
             </Modal>
 
-            {/* NAV előnézeti modal */}
             <Modal
-                title="NAV adatok előnézete"
-                open={navPreviewOpen}
-                onCancel={() => setNavPreviewOpen(false)}
-                onOk={() => {
-                    if (!navPreviewData) { setNavPreviewOpen(false); return; }
-                    const before = form.getFieldsValue();
-                    const applyMap: Record<string, string> = {
-                        name: 'name',
-                        tax_number: 'tax_number',
-                        group_tax_number: 'group_tax_number',
-                        eu_tax_number: 'eu_tax_number',
-                        country: 'country',
-                        postal_code: 'postal_code',
-                        city: 'city',
-                        street_name: 'street_name',
-                        street_type: 'street_type',
-                        house_number: 'house_number',
-                        full_address: 'address',
-                    };
-                    const newValues: any = { ...before };
-                    Object.entries(applyMap).forEach(([src, dest]) => {
-                        if (navPreviewSel[src] && (navPreviewData as any)[src] != null) {
-                            newValues[dest] = (navPreviewData as any)[src];
-                        }
-                    });
-                    form.setFieldsValue(newValues);
-                    const changed = Object.keys(newValues).some(k => (before as any)[k] !== (newValues as any)[k]);
-                    if (changed) message.success('NAV adatok alkalmazva'); else message.info('Nem történt változás');
-                    setNavPreviewOpen(false);
-                }}
-                okText="Kiválasztott mezők beillesztése"
-                cancelText="Mégse"
-                width={720}
-            >
-                {navPreviewData?.debug && (
-                    <Alert type="info" showIcon message="Debug" description={<pre style={{ whiteSpace: 'pre-wrap' }}>{JSON.stringify(navPreviewData.debug, null, 2)}</pre>} style={{ marginBottom: 16 }} />
-                )}
-                {navPreviewData ? (
-                    <div>
-                        <Row gutter={16}>
-                            <Col span={12}>
-                                <Checkbox
-                                    checked={!!navPreviewSel.name}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, name: e.target.checked })}
-                                >
-                                    Cégnév
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.name || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.tax_number}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, tax_number: e.target.checked })}
-                                >
-                                    Adószám
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.tax_number || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.group_tax_number}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, group_tax_number: e.target.checked })}
-                                >
-                                    Csoport adószám
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.group_tax_number || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.eu_tax_number}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, eu_tax_number: e.target.checked })}
-                                >
-                                    EU adószám
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.eu_tax_number || '-'}</div>
-                            </Col>
-                            <Col span={12}>
-                                <Checkbox
-                                    checked={!!navPreviewSel.country}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, country: e.target.checked })}
-                                >
-                                    Ország
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.country || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.postal_code}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, postal_code: e.target.checked })}
-                                >
-                                    Irányítószám
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.postal_code || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.city}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, city: e.target.checked })}
-                                >
-                                    Város
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.city || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.street_name}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, street_name: e.target.checked })}
-                                >
-                                    Közterület neve
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.street_name || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.street_type}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, street_type: e.target.checked })}
-                                >
-                                    Közterület típusa
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.street_type || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.house_number}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, house_number: e.target.checked })}
-                                >
-                                    Házszám
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.house_number || '-'}</div>
-
-                                <Checkbox
-                                    checked={!!navPreviewSel.full_address}
-                                    onChange={e => setNavPreviewSel({ ...navPreviewSel, full_address: e.target.checked })}
-                                >
-                                    Teljes cím
-                                </Checkbox>
-                                <div style={{ color: '#555', marginBottom: 12 }}>{navPreviewData.full_address || '-'}</div>
-                            </Col>
-                        </Row>
-                    </div>
-                ) : (
-                    <Alert type="warning" message="Nincs előnézeti adat" />
-                )}
-            </Modal>
-
-            {/* NAV debug kapcsoló */}
-            <div style={{ marginTop: 8 }}>
-                <Checkbox checked={navDebug} onChange={e => setNavDebug(e.target.checked)}>NAV debug mód</Checkbox>
-            </div>
-
-            {/* Megtekintés Modal */}
-            <Modal
-                title="Cég részletei"
                 open={isViewModalVisible}
-                onCancel={() => setIsViewModalVisible(false)}
-                footer={[
-                    <Button 
-                        key="contacts" 
-                        type="primary"
-                        onClick={() => {
-                            if (viewingCompany) {
-                                window.open(`/crm/contacts?company=${viewingCompany.id}`, '_blank');
-                            }
-                        }}
-                    >
-                        Kapcsolattartók
-                    </Button>,
-                    <Button key="close" onClick={() => setIsViewModalVisible(false)}>
-                        Bezárás
-                    </Button>
-                ]}
+                title="Cég adatlap"
+                footer={null}
+                onCancel={() => { setIsViewModalVisible(false); setCompanyDetail(null); setCompanyContacts([]); }}
+                width={900}
             >
-                {viewingCompany && (
-                    <Descriptions column={1} bordered>
-                        <Descriptions.Item label="Cégnév">{viewingCompany.name}</Descriptions.Item>
-                        <Descriptions.Item label="Szerepkörök">
-                            <Space>
-                                {viewingCompany.is_customer && <Tag color="blue">Ügyfél</Tag>}
-                                {viewingCompany.is_supplier && <Tag color="green">Beszállító</Tag>}
-                                {!viewingCompany.is_customer && !viewingCompany.is_supplier && <Tag>Nincs szerepkör</Tag>}
-                            </Space>
-                        </Descriptions.Item>
-                        {viewingCompany.tax_number && (
-                            <Descriptions.Item label="Adószám">
-                                <Tag color="blue">{viewingCompany.tax_number}</Tag>
-                            </Descriptions.Item>
+                {detailLoading && <Spin style={{ display: 'block', textAlign: 'center' }} />}
+                {!detailLoading && (companyDetail || viewingCompany) && (
+                    <Space direction="vertical" style={{ width: '100%' }}>
+                        {(() => {
+                            const detail = companyDetail || viewingCompany;
+                            if (!detail) return null;
+                            return (
+                        <Descriptions bordered column={{ xs: 1, sm: 2 }} size="small">
+                            <Descriptions.Item label="Név">{detail.name}</Descriptions.Item>
+                            <Descriptions.Item label="Rövid név">{detail.short_name || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Adószám">{detail.tax_number || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Csoport adószám">{detail.group_tax_number || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="EU adószám">{detail.eu_tax_number || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Fizetési határidő">{detail.payment_due_days ? `${detail.payment_due_days} nap` : '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Ország">{detail.country || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Város">{detail.city || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Cím">{renderAddress(detail)}</Descriptions.Item>
+                            <Descriptions.Item label="E-mail">{detail.email || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Telefon">{detail.phone || '-'}</Descriptions.Item>
+                            <Descriptions.Item label="Szerepkörök">{renderTypes(detail)}</Descriptions.Item>
+                            <Descriptions.Item label="Státusz">{renderStatus(detail)}</Descriptions.Item>
+                        </Descriptions>
+                            );
+                        })()}
+
+                        <Divider orientation="left">Bankszámlák</Divider>
+                        {companyDetail?.bank_accounts?.length ? (
+                            <List
+                                dataSource={companyDetail.bank_accounts}
+                                renderItem={(acc) => (
+                                    <List.Item key={acc.id || acc.account_number}>
+                                        <Space direction="vertical" size={2}>
+                                            <Space size="small">
+                                                <Text strong>{acc.account_number || acc.iban || 'Ismeretlen számla'}</Text>
+                                                {acc.is_primary && <Tag color="blue">Elsődleges</Tag>}
+                                            </Space>
+                                            <Text type="secondary">{[acc.bank_name, acc.currency].filter(Boolean).join(' • ') || 'Nincs további adat'}</Text>
+                                        </Space>
+                                    </List.Item>
+                                )}
+                            />
+                        ) : (
+                            <Text type="secondary">Nincs rögzített bankszámla</Text>
                         )}
-                        {viewingCompany.group_tax_number && (
-                            <Descriptions.Item label="Csoport adószám">
-                                <Tag color="green">{viewingCompany.group_tax_number}</Tag>
-                            </Descriptions.Item>
+
+                        <Divider orientation="left">Kapcsolattartók</Divider>
+                        {companyContacts.length ? (
+                            <List
+                                dataSource={companyContacts}
+                                renderItem={(ct) => (
+                                    <List.Item key={ct.id} onClick={() => navigate(`/crm/contacts?contact=${ct.id}`)} style={{ cursor: 'pointer' }}>
+                                        <Space direction="vertical" size={2}>
+                                            <Space size="small">
+                                                <Text strong>{ct.full_name}</Text>
+                                                {ct.is_primary && <Tag color="gold">Elsődleges</Tag>}
+                                                {ct.contact_type && <Tag color="blue">{ct.contact_type}</Tag>}
+                                            </Space>
+                                            <Space size="small">
+                                                {ct.email && <Text type="secondary">{ct.email}</Text>}
+                                                {ct.phone && <Text type="secondary">{ct.phone}</Text>}
+                                            </Space>
+                                        </Space>
+                                    </List.Item>
+                                )}
+                            />
+                        ) : (
+                            <Text type="secondary">Nincs kapcsolattartó</Text>
                         )}
-                        {viewingCompany.eu_tax_number && (
-                            <Descriptions.Item label="EU adószám">
-                                <Tag color="orange">{viewingCompany.eu_tax_number}</Tag>
-                            </Descriptions.Item>
-                        )}
-                        {!viewingCompany.tax_number && viewingCompany.full_tax_number && (
-                            <Descriptions.Item label="Teljes adószám">
-                                <Tag color="blue">{viewingCompany.full_tax_number}</Tag>
-                            </Descriptions.Item>
-                        )}
-                        <Descriptions.Item label="Ország">{viewingCompany.country}</Descriptions.Item>
-                        <Descriptions.Item label="Cím">{viewingCompany.full_address}</Descriptions.Item>
-                        <Descriptions.Item label="Létrehozva">
-                            {new Date(viewingCompany.created_at).toLocaleString('hu-HU')}
-                        </Descriptions.Item>
-                        <Descriptions.Item label="Módosítva">
-                            {new Date(viewingCompany.updated_at).toLocaleString('hu-HU')}
-                        </Descriptions.Item>
-                    </Descriptions>
+                    </Space>
                 )}
             </Modal>
-
-            {/* Törlés Modal */}
-            <Modal
-                title="Cég törlése"
-                open={isDeleteModalVisible}
-                onCancel={() => setIsDeleteModalVisible(false)}
-                footer={[
-                    <Button key="cancel" onClick={() => setIsDeleteModalVisible(false)}>
-                        Mégse
-                    </Button>,
-                    <Button key="delete" danger onClick={() => handleDelete('delete_all')}>
-                        Törlés adatokkal együtt
-                    </Button>,
-                    <Button key="reassign" onClick={() => handleDelete('reassign_all')}>
-                        Adatok átadása másik cégnek
-                    </Button>,
-                    <Button key="keep" onClick={() => handleDelete('keep_data')}>
-                        Adatok megtartása és törlés
-                    </Button>
-                ]}
-            >
-                <p>Biztosan törölni szeretné a(z) <strong>{deletingCompany?.name}</strong> céget?</p>
-                <p>Válassza ki, hogy mit szeretne csinálni a kapcsolódó adatokkal:</p>
-                <ul>
-                    <li><strong>Törlés adatokkal együtt:</strong> Minden adat (kapcsolattartók, rendelések, stb.) törlődik</li>
-                    <li><strong>Adatok átadása másik cégnek:</strong> Összes adat áthelyezése másik céghez</li>
-                    <li><strong>Adatok megtartása és törlés:</strong> Adatok megtartása cég nélkül</li>
-                </ul>
-            </Modal>
-
-            {/* Áthelyezés Modal */}
-            <Modal
-                title="Adatok áthelyezése"
-                open={isReassignModalVisible}
-                onCancel={() => {
-                    setIsReassignModalVisible(false);
-                    setReassignCompanyId(null);
-                }}
-                onOk={handleReassign}
-                okText="Áthelyezés és törlés"
-                cancelText="Mégse"
-                okButtonProps={{ disabled: !reassignCompanyId }}
-            >
-                <p>Válassza ki, hogy melyik céghez szeretné áthelyezni a(z) <strong>{deletingCompany?.name}</strong> összes adatát:</p>
-                <p style={{ color: '#666', fontSize: '14px', marginBottom: '16px' }}>
-                    Ez magában foglalja: kapcsolattartókat, rendeléseket, ajánlatokat, számlákat és minden egyéb kapcsolódó adatot.
-                </p>
-                <Select
-                    placeholder="Válasszon céget"
-                    style={{ width: '100%' }}
-                    showSearch
-                    optionFilterProp="children"
-                    filterOption={(input, option) =>
-                        (option?.children as unknown as string)?.toLowerCase().includes(input.toLowerCase())
-                    }
-                    value={reassignCompanyId}
-                    onChange={setReassignCompanyId}
-                >
-                    {companies.filter(company => company.id !== deletingCompany?.id).map(company => (
-                        <Option key={company.id} value={company.id}>
-                            {company.name}
-                        </Option>
-                    ))}
-                </Select>
-            </Modal>
-        </div>
+        </Card>
     );
 };
 

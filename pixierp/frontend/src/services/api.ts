@@ -1,6 +1,7 @@
 import axios from 'axios';
 
-const DEFAULT_DEV_API_BASE_URL = 'http://192.168.5.61:8003/api/v1';
+// Default to local dev backend; fall back to relative path in prod
+const DEFAULT_DEV_API_BASE_URL = 'http://localhost:8003/api/v1';
 const DEFAULT_PROD_API_BASE_URL = '/api/v1';
 
 const API_BASE_URL =

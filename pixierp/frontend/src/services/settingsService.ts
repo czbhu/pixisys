@@ -81,4 +81,15 @@ export const settingsService = {
     const r = await api.patch('/core/user-preferences/me/', data);
     return r.data;
   },
+
+  async getAttendanceKioskConfig() {
+     const r = await api.get('/hr/attendance-kiosk-config/current/');
+     return r.data;
+  },
+  async updateAttendanceKioskConfig(id: number, data: FormData) {
+     const r = await api.patch(`/hr/attendance-kiosk-config/${id}/`, data, {
+         headers: { 'Content-Type': 'multipart/form-data' }
+     });
+     return r.data;
+  },
 };

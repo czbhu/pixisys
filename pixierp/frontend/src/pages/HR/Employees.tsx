@@ -567,26 +567,26 @@ const Employees: React.FC = () => {
         }
     };
 
-    const columns = [
+    const columns: any = [
         {
-            title: 'ID',
-            dataIndex: 'employee_id',
-            key: 'employee_id',
-            width: 100,
-            sorter: (a: Employee, b: Employee) => a.employee_id.localeCompare(b.employee_id),
-        },
-        {
-            title: 'Név',
-            dataIndex: 'full_name',
-            key: 'full_name',
+            title: 'Név / Pozíció',
+            key: 'name_pos',
+            fixed: 'left',
             width: 200,
-            sorter: (a: Employee, b: Employee) => a.full_name.localeCompare(b.full_name),
+            render: (_: any, r: Employee) => (
+                <Space direction="vertical" size={0}>
+                  <div style={{ fontWeight: 'bold' }}>{r.full_name}</div>
+                  <div style={{ fontSize: '12px', color: '#666' }}>{r.position_name || '-'}</div>
+                  <div style={{ fontSize: '11px', color: '#888' }}>{r.employee_id}</div>
+                </Space>
+            )
         },
         {
             title: 'Osztályok',
             dataIndex: 'department_names',
             key: 'department_names',
             width: 200,
+            responsive: ['md'],
             render: (departmentNames: string[]) => {
                 if (!departmentNames || departmentNames.length === 0) {
                     return '-';
@@ -601,37 +601,20 @@ const Employees: React.FC = () => {
                     </div>
                 );
             },
-            sorter: (a: Employee, b: Employee) => {
-                const aNames = a.department_names || [];
-                const bNames = b.department_names || [];
-                return aNames.join(', ').localeCompare(bNames.join(', '));
-            },
-        },
-        {
-            title: 'Pozíció',
-            dataIndex: 'position_name',
-            key: 'position_name',
-            width: 150,
-            sorter: (a: Employee, b: Employee) => (a.position_name || '').localeCompare(b.position_name || ''),
         },
         {
             title: 'Belépett',
             dataIndex: 'last_activity',
             key: 'last_activity',
-            width: 190,
+            width: 140,
+            responsive: ['lg'],
             render: (value: string | undefined) => value ? dayjs(value).format('YYYY.MM.DD HH:mm') : '-',
-            sorter: (a: Employee, b: Employee) => {
-                const aTime = a.last_activity ? dayjs(a.last_activity).valueOf() : 0;
-                const bTime = b.last_activity ? dayjs(b.last_activity).valueOf() : 0;
-                return aTime - bTime;
-            },
-            defaultSortOrder: 'descend' as const,
         },
         {
-            title: 'Műveletek',
+            title: '',
             key: 'actions',
             width: 120,
-            fixed: 'right' as const,
+            fixed: 'right',
             render: (record: Employee) => (
                 <Space size="small">
                     <Tooltip title="Megtekintés">
@@ -798,7 +781,7 @@ const Employees: React.FC = () => {
                         onShowSizeChange: (current, size) => setTablePageSize('employees', size)
                     }}
                     rowKey="id"
-                    scroll={{ x: 1400 }}
+                    scroll={{ x: 'max-content' }}
                     size="small"
                     loading={loading}
                     onRow={(record) => ({

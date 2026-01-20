@@ -1,7 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db.models import Max
-from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials
+from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials, AttendanceKioskConfig
 
 User = get_user_model()
 
@@ -341,6 +341,7 @@ class AttendanceReportSerializer(serializers.Serializer):
     hours_worked = serializers.DecimalField(max_digits=5, decimal_places=2)
     notes = serializers.CharField(allow_blank=True, allow_null=True)
     is_editable = serializers.BooleanField(default=True)
+    segments = serializers.ListField(child=serializers.DictField(), read_only=True, required=False)
     
     # For update operations
     def update(self, instance, validated_data):
@@ -385,3 +386,16 @@ class EmployeeAccessCredentialsSerializer(serializers.ModelSerializer):
     
     def get_function_display(self, obj):
         return obj.get_function_display()
+
+class AttendanceKioskConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AttendanceKioskConfig
+        fields = '__all__'
+
+from .models import KioskDevice
+
+class KioskDeviceSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = KioskDevice
+        fields = '__all__'
+        read_only_fields = ['last_seen']

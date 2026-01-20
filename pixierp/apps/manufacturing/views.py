@@ -71,7 +71,8 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     own_data_project_field = 'project'  # ManufacturingProduct.project -> Project.members
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ['status', 'product_class', 'project', 'contact']
-    search_fields = ['name', 'description', 'internal_description']
+    filterset_fields = ['status', 'product_class', 'project', 'contact', 'contact_external_id']
+    search_fields = ['name', 'description', 'internal_description', 'contact_external_id']
     ordering_fields = ['date', 'name', 'deadline', 'created_at']
     ordering = ['-created_at']
     

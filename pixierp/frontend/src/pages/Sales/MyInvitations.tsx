@@ -1,9 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Tag, Space, Button, message, Input } from 'antd';
+import { Card, Table, Tag, Space, Button, message, Input, Tooltip } from 'antd';
 import { SearchOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 
 const MyInvitations: React.FC = () => {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [rows, setRows] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
@@ -39,11 +41,24 @@ const MyInvitations: React.FC = () => {
   }, [query, rows]);
 
   const columns = [
-    { title: 'Ajánlatkérő', dataIndex: 'quote_request_number', key: 'rfq', sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || '') },
+    { title: 'Ajánlatkérő/Megrendelések', dataIndex: 'quote_request_number', key: 'rfq', sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || '') },
     { title: 'Státusz', dataIndex: 'status', key: 'status', render: (s: string): React.ReactNode => <Tag>{s}</Tag>, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
     { title: 'Meghívás ideje', dataIndex: 'created_at', key: 'created_at', render: (d: string): React.ReactNode => d ? new Date(d).toLocaleString('hu-HU') : '', sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || '') },
     { title: 'Műveletek', key: 'actions', render: (_: any, r: any): React.ReactNode => (
       <Space>
+        <Tooltip title={
+          <div style={{ fontSize: '12px' }}>
+            <div><b>Cég:</b> {r.company_name} - {r.contact_names}</div>
+            <div><b>Megnevezés:</b> {r.qr_title}</div>
+            <div><b>Leírás:</b> {r.qr_description}</div>
+            <div><b>Belső leírás:</b> {r.qr_internal_description}</div>
+            <div><b>Tételek:</b> {r.item_count} db</div>
+            <div><b>Keltezés:</b> {r.issue_date}</div>
+            <div><b>Határidő:</b> {r.qr_deadline}</div>
+          </div>
+        }>
+            <Button size="small" onClick={() => navigate(`/sales/rfqs/${r.quote_request}`)}>Megnyitás</Button>
+        </Tooltip>
         <Button type="primary" size="small" onClick={async () => {
           try { await salesService.acceptInvitation(r.quote_request); message.success('Elfogadva'); load(); }
           catch { message.error('Nem sikerült elfogadni'); }

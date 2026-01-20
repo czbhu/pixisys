@@ -74,22 +74,114 @@ class PixinvoiceClient:
 	def list_customers(self, company_id=None):
 		return self._fetch_all('customers', company_id=company_id)
 
-	def list_contacts(self, company_id=None):
-		return self._fetch_all('contacts', company_id=company_id)
-
-	def upsert_contact(self, payload: dict, contact_id: str = None):
-		url = f"{self.base}/contacts/"
-		if contact_id:
-			url += f"{contact_id}/"
-		r = requests.put(url, headers=self.headers, json=payload, timeout=20) if contact_id else requests.post(url, headers=self.headers, json=payload, timeout=20)
+	def get_customer(self, customer_id: str, company_id=None):
+		url = f"{self.base}/customers/{customer_id}/"
+		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None
+		r = requests.get(url, headers=self.headers, params=params, timeout=20)
 		r.raise_for_status()
 		return r.json()
 
-	def delete_contact(self, contact_id: str):
+	def list_customer_bank_accounts(self, customer_id: str, company_id=None):
+		url = f"{self.base}/customer-bank-accounts/"
+		params = {'customer_id': customer_id, 'customer': customer_id}
+		if company_id or self.company_id:
+			params['company_id'] = company_id or self.company_id
+		r = requests.get(url, headers=self.headers, params=params, timeout=20)
+		r.raise_for_status()
+		data = r.json()
+		if isinstance(data, dict):
+			accounts = data.get('results') or data.get('items') or []
+		else:
+			accounts = data if isinstance(data, list) else []
+		if accounts:
+			return accounts
+		# fallback: fetch all and filter by customer/customer_id
+		try:
+			all_accounts = self._fetch_all('customer-bank-accounts', company_id=company_id)
+			filtered = [acc for acc in all_accounts if str(acc.get('customer') or acc.get('customer_id')) == str(customer_id)]
+			if filtered:
+				return filtered
+		except Exception:
+			filtered = []
+		# fallback: map to PixInvoice company bank accounts when customer records are empty
+		try:
+			cust = None
+			try:
+				cust = self.get_customer(customer_id, company_id=company_id)
+			except Exception:
+				cust = None
+			tax = (cust or {}).get('full_tax_number') or (cust or {}).get('tax_number') or ''
+			eu_tax = (cust or {}).get('eu_tax_number') or ''
+			name = (cust or {}).get('name') or ''
+			companies = self.list_companies(company_id=company_id)
+			for comp in companies:
+				bank_accs = comp.get('bank_accounts') or []
+				if not bank_accs:
+					continue
+				comp_tax = comp.get('full_tax_number') or comp.get('tax_number') or ''
+				comp_eu = comp.get('eu_tax_number') or ''
+				tax_digits = ''.join(filter(str.isdigit, str(tax)))[:8]
+				comp_digits = ''.join(filter(str.isdigit, str(comp_tax)))[:8]
+				if tax_digits and comp_digits and tax_digits == comp_digits:
+					return bank_accs
+				if eu_tax and comp_eu and str(comp_eu).replace(' ', '').upper().lstrip('HU') == str(eu_tax).replace(' ', '').upper().lstrip('HU'):
+					return bank_accs
+				if name and comp.get('name') and comp['name'].strip().lower() == name.strip().lower():
+					return bank_accs
+				if name and comp.get('short_name') and comp['short_name'].strip().lower() == name.strip().lower():
+					return bank_accs
+		except Exception:
+			return filtered
+		return filtered
+
+	def upsert_customer(self, payload: dict, customer_id: str = None, company_id=None):
+		url = f"{self.base}/customers/"
+		if customer_id:
+			url += f"{customer_id}/"
+		data = dict(payload or {})
+		if (company_id or self.company_id) and 'company_id' not in data:
+			data['company_id'] = company_id or self.company_id
+		r = requests.put(url, headers=self.headers, json=data, timeout=20) if customer_id else requests.post(url, headers=self.headers, json=data, timeout=20)
+		r.raise_for_status()
+		return r.json()
+
+	def delete_customer(self, customer_id: str, company_id=None):
+		if not customer_id:
+			return
+		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None
+		url = f"{self.base}/customers/{customer_id}/"
+		r = requests.delete(url, headers=self.headers, params=params, timeout=20)
+		if r.status_code in (404, 410):
+			return
+		r.raise_for_status()
+
+	def list_contacts(self, company_id=None):
+		return self._fetch_all('contacts', company_id=company_id)
+
+	def get_contact(self, contact_id: str, company_id=None):
+		url = f"{self.base}/contacts/{contact_id}/"
+		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None
+		r = requests.get(url, headers=self.headers, params=params, timeout=20)
+		r.raise_for_status()
+		return r.json()
+
+	def upsert_contact(self, payload: dict, contact_id: str = None, company_id=None):
+		url = f"{self.base}/contacts/"
+		if contact_id:
+			url += f"{contact_id}/"
+		data = dict(payload or {})
+		if (company_id or self.company_id) and 'company_id' not in data:
+			data['company_id'] = company_id or self.company_id
+		r = requests.put(url, headers=self.headers, json=data, timeout=20) if contact_id else requests.post(url, headers=self.headers, json=data, timeout=20)
+		r.raise_for_status()
+		return r.json()
+
+	def delete_contact(self, contact_id: str, company_id=None):
 		if not contact_id:
 			return
+		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None
 		url = f"{self.base}/contacts/{contact_id}/"
-		r = requests.delete(url, headers=self.headers, timeout=20)
+		r = requests.delete(url, headers=self.headers, params=params, timeout=20)
 		if r.status_code in (404, 410):
 			return
 		r.raise_for_status()
@@ -213,21 +305,30 @@ def _sync_pixinvoice(req_settings=None):
 					created += 1 if was_created else 0
 					updated += 0 if was_created else 1
 
+					partner_payload = inv.get('partner') or {}
+					partner_external = str(partner_payload.get('id') or partner_payload.get('externalId') or '')
+
 					cur_obj = _map_currency(inv.get('currency'))
 					if obj.currency_id != (cur_obj.id if cur_obj else None):
 						obj.currency = cur_obj
 						obj.save(update_fields=['currency'])
 
-					partner_tax = (inv.get('partner') or {}).get('taxNumber')
-					partner_name = (inv.get('partner') or {}).get('name')
+					partner_tax = partner_payload.get('taxNumber')
+					partner_name = partner_payload.get('name')
 					partner = None
 					if partner_tax:
 						partner = CrmCompany.objects.filter(models.Q(tax_number__icontains=partner_tax) | models.Q(eu_tax_number__icontains=partner_tax)).first()
 					if not partner and partner_name:
 						partner = CrmCompany.objects.filter(name__iexact=partner_name).first()
+					updates = {}
 					if obj.partner_id != (partner.id if partner else None):
-						obj.partner = partner
-						obj.save(update_fields=['partner'])
+						updates['partner'] = partner
+					if partner_external and obj.partner_external_id != partner_external:
+						updates['partner_external_id'] = partner_external
+					if updates:
+						for k, v in updates.items():
+							setattr(obj, k, v)
+						obj.save(update_fields=list(updates.keys()))
 
 					items = inv.get('items') or []
 					if items:
@@ -489,112 +590,24 @@ class SyncPixinvoiceView(views.APIView):
 	permission_classes = [AllowAny]
 
 	def post(self, request):
-		"""Szinkron: számlák, kifizetések, ügyfelek/beszállítók és kapcsolattartók."""
-		try:
-			result = _sync_pixinvoice(request.data or {})
-		except ValueError as e:
-			return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-		except requests.exceptions.RequestException as e:
-			return Response({'error': 'External API error', 'details': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
-
-		settings_payload = result.get('settings') or {}
-		try:
-			cfg = PixinvoiceConfig.objects.filter(is_active=True).order_by('-updated_at').first()
-			if cfg and settings_payload:
-				cfg.sync_settings = settings_payload
-				cfg.save(update_fields=['sync_settings', 'updated_at'])
-				settings_payload['saved'] = True
-		except Exception:
-			pass
-		if settings_payload is not None and 'saved' not in settings_payload:
-			settings_payload['saved'] = False
-		return Response(result)
+		return Response({'error': 'PixInvoice is the single source now. Legacy sync disabled.'}, status=status.HTTP_410_GONE)
 
 
 class PixinvoiceCompaniesImportView(views.APIView):
 	permission_classes = [AllowAny]
 
 	def get(self, request):
-		client = PixinvoiceClient()
-		companies = client.list_companies()
-		return Response({'companies': companies})
+		return Response({'error': 'PixInvoice is the single source now. Legacy import disabled.'}, status=status.HTTP_410_GONE)
 
 	def post(self, request):
-		client = PixinvoiceClient()
-		companies = client.list_companies()
-		if isinstance(companies, dict):
-			companies = companies.get('results') or []
-		created, updated, bank_created = 0, 0, 0
-		for comp in companies:
-			name = comp.get('name') or ''
-			tax = comp.get('tax_number') or comp.get('taxNumber') or ''
-			eu_tax = comp.get('eu_tax_number') or comp.get('euTaxNumber') or ''
-			if not name and not tax:
-				continue
-			qs = CoreCompany.objects.all()
-			if tax:
-				qs = qs.filter(models.Q(tax_number__iexact=tax) | models.Q(eu_tax_number__iexact=eu_tax) | models.Q(name__iexact=name))
-			else:
-				qs = qs.filter(name__iexact=name)
-			obj = qs.first()
-			address = comp.get('address') or comp.get('full_address') or comp.get('fullAddress') or _compose_address(comp)
-			defaults = {
-				'name': name,
-				'tax_number': tax or (eu_tax or name)[:20],
-				'eu_tax_number': eu_tax or '',
-				'address': address or '',
-				'phone': comp.get('phone') or '',
-				'email': comp.get('email') or '',
-				'website': comp.get('website') or '',
-			}
-			if obj:
-				# Do not overwrite an existing non-empty address with an empty value
-				if not defaults['address'] and obj.address:
-					defaults['address'] = obj.address
-				for k, v in defaults.items():
-					setattr(obj, k, v)
-				obj.save()
-				updated += 1
-			else:
-				obj = CoreCompany.objects.create(**defaults)
-				created += 1
-
-			banks = comp.get('bank_accounts') or comp.get('bankAccounts') or []
-			for ba in banks:
-				acct = ba.get('account_number') or ba.get('accountNumber')
-				if not acct:
-					continue
-				cur_obj = _map_currency(ba.get('currency') or ba.get('currency_code')) or Currency.objects.first()
-				ba_defaults = {
-					'company': obj,
-					'currency': cur_obj,
-					'account_number': acct,
-					'bank_name': ba.get('bank_name') or ba.get('bankName') or '',
-					'swift': ba.get('swift') or ba.get('swift_code') or '',
-					'iban': ba.get('iban') or '',
-					'is_primary': bool(ba.get('is_primary')),
-				}
-				BankAccount.objects.update_or_create(company=obj, account_number=acct, defaults=ba_defaults)
-				bank_created += 1
-		return Response({'companies': {'created': created, 'updated': updated}, 'bank_accounts': {'created_or_updated': bank_created}})
+		return Response({'error': 'PixInvoice is the single source now. Legacy import disabled.'}, status=status.HTTP_410_GONE)
 
 
 class PixinvoiceWebhookView(views.APIView):
 	permission_classes = [AllowAny]
 
 	def post(self, request):
-		"""Webhook endpoint a PixInvoice értesítésekhez (event alapú szinkron)."""
-		payload = request.data or {}
-		try:
-			settings_payload = payload.get('settings') or {}
-			if not settings_payload.get('entities'):
-				settings_payload['entities'] = ['contacts']
-			if not settings_payload.get('strategy') and not settings_payload.get('strategy_type'):
-				settings_payload['strategy'] = {'type': 'newer'}
-			result = _sync_pixinvoice(settings_payload)
-		except Exception as e:
-			return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-		return Response({'ok': True, 'synced': result})
+		return Response({'error': 'PixInvoice is the single source now. Legacy webhook sync disabled.'}, status=status.HTTP_410_GONE)
 
 
 class PixinvoiceLookupTaxpayerView(views.APIView):

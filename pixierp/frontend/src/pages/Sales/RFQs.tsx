@@ -49,6 +49,7 @@ const RFQs: React.FC = () => {
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatures, setSignatures] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
 
   useEffect(() => {
@@ -65,7 +66,7 @@ const RFQs: React.FC = () => {
         manufacturingService.getProjects(),
       ]);
     const rfqRaw = (rfqRes.results ?? rfqRes) as any[];
-    const rfqList = (rfqRaw || []).filter(r => (r.items || []).length > 0);
+    const rfqList = (rfqRaw || []);
       const compList = ((compRes.results ?? compRes) as any[]).filter((c: any) => c.is_customer);
     setRfqs(rfqList);
     setFiltered(rfqList);
@@ -80,17 +81,28 @@ const RFQs: React.FC = () => {
   };
 
   const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  
+  const creators = useMemo(() => {
+    const names = rfqs.map(r => r.created_by_name).filter(Boolean);
+    return Array.from(new Set(names)).sort();
+  }, [rfqs]);
+
   useEffect(() => {
     let filtered = rfqs || [];
     
-    // Státusz szűrés
+    // Status filter
     if (statusFilter === 'all_except_archived') {
       filtered = filtered.filter(r => r.status !== 'archived');
     } else if (statusFilter !== 'all') {
       filtered = filtered.filter(r => r.status === statusFilter);
     }
+
+    // Creator filter
+    if (creatorFilter) {
+      filtered = filtered.filter(r => r.created_by_name === creatorFilter);
+    }
     
-    // Szöveges keresés
+    // Text search
     const q = normalize(query);
     if (q) {
       filtered = filtered.filter(r => {
@@ -100,13 +112,14 @@ const RFQs: React.FC = () => {
           r.company?.name || r.company_name || '',
           r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '),
           (r.items || []).map((it: any) => it.product?.name || it.manufacturing_product?.name || it.service?.name || it.description || '').join(' '),
+          r.created_by_name || ''
         ].join(' \u0001 ');
         return normalize(hay).includes(q);
       });
     }
     
     setFiltered(filtered);
-  }, [query, rfqs, statusFilter]);
+  }, [query, rfqs, statusFilter, creatorFilter]);
 
   const statusTag = (status: string) => {
     const color = {
@@ -133,27 +146,52 @@ const RFQs: React.FC = () => {
   };
 
   const columns = useMemo(() => ([
-  { title: 'Ajánlatszám', dataIndex: 'number', key: 'number', sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || '') },
-  { title: 'Keltezés', dataIndex: 'issue_date', key: 'issue_date', render: (d: string): React.ReactNode => d ? new Date(d).toLocaleDateString('hu-HU') : '', sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') },
-  { title: 'Cím', dataIndex: 'title', key: 'title', sorter: (a: any, b: any) => (a.title || '').localeCompare(b.title || '') },
-  { title: 'Cég', dataIndex: ['company', 'name'], key: 'company_name', render: (_: any, r: any): React.ReactNode => r.company?.name || r.company_name || 'Magánszemély', sorter: (a: any, b: any) => (a.company?.name || a.company_name || '').localeCompare(b.company?.name || b.company_name || '') },
-  { title: 'Kapcsolattartó', key: 'contact_names', render: (_: any, r: any): React.ReactNode => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
+  { 
+    title: 'Ajánlat', 
+    key: 'main_info', 
+    sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || ''),
+    render: (_: any, r: any) => (
+      <div style={{ lineHeight: '1.2' }}>
+        <div style={{ fontWeight: 600 }}>{r.number || r.request_number}</div>
+        <div style={{ fontSize: '0.85em', color: '#1890ff' }}>{r.company?.name || r.company_name || 'Magánszemély'}</div>
+        {r.title && <div style={{ fontSize: '0.75em', color: '#666' }}>{r.title}</div>}
+      </div>
+    )
+  },
+  { 
+    title: 'Keltezés', 
+    dataIndex: 'issue_date', 
+    key: 'issue_date', 
+    responsive: ['lg'], 
+    render: (d: string, r: any): React.ReactNode => (
+      <div>
+        <div>{d ? new Date(d).toLocaleDateString('hu-HU') : ''}</div>
+        {r.created_by_name && (
+          <div style={{ fontSize: '11px', color: '#888' }}>
+            {r.created_by_name}
+          </div>
+        )}
+      </div>
+    ), 
+    sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') 
+  },
+  { title: 'Kapcsolattartó', key: 'contact_names', responsive: ['xl'], render: (_: any, r: any): React.ReactNode => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
     { 
-      title: 'Összeg', 
-      key: 'total_amount', 
+      title: 'Nettó összeg', 
+      key: 'total_net_amount', 
       render: (_: any, r: any): React.ReactNode => {
-        const amount = r.total_amount || 0;
+        const amount = r.total_net_amount || 0;
         const currencySymbol = r.currency_symbol || 'Ft';
-        return `${amount.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`;
+        return <span style={{ whiteSpace: 'nowrap' }}>{`${amount.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`}</span>;
       },
-      sorter: (a: any, b: any) => (a.total_amount || 0) - (b.total_amount || 0),
+      sorter: (a: any, b: any) => (a.total_net_amount || 0) - (b.total_net_amount || 0),
       align: 'right' as const
     },
     { title: 'Státusz', dataIndex: 'status', key: 'status', render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
-    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
+    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
       title: 'Műveletek', key: 'actions', render: (record: any): React.ReactNode => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Tooltip title="Szerkesztés">
             <Button icon={<EditOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
@@ -441,28 +479,40 @@ const RFQs: React.FC = () => {
       <Card
         title="Árajánlatok"
         extra={
-          <Space>
+          <Space wrap style={{ justifyContent: 'flex-end', maxWidth: '100%' }}>
             <Select
               value={statusFilter}
               onChange={(value) => setStatusFilter(value)}
-              style={{ width: 220 }}
+              style={{ width: 150 }}
+              popupMatchSelectWidth={false}
             >
               <Select.Option value="all">Mind</Select.Option>
-              <Select.Option value="all_except_archived">Mind (kivéve archív)</Select.Option>
+              <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
               <Select.Option value="new">Új</Select.Option>
               <Select.Option value="quoted">Árazva</Select.Option>
               <Select.Option value="rejected">Elutasítva</Select.Option>
               <Select.Option value="accepted">Elfogadva</Select.Option>
               <Select.Option value="archived">Archív</Select.Option>
             </Select>
-            <Input allowClear prefix={<SearchOutlined />} placeholder="Gyors kereső…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 280 }} />
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új árajánlat</Button>
+            <Select
+              placeholder="Szűrés rögzítőre"
+              allowClear
+              style={{ width: 170 }}
+              value={creatorFilter}
+              onChange={setCreatorFilter}
+            >
+              {creators.map((name: any) => (
+                <Select.Option key={name} value={name}>{name}</Select.Option>
+              ))}
+            </Select>
+            <Input allowClear prefix={<SearchOutlined />} placeholder="Keresés…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 200 }} />
+            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új</Button>
           </Space>
         }
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} />
+        <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
       </Card>
       <Modal title="Ajánlat kiküldése e-mailen" open={!!sendOpenId} onOk={async () => {
         const v = await sendForm.validateFields();
@@ -688,29 +738,29 @@ const RFQs: React.FC = () => {
             </Tooltip>
           </div>
           <Row gutter={12}>
-            <Col span={6}>
+            <Col xs={24} md={6}>
               <Form.Item label="Ajánlatszám">
                 <Input value={nextNumber || ''} readOnly />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col xs={24} md={6}>
               <Form.Item label="Rögzítette">
                 <Input value={currentUserName || ''} readOnly />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col xs={24} md={6}>
               <Form.Item label="Keltezés" name="issue_date">
                 <DatePicker style={{ width: '100%' }} onChange={onIssueDateChange} />
               </Form.Item>
             </Col>
-            <Col span={6}>
+            <Col xs={24} md={6}>
               <Form.Item label="Határidő" name="deadline" rules={[{ required: true, message: 'Válassz határidőt' }]}>
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item 
                 label="Cég" 
                 name="company_id"
@@ -784,7 +834,7 @@ const RFQs: React.FC = () => {
                     }}
                   >
                     {contacts.map((p: any) => (
-                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                      <Select.Option key={p.id} value={p.id} label={p.full_name || p.name}>{p.full_name || p.name}</Select.Option>
                     ))}
                   </Select>
                   <Tooltip title="Új kapcsolattartó hozzáadása">
@@ -826,12 +876,12 @@ const RFQs: React.FC = () => {
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={14}>
+            <Col xs={24} md={14}>
               <Form.Item label="Megnevezés" name="title">
                 <Input placeholder="Ha üres, az ajánlatszám lesz" />
               </Form.Item>
             </Col>
-            <Col span={10}>
+            <Col xs={24} md={10}>
               <Form.Item label="Projekt" name="project_id">
                 <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
                   {(projects || []).map((p: any) => (
@@ -842,12 +892,12 @@ const RFQs: React.FC = () => {
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item label="Leírás" name="description">
                 <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col xs={24} md={12}>
               <Form.Item label="Belső leírás" name="internal_description">
                 <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
               </Form.Item>
@@ -855,7 +905,7 @@ const RFQs: React.FC = () => {
           </Row>
           <Divider />
           <Row gutter={12}>
-            <Col span={8}>
+            <Col xs={24} md={8}>
               <Form.Item label="Pénznem">
                 <Select
                   showSearch
@@ -872,7 +922,7 @@ const RFQs: React.FC = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={16}>
+            <Col xs={24} md={16}>
               <Form.Item label="Ajánlat csatolmányok">
                 <Upload.Dragger
                   multiple

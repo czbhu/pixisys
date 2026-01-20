@@ -126,30 +126,35 @@ const Dashboard = () => {
 
     const columns = [
         {
-            title: 'Megrendelés szám',
+            title: 'Megrendelés',
             dataIndex: 'order_number',
             key: 'order_number',
-        },
-        {
-            title: 'Ügyfél',
-            dataIndex: 'customer_name',
-            key: 'customer_name',
+            render: (text: string, record: any) => (
+                <div>
+                    <div style={{ fontWeight: 500 }}>{text}</div>
+                    <div style={{ fontSize: '12px', color: '#666' }}>{record.customer_name}</div>
+                </div>
+            ),
         },
         {
             title: 'Összeg',
             dataIndex: 'total_amount',
             key: 'total_amount',
-            render: (amount: number) => `${amount.toLocaleString()} Ft`
+            align: 'right' as const,
+            render: (amount: number) => <span style={{ whiteSpace: 'nowrap' }}>{amount.toLocaleString()} Ft</span>
         },
         {
             title: 'Státusz',
             dataIndex: 'status',
             key: 'status',
+            align: 'center' as const,
             render: (status: string) => (
                 <span style={{
                     color: getStatusColor(status) === 'green' ? '#52c41a' :
                         getStatusColor(status) === 'orange' ? '#fa8c16' :
-                            getStatusColor(status) === 'blue' ? '#1890ff' : '#f5222d'
+                            getStatusColor(status) === 'blue' ? '#1890ff' : '#f5222d',
+                    whiteSpace: 'nowrap',
+                    fontWeight: 500
                 }}>
                     {getStatusText(status)}
                 </span>
@@ -159,7 +164,9 @@ const Dashboard = () => {
             title: 'Létrehozva',
             dataIndex: 'created_at',
             key: 'created_at',
-            render: (date: string) => new Date(date).toLocaleDateString('hu-HU')
+            responsive: ['md'] as any,
+            align: 'right' as const,
+            render: (date: string) => <span style={{ whiteSpace: 'nowrap' }}>{new Date(date).toLocaleDateString('hu-HU')}</span>
         },
     ];
 
@@ -220,7 +227,7 @@ const Dashboard = () => {
                             pagination={false}
                             size="small"
                             rowKey="id"
-                            scroll={{ x: 800 }}
+                            scroll={{ x: 'max-content' }}
                         />
                     </Card>
                 </Col>

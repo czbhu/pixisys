@@ -18,6 +18,8 @@ router.register(r'analytics', analytics_views.EmployeeAnalyticsViewSet, basename
 router.register(r'time-logs', analytics_views.TimeLogViewSet)
 router.register(r'access-logs', analytics_views.AccessLogViewSet)
 router.register(r'project-participations', analytics_views.ProjectParticipationViewSet)
+router.register(r'attendance-kiosk-config', views.AttendanceKioskConfigViewSet)
+router.register(r'kiosk-devices', views.KioskDeviceViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

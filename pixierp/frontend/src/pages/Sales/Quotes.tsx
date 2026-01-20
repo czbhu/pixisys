@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Popconfirm, Input } from 'antd';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Popconfirm, Input, Select } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, CheckOutlined, SearchOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import { useNavigate } from 'react-router-dom';
@@ -10,6 +10,7 @@ const Quotes: React.FC = () => {
     const [quotes, setQuotes] = useState<any[]>([]);
     const [filtered, setFiltered] = useState<any[]>([]);
     const [query, setQuery] = useState('');
+    const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
 
     const navigate = useNavigate();
     useEffect(() => {
@@ -37,22 +38,39 @@ const Quotes: React.FC = () => {
 
     // Keresési logika
     const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    
     useEffect(() => {
+        let result = quotes;
+
+        // Szűrés rögzítőre
+        if (creatorFilter) {
+            result = result.filter(q => q.created_by_name === creatorFilter);
+        }
+
+        // Szöveges keresés
         const q = normalize(query);
-        if (!q) { setFiltered(quotes); return; }
-        const next = quotes.filter(quote => {
-            const hay = [
-                quote.quote_number || '',
-                quote.quote_request_number || quote.quote_request?.number || '',
-                quote.customer_name || '',
-                quote.owner_name || quote.quote_request?.owner_name || '',
-                quote.assignee_names || quote.quote_request?.assignee_names || '',
-                quote.status || ''
-            ].join(' \u0001 ');
-            return normalize(hay).includes(q);
-        });
-        setFiltered(next);
-    }, [query, quotes]);
+        if (q) {
+            result = result.filter(quote => {
+                const hay = [
+                    quote.quote_number || '',
+                    quote.quote_request_number || quote.quote_request?.number || '',
+                    quote.customer_name || '',
+                    quote.owner_name || quote.quote_request?.owner_name || '',
+                    quote.assignee_names || quote.quote_request?.assignee_names || '',
+                    quote.status || '',
+                    quote.created_by_name || ''
+                ].join(' \u0001 ');
+                return normalize(hay).includes(q);
+            });
+        }
+        
+        setFiltered(result);
+    }, [query, quotes, creatorFilter]);
+
+    const creators = useMemo(() => {
+        const names = quotes.map(q => q.created_by_name).filter(Boolean);
+        return Array.from(new Set(names)).sort();
+    }, [quotes]);
 
     const getStatusColor = (status: string) => {
         switch (status) {
@@ -143,7 +161,16 @@ const Quotes: React.FC = () => {
             title: 'Dátum',
             dataIndex: 'created_at',
             key: 'created_at',
-            render: (date: string) => new Date(date).toLocaleDateString('hu-HU'),
+            render: (date: string, record: any) => (
+                <div>
+                    <div>{new Date(date).toLocaleDateString('hu-HU')}</div>
+                    {record.created_by_name && (
+                        <div style={{ fontSize: '11px', color: '#888' }}>
+                            {record.created_by_name}
+                        </div>
+                    )}
+                </div>
+            ),
             sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || ''),
         },
         {
@@ -243,14 +270,27 @@ const Quotes: React.FC = () => {
                     />
                 )}
 
-                <Input
-                    placeholder="Keresés (ajánlatszám, igényszám, ügyfél, felelős, résztevők)..."
-                    prefix={<SearchOutlined />}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                    allowClear
-                />
+                <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
+                    <Input
+                        placeholder="Keresés (ajánlatszám, igényszám, ügyfél, felelős, résztevők)..."
+                        prefix={<SearchOutlined />}
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                        style={{ flex: 1 }}
+                        allowClear
+                    />
+                    <Select
+                        placeholder="Szűrés rögzítőre"
+                        allowClear
+                        style={{ width: 200 }}
+                        onChange={setCreatorFilter}
+                        value={creatorFilter}
+                    >
+                        {creators.map((name: string) => (
+                            <Select.Option key={name} value={name}>{name}</Select.Option>
+                        ))}
+                    </Select>
+                </div>
 
                 <Table
                     columns={columns}

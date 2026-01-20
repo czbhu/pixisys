@@ -30,9 +30,10 @@ interface ItemsTableProps {
   onDeleteItem?: (item: any) => void;
   onCopyItem?: (item: any) => void;
   currency?: string;
+  hidePrices?: boolean;
 }
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF' }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   
@@ -85,33 +86,57 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     }
   };
   const columns: any[] = [
-    { title: 'Cikkszám', key: 'code', render: (r: any) => r.material_code || r.product_code || '-' },
-    { title: 'Név', key: 'name', render: (r: any) => r.material_name || r.product_name || r.manufacturing_product_name || r.service_name },
-    { title: 'Leírás', dataIndex: 'description', key: 'description' },
-    { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity' },
-    { title: 'Egység', dataIndex: 'unit', key: 'unit' },
-    { title: 'Nettó ár', key: 'net_price', render: (r: any) => {
-      const qty = Number(r.quantity || 1);
-      const netTotal = Number(r.net_total || 0);
-      const perUnit = qty > 0 ? netTotal / qty : 0;
-      const unit = r.unit || 'db';
-      return `${Math.round(netTotal)} (${Math.round(perUnit)}/${unit})`;
-    } },
-    { title: 'Nettó összesen', key: 'net_total', render: (r: any) => {
-      const qty = Number(r.quantity || 1);
-      const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : Number(r.net_total || 0);
-      const perUnit = qty > 0 ? discounted / qty : 0;
-      const unit = r.unit || 'db';
-      return `${Math.round(discounted)} (${Math.round(perUnit)}/${unit})`;
-    } },
+    { 
+      title: 'Tétel', 
+      key: 'item_info', 
+      render: (r: any) => (
+        <div>
+           <div style={{ fontWeight: 600 }}>{r.material_code || r.product_code || r.service_code || '-'}</div>
+           <div>{r.material_name || r.product_name || r.manufacturing_product_name || r.service_name}</div>
+        </div>
+      )
+    },
+    { title: 'Leírás', dataIndex: 'description', key: 'description', responsive: ['md'] },
+    { 
+      title: 'Menny.', 
+      key: 'quantity', 
+      render: (r: any) => <span style={{ whiteSpace: 'nowrap' }}>{Number(r.quantity)} {r.unit || 'db'}</span>
+    },
   ];
+
+  if (!hidePrices) {
+    columns.push({ 
+      title: 'Nettó ár', 
+      key: 'net_price', 
+      responsive: ['lg'],
+      render: (r: any) => {
+        const qty = Number(r.quantity || 1);
+        const netTotal = Number(r.net_total || 0);
+        const perUnit = qty > 0 ? netTotal / qty : 0;
+        const unit = r.unit || 'db';
+        return `${Math.round(netTotal)} (${Math.round(perUnit)}/${unit})`;
+      } 
+    });
+    columns.push({ 
+      title: 'Nettó összesen', 
+      key: 'net_total', 
+      align: 'right',
+      render: (r: any) => {
+        const qty = Number(r.quantity || 1);
+        const discounted = r.discounted_net_total != null ? Number(r.discounted_net_total) : Number(r.net_total || 0);
+        const perUnit = qty > 0 ? discounted / qty : 0;
+        const unit = r.unit || 'db';
+        return <span style={{ whiteSpace: 'nowrap', fontWeight: 'bold' }}>{Math.round(discounted)} ({Math.round(perUnit)}/{unit})</span>;
+      } 
+    });
+  }
 
   if (onEditItem || quoteRequestId || onDeleteItem || onCopyItem) {
     columns.push({
       title: 'Műveletek',
       key: 'actions',
       render: (_: any, record: any) => (
-        <Space>
+        <Space wrap>
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerkesztés</Button>
           ) : null}
@@ -169,11 +194,13 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
 
   return (
     <Card size="small" title="Tételek">
-      <Table columns={columns} dataSource={items || []} rowKey="id" pagination={false} />
+      <Table columns={columns} dataSource={items || []} rowKey="id" pagination={false} scroll={{ x: 'max-content' }} />
+      {!hidePrices && (
       <div style={{ marginTop: 12, textAlign: 'right' }}>
         <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
         <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
       </div>
+      )}
       
       <Modal
         title="Tétel csatolmányok"

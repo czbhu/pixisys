@@ -140,7 +140,10 @@ class ManufacturingService {
         const response = await api.get('/manufacturing/products/');
         return response.data.results || response.data;
     }
-
+    async getProduct(id: number): Promise<ManufacturingProduct> {
+        const response = await api.get(`/manufacturing/products/${id}/`);
+        return response.data;
+    }
     async getProductsByStatus(status: string): Promise<ManufacturingProduct[]> {
         const response = await api.get(`/manufacturing/products/by_status/?status=${status}`);
         return response.data;

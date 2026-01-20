@@ -225,7 +225,7 @@ class QuoteRequestItem(models.Model):
     product = models.ForeignKey(Product, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Termék")
     material = models.ForeignKey('warehouse.Material', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Alapanyag/Termék", related_name='quote_items')
     manufacturing_product = models.ForeignKey('manufacturing.ManufacturingProduct', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Gyártási termék")
-    service = models.ForeignKey('sales.Service', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Szolgáltatás")
+    service = models.ForeignKey('manufacturing.Service', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Szolgáltatás")
     quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1, verbose_name="Mennyiség")
     unit = models.CharField(max_length=20, default='db', verbose_name="Mennyiségi egység")
     net_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó egységár")
@@ -382,6 +382,31 @@ class SearchStat(models.Model):
         verbose_name = "Keresési statisztika"
         verbose_name_plural = "Keresési statisztikák"
 
+class QuoteRequestCost(models.Model):
+    """Ajánlat költségek"""
+    quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, related_name='costs', verbose_name="Ajánlat")
+    material = models.ForeignKey('warehouse.Material', null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Alapanyag")
+    code = models.CharField(max_length=50, blank=True, verbose_name="Cikkszám")
+    name = models.CharField(max_length=200, verbose_name="Megnevezés")
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, default=1, verbose_name="Mennyiség")
+    unit = models.CharField(max_length=20, default='db', verbose_name="Egység")
+    net_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó egységár")
+    net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó összesen")
+    supplier = models.ForeignKey(CrmCompany, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Beszállító", related_name='quote_costs')
+    is_stock = models.BooleanField(default=False, verbose_name="Raktári")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Ajánlat költség"
+        verbose_name_plural = "Ajánlat költségek"
+
+    def save(self, *args, **kwargs):
+        self.net_total = (self.quantity or 0) * (self.net_unit_price or 0)
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.name} ({self.quantity} {self.unit})"
+
 class QuoteItem(models.Model):
     """Ajánlat tételek"""
     quote = models.ForeignKey(Quote, on_delete=models.CASCADE, related_name='items', verbose_name="Ajánlat")
@@ -474,3 +499,50 @@ class Forecast(models.Model):
     actual_revenue = models.DecimalField(max_digits=10, decimal_places=2)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+class WorkLog(models.Model):
+    """Munka idő nyilvántartás (Stopper)"""
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Felhasználó")
+    customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Megrendelés")
+    item = models.ForeignKey(CustomerOrderItem, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Tétel")
+    workflow_name = models.CharField(max_length=200, verbose_name="Munkafolyamat")
+    started_at = models.DateTimeField(verbose_name="Kezdés")
+    ended_at = models.DateTimeField(null=True, blank=True, verbose_name="Befejezés")
+    duration_seconds = models.IntegerField(default=0, verbose_name="Időtartam (mp)")
+    
+    class Meta:
+        verbose_name = "Munkanapló"
+        verbose_name_plural = "Munkanaplók"
+        ordering = ['-started_at']
+
+    def __str__(self):
+        return f"{self.user} - {self.customer_order.order_number} - {self.workflow_name}"
+
+class ChatThread(models.Model):
+    """Chat beszélgetés Árajánlat vagy Megrendelés kapcsán"""
+    quote_request = models.OneToOneField(QuoteRequest, on_delete=models.CASCADE, related_name='chat_thread', null=True, blank=True)
+    customer_order = models.OneToOneField(CustomerOrder, on_delete=models.CASCADE, related_name='chat_thread', null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Chat foly folyam"
+        verbose_name_plural = "Chat folyamok"
+
+class ChatMessage(models.Model):
+    thread = models.ForeignKey(ChatThread, on_delete=models.CASCADE, related_name='messages')
+    sender = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
+    content = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        ordering = ['created_at']
+
+class ChatMessageAttachment(models.Model):
+    message = models.ForeignKey(ChatMessage, on_delete=models.CASCADE, related_name='attachments')
+    file = models.FileField(upload_to='chat_attachments/%Y/%m/%d/')
+    original_filename = models.CharField(max_length=255)
+    
+    def __str__(self):
+        return self.original_filename
+

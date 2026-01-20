@@ -112,12 +112,15 @@ class MaterialSupplierViewSet(viewsets.ModelViewSet):
         queryset = MaterialSupplier.objects.all()
         material = self.request.query_params.get('material', None)
         supplier = self.request.query_params.get('supplier', None)
+        supplier_ext = self.request.query_params.get('supplier_external_id', None)
         
         if material:
             queryset = queryset.filter(material_id=material)
         
         if supplier:
             queryset = queryset.filter(supplier_id=supplier)
+        elif supplier_ext:
+            queryset = queryset.filter(supplier_external_id=supplier_ext)
         
         return queryset
 
@@ -179,6 +182,7 @@ class MaterialCostItemViewSet(viewsets.ModelViewSet):
         queryset = MaterialCostItem.objects.select_related('material', 'supplier')
         material_id = self.request.query_params.get('material_id', None)
         supplier_id = self.request.query_params.get('supplier_id', None)
+        supplier_ext = self.request.query_params.get('supplier_external_id', None)
         is_internal = self.request.query_params.get('is_internal', None)
         
         if material_id:
@@ -186,6 +190,8 @@ class MaterialCostItemViewSet(viewsets.ModelViewSet):
         
         if supplier_id:
             queryset = queryset.filter(supplier_id=supplier_id)
+        elif supplier_ext:
+            queryset = queryset.filter(supplier_external_id=supplier_ext)
         
         if is_internal is not None:
             queryset = queryset.filter(is_internal=is_internal.lower() == 'true')

@@ -5,14 +5,16 @@ import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
+import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 import { Upload, Popconfirm } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { crmService } from '../../services/crmService';
 import dayjs from 'dayjs';
-import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined } from '@ant-design/icons';
+import { LeftOutlined, DeleteOutlined, UserAddOutlined, UserSwitchOutlined, LogoutOutlined, TeamOutlined, PlusOutlined, MessageOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
+import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 
 const { TextArea } = Input;
 
@@ -27,6 +29,7 @@ const RFQDetail: React.FC = () => {
   const [formBasic] = Form.useForm();
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
@@ -51,6 +54,25 @@ const RFQDetail: React.FC = () => {
   const [navPreviewData, setNavPreviewData] = useState<any>(null);
   const [navPreviewSel, setNavPreviewSel] = useState<Record<string, boolean>>({});
   const [navDebug, setNavDebug] = useState<boolean>(false);
+  const selectedCompanyId = Form.useWatch('company_id', formBasic);
+
+  const contactOptionLabel = (p: any) => {
+    const nameParts = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
+    const altNameParts = [p.last_name, p.first_name].filter(Boolean).join(' ').trim();
+    return (
+      p.full_name ||
+      p.fullName ||
+      nameParts ||
+      altNameParts ||
+      p.name ||
+      p.email ||
+      p.phone ||
+      p.mobile ||
+      p.company_name ||
+      p.customer_name ||
+      p.id
+    );
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -63,19 +85,41 @@ const RFQDetail: React.FC = () => {
         manufacturingService.getCurrencies(),
       ]);
       setRfq(rfqRes);
-      const allCompanies = (compRes as any).results ?? compRes;
-      setCompanies((allCompanies as any[]).filter((c: any) => c.is_customer));
+      let allCompanies = (compRes as any).results ?? compRes;
+      // Filter for customers locally or use what we got
+      let filteredCompanies = (allCompanies as any[]).filter((c: any) => c.is_customer);
+      // Ensure the currently assigned company is in the list
+      if (rfqRes?.company?.id && !filteredCompanies.find((c: any) => c.id === rfqRes.company.id)) {
+        filteredCompanies.push(rfqRes.company);
+      }
+      setCompanies(filteredCompanies);
+
       setCurrencyList(currRes as any);
       if (rfqRes?.company?.id) {
         try {
           const cl = await crmService.getContactsByCompany(rfqRes.company.id);
-          setContacts((cl as any).results ?? cl);
+          const loadedContacts = ((cl as any).results ?? cl) || [];
+          // Ensure assigned contacts are in the list
+          if (rfqRes.contacts && rfqRes.contacts.length > 0) {
+            rfqRes.contacts.forEach((rc: any) => {
+              if (!loadedContacts.find((c: any) => c.id === rc.id)) {
+                loadedContacts.push(rc);
+              }
+            });
+          }
+          setContacts(loadedContacts);
         } catch {}
       } else if (rfqRes?.contacts && rfqRes.contacts.length > 0) {
         // Ha nincs cég, de vannak kapcsolattartók, akkor magánszemélyek
         try {
           const cl = await crmService.getPrivateContacts();
-          setContacts((cl as any).results ?? cl);
+          const loadedContacts = ((cl as any).results ?? cl) || [];
+          rfqRes.contacts.forEach((rc: any) => {
+            if (!loadedContacts.find((c: any) => c.id === rc.id)) {
+              loadedContacts.push(rc);
+            }
+          });
+          setContacts(loadedContacts);
         } catch {}
       } else {
         setContacts([]);
@@ -91,12 +135,13 @@ const RFQDetail: React.FC = () => {
           issue_date: rfqRes.issue_date ? dayjs(rfqRes.issue_date) : null,
           deadline: rfqRes.deadline ? dayjs(rfqRes.deadline) : null,
           company_id: rfqRes.company?.id || (rfqRes.contacts && rfqRes.contacts.length > 0 ? 'private' : undefined),
-          contact_ids: (rfqRes.contacts || []).map((c: any) => c.id),
+          contact_ids: (rfqRes.contacts || []).map((c: any) => String(c.id)),
           title: computedDemandTitle,
           project_id: rfqRes.project?.id || rfqRes.project,
           description: rfqRes.description,
           internal_description: rfqRes.internal_description,
           currency_code: rfqRes.currency_code || 'HUF',
+          partial_order_allowed: rfqRes.partial_order_allowed ?? true,
         });
       } catch {}
       try {
@@ -124,6 +169,10 @@ const RFQDetail: React.FC = () => {
       } catch {}
     })();
   }, []);
+
+  // Frissítsd a kapcsolattartó listát, amikor cég választás változik - REMOVED to avoid overwriting on load
+  // useEffect logic moved to Select onChange and initial load
+
 
   const isDemand = (rfq?: any) => {
     const itc = (rfq?.items || []).length;
@@ -327,6 +376,7 @@ const RFQDetail: React.FC = () => {
         <Button icon={<LeftOutlined />} onClick={() => navigate('/sales/rfqs')}>Vissza</Button>
         <span>{isDemand(rfq) ? 'Ajánlat' : 'Árajánlat'} {rfq.number || rfq.request_number}</span>
       </Space>} extra={<Space>
+        <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
         <Button type="primary" onClick={async () => {
           try {
             const q = await salesService.createQuoteFromRfq(Number(id));
@@ -392,6 +442,7 @@ const RFQDetail: React.FC = () => {
               contact_ids: v.contact_ids || [],
               project_id: v.project_id,
               currency_code: v.currency_code,
+              partial_order_allowed: v.partial_order_allowed,
             };
             
             // Set company_id: null for private, or the actual ID
@@ -496,7 +547,12 @@ const RFQDetail: React.FC = () => {
                       allowClear 
                       showSearch 
                       optionFilterProp="label" 
+                      optionLabelProp="label"
                       placeholder="Válassz kapcsolattartókat"
+                      options={(contacts || []).map((p: any, idx: number) => ({
+                        value: String(p.id ?? idx),
+                        label: contactOptionLabel(p),
+                      }))}
                       onFocus={async () => {
                         // Frissítjük a kapcsolattartók listáját amikor rákattintanak
                         const companyId = formBasic.getFieldValue('company_id');
@@ -508,11 +564,7 @@ const RFQDetail: React.FC = () => {
                           setContacts((list as any).results ?? list);
                         }
                       }}
-                    >
-                      {(contacts || []).map((p: any) => (
-                        <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                      ))}
-                    </Select>
+                    />
                   </Form.Item>
                 </Col>
                 <Col flex="40px">
@@ -564,7 +616,7 @@ const RFQDetail: React.FC = () => {
             </Col>
           </Row>
           <Row gutter={12}>
-            <Col span={8}>
+            <Col span={6}>
               <Form.Item label="Pénznem" name="currency_code">
                 <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet">
                   {(currencyList || []).map((c: any) => (
@@ -575,7 +627,12 @@ const RFQDetail: React.FC = () => {
                 </Select>
               </Form.Item>
             </Col>
-            <Col span={16} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
+            <Col span={6}>
+              <Form.Item label=" " name="partial_order_allowed" valuePropName="checked">
+                <Checkbox>Részlegesen megrendelhető</Checkbox>
+              </Form.Item>
+            </Col>
+            <Col span={12} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
               <div style={{ flex: 1 }} />
               <div style={{ alignSelf: 'flex-end' }}>{statusTag(rfq.status)}</div>
               <Button type="primary" htmlType="submit">Mentés</Button>
@@ -587,10 +644,55 @@ const RFQDetail: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
           <div style={{ color: '#555' }}>
             {rfq?.owner_name ? (<span><strong>Felelős:</strong> {rfq.owner_name} </span>) : (<span><strong>Felelős:</strong> - </span>)}
-            {rfq?.assignee_names ? (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> {rfq.assignee_names}</span>) : (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> -</span>)}
+            
+            <div style={{ display: 'inline-block', marginLeft: 12 }}>
+                <strong>Résztvevők: </strong>
+                {rfq?.assignee_details && rfq.assignee_details.length > 0 ? (
+                    rfq.assignee_details.map((part: any) => (
+                        <Tag 
+                            key={part.id} 
+                            closable 
+                            onClose={async (e) => {
+                                e.preventDefault();
+                                try {
+                                    await salesService.removeAssignee(Number(id), part.id);
+                                    message.success('Résztvevő eltávolítva');
+                                    load();
+                                } catch {
+                                    message.error('Hiba törléskor');
+                                }
+                            }}
+                        >
+                            {part.name}
+                        </Tag>
+                    ))
+                ) : (
+                    <span>-</span>
+                )}
+            </div>
+
             {Array.isArray(rfq?.invitations_pending) && (rfq.invitations_pending.length > 0) ? (
               <span style={{ marginLeft: 12, color: '#888' }}>
-                <strong>Meghívottak:</strong> {rfq.invitations_pending.map((i: any) => i.invitee_name).join(', ')}
+                <strong>Meghívottak: </strong>
+                {rfq.invitations_pending.map((i: any) => (
+                    <Tag 
+                        key={i.id} 
+                        closable 
+                        color="warning"
+                        onClose={async (e) => {
+                                e.preventDefault();
+                                try {
+                                    await salesService.cancelInvitation(Number(id), i.id);
+                                    message.success('Meghívás visszavonva');
+                                    load();
+                                } catch {
+                                    message.error('Hiba');
+                                }
+                            }}
+                    >
+                        {i.invitee_name}
+                    </Tag>
+                ))}
               </span>
             ) : null}
           </div>
@@ -666,6 +768,12 @@ const RFQDetail: React.FC = () => {
       setSelectorType(item.item_type);
       setSelectorOpen(true);
     }}
+  />
+
+  <RFQCostsTable 
+    rfqId={Number(id)} 
+    totalRevenue={(rfq?.items || []).reduce((sum: number, item: any) => sum + (Number(item.discounted_net_total || item.net_total) || 0), 0)}
+    currency={rfq?.currency_code || 'HUF'}
   />
 
         <Divider />
@@ -955,7 +1063,8 @@ const RFQDetail: React.FC = () => {
                         if (navDebug) {
                           console.log('[RFQDetail] NAV lookup result', data);
                         }
-                        const downHost = (data as any)?.debug?.finance?.host;
+                        const debugInfo = (data as any)?.debug;
+                        const downHost = debugInfo?.finance?.host;
                         if (downHost) {
                           message.error(`Nem elérhető az API host: ${downHost}`);
                         }
@@ -968,15 +1077,15 @@ const RFQDetail: React.FC = () => {
                           }
                         }
                         if (data && data.found === false) {
-                          const base = data?.debug?.finance?.host || data?.debug?.client?.base || data?.debug?.fallback?.url;
+                          const base = debugInfo?.finance?.host || debugInfo?.client?.base || debugInfo?.fallback?.url;
                           if (base) {
                             message.error(`Nem elérhető az API host: ${base}`);
                           } else {
                             message.warning('Nem található cég a megadott adószám alapján');
                           }
-                          setNavPreviewData(data?.debug ? data : null);
+                          setNavPreviewData(debugInfo ? data : null);
                           setNavPreviewSel({});
-                          if (data?.debug) setNavPreviewOpen(true);
+                          if (debugInfo) setNavPreviewOpen(true);
                           return;
                         }
                         // Default selection: select fields that have a value and current form is empty
@@ -1297,6 +1406,13 @@ const RFQDetail: React.FC = () => {
           <Alert type="warning" message="Nincs előnézeti adat" />
         )}
       </Modal>
+
+      <ChatDrawer 
+        open={chatOpen} 
+        onClose={() => setChatOpen(false)} 
+        rfqId={Number(id)} 
+        title={`Chat - ${rfq.number || rfq.request_number}`}
+      />
     </div>
   );
 };

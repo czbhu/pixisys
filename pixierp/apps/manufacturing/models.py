@@ -304,6 +304,7 @@ class ManufacturingProduct(models.Model):
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Valuta")
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='quote_request_open', verbose_name="Állapot")
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Ügyfél")
+    contact_external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Kapcsolattartó külső azonosító")
     deadline = models.DateField(verbose_name="Határidő")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -352,6 +353,14 @@ class Service(models.Model):
         verbose_name="Mértékegység"
     )
     
+    calculation_unit = models.CharField(
+        max_length=20,
+        choices=UNIT_CHOICES + [('minute', 'perc')],
+        default='db',
+        verbose_name="Kalkulációs mértékegység",
+        help_text="Ha eltér az alap mértékegységtől, a rendszer átváltja"
+    )
+
     calculation_basis = models.CharField(
         max_length=20,
         choices=CALCULATION_BASIS_CHOICES,
@@ -371,7 +380,7 @@ class Service(models.Model):
     )
     
     markup_percentage = models.DecimalField(
-        max_digits=5,
+        max_digits=10,
         decimal_places=2,
         default=35.00,
         validators=[MinValueValidator(0)],
@@ -933,6 +942,14 @@ class ServiceCostItem(models.Model):
         verbose_name="Megnevezés",
         help_text="pl. Anyagköltség, Munkadíj, stb."
     )
+
+    rounding_step = models.DecimalField(
+        max_digits=10,
+        decimal_places=4,
+        default=1.0,
+        verbose_name="Elszámolási egység (kerekítés)",
+        help_text="Pl. 0.5 óra, 10 perc, 1 db. Mindig felfelé kerekít."
+    )
     
     calculation_type = models.CharField(
         max_length=20,
@@ -958,10 +975,10 @@ class ServiceCostItem(models.Model):
     )
     
     markup_percentage = models.DecimalField(
-        max_digits=5,
+        max_digits=10,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        validators=[MinValueValidator(0)],
         verbose_name="Haszon kulcs (%)"
     )
     

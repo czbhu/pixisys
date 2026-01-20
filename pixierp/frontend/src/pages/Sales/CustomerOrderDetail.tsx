@@ -1,19 +1,25 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
-import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined } from '@ant-design/icons';
+import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { useAuth } from '../../contexts/AuthContext';
+import { useTimeTracker } from '../../contexts/TimeTrackerContext';
+import { Table } from 'antd';
+import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 
 const { TextArea } = Input;
+
 
 const CustomerOrderDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const hidePrices = location.state?.hidePrices;
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<any>();
@@ -25,6 +31,26 @@ const CustomerOrderDetail: React.FC = () => {
   const [takeoverConfirmOpen, setTakeoverConfirmOpen] = useState(false);
   const [allUsers, setAllUsers] = useState<Array<{ id: number; name: string }>>([]);
   const [inviteUserId, setInviteUserId] = useState<number | null>(null);
+  
+  // Work Log features
+  const { setModalOpen: setTimerModalOpen, setPreselectedOrderId } = useTimeTracker();
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [workLogs, setWorkLogs] = useState<any[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+
+  const loadLogs = async () => {
+    try {
+        const params: any = { order_id: id };
+        if (hidePrices) {
+            params.user_id = user?.id;
+        }
+        const res = await salesService.getWorkLogs(params);
+        setWorkLogs(res.results ?? res);
+        setLogModalOpen(true);
+    } catch (e) {
+        message.error('Nem sikerült betölteni a naplót');
+    }
+  };
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -75,6 +101,24 @@ const CustomerOrderDetail: React.FC = () => {
     })();
   }, []);
 
+  const handleBack = useCallback(() => {
+    if (location.key !== "default") {
+        navigate(-1);
+    } else {
+        navigate('/sales/customer-orders');
+    }
+  }, [navigate]);
+
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+        if (e.key === 'Escape') {
+            handleBack();
+        }
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [handleBack]);
+
   const handleStatusChange = async (action: string) => {
     try {
       await api.post(`/sales/customer-orders/${id}/${action}/`, {});
@@ -115,9 +159,15 @@ const CustomerOrderDetail: React.FC = () => {
   return (
     <div>
       <Card title={<Space>
-        <Button icon={<LeftOutlined />} onClick={() => navigate('/sales/customer-orders')}>Vissza</Button>
+        <Button icon={<LeftOutlined />} onClick={handleBack}>Vissza</Button>
         <span>Megrendelés {order.order_number}</span>
       </Space>} extra={<Space>
+        <Button icon={<MessageOutlined />} onClick={() => setChatOpen(true)}>Chat</Button>
+        <Button icon={<ClockCircleOutlined />} onClick={() => {
+            if (order?.id) setPreselectedOrderId(order.id);
+            setTimerModalOpen(true);
+        }}>Stopper</Button>
+        <Button icon={<HistoryOutlined />} onClick={loadLogs}>Munkanapló</Button>
         {order.status === 'new' && (
           <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('confirm')}>
             Megerősítés
@@ -225,10 +275,57 @@ const CustomerOrderDetail: React.FC = () => {
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
           <div style={{ color: '#555' }}>
             {rfq?.owner_name ? (<span><strong>Felelős:</strong> {rfq.owner_name} </span>) : (<span><strong>Felelős:</strong> - </span>)}
-            {rfq?.assignee_names ? (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> {rfq.assignee_names}</span>) : (<span style={{ marginLeft: 12 }}><strong>Résztvevők:</strong> -</span>)}
+            
+            <div style={{ display: 'inline-block', marginLeft: 12 }}>
+                <strong>Résztvevők: </strong>
+                {rfq?.assignee_details && rfq.assignee_details.length > 0 ? (
+                    rfq.assignee_details.map((part: any) => (
+                        <Tag 
+                            key={part.id} 
+                            closable={!hidePrices}
+                            onClose={async (e) => {
+                                e.preventDefault();
+                                if (!rfq?.id) return;
+                                try {
+                                    await salesService.removeAssignee(rfq.id, part.id);
+                                    message.success('Résztvevő eltávolítva');
+                                    load();
+                                } catch {
+                                    message.error('Hiba törléskor');
+                                }
+                            }}
+                        >
+                            {part.name}
+                        </Tag>
+                    ))
+                ) : (
+                    <span>-</span>
+                )}
+            </div>
+
             {Array.isArray(rfq?.invitations_pending) && (rfq.invitations_pending.length > 0) ? (
               <span style={{ marginLeft: 12, color: '#888' }}>
-                <strong>Meghívottak:</strong> {rfq.invitations_pending.map((i: any) => i.invitee_name).join(', ')}
+                <strong>Meghívottak: </strong>
+                {rfq.invitations_pending.map((i: any) => (
+                    <Tag 
+                        key={i.id} 
+                        closable={!hidePrices}
+                        color="warning"
+                        onClose={async (e) => {
+                                e.preventDefault();
+                                if (!rfq?.id) return;
+                                try {
+                                    await salesService.cancelInvitation(rfq.id, i.id);
+                                    message.success('Meghívás visszavonva');
+                                    load();
+                                } catch {
+                                    message.error('Hiba');
+                                }
+                            }}
+                    >
+                        {i.invitee_name}
+                    </Tag>
+                ))}
               </span>
             ) : null}
           </div>
@@ -289,6 +386,7 @@ const CustomerOrderDetail: React.FC = () => {
           onRefresh={load}
           quoteRequestId={rfq?.id ? Number(rfq.id) : undefined}
           currency={rfq?.currency_code || 'HUF'}
+          hidePrices={hidePrices}
         />
 
         <Divider />
@@ -347,12 +445,43 @@ const CustomerOrderDetail: React.FC = () => {
         <Divider />
 
       </Card>
+      <Modal
+        title={`Munkanapló - Összesen: ${(workLogs.reduce((acc, log) => acc + (log.duration_seconds || 0), 0) / 60).toFixed(1)} perc`}
+        open={logModalOpen}
+        onCancel={() => setLogModalOpen(false)}
+        footer={[<Button key="close" onClick={() => setLogModalOpen(false)}>Bezárás</Button>]}
+        width={1000}
+      >
+        <Table
+          dataSource={workLogs}
+          rowKey="id"
+          pagination={false}
+          columns={[
+            { title: 'ID', dataIndex: 'id', width: 60 },
+            { title: 'Felhasználó', dataIndex: 'user_name' },
+            { title: 'Tétel', dataIndex: 'item_name' },
+            { title: 'Folyamat', dataIndex: 'workflow_name' },
+            { title: 'Kezdet', dataIndex: 'started_at', render: (val) => new Date(val).toLocaleString('hu-HU') },
+            { title: 'Vége', dataIndex: 'ended_at', render: (val) => val ? new Date(val).toLocaleString('hu-HU') : 'Folyamatban' },
+            { title: 'Időtartam (perc)', dataIndex: 'duration_seconds', align: 'right', render: (val) => (val/60).toFixed(1) },
+          ]}
+        />
+      </Modal>
+
       <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {
         if (!rfq?.id) return;
         try { await salesService.takeoverQuoteRequest(rfq.id); message.success('Átvetted'); setTakeoverConfirmOpen(false); load(); } catch { message.error('Nem sikerült átvenni'); }
       }}>
         Biztosan átveszed? Mindenki más lekerül a feladatról és csak te maradsz.
       </Modal>
+
+      <ChatDrawer
+        open={chatOpen} 
+        onClose={() => setChatOpen(false)} 
+        orderId={Number(id)} 
+        rfqId={order.quote_request?.id}
+        title={`Chat - ${order.order_number}`}
+      />
     </div>
   );
 };

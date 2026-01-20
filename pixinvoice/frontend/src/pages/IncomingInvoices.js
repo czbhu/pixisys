@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
 import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar } from 'lucide-react';
+import { Pagination, Spin } from 'antd';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
 import { useAuth } from '../contexts/AuthContext';
@@ -150,9 +151,7 @@ const IconButton = styled.button`
   &:hover { opacity: 0.85; }
 `;
 
-const Sentinel = styled.div`
-  height: 1px;
-`;
+
 
 const SecondaryButton = styled.button`
   display: inline-flex;
@@ -216,6 +215,119 @@ const ModalBody = styled.div`
   overflow: auto;
 `;
 
+
+
+const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
+  const [tab, setTab] = useState('batches'); // batches | statements
+  const [batches, setBatches] = useState([]);
+  const [statements, setStatements] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!visible || !companyId) return;
+    loadData();
+  }, [visible, companyId, tab]);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      if (tab === 'batches') {
+        const res = await api.get('/api/payment-batches/', { params: { company: companyId } });
+        setBatches(res.data?.results || res.data || []);
+      } else {
+        const res = await api.get('/api/bank-statements/', { params: { company: companyId } });
+        setStatements(res.data?.results || res.data || []);
+      }
+    } catch (e) {
+      toast.error('Adatok betöltése sikertelen');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!visible) return null;
+
+  return (
+    <ModalOverlay onClick={onClose}>
+      <ModalContent onClick={e => e.stopPropagation()} style={{ width: '80vw', maxWidth: 1200 }}>
+        <ModalHeader>
+          <ModalTitle>Kifizetések és Bankkivonatok</ModalTitle>
+          <CloseBtn onClick={onClose}><X size={18} /></CloseBtn>
+        </ModalHeader>
+        <div style={{ display: 'flex', borderBottom: '1px solid #eee', padding: '0 16px' }}>
+          <button 
+             onClick={() => setTab('batches')} 
+             style={{ padding: '12px 16px', border: 'none', background: 'transparent', borderBottom: tab==='batches'?'2px solid #3498db':'none', fontWeight: tab==='batches'?'600':'400', cursor: 'pointer' }}
+          >
+            Utalási csomagok
+          </button>
+          <button 
+             onClick={() => setTab('statements')} 
+             style={{ padding: '12px 16px', border: 'none', background: 'transparent', borderBottom: tab==='statements'?'2px solid #3498db':'none', fontWeight: tab==='statements'?'600':'400', cursor: 'pointer' }}
+          >
+            Bankkivonatok
+          </button>
+        </div>
+        <ModalBody>
+           {loading ? <div style={{textAlign:'center', padding:20}}><Spin /></div> : (
+             tab === 'batches' ? (
+               <div style={{overflow:'auto'}}>
+               <Table>
+                 <thead>
+                   <tr>
+                     <TableHeaderCell style={{padding:8}}>Név</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Státusz</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Tételek</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Deviza</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Létrehozva</TableHeaderCell>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {batches.map(b => (
+                     <tr key={b.id} style={{borderBottom:'1px solid #f0f0f0'}}>
+                       <td style={{padding:8}}>{b.name}</td>
+                       <td style={{padding:8}}>
+                         <StatusPill variant={b.status==='EXPORTED'?'paid':'unpaid'}>{b.status === 'EXPORTED' ? 'Exportálva' : 'Függő'}</StatusPill>
+                       </td>
+                       <td style={{padding:8}}>{b.items?.length || b.item_count || 0}</td>
+                       <td style={{padding:8}}>{b.currency}</td>
+                       <td style={{padding:8}}>{b.created_at?.substring(0,10)}</td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </Table>
+               </div>
+             ) : (
+                <div style={{overflow:'auto'}}>
+               <Table>
+                 <thead>
+                   <tr>
+                     <TableHeaderCell style={{padding:8}}>Kivonat</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Dátum</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Számla</TableHeaderCell>
+                     <TableHeaderCell style={{padding:8}}>Tételek</TableHeaderCell>
+                   </tr>
+                 </thead>
+                 <tbody>
+                   {statements.map(s => (
+                     <tr key={s.id} style={{borderBottom:'1px solid #f0f0f0'}}>
+                       <td style={{padding:8}}>{s.sequence_number}</td>
+                       <td style={{padding:8}}>{s.statement_date}</td>
+                       <td style={{padding:8}}>{s.bank_account_label || s.account_label || ''}</td>
+                       <td style={{padding:8}}>{Array.isArray(s.items) ? s.items.length : (s.items_count || '-')}</td>
+                     </tr>
+                   ))}
+                 </tbody>
+               </Table>
+               </div>
+             )
+           )}
+        </ModalBody>
+      </ModalContent>
+    </ModalOverlay>
+  );
+};
+
 export default function IncomingInvoices() {
   const [companyId, setCompanyId] = useState(() => localStorage.getItem('selectedCompanyId') || '');
   const [dateFrom, setDateFrom] = useState(null);
@@ -226,8 +338,9 @@ export default function IncomingInvoices() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
+  const [totalItems, setTotalItems] = useState(0);
   const [hasMore, setHasMore] = useState(true);
-  const [isFetchingMore, setIsFetchingMore] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
   const [searchText, setSearchText] = useState('');
@@ -267,6 +380,7 @@ export default function IncomingInvoices() {
   const [batchTab, setBatchTab] = useState('pending');
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
+  const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const searchTimer = useRef(null);
   const [approvalSaving, setApprovalSaving] = useState({});
   const formatDate = (d) => {
@@ -393,16 +507,44 @@ export default function IncomingInvoices() {
 
   const fetchDigest = async (pageArg, opts = {}) => {
     if (!companyId) { toast.error('Válassz céget'); return; }
-    const replace = !!opts.replace;
+    const replace = true; // Always replace in pagination mode
     const doRefresh = opts.refresh ? 1 : 0;
-    if (pageArg && pageArg > 1) setIsFetchingMore(true); else setLoading(true);
+    setLoading(true);
     setErrorMsg('');
     try {
-      const res = await api.get('/api/invoices/incoming/', { params: { company_id: companyId, date_from: dateFrom, date_to: dateTo, page: pageArg || page, refresh: doRefresh, backfill_all: opts.backfillAll ? 1 : undefined, search: (searchText||'').trim() || undefined, status: statusFilter==='all'? undefined : statusFilter, payment_method: paymentFilter==='all'? undefined : paymentFilter, approval: approvalFilter==='all'? undefined : approvalFilter } });
+      const res = await api.get('/api/invoices/incoming/', { params: { 
+        company_id: companyId, 
+        date_from: dateFrom, 
+        date_to: dateTo, 
+        page: pageArg || page,
+        page_size: pageSize, 
+        refresh: doRefresh, 
+        backfill_all: opts.backfillAll ? 1 : undefined, 
+        search: (searchText||'').trim() || undefined, 
+        status: statusFilter==='all'? undefined : statusFilter, 
+        payment_method: paymentFilter==='all'? undefined : paymentFilter, 
+        approval: approvalFilter==='all'? undefined : approvalFilter 
+      } });
       const data = res.data || {};
       if (data.success && Array.isArray(data.items)) {
-        setItems(prev => (replace ? data.items : [...prev, ...data.items]));
+        setItems(data.items);
         setPage(data.page || pageArg || 1);
+        setTotalItems(data.totalItems || 0); // Use backend provided totalItems, or 0
+        // Fallback for older backend if totalItems is missing but pageCount is present
+        if (!data.totalItems && data.items.length > 0 && data.pageCount) {
+             // Heuristic: if items < pageSize and this is last page, we can guess
+             // But simpler to just rely on pageCount for display if needed, but Antd needs total.
+             // If totalItems is missing, we might see 0 items. 
+             // We can try to approximate: (pageCount - 1) * pageSize + items.length 
+             // if we are on the last page.
+             // But best is to rely on backend update.
+             if (data.page === data.pageCount) {
+                 setTotalItems((data.pageCount - 1) * pageSize + data.items.length);
+             } else {
+                 setTotalItems(data.pageCount * pageSize); // Approximate
+             }
+        }
+        
         setHasMore(!!data.hasMore);
         setLastRefreshedAt(data.lastRefreshedAt || null);
         if (data.refreshError) {
@@ -425,7 +567,6 @@ export default function IncomingInvoices() {
       toast.error(msg);
     } finally {
       setLoading(false);
-      setIsFetchingMore(false);
     }
   };
 
@@ -434,27 +575,15 @@ export default function IncomingInvoices() {
     if (!companyId) return;
     if (searchTimer.current) clearTimeout(searchTimer.current);
     searchTimer.current = setTimeout(() => {
-      setPage(1); setItems([]); setHasMore(true);
+      setPage(1); setHasMore(true);
       fetchDigest(1, { replace: true });
     }, 400);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
+  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, pageSize]);
 
-  // Infinite scroll sentinel
-  useEffect(() => {
-    const el = document.getElementById('incoming-sentinel');
-    if (!el) return;
-    const io = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        if (entry.isIntersecting && !loading && !isFetchingMore && hasMore) {
-          fetchDigest((page || 1) + 1, { replace: false });
-        }
-      });
-    }, { rootMargin: '200px' });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [loading, isFetchingMore, hasMore, page, companyId, dateFrom, dateTo]);
+
+
 
   const downloadXml = async (invoiceNumber, supplierTaxNumber) => {
     // kept as fallback download if needed in the future
@@ -1300,6 +1429,25 @@ export default function IncomingInvoices() {
 
   const cancelEditBatch = () => { setEditingBatch(null); };
 
+  const antPagination = (
+    <div style={{ padding: '16px 24px', background: 'white', borderTop: '1px solid #ecf0f1', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+      <div style={{ marginRight: 'auto', fontSize: 13, color: '#7f8c8d' }}>
+        Összesen {totalItems} tétel
+      </div>
+      <Pagination
+        simple={false}
+        current={page}
+        pageSize={pageSize}
+        total={totalItems}
+        showSizeChanger
+        onChange={(p, size) => { setPage(p); setPageSize(size); fetchDigest(p, { replace: true }); }}
+        onShowSizeChange={(current, size) => { setPageSize(size); setPage(1); fetchDigest(1, { replace: true }); }}
+        pageSizeOptions={['20', '50', '100', '200']}
+        showTotal={(total, range) => `${range[0]}-${range[1]} / ${total} számla`}
+      />
+    </div>
+  );
+
   return (
     <InvoicesContainer>
       <InvoicesHeader>
@@ -1308,18 +1456,18 @@ export default function IncomingInvoices() {
           <div style={{display:'flex', gap:8, alignItems:'center'}}>
             <input
               value={searchText}
-              onChange={(e)=>{ setSearchText(e.target.value); setPage(1); setItems([]); setHasMore(true); }}
+              onChange={(e)=>{ setSearchText(e.target.value); }}
               onKeyDown={(e)=>{ if (e.key==='Enter') fetchDigest(1, { replace: true }); }}
               placeholder="Gyorskereső (számla, név, adószám)"
               style={{ padding:'6px 10px', minWidth:260 }}
             />
-            <select value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); setPage(1); setItems([]); setHasMore(true); fetchDigest(1, { replace: true }); }} style={{ padding:'6px 10px' }}>
+            <select value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
               <option value="all">Mind</option>
               <option value="unpaid">Kifizetetlen</option>
               <option value="paid">Kifizetett</option>
               <option value="due">Esedékes</option>
             </select>
-            <select value={paymentFilter} onChange={(e)=>{ setPaymentFilter(e.target.value); setPage(1); setItems([]); setHasMore(true); fetchDigest(1, { replace: true }); }} style={{ padding:'6px 10px' }}>
+            <select value={paymentFilter} onChange={(e)=>{ setPaymentFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
               <option value="all">Összes fizetési mód</option>
               <option value="TRANSFER">Átutalás</option>
               <option value="CASH">Készpénz</option>
@@ -1328,7 +1476,7 @@ export default function IncomingInvoices() {
               <option value="UTANVET">Utánvét</option>
               <option value="OTHER">Egyéb</option>
             </select>
-            <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); setPage(1); setItems([]); setHasMore(true); fetchDigest(1, { replace: true }); }} style={{ padding:'6px 10px' }}>
+            <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
               <option value="all">Összes jóváhagyás</option>
               <option value="approved">Csak jóváhagyott</option>
               <option value="unapproved">Csak nem jóváhagyott</option>
@@ -1344,6 +1492,9 @@ export default function IncomingInvoices() {
           <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading}>
             <RefreshCw size={16}/> Frissítés
           </PrimaryButton>
+          <SecondaryButton onClick={() => setShowPaymentHistory(true)}>
+            Kifizetések
+          </SecondaryButton>
           <SecondaryButton onClick={openBatches}>
             <FolderOpen size={16}/> Csomagok ({pendingCount})
           </SecondaryButton>
@@ -1378,6 +1529,7 @@ export default function IncomingInvoices() {
           </div>
         </EditInfoBar>
       )}
+      {antPagination}
       <TableContainer>
         <Table>
           <TableHeader>
@@ -1531,15 +1683,21 @@ export default function IncomingInvoices() {
                             )}
                           </>
                         ) : (
-                          <StatusPill variant="paid">
-                            Kifizetve: {paymentDisplayDate || dueText}
-                          </StatusPill>
+                          <>
+                            <StatusPill variant="paid">
+                              Kifizetve: {paymentDisplayDate || dueText}
+                            </StatusPill>
+                            {row.paymentReference && <SmallMuted>{row.paymentReference}</SmallMuted>}
+                          </>
                         )
                       ) : (
                         paymentDisplayDate ? (
-                          <StatusPill variant="paid">
-                            Kifizetve: {paymentDisplayDate}
-                          </StatusPill>
+                          <>
+                            <StatusPill variant="paid">
+                              Kifizetve: {paymentDisplayDate}
+                            </StatusPill>
+                            {row.paymentReference && <SmallMuted>{row.paymentReference}</SmallMuted>}
+                          </>
                         ) : (
                           <SmallMuted>Nincs fizetési dátum</SmallMuted>
                         )
@@ -1560,13 +1718,11 @@ export default function IncomingInvoices() {
             );})}
           </TableBody>
         </Table>
-        {(loading && items.length===0) && <div style={{padding:16}}>Betöltés…</div>}
+        {(loading && items.length===0) && <div style={{padding:40, textAlign:'center'}}><Spin size="large" tip="Betöltés..." /></div>}
         {errorMsg && <div style={{padding:16, color:'#c00'}}>{errorMsg}</div>}
-        {/* sentinel for infinite scroll */}
-        <Sentinel id="incoming-sentinel" />
-        {isFetchingMore && <div style={{padding:16}}>További találatok betöltése…</div>}
-        {!hasMore && items.length>0 && <div style={{padding:16, color:'#6c757d'}}>Nincs több találat.</div>}
       </TableContainer>
+      
+      {antPagination}
 
       {/* Inline XML modal / print view (existing below) */}
       {xmlOpen && (
@@ -2075,6 +2231,12 @@ export default function IncomingInvoices() {
           </ModalContent>
         </ModalOverlay>
       )}
+      {/* Payment History Modal */}
+      <PaymentHistoryModal 
+        companyId={companyId}
+        onClose={()=>setShowPaymentHistory(false)}
+        visible={showPaymentHistory}
+      />
     </InvoicesContainer>
   );
 }

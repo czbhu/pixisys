@@ -15,9 +15,12 @@ router.register(r'orders', views.OrderViewSet)
 router.register(r'order-items', views.OrderItemViewSet)
 router.register(r'customer-orders', views.CustomerOrderViewSet)
 router.register(r'customer-order-items', views.CustomerOrderItemViewSet)
+router.register(r'quote-request-costs', views.QuoteRequestCostViewSet)
 router.register(r'leads', views.LeadViewSet)
 router.register(r'opportunities', views.OpportunityViewSet)
 router.register(r'forecasts', views.ForecastViewSet)
+router.register(r'work-logs', views.WorkLogViewSet)
+router.register(r'chats', views.ChatThreadViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),
