@@ -198,7 +198,8 @@ function AppContent() {
       )}
       <Layout style={{ 
         marginLeft: isMobile ? 0 : (sidebarCollapsed ? 80 : 200),
-        transition: 'margin-left 0.2s'
+        transition: 'margin-left 0.2s',
+        marginBottom: 0
       }}>
         <Header 
           onMenuClick={() => setMobileMenuVisible(true)}
@@ -206,9 +207,9 @@ function AppContent() {
           inviteCount={inviteCount}
         />
         <Content style={{ 
-          margin: isMobile ? '16px 8px' : '24px 16px', 
-          padding: isMobile ? 12 : 24, 
-          background: '#fff',
+          margin: isMobile ? '2px' : '2px', 
+          padding: 0, 
+          background: '#f0f2f5', 
           minHeight: 280
         }}>
           <Routes>

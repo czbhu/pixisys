@@ -51,14 +51,28 @@ class MaterialGroup(models.Model):
         related_name='created_material_groups',
         verbose_name="Létrehozta"
     )
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name="Szülő kategória"
+    )
     
     class Meta:
         verbose_name = "Alapanyag gyűjtő"
         verbose_name_plural = "Alapanyag gyűjtők"
         ordering = ['name']
     
-    def __str__(self):
+    def get_full_name(self):
+        """Recursively builds the full category path."""
+        if self.parent:
+            return f"{self.parent.get_full_name()} > {self.name}"
         return self.name
+
+    def __str__(self):
+        return self.get_full_name()
     
     def get_materials_count(self):
         """Visszaadja a gyűjtőhöz tartozó alapanyagok számát"""

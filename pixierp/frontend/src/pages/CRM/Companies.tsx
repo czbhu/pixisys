@@ -150,9 +150,20 @@ const Companies: React.FC = () => {
     useEffect(() => {
         const searchParams = new URLSearchParams(location.search);
         if (searchParams.get('action') === 'create') {
-            showCreateModal();
+            const preset = searchParams.get('preset');
+            if (preset === 'supplier') {
+                form.setFieldsValue({
+                    ...defaultFormValues,
+                    is_customer: false,
+                    is_supplier: true
+                });
+            } else {
+                form.setFieldsValue(defaultFormValues);
+            }
+            setEditingCompany(null);
+            setIsModalVisible(true);
         }
-    }, [location.search, showCreateModal]);
+    }, [location.search, showCreateModal, form]);
 
     const filteredCompanies = useMemo(() => {
         const q = (searchQuery || '').trim().toLowerCase();

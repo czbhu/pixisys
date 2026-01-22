@@ -20,9 +20,13 @@ import {
     DeleteOutlined,
     EyeOutlined,
     AppstoreOutlined,
+    QrcodeOutlined,
+    ThunderboltOutlined,
+    DatabaseOutlined,
 } from '@ant-design/icons';
 import { warehouseService } from '../../services/warehouseService';
 import api from '../../services/api';
+import QRLabelModal from '../../components/Warehouse/QRLabelModal';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -59,12 +63,41 @@ const Warehouses: React.FC = () => {
     const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
     const [shelves, setShelves] = useState<Shelf[]>([]);
     const [editingShelf, setEditingShelf] = useState<Shelf | null>(null);
+    const [qrModalVisible, setQrModalVisible] = useState(false);
+    const [qrData, setQrData] = useState<{qrValue: string, displayCode: string, title: string, subtitle?: string} | null>(null);
+    const [isInventoryVisible, setIsInventoryVisible] = useState(false);
+    const [inventoryList, setInventoryList] = useState<any[]>([]);
+    const [inventoryLoading, setInventoryLoading] = useState(false);
+    const [inventoryTitle, setInventoryTitle] = useState('');
     const [form] = Form.useForm();
     const [shelfForm] = Form.useForm();
 
     useEffect(() => {
         loadWarehouses();
     }, []);
+
+    const fetchDefaultAddress = async () => {
+        try {
+            const { data } = await api.get('/core/companies/');
+            // Assuming response structure (array or paginated)
+            const companies = Array.isArray(data) ? data : (data.results || []);
+            const defaultCompany = companies.find((c: any) => c.is_default);
+            
+            if (defaultCompany) {
+                // Construct address string if simple string not available
+                // If the API returns address string, use it.
+                // Assuming standard fields: address_city, address_street, etc.
+                let addr = '';
+                if (defaultCompany.address_zip) addr += defaultCompany.address_zip + ' ';
+                if (defaultCompany.address_city) addr += defaultCompany.address_city + ', ';
+                if (defaultCompany.address_street) addr += defaultCompany.address_street + ' ';
+                if (defaultCompany.address_house_number) addr += defaultCompany.address_house_number;
+                
+                return addr.trim();
+            }
+        } catch (e) { console.error('Error fetching default address', e); }
+        return '';
+    };
 
     const loadWarehouses = async () => {
         try {
@@ -79,10 +112,30 @@ const Warehouses: React.FC = () => {
         }
     };
 
-    const showCreateModal = () => {
+    const loadInventory = async (params: { warehouse?: number, shelf?: number }, title: string) => {
+        setInventoryTitle(title);
+        setIsInventoryVisible(true);
+        setInventoryLoading(true);
+        try {
+            const response = await api.get('/warehouse/inventory/', { params });
+            setInventoryList(Array.isArray(response.data) ? response.data : response.data.results || []);
+        } catch (error) {
+            console.error(error);
+            message.error('Hiba a készlet betöltésekor');
+        } finally {
+            setInventoryLoading(false);
+        }
+    };
+
+    const showCreateModal = async () => {
         setEditingWarehouse(null);
         form.resetFields();
-        form.setFieldsValue({ is_active: true });
+        // Fetch default address
+        const defaultAddr = await fetchDefaultAddress();
+        form.setFieldsValue({ 
+            is_active: true,
+            address: defaultAddr
+        });
         setIsModalVisible(true);
     };
 
@@ -100,6 +153,64 @@ const Warehouses: React.FC = () => {
     const showViewModal = (warehouse: Warehouse) => {
         setViewingWarehouse(warehouse);
         setIsViewModalVisible(true);
+    };
+
+    const showQRModal = (qrValue: string, displayCode: string, title: string, subtitle?: string) => {
+        setQrData({ qrValue, displayCode, title, subtitle });
+        setQrModalVisible(true);
+    };
+
+    const handleGenerateWarehouseCode = () => {
+        const name = form.getFieldValue('name');
+        if (!name) {
+            message.warning('Kérjük, először adja meg a raktár nevét!');
+            return;
+        }
+        
+        // Remove accents and special chars for code
+        const normalized = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const initials = normalized.split(' ')
+            .map((w: string) => w[0])
+            .join('')
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, ''); // Keep only alphanumeric
+            
+        const code = `${initials}001`;
+        
+        // Remove accents from code input too if needed, but here we construct it.
+        // Also remove accents from user input if they typed manually? No, just generated.
+        
+        form.setFieldsValue({ code });
+    };
+
+    const handleGenerateShelfCode = () => {
+        if (!selectedWarehouse) return;
+        
+        const name = shelfForm.getFieldValue('name');
+        if (!name) {
+            message.warning('Kérjük, először adja meg a polc nevét (pl. A sor)!');
+            return;
+        }
+
+        const normalizedName = name.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+        const shelfInitial = normalizedName.replace(/[^a-zA-Z0-9]/g, '').substring(0, 1).toUpperCase();
+        
+        const prefix = `${selectedWarehouse.code}${shelfInitial}`;
+        
+        // Find max suffix
+        let max = 0;
+        shelves.forEach(s => {
+            if (s.code.startsWith(prefix)) {
+                const suffix = s.code.substring(prefix.length);
+                if (/^\d+$/.test(suffix)) {
+                    const num = parseInt(suffix);
+                    if (num > max) max = num;
+                }
+            }
+        });
+
+        const nextStr = (max + 1).toString().padStart(2, '0');
+        shelfForm.setFieldsValue({ code: `${prefix}${nextStr}` });
     };
 
     const handleSubmit = async (values: any) => {
@@ -205,6 +316,20 @@ const Warehouses: React.FC = () => {
             dataIndex: 'code',
             key: 'code',
             sorter: (a: Warehouse, b: Warehouse) => a.code.localeCompare(b.code),
+            render: (code: string, record: Warehouse) => (
+                <Space>
+                    {code}
+                    <Button 
+                        size="small" 
+                        icon={<QrcodeOutlined />} 
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            const url = `${window.location.origin}/warehouse/warehouses?id=${record.id}`;
+                            showQRModal(url, code, record.name, record.address);
+                        }}
+                    />
+                </Space>
+            )
         },
         {
             title: 'Cím',
@@ -225,7 +350,15 @@ const Warehouses: React.FC = () => {
             title: 'Műveletek',
             key: 'actions',
             render: (record: Warehouse) => (
-                <Space>
+                <Space onClick={(e) => e.stopPropagation()}>
+                    <Button
+                        type="link"
+                        icon={<DatabaseOutlined />}
+                        onClick={() => loadInventory({ warehouse: record.id }, `Készlet: ${record.name}`)}
+                        title="Készlet"
+                    >
+                        Készlet
+                    </Button>
                     <Button
                         type="link"
                         icon={<AppstoreOutlined />}
@@ -311,7 +444,18 @@ const Warehouses: React.FC = () => {
                         label="Kód"
                         rules={[{ required: true, message: 'Kérjük, adja meg a kódot!' }]}
                     >
-                        <Input />
+                        <Input 
+                            addonAfter={
+                                <Button 
+                                    type="text" 
+                                    size="small" 
+                                    onClick={handleGenerateWarehouseCode}
+                                    icon={<ThunderboltOutlined />}
+                                >
+                                    Generálás
+                                </Button>
+                            }
+                        />
                     </Form.Item>
 
                     <Form.Item
@@ -411,7 +555,19 @@ const Warehouses: React.FC = () => {
                                     label="Kód"
                                     rules={[{ required: true, message: 'Kötelező mező' }]}
                                 >
-                                    <Input placeholder="pl. A1" />
+                                    <Input 
+                                        placeholder="pl. KR001A01" 
+                                        addonAfter={
+                                            <Button 
+                                                type="text" 
+                                                size="small" 
+                                                onClick={handleGenerateShelfCode}
+                                                icon={<ThunderboltOutlined />}
+                                            >
+                                                Generálás
+                                            </Button>
+                                        }
+                                    />
                                 </Form.Item>
 
                                 <Form.Item name="description" label="Leírás">
@@ -458,6 +614,19 @@ const Warehouses: React.FC = () => {
                                     title: 'Kód',
                                     dataIndex: 'code',
                                     key: 'code',
+                                    render: (code: string, record: Shelf) => (
+                                        <Space>
+                                            {code}
+                                            <Button 
+                                                size="small" 
+                                                icon={<QrcodeOutlined />} 
+                                                onClick={() => {
+                                                    const url = `${window.location.origin}/warehouse/warehouses?shelf_id=${record.id}`;
+                                                    showQRModal(url, code, `${selectedWarehouse?.name} - ${record.name}`, selectedWarehouse?.address);
+                                                }}
+                                            />
+                                        </Space>
+                                    )
                                 },
                                 {
                                     title: 'Leírás',
@@ -479,6 +648,14 @@ const Warehouses: React.FC = () => {
                                     key: 'actions',
                                     render: (record: Shelf) => (
                                         <Space>
+                                            <Button
+                                                type="link"
+                                                icon={<DatabaseOutlined />}
+                                                onClick={() => loadInventory({ warehouse: selectedWarehouse?.id, shelf: record.id }, `Készlet: ${selectedWarehouse?.name} - ${record.name}`)}
+                                                title="Készlet"
+                                            >
+                                                Készlet
+                                            </Button>
                                             <Button
                                                 type="link"
                                                 icon={<EditOutlined />}
@@ -504,6 +681,62 @@ const Warehouses: React.FC = () => {
                     </Card>
                 </Space>
             </Modal>
+
+            {/* Készlet Modal */}
+            <Modal
+                title={inventoryTitle}
+                open={isInventoryVisible}
+                onCancel={() => setIsInventoryVisible(false)}
+                footer={[
+                    <Button key="close" onClick={() => setIsInventoryVisible(false)}>
+                        Bezárás
+                    </Button>
+                ]}
+                width={800}
+            >
+                <Table
+                    dataSource={inventoryList}
+                    loading={inventoryLoading}
+                    rowKey="id"
+                    pagination={{ pageSize: 10 }}
+                    columns={[
+                        {
+                            title: 'Polc',
+                            dataIndex: 'shelf_name',
+                            key: 'shelf_name',
+                            render: (text) => text || '-',
+                        },
+                        {
+                            title: 'Kód',
+                            dataIndex: 'material_code',
+                            key: 'material_code',
+                        },
+                        {
+                            title: 'Név',
+                            dataIndex: 'material_name',
+                            key: 'material_name',
+                        },
+                        {
+                            title: 'Mennyiség',
+                            key: 'quantity',
+                            render: (_, record) => `${record.quantity} ${record.material_unit}`,
+                        },
+                        {
+                            title: 'Frissítve',
+                            dataIndex: 'last_updated',
+                            key: 'last_updated',
+                            render: (date) => date ? new Date(date).toLocaleString('hu-HU') : '-',
+                        }
+                    ]}
+                />
+            </Modal>
+            
+            <QRLabelModal
+                visible={qrModalVisible}
+                onClose={() => setQrModalVisible(false)}
+                data={qrData}
+                zIndex={1100}
+            />
         </div>
     );
 };

@@ -133,6 +133,7 @@ class InventoryViewSet(viewsets.ModelViewSet):
         queryset = Inventory.objects.all()
         material = self.request.query_params.get('material', None)
         warehouse = self.request.query_params.get('warehouse', None)
+        shelf = self.request.query_params.get('shelf', None)
         low_stock = self.request.query_params.get('low_stock', None)
         
         if material:
@@ -140,6 +141,9 @@ class InventoryViewSet(viewsets.ModelViewSet):
         
         if warehouse:
             queryset = queryset.filter(warehouse_id=warehouse)
+
+        if shelf:
+            queryset = queryset.filter(shelf_id=shelf)
         
         if low_stock == 'true':
             # Készlet alacsonyabb, mint a minimum készletszint

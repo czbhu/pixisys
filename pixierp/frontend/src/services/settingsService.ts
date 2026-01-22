@@ -74,7 +74,7 @@ export const settingsService = {
     return r.data;
   },
   async getUserPreferences() {
-    const r = await api.get('/core/user-preferences/me/');
+    const r = await api.get('/user-preferences/me/');
     return r.data;
   },
   async updateUserPreferences(data: any) {

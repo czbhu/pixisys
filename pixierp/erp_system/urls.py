@@ -7,7 +7,7 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
 from rest_framework import routers
-from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet
+from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet, UserPreferenceViewSet, NotificationViewSet
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import json
@@ -39,6 +39,8 @@ router.register(r'core/email-servers', EmailServerConfigViewSet, basename='email
 router.register(r'core/email-templates', EmailTemplateViewSet, basename='email-templates')
 router.register(r'core/signature-templates', SignatureTemplateViewSet, basename='signature-templates')
 router.register(r'core/pixinvoice-configs', PixinvoiceConfigViewSet, basename='pixinvoice-configs')
+router.register(r'core/user-preferences', UserPreferenceViewSet, basename='core-user-preferences')
+router.register(r'core/notifications', NotificationViewSet, basename='core-notifications')
 
 urlpatterns = [
     # Device webhooks FIRST (must be before other patterns)

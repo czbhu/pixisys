@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Button, Modal, Form, Input, message } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, message, Alert } from 'antd';
 import { settingsService } from '../../../services/settingsService';
 
 const SignaturesPage: React.FC = () => {
@@ -37,6 +37,13 @@ const SignaturesPage: React.FC = () => {
     <Card title="Aláírások" extra={<Button onClick={() => { setEditing(null); form.resetFields(); setOpen(true); }}>Új</Button>}>
   <Table rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
       <Modal title={editing ? 'Aláírás szerkesztése' : 'Új aláírás'} open={open} onOk={onSave} onCancel={() => setOpen(false)} width={800}>
+        <Alert
+          message="Elérhető változók"
+          description="A HTML tartalomban használhatja a következő változókat: {user_name}, {user_email}, {user_position}, {user_phonenumber}. Ezek automatikusan behelyettesítésre kerülnek az aláíró felhasználó adatai alapján."
+          type="info"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
         <Form layout="vertical" form={form}>
           <Form.Item label="Kulcs" name="key" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item label="Név" name="name" rules={[{ required: true }]}><Input /></Form.Item>

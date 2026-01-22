@@ -1060,10 +1060,10 @@ const Materials: React.FC = () => {
       ),
     },
     {
-      title: 'Gyűjtő',
+      title: 'Kategória',
       dataIndex: 'material_group_name',
       key: 'material_group_name',
-      width: 150,
+      width: 250,
       responsive: ['lg'] as any,
       render: (groupName: string | undefined) => 
         groupName ? <Tag color="purple">{groupName}</Tag> : '-',
@@ -1241,23 +1241,14 @@ const Materials: React.FC = () => {
         title={editingMaterial ? 'Alapanyag/Termék szerkesztése' : 'Új alapanyag/termék'}
         open={modalVisible}
         onCancel={() => setModalVisible(false)}
-        onOk={() => form.submit()}
+        footer={null}
         width={900}
         style={{ top: 20 }}
-        closeIcon={
-          <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginRight: 8 }}>
-            <SaveOutlined 
-              style={{ fontSize: 18, cursor: 'pointer' }} 
-              onClick={(e) => {
-                e.stopPropagation();
-                handleSaveWithoutClose();
-              }}
-              title="Mentés a form bezárása nélkül"
-            />
-            <span style={{ fontSize: 20 }}>×</span>
-          </div>
-        }
       >
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
+          <Button onClick={() => setModalVisible(false)}>Bezárás</Button>
+          <Button type="primary" onClick={() => form.submit()}>Mentés</Button>
+        </div>
         <Tabs 
           defaultActiveKey="1"
           items={[
@@ -1694,7 +1685,7 @@ const Materials: React.FC = () => {
                 <Form.Item 
                   name="default_supplier" 
                   label="Alapértelmezett beszállító"
-                  rules={[{ required: true, message: 'Válassz beszállítót' }]}
+                  rules={[{ required: false }]}
                 >
                   <Select placeholder="Válassz a hozzáadott beszállítók közül" allowClear>
                     {addedSuppliers

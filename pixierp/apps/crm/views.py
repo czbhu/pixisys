@@ -4,6 +4,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 from apps.finance.views import PixinvoiceClient
 from apps.core.models import PixinvoiceConfig
+from .models import Company
 import requests
 
 
@@ -59,6 +60,12 @@ class CompanyViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
+            # Ha kifejezetten beszállítókat keresünk, akkor a helyi adatbázisból dolgozunk
+            if request.query_params.get('is_supplier') == 'true':
+                items = list(Company.objects.filter(is_supplier=True).values('id', 'name', 'tax_number'))
+                items = _filter_by_query(items, request.query_params.get('q'))
+                return Response(items)
+
             company_id = _resolve_company_id(request)
             client = PixinvoiceClient()
             if not company_id:
@@ -222,14 +229,47 @@ class ContactViewSet(viewsets.ViewSet):
     @action(detail=False, methods=['get'])
     def by_company(self, request):
         try:
-            company_id = request.query_params.get('company_id') or _resolve_company_id(request)
+            # We need the Tenant ID to call PixInvoice API
             client = PixinvoiceClient()
-            if not company_id:
-                company_id = _ensure_company_id(client)
-            if not company_id:
-                return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            items = client.list_contacts(company_id=company_id)
-            cid = request.query_params.get('company_id') or None
+            tenant_id = _ensure_company_id(client)
+            
+            # We need the Customer ID to filter the contacts
+            customer_id_param = request.query_params.get('company_id')
+            
+            remote_customer_id = customer_id_param
+
+            # If customer_id is a local ID (digit), map it to remote ID
+            if customer_id_param and str(customer_id_param).isdigit():
+                try:
+                    c = Company.objects.get(id=int(customer_id_param))
+                    # Try to find corresponding customer in PixInvoice
+                    if tenant_id:
+                        # Fetch customers to match
+                        customers = client.list_customers(company_id=tenant_id)
+                        
+                        found = None
+                        # 1. Match by Tax Number
+                        if c.tax_number:
+                            found = next((cust for cust in customers if (cust.get('tax_number') or cust.get('taxNumber') or '').startswith(c.tax_number[:8])), None)
+                        
+                        # 2. Match by Name if not found
+                        if not found and c.name:
+                            found = next((cust for cust in customers if (cust.get('name') or cust.get('full_name') or '').lower() == c.name.lower()), None)
+                        
+                        if found:
+                            remote_customer_id = found.get('id') or found.get('company_id')
+                except Exception as e:
+                    print(f"[CRM] Error resolving local company: {e}")
+                    pass
+
+            if not tenant_id:
+                return Response({'error': 'PixInvoice company_id (Tenant) hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # List all contacts for the Tenant
+            items = client.list_contacts(company_id=tenant_id)
+            
+            # Filter by the Resolved Customer ID
+            cid = remote_customer_id
             if cid and cid != 'private':
                 items = [
                     it for it in items

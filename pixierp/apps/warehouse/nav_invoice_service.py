@@ -88,18 +88,34 @@ class NavInvoiceService:
             params['date_to'] = date_to.isoformat()
         
         try:
-            url = f"{self.config.base_url.rstrip('/')}/nav/invoices/search"
+            # Pixinvoice API endpoint: /invoices/incoming/
+            # Assuming base_url ends with /api/ or similar
+            url = f"{self.config.base_url.rstrip('/')}/invoices/incoming/"
+            
+            # Paraméterek átnevezése Pixinvoice API-hoz
+            api_params = {
+                'company_id': self.config.company_id,
+                'search': invoice_number or supplier_name or supplier_tax_number or '',
+            }
+            
+            if date_from:
+                api_params['date_from'] = date_from.isoformat()
+            if date_to:
+                api_params['date_to'] = date_to.isoformat()
+                
             response = requests.get(
                 url,
                 headers=self._get_headers(),
-                params=params,
+                params=api_params,
                 timeout=30
             )
             
             response.raise_for_status()
             data = response.json()
             
-            return data.get('invoices', [])
+            # Pixinvoice returns pagination wrapper or list
+            results = data.get('results', data) if isinstance(data, dict) else data
+            return results
             
         except requests.exceptions.RequestException as e:
             logger.error(f"NAV számla keresési hiba: {e}")
@@ -169,14 +185,15 @@ class NavInvoiceService:
             raise ValueError("PixiInvoice nincs konfigurálva")
         
         try:
-            url = f"{self.config.base_url.rstrip('/')}/nav/invoices/details"
-            response = requests.post(
+            # Pixinvoice API endpoint: /invoices/incoming/details/
+            url = f"{self.config.base_url.rstrip('/')}/invoices/incoming/details/"
+            
+            response = requests.get(
                 url,
                 headers=self._get_headers(),
-                json={
-                    'invoice_number': invoice_number,
-                    'supplier_tax_number': supplier_tax_number,
-                    'direction': 'INBOUND'
+                params={
+                    'company_id': self.config.company_id,
+                    'invoice_number': invoice_number
                 },
                 timeout=30
             )
@@ -184,11 +201,71 @@ class NavInvoiceService:
             response.raise_for_status()
             data = response.json()
             
+            if 'xml_text' in data:
+                return self.parse_xml_to_erp_format(data['xml_text'], data)
+            
             return data.get('invoice')
             
         except requests.exceptions.RequestException as e:
             logger.error(f"NAV számla részletek lekérési hiba: {e}")
             raise
+
+    def parse_xml_to_erp_format(self, xml_text: str, meta_data: Dict[str, Any]) -> Dict[str, Any]:
+        """NAV XML parse-olása ERP formátumba"""
+        import xml.etree.ElementTree as ET
+        
+        try:
+            root = ET.fromstring(xml_text)
+            ns = {'base': 'http://schemas.nav.gov.hu/OSA/3.0/data'}
+            # Note: namespace usually depends on version. trying to be generic or find one.
+            # NAV 3.0 uses http://schemas.nav.gov.hu/OSA/3.0/data
+            # We can strip namespaces for easier parsing
+            
+            items = []
+            
+            # Helper to find without namespace
+            def find_all_recursive(node, tag):
+                return [e for e in node.iter() if e.tag.endswith(tag) or e.tag.endswith(f"}}{tag}")]
+                
+            def find_text(node, tag):
+                el = next((e for e in node.iter() if e.tag.endswith(tag) or e.tag.endswith(f"}}{tag}")), None)
+                return el.text if el is not None else None
+
+            # Extract basic info if not in meta
+            invoice_lines = find_all_recursive(root, 'Line')
+            
+            for line in invoice_lines:
+                desc = find_text(line, 'LineDescription')
+                qty = float(find_text(line, 'Quantity') or 0)
+                unit_price = float(find_text(line, 'UnitPrice') or 0)
+                line_amount = float(find_text(line, 'LineNetAmount') or 0)
+                unit = find_text(line, 'UnitOfMeasure')
+                product_code = find_text(line, 'ProductCode') # Sometimes specific tags
+                
+                items.append({
+                    'product_name': desc,
+                    'product_code': product_code or '',
+                    'quantity': qty,
+                    'unit_price': unit_price,
+                    'total_price': line_amount,
+                    'unit': unit or 'db'
+                })
+                
+            return {
+                'invoiceNumber': meta_data.get('invoice_number'),
+                'invoiceIssueDate': meta_data.get('invoice_issue_date') or find_text(root, 'InvoiceIssueDate'),
+                'supplierInfo': {
+                    'taxNumber': meta_data.get('supplier_tax_number') or find_text(root, 'SupplierTaxNumber'),
+                    'taxNumberName': find_text(root, 'SupplierName') # This might be deep
+                },
+                'items': items,
+                'invoice_xml': xml_text  # Keep raw just in case
+            }
+            
+        except ET.ParseError as e:
+            logger.error(f"XML parsing error: {e}")
+            return {}
+
     
     def _get_mock_invoice_details(self, invoice_number: str) -> Dict[str, Any]:
         """DEMO teszt számla részletek"""

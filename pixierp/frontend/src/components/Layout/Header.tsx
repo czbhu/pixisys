@@ -98,12 +98,14 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
 
     return (
         <AntHeader style={{
-            padding: isMobile ? '0 12px' : '0 24px',
+            padding: isMobile ? '0 12px' : '0 16px',
             background: '#fff',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
-            boxShadow: '0 1px 4px rgba(0,21,41,.08)'
+            boxShadow: '0 1px 4px rgba(0,21,41,.08)',
+            height: isMobile ? 48 : 48,
+            lineHeight: isMobile ? '48px' : '48px'
         }}>
              <TimerModal />
              <QRScannerModal open={qrModalOpen} onClose={() => setQrModalOpen(false)} isMobile={isMobile} />
@@ -137,7 +139,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                 <h2 style={{ 
                     margin: 0, 
                     color: '#1890ff',
-                    fontSize: isMobile ? 16 : 20 
+                    fontSize: isMobile ? 16 : 18,
+                    lineHeight: isMobile ? '48px' : '48px'
                 }}>
                     {isMobile ? 'PixiERP' : `PixiERP Dashboard ${process.env.REACT_APP_VERSION || 'dev'}`}
                 </h2>

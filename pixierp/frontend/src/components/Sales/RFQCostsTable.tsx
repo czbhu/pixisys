@@ -8,12 +8,15 @@ const { Panel } = Collapse;
 const { Text } = Typography;
 
 interface RFQCostsTableProps {
-  rfqId: number;
+  rfqId?: number;
   totalRevenue: number;
   currency: string;
+  draftMode?: boolean;
+  value?: any[];
+  onChange?: (val: any[]) => void;
 }
 
-export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenue, currency }) => {
+export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenue, currency, draftMode, value, onChange }) => {
   const [costs, setCosts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
@@ -23,11 +26,19 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
   const [activeKey, setActiveKey] = useState<string | string[]>('1');
 
   useEffect(() => {
-    loadCosts();
+    if (!draftMode && rfqId) {
+      loadCosts();
+    } else if (draftMode && value) {
+        setCosts(value);
+    }
+  }, [rfqId, draftMode, value]);
+
+  useEffect(() => {
     loadSuppliers();
-  }, [rfqId]);
+  }, []);
 
   const loadCosts = async () => {
+    if (!rfqId) return;
     setLoading(true);
     try {
       const data = await salesService.getQuoteRequestCosts(rfqId);
@@ -62,6 +73,13 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
   };
 
   const handleDelete = async (id: number) => {
+    if (draftMode) {
+      const newCosts = costs.filter(c => c.id !== id);
+      setCosts(newCosts);
+      onChange?.(newCosts);
+      message.success('Költség eltávolítva (draft)');
+      return;
+    }
     try {
       await salesService.deleteQuoteRequestCost(id);
       message.success('Költség törölve');
@@ -74,12 +92,34 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
+      
+      const supplierName = suppliers.find(s => s.id === values.supplier_id)?.name;
+      const netTotal = (Number(values.quantity) || 0) * (Number(values.net_unit_price) || 0);
+
       const payload = {
         ...values,
         quote_request: rfqId,
-        supplier: values.supplier_id
+        supplier: values.supplier_id,
+        supplier_name: supplierName,
+        net_total: netTotal
       };
       
+      if (draftMode) {
+         if (editingItem) {
+            const newCosts = costs.map(c => c.id === editingItem.id ? { ...c, ...payload, id: c.id } : c);
+            setCosts(newCosts);
+            onChange?.(newCosts);
+         } else {
+            const newId = (costs.length > 0 ? Math.max(...costs.map(c => c.id)) : 0) + 1;
+            const newCosts = [...costs, { ...payload, id: newId }];
+            setCosts(newCosts);
+            onChange?.(newCosts);
+         }
+         message.success('Költség rögzítve (draft)');
+         setModalOpen(false);
+         return;
+      }
+
       if (editingItem) {
         await salesService.updateQuoteRequestCost(editingItem.id, payload);
         message.success('Frissítve');

@@ -1701,6 +1701,40 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         
         return Response(stats)
 
+    @action(detail=False, methods=['get'], url_path='incoming/details')
+    def incoming_details(self, request):
+        from invoices.models import IncomingInvoiceData, Company
+        
+        company_id = request.query_params.get('company_id')
+        invoice_number = request.query_params.get('invoice_number')
+        
+        if not company_id or not invoice_number:
+            return Response(
+                {'error': 'company_id és invoice_number kötelező'}, 
+                status=status.HTTP_400_BAD_REQUEST
+            )
+            
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_404_NOT_FOUND)
+            
+        data = IncomingInvoiceData.objects.filter(company=company, invoice_number=invoice_number).first()
+        
+        if not data:
+            return Response(
+                {'error': 'Számla részletek nem találhatók'}, 
+                status=status.HTTP_404_NOT_FOUND
+            )
+            
+        return Response({
+            'invoice_number': data.invoice_number,
+            'supplier_tax_number': data.supplier_tax_number,
+            'transaction_id': data.transaction_id,
+            'xml_text': data.xml_text,
+            'created_at': data.created_at
+        })
+
     @action(detail=False, methods=['get'], url_path='incoming')
     def list_incoming(self, request):
         """List incoming invoices for a company from local DB, refreshing from NAV only when needed.
@@ -1723,6 +1757,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         status_filter = (request.query_params.get('status') or '').strip().lower()
         payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
         approval_filter = (request.query_params.get('approval') or '').strip().lower()
+        amount_from = request.query_params.get('amount_from')
+        amount_to = request.query_params.get('amount_to')
         today_date = timezone.now().date()
 
         if not company_id:
@@ -1752,7 +1788,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 needs_refresh = True
 
         # If we have no local data for the requested range, force a backfill for that range
-        from django.db.models import Q
+        from django.db.models import Q, F, Value, DecimalField
+        from django.db.models.functions import Coalesce
         if date_from and date_to:
             has_any = IncomingInvoiceDigest.objects.filter(company=company).filter(
                 Q(invoice_issue_date__gte=date_from, invoice_issue_date__lte=date_to) |
@@ -2045,6 +2082,22 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 |
                 Q(supplier_tax_number__icontains=search)
             )
+
+        # Amount filter
+        if amount_from or amount_to:
+            qs = qs.annotate(
+                _total_gross=Coalesce(F('invoice_net_amount'), Value(0, output_field=DecimalField())) + Coalesce(F('invoice_vat_amount'), Value(0, output_field=DecimalField()))
+            )
+            if amount_from:
+                try:
+                    qs = qs.filter(_total_gross__gte=amount_from)
+                except Exception:
+                    pass
+            if amount_to:
+                try:
+                    qs = qs.filter(_total_gross__lte=amount_to)
+                except Exception:
+                    pass
 
         # Payment method filter
         if payment_method_filter and payment_method_filter != 'all':

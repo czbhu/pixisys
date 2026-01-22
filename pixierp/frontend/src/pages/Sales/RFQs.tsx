@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
+import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 
 const { TextArea } = Input;
 
@@ -31,6 +32,7 @@ const RFQs: React.FC = () => {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [newItems, setNewItems] = useState<any[]>([]);
+  const [newCosts, setNewCosts] = useState<any[]>([]);
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [currency, setCurrency] = useState<string>('HUF');
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
@@ -219,8 +221,10 @@ const RFQs: React.FC = () => {
               
               // Load user preferences for default signature
               let signatureKey = '';
+              let userPrefs: any = null;
               try {
                 const prefs = await settingsService.getUserPreferences();
+                userPrefs = prefs;
                 if (prefs && prefs.default_signature_key) {
                   signatureKey = prefs.default_signature_key;
                 }
@@ -267,6 +271,14 @@ const RFQs: React.FC = () => {
                 if (signature && signature.body_html) {
                   body = body + '\n\n' + signature.body_html;
                 }
+              }
+
+              // Replace user variables in body (including signature)
+              if (userPrefs) {
+                  const userName = userPrefs.name || [(userPrefs.first_name || ''), (userPrefs.last_name || '')].join(' ').trim();
+                  body = body.replace(/{user_name}/g, userName);
+                  body = body.replace(/{user_email}/g, userPrefs.email || '');
+                  body = body.replace(/{user_phonenumber}/g, userPrefs.phone_number || '');
               }
               
               sendForm.setFieldsValue({ 
@@ -416,12 +428,28 @@ const RFQs: React.FC = () => {
           }
         }
       }
+
+      // add costs if any
+      if (newCosts.length) {
+        for (const c of newCosts) {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const payload: any = { ...c, quote_request: created.id };
+            delete payload.id; // temporary ID
+            try {
+                await salesService.createQuoteRequestCost(payload);
+            } catch (err) {
+                console.error('Failed to create cost:', err);
+            }
+        }
+      }
+
       message.success('Árajánlat létrehozva');
       setCreateOpen(false);
       form.resetFields();
       setNewItems([]);
-  setRfqFiles([]);
-  setRfqFileRemarks({});
+      setNewCosts([]);
+      setRfqFiles([]);
+      setRfqFileRemarks({});
       loadData();
     } catch (e) {
       // validation or api error
@@ -556,17 +584,34 @@ const RFQs: React.FC = () => {
                     const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
                     
                     // Replace variables in subject
-                    subject = subject.replace('{rfq_number}', rec.number || rec.request_number || '');
-                    subject = subject.replace('{rfq_title}', rec.title || '');
-                    subject = subject.replace('{company_name}', rec.company?.name || '');
-                    subject = subject.replace('{contact_names}', contactNames);
+                    subject = subject.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
+                    subject = subject.replace(/{rfq_title}/g, rec.title || '');
+                    subject = subject.replace(/{company_name}/g, rec.company?.name || '');
+                    subject = subject.replace(/{contact_names}/g, contactNames);
                     
                     // Replace variables in body
-                    body = body.replace('{rfq_number}', rec.number || rec.request_number || '');
-                    body = body.replace('{rfq_title}', rec.title || '');
-                    body = body.replace('{company_name}', rec.company?.name || '');
-                    body = body.replace('{contact_names}', contactNames);
-                    body = body.replace('{public_order_url}', rec.public_order_url || '');
+                    body = body.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
+                    body = body.replace(/{rfq_title}/g, rec.title || '');
+                    body = body.replace(/{company_name}/g, rec.company?.name || '');
+                    body = body.replace(/{contact_names}/g, contactNames);
+                    body = body.replace(/{public_order_url}/g, rec.public_order_url || '');
+                    
+                    // Append current signature if exists
+                    const sigKey = sendForm.getFieldValue('signature_key');
+                    if (sigKey) {
+                        const signature = signatures.find((s: any) => s.key === sigKey);
+                        if (signature && signature.body_html) {
+                            let sigBody = signature.body_html;
+                            // Substitute user variables in signature
+                            const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
+                            sigBody = sigBody.replace(/{user_name}/g, uName);
+                            sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
+                            sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
+                            sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
+                            
+                            body = body + (template.is_html ? '' : '\n\n') + sigBody;
+                        }
+                    }
                     
                     sendForm.setFieldsValue({ subject, body, cc, reply_to: replyTo });
                   }
@@ -612,7 +657,15 @@ const RFQs: React.FC = () => {
                 if (sigKey) {
                   const signature = signatures.find((s: any) => s.key === sigKey);
                   if (signature && signature.body_html) {
-                    newBody = bodyWithoutSig + '\n\n' + signature.body_html;
+                    let sigBody = signature.body_html;
+                    // Substitute user variables in signature
+                    const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
+                    sigBody = sigBody.replace(/{user_name}/g, uName);
+                    sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
+                    sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
+                    sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
+
+                    newBody = bodyWithoutSig + '\n\n' + sigBody;
                   }
                 }
                 
@@ -729,41 +782,42 @@ const RFQs: React.FC = () => {
         cancelText="Mégse"
         width={1100}
       >
-        <Form layout="vertical" form={form} initialValues={{ issue_date: dayjs(), deadline: addWorkdays(dayjs(), 14) }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+        <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs(), deadline: addWorkdays(dayjs(), 14) }}>
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <Tooltip title="Az árajánlat még nem lett elmentve, a napló üres. Mentés után a részleteknél elérhető.">
               <Button size="small" onClick={() => message.info('Mentés előtt nincs napló. Mentsd az árajánlatot, majd a részletek nézetben megnyitható a Napló.')}>
                 Napló
               </Button>
             </Tooltip>
           </div>
-          <Row gutter={12}>
+          <Row gutter={[8, 4]}>
             <Col xs={24} md={6}>
-              <Form.Item label="Ajánlatszám">
+              <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
                 <Input value={nextNumber || ''} readOnly />
               </Form.Item>
             </Col>
             <Col xs={24} md={6}>
-              <Form.Item label="Rögzítette">
+              <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
                 <Input value={currentUserName || ''} readOnly />
               </Form.Item>
             </Col>
             <Col xs={24} md={6}>
-              <Form.Item label="Keltezés" name="issue_date">
+              <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
                 <DatePicker style={{ width: '100%' }} onChange={onIssueDateChange} />
               </Form.Item>
             </Col>
             <Col xs={24} md={6}>
-              <Form.Item label="Határidő" name="deadline" rules={[{ required: true, message: 'Válassz határidőt' }]}>
+              <Form.Item label="Határidő" name="deadline" rules={[{ required: true, message: 'Válassz határidőt' }]} style={{ marginBottom: 6 }}>
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           </Row>
-          <Row gutter={12}>
+          <Row gutter={[8, 4]}>
             <Col xs={24} md={8}>
               <Form.Item 
                 label="Cég" 
                 name="company_id"
+                style={{ marginBottom: 6 }}
               > 
                 <Space.Compact style={{ width: '100%' }}>
                   <Select 
@@ -772,9 +826,26 @@ const RFQs: React.FC = () => {
                     placeholder="Válassz céget vagy magánszemélyt" 
                     style={{ width: 'calc(100% - 32px)' }}
                     onFocus={async () => {
-                      // Frissítjük a cégek listáját amikor rákattintanak
-                      const list = await crmService.getCompanies();
-                      setCompanies(list.results ?? list);
+                      // Frissítjük a cégek listáját amikor rákattintanak.
+                      // Top 10 saját cég + többi
+                      try {
+                        const [list, topList] = await Promise.all([
+                          crmService.getCompanies(),
+                          salesService.getTopCompanies().catch(() => [])
+                        ]);
+                        
+                        const all: any[] = list.results ?? list;
+                        const top: any[] = Array.isArray(topList) ? topList : [];
+                        
+                        const topIds = new Set(top.map((c) => c.id));
+                        const rest = all.filter((c) => !topIds.has(c.id));
+                        
+                        setCompanies([...top, ...rest]);
+                      } catch (err) {
+                        console.error(err);
+                        const list = await crmService.getCompanies();
+                        setCompanies(list.results ?? list);
+                      }
                     }}
                     onChange={async (val) => {
                       form.setFieldsValue({ company_id: val });
@@ -808,7 +879,7 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={16}>
-              <Form.Item label="Kapcsolattartók" name="contact_ids">
+              <Form.Item label="Kapcsolattartók" name="contact_ids" style={{ marginBottom: 6 }}>
                 <Space.Compact style={{ width: '100%' }}>
                   <Select 
                     mode="multiple" 
@@ -875,14 +946,14 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <Row gutter={12}>
+          <Row gutter={[8, 4]}>
             <Col xs={24} md={14}>
-              <Form.Item label="Megnevezés" name="title">
+              <Form.Item label="Megnevezés" name="title" style={{ marginBottom: 6 }}>
                 <Input placeholder="Ha üres, az ajánlatszám lesz" />
               </Form.Item>
             </Col>
             <Col xs={24} md={10}>
-              <Form.Item label="Projekt" name="project_id">
+              <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 6 }}>
                 <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
                   {(projects || []).map((p: any) => (
                     <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
@@ -891,22 +962,22 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <Row gutter={12}>
+          <Row gutter={[8, 4]}>
             <Col xs={24} md={12}>
-              <Form.Item label="Leírás" name="description">
+              <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
                 <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item label="Belső leírás" name="internal_description">
+              <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
                 <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
               </Form.Item>
             </Col>
           </Row>
-          <Divider />
-          <Row gutter={12}>
+          <Divider style={{ margin: '12px 0' }} />
+          <Row gutter={[8, 4]}>
             <Col xs={24} md={8}>
-              <Form.Item label="Pénznem">
+              <Form.Item label="Pénznem" style={{ marginBottom: 6 }}>
                 <Select
                   showSearch
                   optionFilterProp="label"
@@ -923,7 +994,7 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
             <Col xs={24} md={16}>
-              <Form.Item label="Ajánlat csatolmányok">
+              <Form.Item label="Ajánlat csatolmányok" style={{ marginBottom: 6 }}>
                 <Upload.Dragger
                   multiple
                   fileList={rfqFiles}
@@ -984,7 +1055,7 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 16 }}>
+          <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
             <span>Tétel hozzáadása:</span>
             <Checkbox 
               checked={partialOrderAllowed}
@@ -998,7 +1069,7 @@ const RFQs: React.FC = () => {
             <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
             <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
           </Space>
-          <div style={{ marginTop: 12 }}>
+          <div style={{ marginTop: 6 }}>
             <ItemsTable
               currency={currency}
               onDeleteItem={(rec) => {
@@ -1045,6 +1116,16 @@ const RFQs: React.FC = () => {
             })}
             />
           </div>
+          <Divider style={{ margin: '16px 0' }}>Költség kalkuláció</Divider>
+          <div style={{ marginBottom: 16 }}>
+             <RFQCostsTable 
+                totalRevenue={newItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.net_unit_price || 0)), 0)}
+                currency={currency}
+                draftMode={true}
+                value={newCosts}
+                onChange={setNewCosts}
+             />
+          </div>
         </Form>
       </Modal>
       <Modal
@@ -1073,6 +1154,12 @@ const RFQs: React.FC = () => {
       <ItemSelectorModal
         open={selectorOpen}
         defaultType={selectorType}
+        customer={(() => {
+          const cid = form.getFieldValue('company_id');
+          if (cid === 'private') return { id: 'private', name: 'Magánszemély' };
+          const c = companies.find((x: any) => x.id === cid);
+          return c ? { id: c.id, name: c.name } : undefined;
+        })()}
         onCancel={() => { setSelectorOpen(false); setEditIdx(null); }}
         onAdd={(p: SelectedItemPayload) => {
           if (editIdx !== null && editIdx >= 0 && editIdx < newItems.length) {

@@ -356,6 +356,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           label: 'Alapanyagok/Termékek',
         },
         {
+          key: '/warehouse/material-groups',
+          label: 'Anyagcsoportok',
+        },
+        {
           key: '/warehouse/inventory',
           label: 'Készlet',
         },
@@ -532,12 +536,12 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         left: 0,
         top: 0,
         bottom: 0,
-        zIndex: 1000,
+        zIndex: 999,
       }}
     >
       <div style={{
         height: 32,
-        margin: 16,
+        margin: '8px 16px',
         background: 'rgba(255, 255, 255, 0.2)',
         borderRadius: 6,
         display: 'flex',

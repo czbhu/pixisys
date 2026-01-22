@@ -157,17 +157,35 @@ class BackupFileSerializer(serializers.ModelSerializer):
 class UserPreferenceSerializer(serializers.ModelSerializer):
     default_signature_name = serializers.SerializerMethodField()
     default_signature_key = serializers.SerializerMethodField()
+    first_name = serializers.CharField(source='user.first_name', read_only=True)
+    last_name = serializers.CharField(source='user.last_name', read_only=True)
+    name = serializers.SerializerMethodField()
+    email = serializers.EmailField(source='user.email', read_only=True)
+    phone_number = serializers.SerializerMethodField()
     
     class Meta:
         model = UserPreference
-        fields = ['id', 'user', 'default_signature', 'default_signature_name', 'default_signature_key']
+        fields = [
+            'id', 'user', 
+            'first_name', 'last_name', 'name', 'email', 'phone_number',
+            'default_signature', 'default_signature_name', 'default_signature_key'
+        ]
         read_only_fields = ['id', 'user']
+    
+    def get_name(self, obj):
+        return obj.user.get_full_name()
+
     
     def get_default_signature_name(self, obj):
         return obj.default_signature.name if obj.default_signature else None
     
     def get_default_signature_key(self, obj):
         return obj.default_signature.key if obj.default_signature else None
+
+    def get_phone_number(self, obj):
+        if hasattr(obj.user, 'employee_profile'):
+            return obj.user.employee_profile.phone
+        return None
 
 
 class PermissionSerializer(serializers.ModelSerializer):

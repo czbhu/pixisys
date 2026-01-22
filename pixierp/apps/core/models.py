@@ -228,7 +228,7 @@ class UserPreference(models.Model):
 class PixinvoiceConfig(models.Model):
     """PIXINVOICE API konfiguráció (NAV lekérdezés, ügyfél szinkron, számlázás)"""
     name = models.CharField(max_length=100, default='Alapértelmezett')
-    base_url = models.URLField(default='http://localhost:4001/api/')
+    base_url = models.URLField(default='http://inv.pixisys.eu/api/')
     api_key = models.CharField(max_length=255, blank=True, default='')
     company_id = models.CharField(max_length=64, blank=True, default='')
     default_invoice_series_id = models.CharField(max_length=64, blank=True, default='', verbose_name='Alapértelmezett számlatömb')

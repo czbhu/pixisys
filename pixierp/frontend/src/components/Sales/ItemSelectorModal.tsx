@@ -38,13 +38,14 @@ interface ItemSelectorModalProps {
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number }>;
+  customer?: { id: any; name: string };
 }
 
 const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer }) => {
   const navigate = useNavigate();
   const [activeKey, setActiveKey] = useState<ItemType>(defaultType);
   const [search, setSearch] = useState('');
@@ -234,16 +235,16 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     <>
       <Space style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Form.Item label="Mennyiség" name="quantity" initialValue={1} rules={[{ required: true }]} style={{ marginBottom: 8 }}> 
-          <InputNumber min={0.01} step={1} style={{ width: 120 }} />
+          <InputNumber min={0.01} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
         </Form.Item>
         <Form.Item label="Egység" name="unit" style={{ marginBottom: 8 }}> 
           <Input disabled style={{ width: 100 }} />
         </Form.Item>
         <Form.Item label="Nettó egységár" name="net_unit_price" style={{ marginBottom: 8 }}> 
-          <InputNumber min={0} step={1} style={{ width: 160 }} />
+          <InputNumber min={0} step={1} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
         </Form.Item>
         <Form.Item label="ÁFA %" name="vat_rate" initialValue={defaultVat} style={{ marginBottom: 8 }}> 
-          <InputNumber min={0} step={1} style={{ width: 120 }} />
+          <InputNumber min={0} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
         </Form.Item>
         <Form.Item label="Nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
           {() => {
@@ -297,10 +298,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         )}
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
           <Form.Item label="Kedvezmény %" name="discount_percent" style={{ marginBottom: 8 }}>
-            <InputNumber min={0} max={100} style={{ width: 120 }} />
+            <InputNumber min={0} max={100} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
           </Form.Item>
           <Form.Item label="Kedvezmény (fix)" name="discount_amount" style={{ marginBottom: 8 }}>
-            <InputNumber min={0} style={{ width: 160 }} />
+            <InputNumber min={0} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
           </Form.Item>
           <Form.Item label="Kedvezményes nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
             {() => {
@@ -488,6 +489,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       <ManufacturingProductEditorModal
         open={manuEditorOpen}
         onCancel={() => setManuEditorOpen(false)}
+        customer={customer}
         onCreated={(created) => {
           setManuProducts((prev) => [created, ...prev]);
           setSelected(created);

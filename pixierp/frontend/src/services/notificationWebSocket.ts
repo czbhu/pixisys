@@ -31,9 +31,15 @@ class NotificationWebSocketService {
     // Assuming backend is on same host/port or proxied correctly. 
     // If running dev, we might need port 8003/8000 difference but usually proxy handles it.
     // Development fallback:
-    const wsUrl = process.env.NODE_ENV === 'development' 
+    let wsUrl = process.env.NODE_ENV === 'development' 
       ? 'ws://localhost:8003/ws/notifications/' 
       : `${protocol}//${host}/ws/notifications/`;
+    
+    // Add auth token if available
+    const token = localStorage.getItem('access_token');
+    if (token) {
+      wsUrl += `?token=${token}`;
+    }
 
     console.log('Connecting to Notification WebSocket:', wsUrl);
     this.ws = new WebSocket(wsUrl);

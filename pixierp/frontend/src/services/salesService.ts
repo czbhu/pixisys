@@ -7,6 +7,12 @@ export const salesService = {
         const response = await api.get('/sales/customers/');
         return response.data;
     },
+
+    async getTopCompanies() {
+        const response = await api.get('/sales/quote-requests/top_companies/');
+        return response.data;
+    },
+
     async createQuoteFromRfq(id: number) {
         const response = await api.post(`/sales/quote-requests/${id}/create_quote/`, {});
         return response.data;

@@ -13,6 +13,8 @@
     "dayjs": "^1.11.18",
     "formik": "^2.4.5",
     "html5-qrcode": "^2.3.8",
+    "jspdf": "^4.0.0",
+    "jspdf-autotable": "^5.0.7",
     "moment": "^2.29.4",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",

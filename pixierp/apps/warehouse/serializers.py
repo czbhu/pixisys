@@ -20,13 +20,14 @@ class MaterialGroupSerializer(serializers.ModelSerializer):
     """Alapanyag gyűjtő serializer"""
     materials_count = serializers.SerializerMethodField()
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
     
     class Meta:
         model = MaterialGroup
         fields = [
             'id', 'name', 'description', 'is_active', 
             'materials_count', 'created_at', 'updated_at', 
-            'created_by', 'created_by_name'
+            'created_by', 'created_by_name', 'parent', 'parent_name'
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by', 'materials_count']
     
@@ -37,7 +38,7 @@ class MaterialGroupSerializer(serializers.ModelSerializer):
 class MaterialSerializer(serializers.ModelSerializer):
     """Alapanyag serializer"""
     material_type_name = serializers.CharField(source='material_type.name', read_only=True)
-    material_group_name = serializers.CharField(source='material_group.name', read_only=True)
+    material_group_name = serializers.CharField(source='material_group.get_full_name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     default_supplier_name = serializers.CharField(source='default_supplier.name', read_only=True)
     internal_production_department_name = serializers.CharField(

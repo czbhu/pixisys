@@ -33,6 +33,7 @@ import { manufacturingService, ManufacturingProduct, ProductClass, Project, Curr
 import { crmService } from '../../services/crmService';
 import HungarianDatePicker from '../../components/HungarianDatePicker';
 import { createIntelligentFilter } from '../../utils/searchUtils';
+import ManufacturingProductEditorModal from '../../components/Editors/ManufacturingProductEditorModal';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -70,6 +71,7 @@ const Products: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<string>('');
     const [query, setQuery] = useState('');
     const [form] = Form.useForm();
+    const [createModalOpen, setCreateModalOpen] = useState(false);
 
     useEffect(() => {
         loadProducts();
@@ -155,14 +157,8 @@ const Products: React.FC = () => {
             });
         } else {
             setEditingProduct(null);
-            form.resetFields();
-            form.setFieldsValue({
-                date: dayjs(),
-                deadline: dayjs().add(14, 'day'),
-                status: 'quote_request_open',
-                quantity: 1,
-                net_unit_price: 0,
-            });
+            setCreateModalOpen(true);
+            return;
         }
         setIsModalVisible(true);
     };
@@ -522,11 +518,20 @@ const Products: React.FC = () => {
                 />
             </Card>
 
+            <ManufacturingProductEditorModal
+                open={createModalOpen}
+                onCancel={() => setCreateModalOpen(false)}
+                onCreated={(p) => {
+                    setCreateModalOpen(false);
+                    loadProducts();
+                }}
+            />
+
             {/* Termék Modal */}
             <Modal
                 title={
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>{editingProduct ? 'Termék szerkesztése' : 'Új termék'}</span>
+                        <span>Termék szerkesztése</span>
                         <Space>
                             <Button
                                 type="primary"

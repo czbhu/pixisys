@@ -25,7 +25,7 @@ from apps.core.models import Currency
 from apps.crm.models import Company as CrmCompany, Contact
 from .models import QuoteLog, QuoteRequestItemAttachment, SearchStat, QuoteRequestAttachment, QuoteRequestEmailLog, QuoteRequestInvitation, WorkLog
 from .serializers import ServiceSerializer, QuoteLogSerializer, QuoteRequestItemAttachmentSerializer, QuoteRequestAttachmentSerializer, QuoteRequestInvitationSerializer
-from apps.core.models import EmailServerConfig, EmailTemplate, SignatureTemplate, Currency
+from apps.core.models import EmailServerConfig, EmailTemplate, SignatureTemplate, Currency, Company as CoreCompany
 import smtplib, ssl, imaplib, email
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -145,6 +145,35 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'count': daily_count,
             'number': number,
         })
+
+    @action(detail=False, methods=['get'])
+    def top_companies(self, request):
+        """A bejelentkezett felhasználó által leggyakrabban használt cégek"""
+        user = request.user
+        if not user or not user.is_authenticated:
+            return Response([])
+        
+        # Logged in user's top companies based on QuoteRequest count
+        top_ids_qs = QuoteRequest.objects.filter(
+            created_by=user, 
+            company__isnull=False
+        ).values('company').annotate(
+            count=models.Count('id')
+        ).order_by('-count')[:10]
+        
+        # Convert to list of IDs to preserve order
+        ids = [item['company'] for item in top_ids_qs]
+        if not ids:
+            return Response([])
+
+        from apps.crm.serializers import CompanySerializer
+        # Fetch companies
+        companies = list(CrmCompany.objects.filter(id__in=ids))
+        # Preserving order
+        companies.sort(key=lambda c: ids.index(c.id))
+        
+        serializer = CompanySerializer(companies, many=True)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
@@ -468,6 +497,45 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         
         sig = SignatureTemplate.objects.filter(key=signature_key).first() if signature_key else None
 
+        # Substitute variables in signature
+        if sig and sig.body_html:
+            try:
+                user = request.user
+                
+                # Try to get employee profile
+                try:
+                    employee = user.employee_profile
+                except Exception:
+                    employee = None
+
+                user_name = f"{user.last_name} {user.first_name}".strip()
+                if not user_name:
+                    user_name = user.username
+                
+                user_email = user.email or ''
+                user_position = ''
+                user_phonenumber = ''
+                
+                if employee:
+                    user_phonenumber = employee.phone or ''
+                    if employee.position:
+                        user_position = employee.position.title
+                
+                sig_ctx = {
+                    'user_name': user_name,
+                    'user_email': user_email,
+                    'user_position': user_position,
+                    'user_phonenumber': user_phonenumber
+                }
+                
+                # Use simple replacement instead of format to avoid issues with other curly braces (CSS, JS)
+                for key, val in sig_ctx.items():
+                    sig.body_html = sig.body_html.replace(f"{{{key}}}", str(val))
+                    
+            except Exception as e:
+                # If substitution fails, keep original signature
+                pass
+
         # Ensure there is a public token for link rendering
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
@@ -497,11 +565,25 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             else:
                 body = f"{body_core}\n\n{sig.body_html if sig else ''}"
 
+        # Determine sender identity
+        from_email = cfg.from_email
+        from_name = cfg.from_name
+        
+        # Try to use default company email settings
+        try:
+            default_company = CoreCompany.objects.filter(is_default=True).first()
+            if default_company and default_company.email:
+                from_email = default_company.email
+                if default_company.name:
+                    from_name = default_company.name
+        except Exception:
+            pass
+
         # Build MIME message
         msg = MIMEMultipart('alternative') if tpl.is_html else email.message.EmailMessage()
         if isinstance(msg, MIMEMultipart):
             msg['Subject'] = subject
-            msg['From'] = f"{cfg.from_name} <{cfg.from_email}>" if cfg.from_name else cfg.from_email
+            msg['From'] = f"{from_name} <{from_email}>" if from_name else from_email
             msg['To'] = to
             if cc:
                 msg['Cc'] = cc
@@ -512,7 +594,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             mime_bytes = msg.as_bytes()
         else:
             msg['Subject'] = subject
-            msg['From'] = cfg.from_email
+            msg['From'] = f"{from_name} <{from_email}>" if from_name else from_email
             msg['To'] = to
             if cc:
                 msg['Cc'] = cc
@@ -532,6 +614,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 with smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, context=context) as server:
                     if cfg.smtp_username:
                         server.login(cfg.smtp_username, cfg.smtp_password)
+                    # Note: server.sendmail FROM address is technically the envelope sender.
+                    # Usually it's better to match the From header or use the authenticated user (cfg.from_email)
+                    # to avoid SPF/DKIM issues. But user requested to change the sender.
+                    # We will use the original cfg.from_email as the envelope sender to be safe with auth,
+                    # but the message header will show the Company email.
                     server.sendmail(cfg.from_email, recipients, mime_bytes)
             else:
                 with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port) as server:
@@ -579,6 +666,44 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not tpl:
             return Response({'error': 'Hiányzó email sablon'}, status=400)
         sig = SignatureTemplate.objects.filter(key=signature_key).first() if signature_key else None
+
+        # Substitute variables in signature
+        if sig and sig.body_html:
+            try:
+                user = request.user
+                
+                # Try to get employee profile
+                try:
+                    employee = user.employee_profile
+                except Exception:
+                    employee = None
+
+                user_name = f"{user.last_name} {user.first_name}".strip()
+                if not user_name:
+                    user_name = user.username
+                
+                user_email = user.email or ''
+                user_position = ''
+                user_phonenumber = ''
+                
+                if employee:
+                    user_phonenumber = employee.phone or ''
+                    if employee.position:
+                        user_position = employee.position.title
+                
+                sig_ctx = {
+                    'user_name': user_name,
+                    'user_email': user_email,
+                    'user_position': user_position,
+                    'user_phonenumber': user_phonenumber
+                }
+                
+                # Use simple replacement instead of format
+                for key, val in sig_ctx.items():
+                    sig.body_html = sig.body_html.replace(f"{{{key}}}", str(val))
+                    
+            except Exception as e:
+                pass
 
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
@@ -2066,22 +2191,29 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 item_code = ''
                 item_description = ''
                 
+                # Base description from entities
+                entity_desc = ''
+                
                 if quote_item.product:
                     item_name = quote_item.product.name
                     item_code = quote_item.product.code
-                    item_description = quote_item.product.description or ''
+                    entity_desc = quote_item.product.description or ''
                 elif quote_item.material:
                     item_name = quote_item.material.name
                     item_code = quote_item.material.code
-                    item_description = quote_item.material.description or ''
+                    entity_desc = quote_item.material.description or ''
                 elif quote_item.manufacturing_product:
                     item_name = quote_item.manufacturing_product.name
                     item_code = quote_item.manufacturing_product.code or ''
-                    item_description = quote_item.manufacturing_product.description or ''
+                    entity_desc = quote_item.manufacturing_product.description or ''
                 elif quote_item.service:
                     item_name = quote_item.service.name
                     item_code = quote_item.service.code or ''
-                    item_description = quote_item.service.description or ''
+                    entity_desc = quote_item.service.description or ''
+                
+                # Use specific description (comment) if available
+                # Prefer OrderItem description, then QuoteItem description, then Entity description
+                item_description = item.description or quote_item.description or entity_desc
                 
                 # Draw item info
                 p.drawString(2*cm, y, f"Cikkszám: {item_code}")
@@ -2089,7 +2221,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 p.drawString(2*cm, y, f"Név: {item_name[:50]}")
                 y -= 0.5*cm
                 if item_description:
-                    p.drawString(2*cm, y, f"Leírás: {item_description[:60]}")
+                    p.drawString(2*cm, y, f"Leírás: {item_description[:120]}")
                     y -= 0.5*cm
                 p.drawString(2*cm, y, f"Mennyiség: {float(item.quantity)} {quote_item.unit}")
                 y -= 0.7*cm

@@ -11,6 +11,7 @@ import {
   Popconfirm,
   Tag,
   Switch,
+  TreeSelect,
 } from 'antd';
 import {
   PlusOutlined,
@@ -18,7 +19,7 @@ import {
   DeleteOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
-import axios from 'axios';
+import api from '../../services/api';
 
 const { TextArea } = Input;
 
@@ -30,9 +31,12 @@ interface MaterialGroup {
   materials_count: number;
   created_at: string;
   created_by_name?: string;
+  parent?: number | null;
+  parent_name?: string;
+  children?: MaterialGroup[];
 }
 
-const API_URL = 'http://192.168.5.61:8003/api/v1/warehouse';
+
 
 const MaterialGroups: React.FC = () => {
   const [groups, setGroups] = useState<MaterialGroup[]>([]);
@@ -41,20 +45,59 @@ const MaterialGroups: React.FC = () => {
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null);
   const [form] = Form.useForm();
 
-  const token = localStorage.getItem('access_token');
-  const axiosConfig = {
-    headers: { Authorization: `Bearer ${token}` },
-  };
+
 
   useEffect(() => {
     loadGroups();
   }, []);
 
+  const buildTree = (items: MaterialGroup[]): MaterialGroup[] => {
+    const itemMap = new Map<number, MaterialGroup>();
+    const roots: MaterialGroup[] = [];
+    
+    // Deep clone to avoid mutating
+    const clonedItems = items.map(item => ({ ...item, children: [] }));
+    
+    clonedItems.forEach(item => {
+      itemMap.set(item.id, item);
+    });
+    
+    clonedItems.forEach(item => {
+      if (item.parent) {
+        const parent = itemMap.get(item.parent);
+        if (parent) {
+          parent.children = parent.children || [];
+          parent.children.push(item);
+        } else {
+          roots.push(item);
+        }
+      } else {
+        roots.push(item);
+      }
+    });
+
+    // Cleanup empty children arrays
+    const cleanup = (nodes: MaterialGroup[]) => {
+        nodes.forEach(node => {
+            if (node.children && node.children.length === 0) {
+                delete node.children;
+            } else if (node.children) {
+                cleanup(node.children);
+            }
+        })
+    };
+    cleanup(roots);
+    
+    return roots;
+  };
+
   const loadGroups = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/material-groups/`, axiosConfig);
-      setGroups(response.data.results || response.data);
+      const response = await api.get('/warehouse/material-groups/');
+      const rawData = response.data.results || response.data;
+      const tree = buildTree(rawData);
+      setGroups(tree);
     } catch (error) {
       message.error('Hiba a gyűjtők betöltésekor');
       console.error(error);
@@ -72,7 +115,10 @@ const MaterialGroups: React.FC = () => {
 
   const showEditModal = (group: MaterialGroup) => {
     setEditingGroup(group);
-    form.setFieldsValue(group);
+    form.setFieldsValue({
+        ...group,
+        parent: group.parent || undefined // ensure null becomes undefined for placeholder
+    });
     setIsModalVisible(true);
   };
 
@@ -81,10 +127,10 @@ const MaterialGroups: React.FC = () => {
       const values = await form.validateFields();
 
       if (editingGroup) {
-        await axios.put(`${API_URL}/material-groups/${editingGroup.id}/`, values, axiosConfig);
+        await api.put(`/warehouse/material-groups/${editingGroup.id}/`, values);
         message.success('Gyűjtő módosítva');
       } else {
-        await axios.post(`${API_URL}/material-groups/`, values, axiosConfig);
+        await api.post('/warehouse/material-groups/', values);
         message.success('Gyűjtő létrehozva');
       }
 
@@ -103,7 +149,7 @@ const MaterialGroups: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await axios.delete(`${API_URL}/material-groups/${id}/`, axiosConfig);
+      await api.delete(`/warehouse/material-groups/${id}/`);
       message.success('Gyűjtő törölve');
       loadGroups();
     } catch (error: any) {
@@ -116,12 +162,23 @@ const MaterialGroups: React.FC = () => {
     }
   };
 
+  // Convert groups tree to TreeSelect data
+  const getTreeData = (nodes: MaterialGroup[], currentId?: number): any[] => {
+    return nodes
+      .filter(node => node.id !== currentId) // Exclude self
+      .map(node => ({
+        value: node.id,
+        title: node.name,
+        children: node.children ? getTreeData(node.children, currentId) : undefined,
+        disabled: node.id === currentId
+      }));
+  };
+
   const columns: ColumnsType<MaterialGroup> = [
     {
       title: 'Gyűjtő neve',
       dataIndex: 'name',
       key: 'name',
-      sorter: (a, b) => a.name.localeCompare(b.name),
     },
     {
       title: 'Leírás',
@@ -168,19 +225,20 @@ const MaterialGroups: React.FC = () => {
           />
           <Popconfirm
             title={
-              record.materials_count > 0
-                ? `${record.materials_count} alapanyag tartozik ehhez a gyűjtőhöz. Biztosan törli?`
+              (record.materials_count > 0 || (record.children && record.children.length > 0))
+                ? 'Csak üres és gyermek nélküli kategória törölhető!'
                 : 'Biztosan törli ezt a gyűjtőt?'
             }
             onConfirm={() => handleDelete(record.id)}
             okText="Igen"
             cancelText="Nem"
+            disabled={record.materials_count > 0 || (record.children && record.children.length > 0)}
           >
             <Button
               size="small"
               danger
               icon={<DeleteOutlined />}
-              disabled={record.materials_count > 0}
+              disabled={record.materials_count > 0 || (record.children && record.children.length > 0)}
             />
           </Popconfirm>
         </Space>
@@ -191,14 +249,14 @@ const MaterialGroups: React.FC = () => {
   return (
     <div style={{ padding: 24 }}>
       <Card
-        title="Alapanyag gyűjtők"
+        title="Alapanyag kategóriák"
         extra={
           <Button
             type="primary"
             icon={<PlusOutlined />}
             onClick={showCreateModal}
           >
-            Új gyűjtő
+            Új kategória
           </Button>
         }
       >
@@ -207,12 +265,15 @@ const MaterialGroups: React.FC = () => {
           dataSource={groups}
           rowKey="id"
           loading={loading}
-          pagination={{ pageSize: 20 }}
+          pagination={false}
+          expandable={{
+              defaultExpandAllRows: true, // Optional: expand all by default
+          }}
         />
       </Card>
 
       <Modal
-        title={editingGroup ? 'Gyűjtő szerkesztése' : 'Új gyűjtő'}
+        title={editingGroup ? 'Kategória szerkesztése' : 'Új kategória'}
         open={isModalVisible}
         onOk={handleSubmit}
         onCancel={() => {
@@ -224,8 +285,20 @@ const MaterialGroups: React.FC = () => {
       >
         <Form form={form} layout="vertical">
           <Form.Item
+            name="parent"
+            label="Szülő kategória"
+          >
+             <TreeSelect
+                allowClear
+                placeholder="Válassz szülő kategóriát (opcionális)"
+                treeData={getTreeData(groups, editingGroup?.id)}
+                treeDefaultExpandAll
+             />
+          </Form.Item>
+
+          <Form.Item
             name="name"
-            label="Gyűjtő neve"
+            label="Kategória neve"
             rules={[
               { required: true, message: 'Kötelező mező' },
               { max: 100, message: 'Maximum 100 karakter' },

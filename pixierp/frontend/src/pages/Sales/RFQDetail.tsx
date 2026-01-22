@@ -461,6 +461,14 @@ const RFQDetail: React.FC = () => {
           }
         }}>
           <Row gutter={12}>
+            <Col span={24} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
+               <Space>
+                 <div style={{ marginRight: 16 }}>{statusTag(rfq.status)}</div>
+                 <Button type="primary" htmlType="submit">Mentés</Button>
+               </Space>
+            </Col>
+          </Row>
+          <Row gutter={12}>
             <Col span={6}>
               <Form.Item label="Ajánlatszám" name="number">
                 <Input disabled />
@@ -633,9 +641,6 @@ const RFQDetail: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={12} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
-              <div style={{ flex: 1 }} />
-              <div style={{ alignSelf: 'flex-end' }}>{statusTag(rfq.status)}</div>
-              <Button type="primary" htmlType="submit">Mentés</Button>
             </Col>
           </Row>
         </Form>

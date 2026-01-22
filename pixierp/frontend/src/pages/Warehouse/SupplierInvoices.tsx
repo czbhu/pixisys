@@ -37,7 +37,7 @@ import {
 import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile, UploadProps } from 'antd/es/upload';
 import dayjs, { Dayjs } from 'dayjs';
-import axios from 'axios';
+import api from '../../services/api';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -132,7 +132,7 @@ interface InvoiceItem {
   notes?: string;
 }
 
-const API_URL = 'http://192.168.5.61:8003/api/v1/warehouse';
+
 
 const SupplierInvoices: React.FC = () => {
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([]);
@@ -167,10 +167,7 @@ const SupplierInvoices: React.FC = () => {
   const [navSearching, setNavSearching] = useState(false);
   const [navImporting, setNavImporting] = useState(false);
 
-  const token = localStorage.getItem('access_token');
-  const axiosConfig = {
-    headers: { Authorization: `Bearer ${token}` },
-  };
+
 
   useEffect(() => {
     loadInvoices();
@@ -179,10 +176,27 @@ const SupplierInvoices: React.FC = () => {
     loadWarehouses();
   }, []);
 
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Listen for INVOICE_SELECTED from embedded iframe
+      if (event.data && event.data.type === 'INVOICE_SELECTED') {
+        const invoice = event.data.payload;
+        handleNavImport({
+            invoiceNumber: invoice.invoiceNumber,
+            supplierTaxNumber: invoice.supplierTaxNumber
+        });
+        setIsNavSearchVisible(false);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
   const loadInvoices = async () => {
     setLoading(true);
     try {
-      const response = await axios.get(`${API_URL}/supplier-invoices/`, axiosConfig);
+      const response = await api.get('/warehouse/supplier-invoices/');
       setInvoices(response.data.results || response.data);
     } catch (error) {
       message.error('Hiba a számlák betöltésekor');
@@ -194,7 +208,7 @@ const SupplierInvoices: React.FC = () => {
 
   const loadSuppliers = async () => {
     try {
-      const response = await axios.get('http://192.168.5.61:8003/api/v1/crm/companies/?is_supplier=true', axiosConfig);
+      const response = await api.get('/crm/companies/?is_supplier=true');
       setSuppliers(response.data.results || response.data);
     } catch (error) {
       console.error('Hiba beszállítók betöltésekor:', error);
@@ -203,7 +217,7 @@ const SupplierInvoices: React.FC = () => {
 
   const loadMaterials = async () => {
     try {
-      const response = await axios.get(`${API_URL}/materials/`, axiosConfig);
+      const response = await api.get('/warehouse/materials/');
       setMaterials(response.data.results || response.data);
     } catch (error) {
       console.error('Hiba anyagok betöltésekor:', error);
@@ -212,7 +226,7 @@ const SupplierInvoices: React.FC = () => {
 
   const loadWarehouses = async () => {
     try {
-      const response = await axios.get(`${API_URL}/warehouses/`, axiosConfig);
+      const response = await api.get('/warehouse/warehouses/');
       setWarehouses(response.data.results || response.data);
     } catch (error) {
       console.error('Hiba raktárak betöltésekor:', error);
@@ -266,18 +280,18 @@ const SupplierInvoices: React.FC = () => {
       };
 
       if (editingInvoice) {
-        await axios.put(`${API_URL}/supplier-invoices/${editingInvoice.id}/`, payload, axiosConfig);
+        await api.put(`/warehouse/supplier-invoices/${editingInvoice.id}/`, payload);
         message.success('Számla módosítva');
       } else {
-        const response = await axios.post(`${API_URL}/supplier-invoices/`, payload, axiosConfig);
+        const response = await api.post('/warehouse/supplier-invoices/', payload);
         const invoiceId = response.data.id;
         
         // Tételek mentése
         for (const item of items) {
-          await axios.post(`${API_URL}/invoice-items/`, {
+          await api.post('/warehouse/invoice-items/', {
             ...item,
             invoice: invoiceId,
-          }, axiosConfig);
+          });
         }
         
         message.success('Számla létrehozva');
@@ -293,7 +307,7 @@ const SupplierInvoices: React.FC = () => {
 
   const handleDelete = async (id: number) => {
     try {
-      await axios.delete(`${API_URL}/supplier-invoices/${id}/`, axiosConfig);
+      await api.delete(`/warehouse/supplier-invoices/${id}/`);
       message.success('Számla törölve');
       loadInvoices();
     } catch (error) {
@@ -304,7 +318,7 @@ const SupplierInvoices: React.FC = () => {
 
   const handleStatusChange = async (invoice: SupplierInvoice, action: string) => {
     try {
-      await axios.post(`${API_URL}/supplier-invoices/${invoice.id}/${action}/`, {}, axiosConfig);
+      await api.post(`/warehouse/supplier-invoices/${invoice.id}/${action}/`, {});
       message.success('Státusz frissítve');
       loadInvoices();
     } catch (error: any) {
@@ -320,12 +334,11 @@ const SupplierInvoices: React.FC = () => {
     formData.append('image', file);
 
     try {
-      const response = await axios.post(
-        `${API_URL}/supplier-invoices/${invoiceId}/upload_image/`,
+      const response = await api.post(
+        `/warehouse/supplier-invoices/${invoiceId}/upload_image/`,
         formData,
         {
           headers: {
-            ...axiosConfig.headers,
             'Content-Type': 'multipart/form-data',
           },
         }
@@ -350,10 +363,9 @@ const SupplierInvoices: React.FC = () => {
 
   const handleImageDelete = async (invoiceId: number, imagePath: string) => {
     try {
-      const response = await axios.post(
-        `${API_URL}/supplier-invoices/${invoiceId}/delete_image/`,
-        { image_path: imagePath },
-        axiosConfig
+      const response = await api.post(
+        `/warehouse/supplier-invoices/${invoiceId}/delete_image/`,
+        { image_path: imagePath }
       );
       
       message.success('Kép törölve');
@@ -407,10 +419,9 @@ const SupplierInvoices: React.FC = () => {
       const values = await navSearchForm.validateFields();
       setNavSearching(true);
       
-      const response = await axios.post(
-        `${API_URL}/supplier-invoices/search_nav_invoices/`,
-        values,
-        axiosConfig
+      const response = await api.post(
+        '/warehouse/supplier-invoices/search_nav_invoices/',
+        values
       );
       
       if (response.data.success) {
@@ -435,13 +446,12 @@ const SupplierInvoices: React.FC = () => {
     try {
       setNavImporting(true);
       
-      const response = await axios.post(
-        `${API_URL}/supplier-invoices/import_nav_invoice/`,
+      const response = await api.post(
+        '/warehouse/supplier-invoices/import_nav_invoice/',
         {
           invoice_number: navInvoice.invoiceNumber,
           supplier_tax_number: navInvoice.supplierTaxNumber
-        },
-        axiosConfig
+        }
       );
       
       if (response.data.success) {
@@ -803,7 +813,7 @@ const SupplierInvoices: React.FC = () => {
         <Title level={2}>Beszállítói számlák</Title>
         <Space>
           <Button icon={<FileImageOutlined />} onClick={showNavSearch}>
-            NAV Számla import
+            Bejövő számla keresés
           </Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
             Új számla
@@ -986,7 +996,7 @@ const SupplierInvoices: React.FC = () => {
                             size="small"
                             cover={
                               <Image
-                                src={`http://192.168.5.61:8003/media/${imagePath}`}
+                                src={`/media/${imagePath}`}
                                 alt={`Számla kép ${index + 1}`}
                                 style={{ objectFit: 'cover', height: '150px' }}
                               />
@@ -1187,129 +1197,22 @@ const SupplierInvoices: React.FC = () => {
       
       {/* NAV Számla keresés modal */}
       <Modal
-        title="NAV Számla keresés és import"
+        title="Bejövő számla kiválasztása"
         open={isNavSearchVisible}
         onCancel={() => setIsNavSearchVisible(false)}
-        width={900}
+        width={1200}
         footer={null}
+        style={{ top: 20 }}
+        bodyStyle={{ padding: 0, height: '80vh' }}
       >
-        <Alert
-          message="NAV/PixiInvoice integráció"
-          description="Add meg a számlaszámot vagy a beszállító nevét és az összeget a számla azonosításához."
-          type="info"
-          showIcon
-          style={{ marginBottom: 16 }}
+        <iframe 
+          src="https://inv.pixisys.eu/incoming-invoices?mode=select"
+          style={{ width: '100%', height: '100%', border: 'none' }}
+          title="Bejövő számlák"
         />
-        
-        <Form form={navSearchForm} layout="vertical">
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="invoice_number" label="Számlaszám">
-                <Input placeholder="Pontos számlaszám" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="supplier_name" label="Beszállító neve">
-                <Input placeholder="Részleges név is lehet" />
-              </Form.Item>
-            </Col>
-          </Row>
-          
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item name="amount_min" label="Min. összeg">
-                <InputNumber style={{ width: '100%' }} min={0} placeholder="Pl: 100000" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item name="amount_max" label="Max. összeg">
-                <InputNumber style={{ width: '100%' }} min={0} placeholder="Pl: 200000" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label=" ">
-                <Button
-                  type="primary"
-                  icon={<FileImageOutlined />}
-                  onClick={handleNavSearch}
-                  loading={navSearching}
-                  block
-                >
-                  Keresés
-                </Button>
-              </Form.Item>
-            </Col>
-          </Row>
-          
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item name="date_from" label="Dátumtól">
-                <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item name="date_to" label="Dátumig">
-                <DatePicker style={{ width: '100%' }} format="YYYY-MM-DD" />
-              </Form.Item>
-            </Col>
-          </Row>
-        </Form>
-        
-        {navSearchResults.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            <Divider>Találatok ({navSearchResults.length})</Divider>
-            <Table
-              dataSource={navSearchResults}
-              rowKey="invoiceNumber"
-              size="small"
-              pagination={false}
-              scroll={{ y: 300 }}
-              columns={[
-                {
-                  title: 'Számlaszám',
-                  dataIndex: 'invoiceNumber',
-                  key: 'invoiceNumber',
-                  width: 150,
-                },
-                {
-                  title: 'Beszállító',
-                  dataIndex: 'supplierName',
-                  key: 'supplierName',
-                  width: 200,
-                },
-                {
-                  title: 'Dátum',
-                  dataIndex: 'invoiceIssueDate',
-                  key: 'invoiceIssueDate',
-                  width: 100,
-                },
-                {
-                  title: 'Összeg',
-                  dataIndex: 'invoiceNetAmount',
-                  key: 'invoiceNetAmount',
-                  width: 100,
-                  render: (amount: number) => `${amount?.toLocaleString()} Ft`,
-                },
-                {
-                  title: 'Művelet',
-                  key: 'action',
-                  width: 100,
-                  render: (_: any, record: any) => (
-                    <Button
-                      size="small"
-                      type="primary"
-                      onClick={() => handleNavImport(record)}
-                      loading={navImporting}
-                    >
-                      Import
-                    </Button>
-                  ),
-                },
-              ]}
-            />
-          </div>
-        )}
       </Modal>
+
+
     </div>
   );
 };

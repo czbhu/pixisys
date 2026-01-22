@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
-import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar } from 'lucide-react';
+import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar, Banknote } from 'lucide-react';
 import { Pagination, Spin } from 'antd';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
@@ -329,6 +329,8 @@ const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
 };
 
 export default function IncomingInvoices() {
+  const queryParams = new URLSearchParams(window.location.search);
+  const isSelectorMode = queryParams.get('mode') === 'select';
   const [companyId, setCompanyId] = useState(() => localStorage.getItem('selectedCompanyId') || '');
   const [dateFrom, setDateFrom] = useState(null);
   const [dateTo, setDateTo] = useState(null);
@@ -347,6 +349,11 @@ export default function IncomingInvoices() {
   const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid | due
   const [paymentFilter, setPaymentFilter] = useState('all'); // all | transfer | cash | card | voucher | utanvet | other
   const [approvalFilter, setApprovalFilter] = useState('all'); // all | approved | unapproved
+  const [amountFrom, setAmountFrom] = useState('');
+  const [amountTo, setAmountTo] = useState('');
+  const [showAmountModal, setShowAmountModal] = useState(false);
+  const [amountDraftFrom, setAmountDraftFrom] = useState('');
+  const [amountDraftTo, setAmountDraftTo] = useState('');
   const [xmlOpen, setXmlOpen] = useState(false);
   const [xmlLoading, setXmlLoading] = useState(false);
   const [xmlError, setXmlError] = useState('');
@@ -473,7 +480,7 @@ export default function IncomingInvoices() {
     setHasMore(true); 
     // Only clear selection if company changes, otherwise persist selection across filters/search
     // setSelected(new Set()); 
-  }, [statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo]);
+  }, [statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, amountFrom, amountTo]);
 
   // Clear selection explicitly when companyId changes
   useEffect(() => {
@@ -523,7 +530,9 @@ export default function IncomingInvoices() {
         search: (searchText||'').trim() || undefined, 
         status: statusFilter==='all'? undefined : statusFilter, 
         payment_method: paymentFilter==='all'? undefined : paymentFilter, 
-        approval: approvalFilter==='all'? undefined : approvalFilter 
+        approval: approvalFilter==='all'? undefined : approvalFilter,
+        amount_from: amountFrom || undefined,
+        amount_to: amountTo || undefined
       } });
       const data = res.data || {};
       if (data.success && Array.isArray(data.items)) {
@@ -580,7 +589,7 @@ export default function IncomingInvoices() {
     }, 400);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, pageSize]);
+  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, pageSize, amountFrom, amountTo]);
 
 
 
@@ -1448,6 +1457,24 @@ export default function IncomingInvoices() {
     </div>
   );
 
+  const handleSelectInvoice = (row) => {
+    // Post message to parent
+    const msg = {
+      type: 'INVOICE_SELECTED',
+      payload: {
+        invoiceNumber: row.invoiceNumber,
+        supplierTaxNumber: row.supplierTaxNumber,
+        supplierName: row.supplierName,
+        netAmount: row.netAmount,
+        grossAmount: row.grossAmount,
+        currency: row.currency,
+        invoiceIssueDate: row.invoiceIssueDate,
+        items: row.items || []
+      }
+    };
+    window.parent.postMessage(msg, '*');
+  };
+
   return (
     <InvoicesContainer>
       <InvoicesHeader>
@@ -1461,6 +1488,12 @@ export default function IncomingInvoices() {
               placeholder="Gyorskereső (számla, név, adószám)"
               style={{ padding:'6px 10px', minWidth:260 }}
             />
+            <SecondaryButton
+              onClick={()=>{ setAmountDraftFrom(amountFrom); setAmountDraftTo(amountTo); setShowAmountModal(true); }}
+            >
+              <Banknote size={16}/>
+              {amountFrom || amountTo ? `${amountFrom || '0'} – ${amountTo || '∞'} Ft` : 'Összeg'}
+            </SecondaryButton>
             <select value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
               <option value="all">Mind</option>
               <option value="unpaid">Kifizetetlen</option>
@@ -1485,13 +1518,16 @@ export default function IncomingInvoices() {
           <SecondaryButton
             onClick={()=>{ setDateDraftFrom(dateFrom); setDateDraftTo(dateTo); setShowDateModal(true); }}
             style={{ marginLeft:'auto' }}
+            title={dateFrom || dateTo ? `${dateFrom || '…'} – ${dateTo || '…'}` : 'Dátumszűrés'}
           >
             <Calendar size={16}/>
-            {dateFrom || dateTo ? `${dateFrom || '…'} – ${dateTo || '…'}` : 'Dátumszűrés'}
           </SecondaryButton>
-          <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading}>
-            <RefreshCw size={16}/> Frissítés
+          <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading} title="Frissítés">
+            <RefreshCw size={16}/>
           </PrimaryButton>
+          
+          {!isSelectorMode && (
+          <>
           <SecondaryButton onClick={() => setShowPaymentHistory(true)}>
             Kifizetések
           </SecondaryButton>
@@ -1510,6 +1546,8 @@ export default function IncomingInvoices() {
                 <Save size={16}/> {savingEdit ? 'Mentés…' : 'Csomag mentése'}
               </PrimaryButton>
             </div>
+          )}
+          </>
           )}
         </Toolbar>
       </InvoicesHeader>
@@ -1534,7 +1572,7 @@ export default function IncomingInvoices() {
         <Table>
           <TableHeader>
             <tr>
-              <TableHeaderCell></TableHeaderCell>
+              {isSelectorMode ? <TableHeaderCell>Kiválasztás</TableHeaderCell> : <TableHeaderCell></TableHeaderCell>}
               <TableHeaderCell>Kibocsátó</TableHeaderCell>
               <TableHeaderCell>Adószám</TableHeaderCell>
               <TableHeaderCell>Számlaszám</TableHeaderCell>
@@ -1578,12 +1616,18 @@ export default function IncomingInvoices() {
                 $selected={selected.has(rowKey(row))}
               >
                 <TableCell style={{width:40}}>
-                  {canSelect(row) ? (
+                  {isSelectorMode ? (
+                      <PrimaryButton onClick={() => handleSelectInvoice(row)} style={{padding: '4px 8px', fontSize: 12}}>
+                        Kiválaszt
+                      </PrimaryButton>
+                  ) : (
+                  canSelect(row) ? (
                     <CheckboxBtn onClick={(e)=>toggleSelect(row, idx, e)} title="Kijelölés">
                       {selected.has(rowKey(row)) ? <CheckSquare size={18}/> : <Square size={18}/>} 
                     </CheckboxBtn>
                   ) : (
                     <span title="Nem átutalásos"> </span>
+                  )
                   )}
                 </TableCell>
                 <TableCell title={row.supplierName}>{row.supplierName?.length>30? row.supplierName.slice(0,30)+'…':row.supplierName}</TableCell>
@@ -1924,6 +1968,55 @@ export default function IncomingInvoices() {
                 <SecondaryButton onClick={()=>setShowDateModal(false)}>Mégse</SecondaryButton>
                 <PrimaryButton onClick={()=>{ applyRange(dateDraftFrom || null, dateDraftTo || null, { refresh: 1, backfillAll: dateDraftFrom && dateDraftTo ? 1 : 0 }); setShowDateModal(false); }}>
                   Szűrés alkalmazása
+                </PrimaryButton>
+              </div>
+            </ModalBody>
+          </ModalContent>
+        </ModalOverlay>
+      )}
+
+      {/* Összegszűrés Modal */}
+      {showAmountModal && (
+        <ModalOverlay onClick={()=>setShowAmountModal(false)}>
+          <ModalContent onClick={(e)=>e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <ModalHeader>
+              <ModalTitle>Összeg szűrés (Bruttó)</ModalTitle>
+              <CloseBtn onClick={()=>setShowAmountModal(false)}>Bezárás</CloseBtn>
+            </ModalHeader>
+            <ModalBody>
+              <div style={{ display:'flex', gap:12, flexDirection:'column' }}>
+                <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                  <label style={{ fontWeight:500 }}>Minimum összeg (Ft)</label>
+                  <input 
+                    type="text"
+                    inputMode="decimal"
+                    value={amountDraftFrom || ''} 
+                    onChange={(e)=>setAmountDraftFrom(e.target.value.replace(',', '.'))}
+                    placeholder="pl. 1000"
+                    style={{ padding: 8, border: '1px solid #ddd', borderRadius: 4 }}
+                  />
+                </div>
+                <div style={{ display:'flex', flexDirection:'column', gap:4 }}>
+                  <label style={{ fontWeight:500 }}>Maximum összeg (Ft)</label>
+                  <input 
+                    type="text"
+                    inputMode="decimal"
+                    value={amountDraftTo || ''} 
+                    onChange={(e)=>setAmountDraftTo(e.target.value.replace(',', '.'))}
+                    placeholder="pl. 50000"
+                    style={{ padding: 8, border: '1px solid #ddd', borderRadius: 4 }}
+                  />
+                </div>
+              </div>
+              <div style={{ display:'flex', justifyContent:'flex-end', gap:8, marginTop:24 }}>
+                <SecondaryButton onClick={()=>{ setAmountDraftFrom(''); setAmountDraftTo(''); }}>Törlés</SecondaryButton>
+                <SecondaryButton onClick={()=>setShowAmountModal(false)}>Mégse</SecondaryButton>
+                <PrimaryButton onClick={()=>{ 
+                  setAmountFrom(amountDraftFrom); 
+                  setAmountTo(amountDraftTo); 
+                  setShowAmountModal(false);
+                }}>
+                  Szűrés
                 </PrimaryButton>
               </div>
             </ModalBody>
