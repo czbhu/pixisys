@@ -235,7 +235,28 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     <>
       <Space style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Form.Item label="Mennyiség" name="quantity" initialValue={1} rules={[{ required: true }]} style={{ marginBottom: 8 }}> 
-          <InputNumber min={0.01} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+          <InputNumber 
+            min={0.01} 
+            step={1} 
+            style={{ width: 120 }} 
+            parser={(value) => value?.replace(',', '.') as unknown as number} 
+            onBlur={(e) => {
+                 const value = parseFloat(e.target.value.replace(',', '.'));
+                 const currentType = (activeKey === 'all' ? (selected?.__type as any) : activeKey);
+                 if (selected && currentType === 'manufacturing' && selected.is_fixed_quantity) {
+                      const fixedQty = Number(selected.quantity);
+                      if (fixedQty > 0 && !isNaN(value)) {
+                           const multiples = Math.ceil(value / fixedQty);
+                           // Ensure at least 1 multiple if value > 0
+                           const finalMultiples = multiples === 0 && value > 0 ? 1 : multiples;
+                           const newValue = finalMultiples * fixedQty;
+                           if (newValue !== value) {
+                                form.setFieldValue('quantity', newValue);
+                           }
+                      }
+                 }
+            }}
+          />
         </Form.Item>
         <Form.Item label="Egység" name="unit" style={{ marginBottom: 8 }}> 
           <Input disabled style={{ width: 100 }} />
@@ -333,8 +354,24 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     const currentType = (activeKey === 'all' ? (record.__type as any) : activeKey);
     let unit = record.unit || record.quantity_unit || (currentType === 'service' ? 'óra' : 'db');
     unit = translateUnit(unit);
-    const price = record.base_price ?? record.net_unit_price ?? record.unit_selling_price ?? 0;
-    form.setFieldsValue({ unit, net_unit_price: price });
+    let price = record.base_price ?? record.net_unit_price ?? record.unit_selling_price ?? 0;
+
+    let qty = 1;
+    if (currentType === 'manufacturing') {
+        if (record.is_fixed_quantity) {
+            qty = Number(record.quantity);
+        } else {
+             // For non-fixed qty, ensure we use the unit price derived from total/qty if available, 
+             // to be safe against older records where net_unit_price might be off, 
+             // but prefer stored net_unit_price if valid.
+             // User requested: "számolja vissza az árat 1 db-ra"
+             if (Number(record.quantity) > 0 && Number(record.net_total_price) > 0) {
+                  price = Number(record.net_total_price) / Number(record.quantity);
+             }
+        }
+    }
+
+    form.setFieldsValue({ unit, net_unit_price: price, quantity: qty });
   };
 
   const confirmAdd = async () => {
@@ -395,10 +432,20 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       { title: 'Egység', dataIndex: 'unit', key: 'unit' },
     ],
     manufacturing: [
-      { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: () => '-' },
+      { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: (v: any) => v || '-' },
       { title: 'Egyedi gyártás neve', dataIndex: 'name', key: 'name' },
       { title: 'Leírás', dataIndex: 'description', key: 'description' },
       { title: 'Nettó ár', dataIndex: 'net_unit_price', key: 'net_unit_price' },
+      { 
+          title: 'Rendelési egység', 
+          key: 'order_unit', 
+          render: (r: any) => {
+              if (r.is_fixed_quantity) {
+                  return `${Number(r.quantity)} ${r.quantity_unit || 'db'}`;
+              }
+              return `1 ${r.quantity_unit || 'db'}`;
+          }
+      },
       { title: 'Egység', dataIndex: 'quantity_unit', key: 'quantity_unit', render: (v: any) => v || 'db' },
     ],
     service: [

@@ -31,10 +31,10 @@ class Command(BaseCommand):
                 elif 'ti.pixisys.eu' in settings.ALLOWED_HOSTS:
                     base_url = 'https://ti.pixisys.eu'
                 else:
-                    # Fallback localhost-ra
-                    base_url = 'http://localhost:4000'
+                    # Fallback production-ra
+                    base_url = 'https://inv.pixisys.eu'
             except:
-                base_url = 'http://localhost:4000'
+                base_url = 'https://inv.pixisys.eu'
         
         # Token létrehozása
         token = EmergencyAccessToken.create_token(validity_minutes=validity_minutes)

@@ -4,8 +4,15 @@ from .models import (
     Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role,
     InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType,
     BankStatement, BankStatementItem, ProformaInvoice, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingDocument,
-    BackupConfiguration, BackupFile
+    BackupConfiguration, BackupFile, Currency
 )
+
+
+class CurrencySerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Currency
+        fields = '__all__'
+        read_only_fields = ['id', 'last_updated']
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -61,28 +68,34 @@ class CustomerSerializer(serializers.ModelSerializer):
             'street_name', 'public_place_category', 'street_number', 'building', 'staircase', 'floor', 'door',
             'city', 'postal_code', 'country', 'email', 'phone', 'vat_code', 'county_code', 
             'vat_group_id', 'vat_group_member_tax_number', 'vat_status', 'is_hungarian_taxpayer', 'eu_tax_number', 'created_at', 'updated_at',
-            'payment_due_days', 'is_supplier', 'is_customer', 'bank_accounts'
+            'payment_due_days', 'is_supplier', 'is_customer', 'bank_accounts', 'payment_method', 'default_currency'
         ]
 
     def validate(self, attrs):
         vat_status = attrs.get('vat_status', getattr(self.instance, 'vat_status', 'DOMESTIC'))
         attrs['is_hungarian_taxpayer'] = (vat_status == 'DOMESTIC')
 
-        # Adószám egyediség ellenőrzése (8 számjegy, szóköz és kötőjel nélkül)
-        tax_number = attrs.get('tax_number', getattr(self.instance, 'tax_number', '')).replace('-', '').replace(' ', '')
-        if tax_number:
-            tax_number = tax_number[:8]
-            if len(tax_number) != 8:
-                raise serializers.ValidationError({'tax_number': 'Az adószámnak 8 számjegyből kell állnia'})
+        if attrs['is_hungarian_taxpayer']:
+            # Adószám egyediség ellenőrzése (8 számjegy, szóköz és kötőjel nélkül)
+            val = attrs.get('tax_number', getattr(self.instance, 'tax_number', ''))
+            # Handle potential None from client or database
+            if val is None:
+                val = ''
+            tax_number = val.replace('-', '').replace(' ', '')
+            
+            if tax_number:
+                tax_number = tax_number[:8]
+                if len(tax_number) != 8:
+                    raise serializers.ValidationError({'tax_number': 'Az adószámnak 8 számjegyből kell állnia'})
 
-            existing = Customer.objects.filter(tax_number=tax_number)
-            if self.instance:
-                existing = existing.exclude(id=self.instance.id)
-            if existing.exists():
-                raise serializers.ValidationError({'tax_number': 'Már létezik ügyfél ezzel az adószámmal'})
+                existing = Customer.objects.filter(tax_number=tax_number)
+                if self.instance:
+                    existing = existing.exclude(id=self.instance.id)
+                if existing.exists():
+                    raise serializers.ValidationError({'tax_number': 'Már létezik ügyfél ezzel az adószámmal'})
 
-            # Normalizált értékkel dolgozzunk tovább
-            attrs['tax_number'] = tax_number
+                # Normalizált értékkel dolgozzunk tovább
+                attrs['tax_number'] = tax_number
         return attrs
 
     def get_bank_accounts(self, obj):
@@ -584,6 +597,19 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
             'payment_method': {'required': True},
         }
 
+    def validate(self, attrs):
+        # Nyugtás vevő ellenőrzése
+        customer_id = attrs.get('customer_id')
+        if customer_id:
+            try:
+                customer = Customer.objects.get(id=customer_id)
+                if customer.category == 'RECEIPT':
+                    raise serializers.ValidationError({"customer_id": "Nyugtás vevőnek nem lehet számlát kiállítani."})
+            except Customer.DoesNotExist:
+                pass
+        
+        return attrs
+
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         customer_id = validated_data.pop('customer_id')
@@ -934,7 +960,7 @@ class ContactSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'customer', 'customer_name', 'first_name', 'last_name', 'full_name',
             'position', 'department', 'contact_type', 'email', 'phone', 'mobile', 'fax',
-            'notes', 'is_primary', 'is_active', 'created_at', 'updated_at'
+            'notes', 'is_primary', 'is_active', 'is_receipt', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -945,7 +971,7 @@ class ContactCreateSerializer(serializers.ModelSerializer):
         fields = [
             'customer', 'first_name', 'last_name', 'position', 'department',
             'contact_type', 'email', 'phone', 'mobile', 'fax', 'notes',
-            'is_primary', 'is_active'
+            'is_primary', 'is_active', 'is_receipt'
         ]
 
 
@@ -1119,6 +1145,7 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
     total_net_amount = serializers.ReadOnlyField()
     total_vat_amount = serializers.ReadOnlyField()
     nav_configuration_name = serializers.SerializerMethodField(read_only=True)
+    nav_configuration = NAVConfigurationSerializer(read_only=True)
     # Accept write via nav_configuration_id for frontend consistency
     nav_configuration_id = serializers.UUIDField(write_only=True, required=False, allow_null=True)
     company_id = serializers.UUIDField(write_only=True, required=False)
@@ -1129,7 +1156,9 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
             'id', 'company', 'company_name', 'name', 'prefix', 'start_number',
             'current_number', 'is_active', 'invoice_count', 'cancelled_count',
             'total_net_amount', 'total_vat_amount', 'nav_configuration',
-            'nav_configuration_name', 'nav_configuration_id', 'company_id', 'invoice_appearance', 'created_at', 'updated_at'
+            'nav_configuration_name', 'nav_configuration_id', 'company_id', 'invoice_appearance', 
+            'default_currency', 'default_bank_account', 'language', 'second_language', 
+            'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'company', 'created_at', 'updated_at']
 
@@ -1137,6 +1166,13 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
         return obj.nav_configuration.name if obj.nav_configuration else None
 
     def validate(self, attrs):
+        if self.instance and self.instance.invoices.exists():
+            for field in ['prefix', 'start_number']:
+                if field in attrs and attrs[field] != getattr(self.instance, field):
+                     raise serializers.ValidationError(
+                        f"A számlatömb már tartalmaz számlát, a(z) {field} mező nem módosítható."
+                    )
+
         # Company mapping via company_id for frontend compatibility
         company_id = attrs.pop('company_id', None)
         if company_id is not None:

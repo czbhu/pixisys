@@ -12,7 +12,6 @@ import {
   ArrowLeft,
   Eye,
   EyeOff,
-  Hash,
   TrendingUp
 } from 'lucide-react';
 import styled from 'styled-components';
@@ -302,20 +301,6 @@ const InvoiceBlocks = () => {
     }
   );
 
-  const generateNumberMutation = useMutation(
-    (id) => invoiceBlockAPI.generateInvoiceNumber(id),
-    {
-      onSuccess: (data) => {
-        queryClient.invalidateQueries(['invoice-blocks']);
-        toast.success(`Új számlaszám generálva: ${data.data.invoice_number}`);
-      },
-      onError: (error) => {
-        toast.error('Hiba történt a számlaszám generálása során');
-        console.error('Generate number error:', error);
-      }
-    }
-  );
-
   const handleDelete = (block) => {
     if (block.invoice_count > 0) {
       toast.error('Nem törölhető számlatömb, amely tartalmaz számlákat');
@@ -332,10 +317,6 @@ const InvoiceBlocks = () => {
       id: block.id,
       isActive: !block.is_active
     });
-  };
-
-  const handleGenerateNumber = (block) => {
-    generateNumberMutation.mutate(block.id);
   };
 
   if (isLoading) {
@@ -472,13 +453,6 @@ const InvoiceBlocks = () => {
                 </TableCell>
                 <TableCell>
                   <ActionButtons>
-                    <ActionButton
-                      className="generate"
-                      onClick={() => handleGenerateNumber(block)}
-                      title="Új számlaszám generálása"
-                    >
-                      <Hash size={16} />
-                    </ActionButton>
                     <ActionButton
                       className="toggle"
                       active={block.is_active}

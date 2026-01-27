@@ -208,7 +208,7 @@ LANGUAGE_CODE = 'hu-hu'
 TIME_ZONE = 'Europe/Budapest'
 
 # Password reset / email settings
-FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default='http://localhost:4000')
+FRONTEND_BASE_URL = config('FRONTEND_BASE_URL', default='https://inv.pixisys.eu')
 DEFAULT_FROM_EMAIL = config('DEFAULT_FROM_EMAIL', default='no-reply@pixisys.eu')
 
 _email_host = config('EMAIL_HOST', default='')

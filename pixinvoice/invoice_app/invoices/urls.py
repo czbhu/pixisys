@@ -4,7 +4,7 @@ from invoices.views.views import (
     CustomerViewSet, InvoiceViewSet, InvoiceItemViewSet, NAVConfigurationViewSet, ContactViewSet,
     CompanyViewSet, SystemUserViewSet, RoleViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
     CompanyEmailSettingsViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
-    BackupConfigurationViewSet, BackupFileViewSet
+    BackupConfigurationViewSet, BackupFileViewSet, CurrencyViewSet
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
 from invoices.views.import_views import import_customers, import_customers_streaming, import_contacts, import_contacts_streaming, export_customer_sample_csv, export_contact_sample_csv, export_missing_customers_csv, import_suppliers_from_invoices, import_suppliers_from_invoices_streaming
@@ -16,6 +16,7 @@ from invoices.views.audit_export_views import nav_audit_export
 
 router = DefaultRouter(trailing_slash=True)
 router.register(r'customers', CustomerViewSet)
+router.register(r'currencies', CurrencyViewSet)
 router.register(r'invoices', InvoiceViewSet)
 router.register(r'invoice-items', InvoiceItemViewSet)
 router.register(r'nav-configurations', NAVConfigurationViewSet)

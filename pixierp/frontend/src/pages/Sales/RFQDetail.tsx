@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Tag, Divider, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert } from 'antd';
+import { Card, Tag, Divider, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
@@ -584,6 +584,10 @@ const RFQDetail: React.FC = () => {
                         let url = '/crm/contacts?action=create';
                         if (companyId && companyId !== 'private') {
                           url += `&company=${companyId}`;
+                          const company = companies.find((c: any) => c.id === companyId);
+                          if (company?.name) {
+                            url += `&company_name=${encodeURIComponent(company.name)}`;
+                          }
                         }
                         window.open(url, '_blank');
                       }}
@@ -812,18 +816,46 @@ const RFQDetail: React.FC = () => {
             bordered
             dataSource={(rfqFiles || [])}
             locale={{ emptyText: 'Nincs csatolmány' }}
-            renderItem={(f: UploadFile & { response?: any }) => (
+            renderItem={(f: UploadFile & { response?: any }) => {
+              const isImage = (f.name || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
+              
+              const handleDownload = async () => {
+                const url = f.url;
+                if (!url) return;
+                try {
+                  const response = await fetch(url);
+                  const blob = await response.blob();
+                  const blobUrl = window.URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = blobUrl;
+                  const rfqNum = rfq?.number || rfq?.request_number || 'Ajanlat';
+                  link.download = `${rfqNum}_${f.name}`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  window.URL.revokeObjectURL(blobUrl);
+                } catch (e) {
+                  console.error('Download error:', e);
+                  window.open(url, '_blank');
+                }
+              };
+
+              const linkBtn = (
+                <Button type="link" style={{ padding: 0 }} onClick={handleDownload}>{f.name}</Button>
+              );
+
+              return (
               <List.Item>
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                   <Space>
-                    <Button type="link" style={{ padding: 0 }} onClick={() => {
-                      const url = f.url;
-                      if (url) {
-                        setFilePreviewUrl(url);
-                        setFilePreviewTitle(f.name);
-                        setFilePreviewOpen(true);
-                      }
-                    }}>{f.name}</Button>
+                    {isImage && f.url ? (
+                      <Popover 
+                        content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
+                        title={f.name}
+                      >
+                        {linkBtn}
+                      </Popover>
+                    ) : linkBtn}
                     <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
                   </Space>
                   <Space>
@@ -865,7 +897,7 @@ const RFQDetail: React.FC = () => {
                   </Space>
                 </Space>
               </List.Item>
-            )}
+            );}}
           />
         </Card>
 

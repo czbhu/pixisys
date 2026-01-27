@@ -536,6 +536,18 @@ export const salesService = {
     async promoteAttachment(threadId: number, data: { attachment_id: number; target_type: 'rfq'|'rfq_item'|'order'; target_id: number }) {
         const response = await api.post(`/sales/chats/${threadId}/promote_attachment/`, data);
         return response.data;
+    },
+    async reorderRfqItems(id: number, items: { id: number; sort_order: number; parent_id: number | null }[]) {
+        const response = await api.post(`/sales/quote-requests/${id}/reorder_items/`, items);
+        return response.data;
+    },
+    async getCustomerOrderDetailedItems(id: number) {
+        const response = await api.get(`/sales/customer-orders/${id}/detailed_items/`);
+        return response.data;
+    },
+    async getItemWorkSheet(orderId: number, itemId: number) {
+        const response = await api.get(`/sales/customer-orders/${orderId}/item_work_sheet/?item_id=${itemId}`, { responseType: 'blob' });
+        return response;
     }
 };
 

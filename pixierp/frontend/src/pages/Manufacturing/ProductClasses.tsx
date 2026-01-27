@@ -19,7 +19,8 @@ import {
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
-    SearchOutlined
+    SearchOutlined,
+    ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { manufacturingService, ProductClass } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
@@ -87,6 +88,25 @@ const ProductClasses: React.FC = () => {
     const showViewModal = (productClass: ProductClass) => {
         setViewingProductClass(productClass);
         setIsViewModalVisible(true);
+    };
+
+    const handleCancel = () => {
+        if (form.isFieldsTouched()) {
+            Modal.confirm({
+                title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+                icon: <ExclamationCircleOutlined />,
+                content: 'A módosítások elvesznek.',
+                okText: 'Bezár',
+                cancelText: 'Mégse',
+                onOk: () => {
+                    setIsModalVisible(false);
+                    form.resetFields();
+                },
+            });
+        } else {
+            setIsModalVisible(false);
+            form.resetFields();
+        }
     };
 
     const handleSubmit = async (values: any) => {
@@ -269,10 +289,7 @@ const ProductClasses: React.FC = () => {
                                 Mentés
                             </Button>
                             <Button
-                                onClick={() => {
-                                    setIsModalVisible(false);
-                                    form.resetFields();
-                                }}
+                                onClick={handleCancel}
                             >
                                 Bezárás
                             </Button>
@@ -280,10 +297,7 @@ const ProductClasses: React.FC = () => {
                     </div>
                 }
                 open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                }}
+                onCancel={handleCancel}
                 width={600}
                 footer={null}
                 closable={false}

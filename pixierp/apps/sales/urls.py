@@ -21,6 +21,8 @@ router.register(r'opportunities', views.OpportunityViewSet)
 router.register(r'forecasts', views.ForecastViewSet)
 router.register(r'work-logs', views.WorkLogViewSet)
 router.register(r'chats', views.ChatThreadViewSet)
+router.register(r'delivery-notes', views.DeliveryNoteViewSet)
+router.register(r'delivery-note-items', views.DeliveryNoteItemViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

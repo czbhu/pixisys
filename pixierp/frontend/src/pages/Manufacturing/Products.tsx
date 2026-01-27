@@ -218,12 +218,12 @@ const Products: React.FC = () => {
                 Modal.confirm({
                     title: 'Visszatérés az ajánlathoz',
                     content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a terméket?',
-                    okText: 'Igen',
-                    cancelText: 'Nem',
+                    okText: 'Alkalmazás',
+                    cancelText: 'Mégse',
                     onOk: () => {
                         const channel = new BroadcastChannel('pixi_rfq_item_creation');
-                        channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedProduct, itemType: 'product' } });
-                        window.close();
+                        channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedProduct, itemType: 'manufacturing' } });
+                        setTimeout(() => window.close(), 100);
                     }
                 });
             }
@@ -334,11 +334,20 @@ const Products: React.FC = () => {
             sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => a.name.localeCompare(b.name),
         },
         {
+            title: 'Leírás',
+            dataIndex: 'description',
+            key: 'description',
+            width: 250, 
+            ellipsis: true,
+            render: (text: string) => <Tooltip title={text}><span>{text}</span></Tooltip>
+        },
+        {
             title: 'Mennyiség',
             dataIndex: 'quantity',
             key: 'quantity',
             width: 100,
             sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => a.quantity - b.quantity,
+            render: (qty: any) => Number(qty).toLocaleString('hu-HU', { maximumFractionDigits: 2 })
         },
         {
             title: 'Termék osztály',
@@ -359,9 +368,9 @@ const Products: React.FC = () => {
             dataIndex: 'net_total_price',
             key: 'net_total_price',
             width: 120,
-            render: (price: number, record: ManufacturingProduct) => {
+            render: (price: any, record: ManufacturingProduct) => {
                 const currencySymbol = record.currency_info?.symbol || 'Ft';
-                return `${price.toLocaleString('hu-HU')} ${currencySymbol}`;
+                return `${Number(price).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`;
             },
             sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => a.net_total_price - b.net_total_price,
         },
@@ -423,6 +432,24 @@ const Products: React.FC = () => {
                             icon={<EditOutlined />}
                             size="small"
                             onClick={() => showModal(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Új az adatok alapján">
+                        <Button
+                            icon={<PlusOutlined />}
+                            size="small"
+                            onClick={() => {
+                                const newProduct: any = { ...record };
+                                delete newProduct.id;
+                                delete newProduct.code;
+                                newProduct.name = `${newProduct.name} - másolat`;
+                                newProduct.date = dayjs().format('YYYY-MM-DD');
+                                newProduct.status = 'quote_request_open';
+                                newProduct.net_total_price = record.net_total_price;
+                                newProduct.net_unit_price = record.net_unit_price;
+                                setEditingProduct(newProduct);
+                                setIsModalVisible(true);
+                            }}
                         />
                     </Tooltip>
                     <Tooltip title="Törlés">
@@ -519,313 +546,47 @@ const Products: React.FC = () => {
             </Card>
 
             <ManufacturingProductEditorModal
-                open={createModalOpen}
-                onCancel={() => setCreateModalOpen(false)}
+                open={createModalOpen || (!!editingProduct && isModalVisible)}
+                onCancel={() => {
+                   setCreateModalOpen(false);
+                   setIsModalVisible(false); // Close legacy modal too if used as flag
+                   setEditingProduct(null);
+                }}
                 onCreated={(p) => {
                     setCreateModalOpen(false);
+                    setIsModalVisible(false);
+                    setEditingProduct(null);
                     loadProducts();
+                    // Handle "return to quote" logic if needed
+                    const params = new URLSearchParams(window.location.search);
+                     if (params.get('from_rfq') === 'true' && p) {
+                        Modal.confirm({
+                            title: 'Visszatérés az ajánlathoz',
+                            content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a terméket?',
+                            okText: 'Alkalmazás',
+                            cancelText: 'Mégse',
+                            onOk: () => {
+                                const channel = new BroadcastChannel('pixi_rfq_item_creation');
+                                channel.postMessage({ type: 'ITEM_CREATED', data: { item: p, itemType: 'manufacturing' } });
+                                setTimeout(() => window.close(), 100);
+                            }
+                        });
+                    }
                 }}
+                editingProduct={editingProduct}
             />
 
-            {/* Termék Modal */}
+            {/* Legacy Termék Modal - No longer used for EDIT and CREATE? Wait. */}
+            {/* The user wants the SAME interface for Edit. So we should use ManufacturingProductEditorModal. */}
+            {/* I will comment out or remove the usage of the old Modal if I redirect all Edits to the new one. */}
+            
+            {/* 
             <Modal
-                title={
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>Termék szerkesztése</span>
-                        <Space>
-                            <Button
-                                type="primary"
-                                onClick={() => form.submit()}
-                            >
-                                Mentés
-                            </Button>
-                            <Button
-                                onClick={() => {
-                                    setIsModalVisible(false);
-                                    form.resetFields();
-                                }}
-                            >
-                                Bezárás
-                            </Button>
-                        </Space>
-                    </div>
-                }
-                open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                }}
-                width={800}
-                footer={null}
-                closable={false}
-            >
-                <Form
-                    form={form}
-                    layout="vertical"
-                    onFinish={handleSubmit}
-                >
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item
-                                name="date"
-                                label="Dátum"
-                                rules={[{ required: true, message: 'Kérjük, adja meg a dátumot!' }]}
-                            >
-                                <HungarianDatePicker style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item
-                                name="deadline"
-                                label="Határidő"
-                                rules={[{ required: true, message: 'Kérjük, adja meg a határidőt!' }]}
-                            >
-                                <HungarianDatePicker style={{ width: '100%' }} />
-                            </Form.Item>
-                        </Col>
-                    </Row>
+                title={ ... }
+            ...
+            </Modal> 
+            */}
 
-                    <Form.Item
-                        name="name"
-                        label="Név"
-                        rules={[{ required: true, message: 'Kérjük, adja meg a nevet!' }]}
-                    >
-                        <Input placeholder="Termék neve" />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="description"
-                        label="Leírás"
-                    >
-                        <TextArea rows={3} placeholder="Termék leírása" />
-                    </Form.Item>
-
-                    <Form.Item
-                        name="internal_description"
-                        label="Belső leírás"
-                    >
-                        <TextArea rows={3} placeholder="Belső leírás" />
-                    </Form.Item>
-
-                    <Row gutter={16}>
-                        <Col span={6}>
-                            <Form.Item
-                                name="quantity"
-                                label="Mennyiség"
-                                rules={[{ required: true, message: 'Kérjük, adja meg a mennyiséget!' }]}
-                            >
-                                <InputNumber
-                                    min={0}
-                                    step={0.01}
-                                    style={{ width: '100%' }}
-                                    placeholder="Mennyiség"
-                                    onChange={() => calculateTotalPrice('quantity')}
-                                />
-                            </Form.Item>
-                        </Col>
-                        <Col span={6}>
-                            <Form.Item
-                                name="quantity_unit"
-                                label="Mennyiségi egység"
-                                initialValue="db"
-                            >
-                                <Select placeholder="Válasszon egységet">
-                                    <Option value="db">db</Option>
-                                    <Option value="kg">kg</Option>
-                                    <Option value="m">m</Option>
-                                    <Option value="m²">m²</Option>
-                                    <Option value="m³">m³</Option>
-                                    <Option value="l">l</Option>
-                                    <Option value="pár">pár</Option>
-                                    <Option value="szett">szett</Option>
-                                    <Option value="darab">darab</Option>
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={6}>
-                            <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.currency !== currentValues.currency}>
-                                {() => (
-                                    <Form.Item
-                                        name="net_unit_price"
-                                        label={`Nettó egység ár (${getCurrentCurrencySymbol()})`}
-                                    >
-                                        <InputNumber
-                                            min={0}
-                                            step={0.01}
-                                            style={{ width: '100%' }}
-                                            placeholder="Egység ár"
-                                            onChange={() => calculateTotalPrice('unitPrice')}
-                                        />
-                                    </Form.Item>
-                                )}
-                            </Form.Item>
-                        </Col>
-                        <Col span={6}>
-                            <Form.Item shouldUpdate={(prevValues, currentValues) => prevValues.currency !== currentValues.currency}>
-                                {() => (
-                                    <Form.Item
-                                        name="net_total_price"
-                                        label={`Nettó ár (${getCurrentCurrencySymbol()})`}
-                                    >
-                                        <InputNumber
-                                            min={0}
-                                            step={0.01}
-                                            style={{ width: '100%' }}
-                                            placeholder="Összesen"
-                                            onChange={() => calculateTotalPrice('totalPrice')}
-                                        />
-                                    </Form.Item>
-                                )}
-                            </Form.Item>
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item
-                                name="status"
-                                label="Állapot"
-                                initialValue="quote_request_open"
-                                rules={[{ required: true, message: 'Kérjük, válasszon állapotot!' }]}
-                            >
-                                <Select placeholder="Válasszon állapotot">
-                                    <Option value="quote_request_open">Ajánlatkérés nyitott</Option>
-                                    <Option value="quote_request_priced">Ajánlatkérés árazott</Option>
-                                    <Option value="quote_request_sent">Ajánlatkérés kiküldött</Option>
-                                    <Option value="ordered">Megrendelve</Option>
-                                    <Option value="design_in_progress">Tervezés alatt</Option>
-                                    <Option value="design_approved">Tervezés jóváhagyva</Option>
-                                    <Option value="production_in_progress">Gyártás alatt</Option>
-                                    <Option value="production_completed">Gyártás kész</Option>
-                                    <Option value="finished_goods_warehouse">Készárú raktárban</Option>
-                                    <Option value="installation_in_progress">Kihelyezés alatt</Option>
-                                    <Option value="delivered">Kiszállítva</Option>
-                                    <Option value="invoiced">Számlázva</Option>
-                                    <Option value="paid">Kifizetve</Option>
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item
-                                name="currency"
-                                label="Valuta"
-                                initialValue={currencies.find(c => c.is_default)?.id}
-                            >
-                                <Select placeholder="Válasszon valutát" allowClear>
-                                    {currencies.map(currency => (
-                                        <Option key={currency.id} value={currency.id}>
-                                            {currency.code} - {currency.name}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Form.Item>
-                            <Button
-                                size="small"
-                                icon={<ReloadOutlined />}
-                                loading={updatingRates}
-                                onClick={handleUpdateExchangeRates}
-                                title="Árfolyamok frissítése MNB API-ból"
-                                style={{ marginTop: 8, marginRight: 8 }}
-                            >
-                                Árfolyamok frissítése
-                            </Button>
-                            <Button
-                                size="small"
-                                onClick={() => setIsExchangeRatesModalVisible(true)}
-                                title="Nettó ár megjelenítése különböző árfolyamokban"
-                                style={{ marginTop: 8 }}
-                            >
-                                Árfolyamok
-                            </Button>
-                        </Col>
-                        <Col span={8}>
-                            {/* Üres oszlop a layout miatt */}
-                        </Col>
-                    </Row>
-
-                    <Row gutter={16}>
-                        <Col span={8}>
-                            <Form.Item
-                                name="product_class"
-                                label="Termék osztály"
-                            >
-                                <Select placeholder="Válasszon termék osztályt" allowClear>
-                                    {productClasses.map(pc => (
-                                        <Option key={pc.id} value={pc.name}>
-                                            {pc.name}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item
-                                name="project"
-                                label="Projekt"
-                            >
-                                <Select placeholder="Válasszon projektet" allowClear>
-                                    {projects.map(p => (
-                                        <Option key={p.id} value={p.name}>
-                                            {p.name}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                            <Form.Item
-                                name="contact"
-                                label="Ügyfél"
-                            >
-                                <Select
-                                    placeholder="Válasszon ügyfelet"
-                                    allowClear
-                                    showSearch
-                                    optionFilterProp="children"
-                                    filterOption={(input, option) => {
-                                        // A teljes szöveg a children-ben van: "Kapcsolattartó név - Cég név"
-                                        // De mivel ez React elem, a szöveget másképp kell kinyerni
-                                        const contactName = option?.value as string; // Kapcsolattartó neve
-
-                                        // A cégnév nincs az option-ban, ezért a contacts tömbből kell kinyerni
-                                        const contactId = option?.key;
-                                        const contact = contacts.find(c => c.id.toString() === contactId);
-                                        const companyName = contact?.company_name || 'Magánszemély';
-
-                                        // Teljes keresési szöveg: kapcsolattartó név + cég név
-                                        const fullSearchText = `${contactName} ${companyName}`;
-
-                                        if (!fullSearchText || typeof fullSearchText !== 'string') {
-                                            return false;
-                                        }
-
-                                        // Ékezetek eltávolítása és kisbetűsítés
-                                        const normalizeText = (text: string) => {
-                                            return text
-                                                .normalize('NFD')
-                                                .replace(/[\u0300-\u036f]/g, '')
-                                                .toLowerCase()
-                                                .replace(/[^a-z0-9\s]/g, '');
-                                        };
-
-                                        const normalizedInput = normalizeText(input);
-                                        const normalizedSearchText = normalizeText(fullSearchText);
-
-                                        const result = normalizedSearchText.includes(normalizedInput);
-                                        return result;
-                                    }}
-                                >
-                                    {contacts.map(c => (
-                                        <Option key={c.id} value={c.name}>
-                                            {c.name} - {c.company_name || 'Magánszemély'}
-                                        </Option>
-                                    ))}
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                </Form>
-            </Modal>
 
             {/* Megtekintés Modal */}
             <Modal

@@ -20,6 +20,7 @@ import SettingsModule from './pages/Settings/SettingsModule';
 import PersonalModule from './pages/Personal/PersonalModule';
 import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
 import PublicDelivery from './pages/Public/PublicDelivery';
+import PublicDeliveryNote from './pages/Public/PublicDeliveryNote';
 import KioskPage from './pages/Public/KioskPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -165,6 +166,7 @@ function AppContent() {
         <Route path="/reset-password/:uid/:token" element={<ResetPassword />} />
         <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
         <Route path="/public/delivery/:token" element={<PublicDelivery />} />
+        <Route path="/public/delivery-note/:token" element={<PublicDeliveryNote />} />
         <Route path="/kiosk" element={<KioskPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
@@ -218,6 +220,7 @@ function AppContent() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
             <Route path="/public/delivery/:token" element={<PublicDelivery />} />
+            <Route path="/public/delivery-note/:token" element={<PublicDeliveryNote />} />
             <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />

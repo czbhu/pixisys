@@ -28,6 +28,7 @@ interface Contact {
 
 interface DeliveryData {
   order_number: string;
+  delivery_note_number?: string;
   customer_name: string;
   title: string;
   description: string;
@@ -205,6 +206,11 @@ const PublicDelivery: React.FC = () => {
           <p>
             <strong>Megrendelés szám:</strong> {data.order_number}
           </p>
+          {data.delivery_note_number && (
+            <p>
+              <strong>Szállítólevél sorszám:</strong> {data.delivery_note_number}
+            </p>
+          )}
           <p>
             <strong>Ügyfél:</strong> {data.customer_name}
           </p>

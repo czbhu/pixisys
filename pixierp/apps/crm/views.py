@@ -34,7 +34,19 @@ def _filter_by_query(items, query):
         name = str((it or {}).get('name') or it.get('full_name') or '').lower()
         email = str((it or {}).get('email') or '').lower()
         tax = str((it or {}).get('tax_number') or it.get('taxNumber') or '').lower()
-        if q in name or q in email or q in tax:
+        
+        # Search in company/customer name as well
+        company_name = str((it or {}).get('company_name') or (it or {}).get('customer_name') or '').lower()
+        if not company_name:
+            # Try to find deeper
+            cust = (it or {}).get('customer') or (it or {}).get('company')
+            if isinstance(cust, dict):
+                company_name = str(cust.get('name') or cust.get('full_name') or '').lower()
+            elif isinstance(cust, str):
+                # Maybe it is just an ID or string name, already handled if flat, but let's be safe
+                pass
+
+        if q in name or q in email or q in tax or q in company_name:
             filtered.append(it)
     return filtered
 
@@ -55,25 +67,60 @@ def _ensure_company_id(client):
     return None
 
 
+def _sync_to_local_db(data):
+    """
+    Syncs the company data from PixInvoice response to the local Company table.
+    Ensures that the 'is_supplier' flag is consistent for ERP modules.
+    """
+    try:
+        cid = data.get('id') or data.get('customer_id')
+        if not cid:
+            return
+
+        is_supplier = data.get('is_supplier', False)
+        
+        # If it's a supplier, or already exists locally, we sync it.
+        if is_supplier or Company.objects.filter(id=cid).exists():
+            Company.objects.update_or_create(
+                id=cid,
+                defaults={
+                    'name': data.get('name') or data.get('customer_name') or 'Névtelen',
+                    'is_supplier': is_supplier,
+                    'is_customer': data.get('is_customer', True),
+                    'tax_number': data.get('tax_number'),
+                    # We can map more fields if needed
+                }
+            )
+    except Exception as e:
+        print(f"Error syncing company {data.get('id')} to local DB: {e}")
+
+
 class CompanyViewSet(viewsets.ViewSet):
     permission_classes = [AllowAny]
 
     def list(self, request):
         try:
-            # Ha kifejezetten beszállítókat keresünk, akkor a helyi adatbázisból dolgozunk
-            if request.query_params.get('is_supplier') == 'true':
-                items = list(Company.objects.filter(is_supplier=True).values('id', 'name', 'tax_number'))
-                items = _filter_by_query(items, request.query_params.get('q'))
-                return Response(items)
-
             company_id = _resolve_company_id(request)
             client = PixinvoiceClient()
             if not company_id:
                 company_id = _ensure_company_id(client)
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
+            
+            # Use PixInvoice as the Source of Truth
             items = client.list_customers(company_id=company_id)
             items = _filter_by_query(items, request.query_params.get('q'))
+
+            # Handle Supplier filtering and Sync
+            if request.query_params.get('is_supplier') == 'true':
+                 # Filter strictly based on the source data
+                 items = [i for i in items if i.get('is_supplier') is True]
+                 
+                 # Sync these suppliers to local DB to ensure ForeignKeys work in ERP
+                 # This effectively makes the local DB a "cache" that is refreshed on read
+                 for item in items:
+                     _sync_to_local_db(item)
+
             return Response(items)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -104,6 +151,38 @@ class CompanyViewSet(viewsets.ViewSet):
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
 
+    @action(detail=False, methods=['post'])
+    def validate_eu_vat(self, request):
+        """Validate EU VAT number using VIES API"""
+        vat_number = request.data.get('vat_number', '').strip()
+        if not vat_number:
+            return Response({'error': 'Adószám megadása kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Remove country code if present (2 chars)
+        country_code = vat_number[:2].upper()
+        number_part = vat_number[2:]
+
+        # Check if first 2 chars are letters
+        if not country_code.isalpha():
+             return Response({'error': 'Az adószámnak kétbetűs országkóddal kell kezdődnie (pl. DE123456789)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # VIES API REST
+        url = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number"
+        payload = {
+            "countryCode": country_code,
+            "vatNumber": number_part
+        }
+        
+        try:
+            resp = requests.post(url, json=payload, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return Response(data)
+            else:
+                return Response({'error': 'VIES API hiba', 'details': resp.text}, status=resp.status_code)
+        except Exception as e:
+            return Response({'error': f'VIES hálózati hiba: {str(e)}'}, status=500)
+
     def create(self, request):
         try:
             company_id = _resolve_company_id(request)
@@ -113,6 +192,7 @@ class CompanyViewSet(viewsets.ViewSet):
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
             data = client.upsert_customer(request.data, company_id=company_id)
+            _sync_to_local_db(data)
             return Response(data, status=status.HTTP_201_CREATED)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -126,6 +206,7 @@ class CompanyViewSet(viewsets.ViewSet):
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
             data = client.upsert_customer(request.data, customer_id=pk, company_id=company_id)
+            _sync_to_local_db(data)
             return Response(data)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
@@ -189,9 +270,11 @@ class ContactViewSet(viewsets.ViewSet):
     def create(self, request):
         try:
             company_id = _resolve_company_id(request)
+            client = PixinvoiceClient()
+            if not company_id:
+                company_id = _ensure_company_id(client)
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            client = PixinvoiceClient()
             data = client.upsert_contact(request.data, company_id=company_id)
             return Response(data, status=status.HTTP_201_CREATED)
         except Exception as e:

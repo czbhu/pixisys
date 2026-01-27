@@ -27,7 +27,8 @@ import {
     CloseOutlined,
     IdcardOutlined,
     SearchOutlined,
-    SafetyOutlined
+    SafetyOutlined,
+    ExclamationCircleOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { hrService } from '../../services/hrService';
@@ -567,6 +568,25 @@ const Employees: React.FC = () => {
         }
     };
 
+    const handleCancel = () => {
+        if (form.isFieldsTouched()) {
+            Modal.confirm({
+                title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+                icon: <ExclamationCircleOutlined />,
+                content: 'A módosítások elvesznek.',
+                okText: 'Bezár',
+                cancelText: 'Mégse',
+                onOk: () => {
+                    setIsModalVisible(false);
+                    form.resetFields();
+                },
+            });
+        } else {
+            setIsModalVisible(false);
+            form.resetFields();
+        }
+    };
+
     const columns: any = [
         {
             title: 'Név / Pozíció',
@@ -795,10 +815,7 @@ const Employees: React.FC = () => {
             <Modal
                 title={editingEmployee ? 'Alkalmazott szerkesztése' : 'Új alkalmazott'}
                 open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                }}
+                onCancel={handleCancel}
                 width={800}
                 footer={[
                     <div key="footer" style={{ display: 'flex', justifyContent: 'space-between', width: '100%' }}>

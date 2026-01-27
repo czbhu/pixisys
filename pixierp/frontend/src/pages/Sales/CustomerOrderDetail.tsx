@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker } from 'antd';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
-import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined } from '@ant-design/icons';
+import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -143,6 +143,37 @@ const CustomerOrderDetail: React.FC = () => {
     return <Tag color={config.color}>{config.text}</Tag>;
   };
 
+  const getStepStatus = () => {
+      if (!order) return { current: 0, status: 'process' };
+      const s = order.status;
+      if (s === 'cancelled') return { current: 1, status: 'error' }; // Just loose logic
+      
+      const map: any = {
+          'new': 1,
+          'confirmed': 2,
+          'in_production': 3,
+          'ready': 4,
+          'in_delivery': 5,
+          'delivered': 6
+      };
+      
+      let current = map[s] || 0;
+      let status = s === 'delivered' ? 'process' : 'process';
+
+      if (s === 'delivered') {
+          if (order.invoice_number) {
+              current = 7;
+              status = 'finish';
+          } else {
+              current = 6;
+          }
+      }
+      
+      return { current, status };
+  };
+
+  const { current: currentStep, status: stepStatus } = getStepStatus();
+
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -199,6 +230,53 @@ const CustomerOrderDetail: React.FC = () => {
             {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}
           </Space>
         </div>
+
+        <div style={{ marginBottom: 30, marginTop: 10 }}>
+            <Steps
+                current={currentStep}
+                status={stepStatus as any}
+                items={[
+                    { title: 'Ajánlat', icon: <FileTextOutlined /> },
+                    { title: 'Új megrendelés', icon: <FileDoneOutlined /> },
+                    { title: 'Megerősítve', icon: <CheckCircleOutlined /> },
+                    { title: 'Gyártás', icon: <RocketOutlined /> },
+                    { title: 'Kész', icon: <CheckOutlined /> },
+                    { title: 'Szállítás', icon: <CarOutlined /> },
+                    { title: 'Kiszállítva', icon: <SmileOutlined /> },
+                    { title: 'Kiszámlázva', icon: <FileTextOutlined /> },
+                ]}
+            />
+            {order.status !== 'cancelled' && order.status !== 'delivered' && (
+                <div style={{ display: 'flex', justifyContent: 'center', marginTop: 20 }}>
+                     {order.status === 'new' && (
+                        <Button type="primary" size="large" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('confirm')}>
+                            Megerősítés (Következő státusz)
+                        </Button>
+                     )}
+                     {order.status === 'confirmed' && (
+                        <Button type="primary" size="large" icon={<RocketOutlined />} onClick={() => handleStatusChange('start_production')}>
+                            Gyártás indítása (Következő státusz)
+                        </Button>
+                     )}
+                     {order.status === 'in_production' && (
+                        <Button type="primary" size="large" icon={<CheckOutlined />} onClick={() => handleStatusChange('mark_ready')}>
+                            Készre jelölés (Következő státusz)
+                        </Button>
+                     )}
+                     {order.status === 'ready' && (
+                        <Button type="primary" size="large" icon={<CarOutlined />} onClick={() => handleStatusChange('start_delivery')}>
+                            Szállítás indítása (Következő státusz)
+                        </Button>
+                     )}
+                      {order.status === 'in_delivery' && (
+                        <Button type="primary" size="large" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('mark_delivered')}>
+                            Kiszállítva (Következő státusz)
+                        </Button>
+                     )}
+                </div>
+            )}
+        </div>
+
         <Form layout="vertical" form={formBasic}>
           <Row gutter={12}>
             <Col span={6}>
@@ -397,18 +475,46 @@ const CustomerOrderDetail: React.FC = () => {
             bordered
             dataSource={(orderFiles || [])}
             locale={{ emptyText: 'Nincs csatolmány' }}
-            renderItem={(f: UploadFile & { response?: any }) => (
+            renderItem={(f: UploadFile & { response?: any }) => {
+              const isImage = (f.name || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
+              
+              const handleDownload = async () => {
+                const url = f.url;
+                if (!url) return;
+                try {
+                  const response = await fetch(url);
+                  const blob = await response.blob();
+                  const blobUrl = window.URL.createObjectURL(blob);
+                  const link = document.createElement('a');
+                  link.href = blobUrl;
+                  const orderNum = order?.order_number || 'Megrendeles';
+                  link.download = `${orderNum}_${f.name}`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  window.URL.revokeObjectURL(blobUrl);
+                } catch (e) {
+                  console.error('Download error:', e);
+                  window.open(url, '_blank');
+                }
+              };
+
+              const linkBtn = (
+                <Button type="link" style={{ padding: 0 }} onClick={handleDownload}>{f.name}</Button>
+              );
+
+              return (
               <List.Item>
                 <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                   <Space>
-                    <Button type="link" style={{ padding: 0 }} onClick={() => {
-                      const url = f.url;
-                      if (url) {
-                        setFilePreviewUrl(url);
-                        setFilePreviewTitle(f.name);
-                        setFilePreviewOpen(true);
-                      }
-                    }}>{f.name}</Button>
+                    {isImage && f.url ? (
+                      <Popover 
+                        content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
+                        title={f.name}
+                      >
+                        {linkBtn}
+                      </Popover>
+                    ) : linkBtn}
                     <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
                   </Space>
                   <Space>
@@ -416,7 +522,7 @@ const CustomerOrderDetail: React.FC = () => {
                   </Space>
                 </Space>
               </List.Item>
-            )}
+            );}}
           />
         </Card>
 

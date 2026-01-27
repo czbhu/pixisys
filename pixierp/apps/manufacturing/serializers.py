@@ -1,9 +1,10 @@
 from rest_framework import serializers
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, 
-    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
+    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
+    ManufacturingCostItem
 )
-from apps.crm.models import Contact
+from apps.crm.models import Contact, Company as CRMCompany
 from apps.hr.models import Department, Employee
 from apps.core.models import Currency
 from apps.warehouse.models import Material
@@ -42,6 +43,23 @@ class CurrencySerializer(serializers.ModelSerializer):
         fields = ['id', 'code', 'name', 'symbol', 'exchange_rate', 'is_default']
 
 
+class ManufacturingCostItemSerializer(serializers.ModelSerializer):
+    supplier = serializers.PrimaryKeyRelatedField(
+        queryset=CRMCompany.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    department = serializers.PrimaryKeyRelatedField(
+        queryset=Department.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    class Meta:
+        model = ManufacturingCostItem
+        exclude = ['product']
+
+
 class ManufacturingProductSerializer(serializers.ModelSerializer):
     product_class_name = serializers.SerializerMethodField()
     project_name = serializers.SerializerMethodField()
@@ -49,10 +67,33 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
     contact_company_name = serializers.SerializerMethodField()
     status_display = serializers.SerializerMethodField()
     currency_info = serializers.SerializerMethodField()
+    cost_items = ManufacturingCostItemSerializer(many=True, required=False)
     
     class Meta:
         model = ManufacturingProduct
         fields = '__all__'
+
+    def create(self, validated_data):
+        cost_items_data = validated_data.pop('cost_items', [])
+        product = ManufacturingProduct.objects.create(**validated_data)
+        for item_data in cost_items_data:
+            ManufacturingCostItem.objects.create(product=product, **item_data)
+        return product
+
+    def update(self, instance, validated_data):
+        cost_items_data = validated_data.pop('cost_items', None)
+        # Update standard fields
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if cost_items_data is not None:
+             # Full replacement strategy
+             instance.cost_items.all().delete()
+             for item_data in cost_items_data:
+                 ManufacturingCostItem.objects.create(product=instance, **item_data)
+
+        return instance
     
     def get_product_class_name(self, obj):
         return obj.product_class.name if obj.product_class else None

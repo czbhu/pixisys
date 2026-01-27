@@ -12,7 +12,8 @@ class Customer(models.Model):
     short_name = models.CharField(max_length=100, blank=True, null=True, verbose_name="Short Name")
     tax_number = models.CharField(
         max_length=20, 
-        validators=[RegexValidator(r'^\d{8}$', 'Tax number must be 8 digits')],
+        blank=True, 
+        null=True,
         verbose_name="Tax Number"
     )
     full_tax_number = models.CharField(max_length=50, blank=True, null=True, verbose_name="Full Tax Number")
@@ -44,6 +45,14 @@ class Customer(models.Model):
     payment_due_days = models.PositiveIntegerField(default=8, verbose_name="Payment Due Days")
     is_supplier = models.BooleanField(default=False, verbose_name="Beszállító")
     is_customer = models.BooleanField(default=True, verbose_name="Vevő")
+
+    PAYMENT_METHOD_CHOICES = [
+        ('CASH', 'Készpénz'),
+        ('TRANSFER', 'Átutalás')
+    ]
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='CASH', verbose_name="Fizetési mód")
+    default_currency = models.CharField(max_length=3, default='HUF', verbose_name="Alapértelmezett deviza")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -66,6 +75,7 @@ class CustomerBankAccount(models.Model):
     swift_bic = models.CharField(max_length=11, blank=True, null=True, verbose_name="SWIFT/BIC")
     currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
     is_primary = models.BooleanField(default=False, verbose_name="Primary")
+    is_approved = models.BooleanField(default=True, verbose_name="Jóváhagyva")
     round_transfer_to_whole = models.BooleanField(default=False, verbose_name="Csak egész számos utalás")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -623,7 +633,8 @@ class Contact(models.Model):
     ]
     
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='contacts', verbose_name="Ügyfél")
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='contacts', verbose_name="Ügyfél", null=True, blank=True)
+    is_receipt = models.BooleanField(default=False, verbose_name="Nyugtás")
     
     # Alapadatok
     first_name = models.CharField(max_length=100, verbose_name="Keresztnév")
@@ -727,6 +738,24 @@ class InvoiceBlock(models.Model):
         ('EDI', 'EDI'),
     ]
     invoice_appearance = models.CharField(max_length=20, choices=APPEARANCE_CHOICES, default='ELECTRONIC', verbose_name="Invoice Appearance")
+    default_currency = models.CharField(max_length=3, default='HUF', verbose_name="Default Currency")
+    default_bank_account = models.ForeignKey(
+        'CompanyBankAccount', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name='invoice_blocks',
+        verbose_name="Default Bank Account"
+    )
+    
+    LANGUAGE_CHOICES = [
+        ('hu', 'Magyar'),
+        ('en', 'Angol'),
+        ('de', 'Német'),
+    ]
+    language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='hu', verbose_name="Language")
+    second_language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, null=True, blank=True, verbose_name="Second Language")
+
     # Optional NAV configuration bound to this block
     nav_configuration = models.ForeignKey(
         'CompanyNAVConfiguration',
@@ -1027,6 +1056,30 @@ class PaymentBatchItem(models.Model):
 
     def __str__(self):
         return f"{self.invoice_number} - {self.amount_gross} {self.currency}"
+
+
+class Currency(models.Model):
+    """Supported currencies and exchange rates"""
+    code = models.CharField(max_length=3, unique=True, verbose_name="Currency Code")
+    name = models.CharField(max_length=50, verbose_name="Currency Name")
+    symbol = models.CharField(max_length=5, blank=True, null=True, verbose_name="Symbol")
+    current_rate = models.DecimalField(max_digits=12, decimal_places=4, default=1.0, verbose_name="Current Rate (to HUF)")
+    last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    is_default = models.BooleanField(default=False, verbose_name="Default")
+
+    class Meta:
+        verbose_name = "Currency"
+        verbose_name_plural = "Currencies"
+        ordering = ['code']
+
+    def __str__(self):
+        return f"{self.code} ({self.current_rate})"
+
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            Currency.objects.filter(is_default=True).exclude(pk=self.pk).update(is_default=False)
+        super().save(*args, **kwargs)
 
 
 class BackupConfiguration(models.Model):

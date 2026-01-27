@@ -50,3 +50,6 @@ logs/
 # OS
 .DS_Store
 Thumbs.db
+*.sql
+debug_*.py
+check_*.py

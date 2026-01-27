@@ -398,9 +398,12 @@ const ContactForm = () => {
       fax: '',
       notes: '',
       is_primary: false,
-      is_active: true
+      is_active: true,
+      is_receipt: false
     }
   });
+
+  const isReceipt = watch('is_receipt');
 
   // Load draft for new contact only
   React.useEffect(() => {
@@ -527,16 +530,25 @@ const ContactForm = () => {
   }, [contact, setValue]);
 
   const onSubmit = (data) => {
-    // Validáljuk, hogy van-e kiválasztott ügyfél
-    if (!data.customer) {
+    // Validáljuk, hogy van-e kiválasztott ügyfél, kivéve ha nyugtás
+    if (!data.customer && !data.is_receipt) {
       toast.error('Ügyfél kiválasztása kötelező');
       return;
     }
     
+    // Ha nyugtás, töröljük a felesleges mezőket
+    const submitData = { ...data };
+    if (data.is_receipt) {
+      submitData.customer = null;
+      submitData.position = '';
+      submitData.department = '';
+      submitData.contact_type = 'primary'; // Default value needed by backend choice? Or allow blank?
+    }
+
     if (isEdit) {
-      updateContactMutation.mutate(data);
+      updateContactMutation.mutate(submitData);
     } else {
-      createContactMutation.mutate(data);
+      createContactMutation.mutate(submitData);
     }
   };
 
@@ -589,6 +601,17 @@ const ContactForm = () => {
       </FormHeader>
 
       <form onSubmit={handleSubmit(onSubmit)}>
+        <CheckboxGroup style={{ marginBottom: 24, padding: 16, backgroundColor: '#f8f9fa', borderRadius: 6, border: '1px solid #e9ecef' }}>
+          <CheckboxLabel>
+            <Checkbox
+              type="checkbox"
+              {...register('is_receipt')}
+            />
+            Nyugtás (Magánszemély / Nincs céghez rendelve)
+          </CheckboxLabel>
+        </CheckboxGroup>
+
+        {!isReceipt && (
         <FormGroup>
           <Label htmlFor="customer">Ügyfél *</Label>
           {console.log('ContactForm - Rendering customer field, value:', watch('customer'))}
@@ -609,6 +632,7 @@ const ContactForm = () => {
             <ErrorMessage>{errors.customer.message}</ErrorMessage>
           )}
         </FormGroup>
+        )}
 
         <FormGrid>
           <FormGroup>
@@ -638,6 +662,7 @@ const ContactForm = () => {
           </FormGroup>
         </FormGrid>
 
+        {!isReceipt && (
         <FormGrid>
           <FormGroup>
             <Label htmlFor="position">Pozíció</Label>
@@ -657,12 +682,14 @@ const ContactForm = () => {
             />
           </FormGroup>
         </FormGrid>
+        )}
 
+        {!isReceipt && (
         <FormGroup>
           <Label htmlFor="contact_type">Kapcsolattartó típusa *</Label>
           <Select
             id="contact_type"
-            {...register('contact_type', { required: 'Kapcsolattartó típusa kötelező' })}
+            {...register('contact_type', { required: !isReceipt ? 'Kapcsolattartó típusa kötelező' : false })}
             className={errors.contact_type ? 'error' : ''}
           >
             <option value="primary">Elsődleges</option>
@@ -676,6 +703,7 @@ const ContactForm = () => {
             <ErrorMessage>{errors.contact_type.message}</ErrorMessage>
           )}
         </FormGroup>
+        )}
 
         <FormGrid>
           <FormGroup>

@@ -10,14 +10,16 @@ from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog,
-    ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment
+    ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
+    DeliveryNote, DeliveryNoteItem
 )
 from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
     QuoteSerializer, QuoteItemSerializer, OrderSerializer, OrderItemSerializer,
     LeadSerializer, OpportunitySerializer, ForecastSerializer,
     CustomerOrderSerializer, CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
-    ChatThreadSerializer, ChatMessageSerializer
+    ChatThreadSerializer, ChatMessageSerializer,
+    DeliveryNoteSerializer, DeliveryNoteItemSerializer
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ManufacturingProductSerializer
@@ -125,6 +127,38 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not instance.public_token:
             instance.public_token = secrets.token_hex(20)
             instance.save(update_fields=['public_token'])
+
+    @action(detail=True, methods=['post'])
+    def reorder_items(self, request, pk=None):
+        """
+        Reorder items and update parent pointers.
+        Expects a list of {id, sort_order, parent_id}.
+        """
+        qr = self.get_object()
+        items_data = request.data
+        if not isinstance(items_data, list):
+            return Response({"error": "List expected"}, status=status.HTTP_400_BAD_REQUEST)
+
+        valid_ids = set(qr.items.values_list('id', flat=True))
+        
+        with transaction.atomic():
+            for item in items_data:
+                iid = item.get('id')
+                if iid not in valid_ids:
+                    continue
+                
+                sort_order = item.get('sort_order', 0)
+                parent_id = item.get('parent_id')
+                
+                if parent_id == iid:
+                    parent_id = None
+                    
+                QuoteRequestItem.objects.filter(id=iid).update(
+                    sort_order=sort_order,
+                    parent_id=parent_id
+                )
+        
+        return Response({'status': 'ok'})
 
     @action(detail=False, methods=['get'])
     def next_number(self, request):
@@ -859,22 +893,51 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             
         if isinstance(contact_ids, list):
             try:
-                # Separate integery IDs (local) and UUIDs (Pixinvoice)
-                valid_ids = []
-                uuid_ids = []
+                # New Logic: Try Local ID first, if not found, treat as External ID
+                potential_local_ids = []
+                other_ids = []
                 for cid in contact_ids:
-                    try:
-                        valid_ids.append(int(str(cid)))
-                    except (ValueError, TypeError):
-                        uuid_ids.append(str(cid))
+                    if str(cid).isdigit():
+                        potential_local_ids.append(int(cid))
+                    else:
+                        other_ids.append(str(cid))
                 
-                # Retrieve local contacts by ID
-                contacts_to_set = list(Contact.objects.filter(id__in=valid_ids))
+                local_found = list(Contact.objects.filter(id__in=potential_local_ids))
+                contacts_to_set = list(local_found)
+                found_local_ids = {c.id for c in local_found}
+                
+                # UUIDs (External IDs) include non-integers AND integers that weren't found locally
+                uuid_ids = other_ids + [str(pid) for pid in potential_local_ids if pid not in found_local_ids]
                 
                 # Process UUIDs
                 if uuid_ids:
                     # Find existing by external_id
                     found_uuid_contacts = Contact.objects.filter(external_id__in=uuid_ids)
+                    
+                    # Auto-heal contacts with empty names (legacy sync bug)
+                    for c in found_uuid_contacts:
+                        if not c.name:
+                            try:
+                                from apps.finance.views import PixinvoiceClient
+                                client = PixinvoiceClient()
+                                pix_company_id = str(company_id) if company_id and not isinstance(company_id, int) and len(str(company_id)) > 10 else None
+                                ct_data = client.get_contact(c.external_id, company_id=pix_company_id)
+                                
+                                first_name = ct_data.get('first_name') or ''
+                                last_name = ct_data.get('last_name') or ''
+                                full_name = ct_data.get('name') or "Unknown"
+                                
+                                if not first_name and not last_name and full_name != "Unknown":
+                                    parts = full_name.split(' ', 1)
+                                    last_name = parts[0]
+                                    first_name = parts[1] if len(parts) > 1 else ''
+                                
+                                c.first_name = first_name
+                                c.last_name = last_name
+                                c.save()
+                            except Exception:
+                                pass
+                    
                     contacts_to_set.extend(list(found_uuid_contacts))
                     
                     found_uuids = [c.external_id for c in found_uuid_contacts]
@@ -889,8 +952,20 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                             for missing_id in missing_uuids:
                                 try:
                                     ct_data = client.get_contact(missing_id, company_id=pix_company_id)
+                                    
+                                    first_name = ct_data.get('first_name') or ''
+                                    last_name = ct_data.get('last_name') or ''
+                                    full_name = ct_data.get('name') or "Unknown"
+                                    
+                                    if not first_name and not last_name and full_name != "Unknown":
+                                        parts = full_name.split(' ', 1)
+                                        last_name = parts[0]
+                                        first_name = parts[1] if len(parts) > 1 else ''
+
                                     new_contact = Contact.objects.create(
-                                        name=ct_data.get('name') or "Unknown",
+                                        name=full_name,
+                                        first_name=first_name,
+                                        last_name=last_name,
                                         email=cust_data.get('email') if 'cust_data' in locals() and not ct_data.get('email') else ct_data.get('email'),
                                         phone=ct_data.get('phone'),
                                         company=qr.company,
@@ -1475,20 +1550,68 @@ def public_submit_order(request, token: str):
     if valid_items.count() != len(item_ids):
         return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
     
-    # Értesítés küldése emailben
-    from django.core.mail import get_connection, EmailMultiAlternatives
-    from django.conf import settings
+    # Megrendelés létrehozása
+    from django.db import transaction
+    
+    # Megrendelésszám generálás
+    today = timezone.now().date()
+    date_str = today.strftime('%Y%m%d')
+    last_order = CustomerOrder.objects.filter(
+        order_number__startswith=f'O{date_str}'
+    ).order_by('-order_number').first()
+    
+    if last_order:
+        last_seq = int(last_order.order_number[-4:])
+        new_seq = last_seq + 1
+    else:
+        new_seq = 1
+    
+    order_number = f'O{date_str}{new_seq:04d}'
     
     order_details = []
-    for item_data in items_data:
-        item = qr.items.get(id=item_data['item_id'])
-        quantity = item_data['quantity']
-        order_details.append(f"- {item.description or item.product.name if item.product else 'Tétel'}: {quantity} {item.unit}")
     
-    email_body = f"""
+    try:
+        with transaction.atomic():
+            # Megrendelés létrehozása
+            order = CustomerOrder.objects.create(
+                quote_request=qr,
+                order_number=order_number,
+                status='new',
+                notes=request.data.get('notes', ''),
+                # created_by None, mivel publikus
+            )
+            
+            # Tételek létrehozása és lista összeállítás emailhez
+            for item_data in items_data:
+                item = qr.items.get(id=item_data['item_id'])
+                quantity = item_data['quantity']
+                
+                CustomerOrderItem.objects.create(
+                    customer_order=order,
+                    quote_item=item,
+                    quantity=quantity,
+                    unit=item.unit,
+                    net_unit_price=item.net_unit_price,
+                    vat_rate=item.vat_rate,
+                    discount_percent=item.discount_percent,
+                    description=item.description
+                )
+                
+                order_details.append(f"- {item.description or item.product.name if item.product else 'Tétel'}: {quantity} {item.unit}")
+            
+            # Státusz frissítés - megrendelve (NEM archív!)
+            qr.status = 'ordered'
+            qr.save(update_fields=['status'])
+
+        # Email küldés (csak sikeres tranzakció esetén)
+        from django.core.mail import get_connection, EmailMultiAlternatives
+        from apps.core.models import EmailServerConfig
+        
+        email_body = f"""
 Új megrendelés érkezett az alábbi árajánlathoz:
 
 Árajánlat száma: {qr.number or qr.request_number}
+Megrendelésszám: {order_number}
 Cím: {qr.title}
 
 Megrendelt tételek:
@@ -1496,8 +1619,6 @@ Megrendelt tételek:
 
 A megrendelést a publikus linken keresztül küldték be.
 """
-    
-    try:
         # EmailServerConfig használata
         email_config = EmailServerConfig.objects.filter(is_active=True).first()
         if email_config:
@@ -1517,19 +1638,18 @@ A megrendelést a publikus linken keresztül küldték be.
             recipient = qr.created_by.email if qr.created_by and qr.created_by.email else 'admin@pixisys.eu'
             
             msg = EmailMultiAlternatives(
-                subject=f'Új megrendelés: {qr.number or qr.request_number}',
+                subject=f'Új megrendelés: {order_number} ({qr.number or qr.request_number})',
                 body=email_body,
                 from_email=from_email,
                 to=[recipient],
                 connection=connection
             )
             msg.send()
+
     except Exception as e:
-        # Log the error but don't fail the request
-        pass
-    
-    # Státusz frissítés - megrendelve és archív
-    qr.status = 'archived'
+        # Ha hiba van, logoljuk és error-t dobunk, de a tranzakció rollbackel
+        print(f"Hiba a megrendelés létrehozásakor: {e}")
+        return Response({'error': 'Hiba történt a megrendelés feldolgozása során.'}, status=500)
     qr.save(update_fields=['status'])
     
     return Response({'success': True, 'message': 'Megrendelés sikeresen rögzítve'})
@@ -1964,6 +2084,30 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             order.public_delivery_token = secrets.token_hex(20)
             order.public_delivery_expires_at = timezone.now() + timedelta(days=30)
         
+        # Generate delivery note number if not exists
+        if not order.delivery_note_number:
+            today_str = timezone.now().strftime('%Y%m%d')
+            # Check DeliveryNote table for correct sequence
+            last_dn = DeliveryNote.objects.filter(
+                delivery_note_number__startswith=f"DN{today_str}"
+            ).order_by('-delivery_note_number').first()
+            
+            # Also check CustomerOrder table to avoid collision if DN is not yet created there
+            last_order = CustomerOrder.objects.filter(
+                delivery_note_number__startswith=f"DN{today_str}"
+            ).order_by('-delivery_note_number').first()
+            
+            seq = 0
+            if last_dn:
+                try: seq = max(seq, int(last_dn.delivery_note_number[-4:]))
+                except: pass
+            if last_order:
+                try: seq = max(seq, int(last_order.delivery_note_number[-4:]))
+                except: pass
+                
+            new_seq = seq + 1
+            order.delivery_note_number = f"DN{today_str}{new_seq:04d}"
+
         # Csak akkor váltunk in_delivery státuszra, ha még ready-ben van
         if order.status == 'ready':
             order.status = 'in_delivery'
@@ -1976,7 +2120,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.save()
         
         # Build public delivery URL
-        frontend_url = getattr(settings, 'FRONTEND_URL', 'http://localhost:3000')
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu')
         delivery_url = f"{frontend_url}/public/delivery/{order.public_delivery_token}"
         
         # Get recipient email from request or use quote_request contact
@@ -2063,6 +2207,199 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.save()
         return Response(self.get_serializer(order).data)
     
+    @action(detail=True, methods=['get'])
+    def detailed_items(self, request, pk=None):
+        """
+        Return all items related to this CustomerOrder via its QuoteRequest,
+        resolving hierarchy and supplier/department info.
+        """
+        order = self.get_object()
+        rfq = order.quote_request
+        if not rfq:
+            return Response([])
+
+        # Pre-fetch CustomerOrderItems for status and real quantity
+        order_items_map = {
+            oi.quote_item_id: oi 
+            for oi in order.items.all()
+        }
+
+        items = rfq.items.select_related(
+            'material', 'material__default_supplier', 
+            'service', 'service__default_supplier', 'service__internal_production_department',
+            'product', 'manufacturing_product',
+            'parent'
+        ).all().order_by('sort_order', 'id')
+        
+        result = []
+        for item in items:
+            name = ""
+            code = ""
+            supplier_name = None
+            department_name = None
+            is_internal = False
+            
+            # Resolve Name/Code/Supplier
+            if item.product:
+                name = item.product.name
+                code = item.product.code if hasattr(item.product, 'code') else ''
+                # Product usually doesn't have default supplier in this model setup? 
+                # Assuming product is finished good.
+            elif item.material:
+                name = item.material.name
+                code = item.material.code
+                if item.material.default_supplier:
+                    supplier_name = item.material.default_supplier.name
+            elif item.manufacturing_product:
+                name = item.manufacturing_product.name
+                code = item.manufacturing_product.code or ''
+                # Manufacturing product usually internal
+                is_internal = True
+                # Try to get internal department if capable
+                if hasattr(item.manufacturing_product, 'internal_production_department') and item.manufacturing_product.internal_production_department:
+                     department_name = item.manufacturing_product.internal_production_department.name
+            elif item.service:
+                name = item.service.name
+                code = item.service.code
+                if item.service.is_internal_production:
+                    is_internal = True
+                    if item.service.internal_production_department:
+                        department_name = item.service.internal_production_department.name
+                elif item.service.default_supplier:
+                    supplier_name = item.service.default_supplier.name
+
+            # Match with CustomerOrderItem
+            order_item = order_items_map.get(item.id)
+            current_status = order_item.status if order_item else 'new'
+            real_quantity = float(order_item.quantity) if order_item else (float(item.quantity) if item.quantity else 0)
+            order_item_id = order_item.id if order_item else None
+
+            # Manual override if description was used as name or similar? 
+            # item.description often holds custom text.
+            
+            result.append({
+                'id': item.id,
+                'parent_id': item.parent_id,
+                'sort_order': item.sort_order,
+                'name': name,
+                'code': code,
+                'description': item.description,
+                'quantity': real_quantity,
+                'unit': item.unit,
+                'net_unit_price': float(item.net_unit_price) if item.net_unit_price else 0,
+                'net_total': float(item.net_total) if item.net_total else 0,
+                'supplier_name': supplier_name,
+                'department_name': department_name,
+                'is_internal': is_internal,
+                'item_type': item.item_type,
+                'status': current_status,
+                'order_item_id': order_item_id
+            })
+            
+        return Response(result)
+
+    @action(detail=True, methods=['get'])
+    def item_work_sheet(self, request, pk=None):
+        """Generate a worksheet for a specific QuoteRequestItem (via order)"""
+        import uuid
+        from django.http import HttpResponse
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import cm
+        from io import BytesIO
+        import qrcode
+        from reportlab.lib.utils import ImageReader
+        
+        order = self.get_object()
+        item_id = request.query_params.get('item_id')
+        if not item_id:
+            return Response({'error': 'item_id required'}, status=400)
+            
+        # Verify item belongs to this order's RFQ
+        try:
+            item = QuoteRequestItem.objects.get(id=item_id, quote_request=order.quote_request)
+        except QuoteRequestItem.DoesNotExist:
+             return Response({'error': 'Item not found'}, status=404)
+
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        
+        # Font setup (Hungarian support)
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        try:
+            pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+            font_name = 'DejaVu'
+        except:
+            font_name = 'Helvetica'
+
+        # Generate QR Code (stub URL)
+        base_url = "https://erp.pixisys.eu"
+        target_url = f"{base_url}/sales/rfqs/{order.quote_request.id}?item={item.id}"
+        
+        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        qr.add_data(target_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        qr_io = BytesIO()
+        img.save(qr_io, format='PNG')
+        qr_io.seek(0)
+        qr_image = ImageReader(qr_io)
+        
+        def draw_page():
+            y = height - 2*cm
+            # Header
+            p.setFont(font_name, 14)
+            p.drawString(2*cm, y, f"MUNKALAP - {order.order_number}")
+            p.setFont(font_name, 10)
+            p.drawRightString(width-2*cm, y, f"Dátum: {timezone.now().strftime('%Y-%m-%d')}")
+            y -= 1.5*cm
+            
+            # QR Code
+            p.drawImage(qr_image, width-5*cm, height-5*cm, width=3*cm, height=3*cm)
+            
+            # Item Details
+            p.setFont(font_name, 12)
+            p.drawString(2*cm, y, f"TÉTEL: {item.quote_request.request_number} / {item.id}")
+            y -= 0.8*cm
+            
+            ref_name = ""
+            if item.product: ref_name = item.product.name
+            elif item.material: ref_name = item.material.name
+            elif item.manufacturing_product: ref_name = item.manufacturing_product.name
+            elif item.service: ref_name = item.service.name
+            
+            p.setFont(font_name, 11)
+            p.drawString(2*cm, y, f"Megnevezés: {ref_name}")
+            y -= 0.6*cm
+            
+            p.drawString(2*cm, y, f"Mennyiség: {float(item.quantity)} {item.unit}")
+            y -= 0.6*cm
+            
+            if item.description:
+                p.drawString(2*cm, y, f"Leírás: {item.description}")
+                y -= 0.6*cm
+            
+            # Additional Context
+            y -= 1*cm
+            p.line(2*cm, y, width-2*cm, y)
+            y -= 0.5*cm
+            
+            p.drawString(2*cm, y, f"Ügyfél: {order.quote_request.company.name if order.quote_request.company else (order.quote_request.customer.name if order.quote_request.customer else '-')}")
+            y -= 0.6*cm
+            p.drawString(2*cm, y, f"Projekt: {order.quote_request.project.name if order.quote_request.project else '-'}")
+            
+            p.showPage()
+            
+        draw_page()
+        p.save()
+        buffer.seek(0)
+        
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="munkalap_item_{item.id}.pdf"'
+        return response
+
     @action(detail=True, methods=['get'])
     def work_sheet(self, request, pk=None):
         """Munkalap PDF generálás - duplikált A4 oldal"""
@@ -2585,6 +2922,7 @@ def public_delivery_view(request, token: str):
     
     response_data = {
         'order_number': order.order_number,
+        'delivery_note_number': order.delivery_note_number,
         'customer_name': customer_name,
         'title': quote_request.title if quote_request else '',
         'description': quote_request.description if quote_request else '',
@@ -2658,6 +2996,14 @@ def public_delivery_pdf(request, token: str):
     p.drawString(width - 8*cm, y + 0.3*cm, "Megrendelés szám:")
     p.setFont(font_name, 11)
     p.drawString(width - 8*cm, y - 0.2*cm, f"{order.order_number}")
+    
+    # Delivery note number
+    if order.delivery_note_number:
+        p.setFont(font_name, 9)
+        p.drawString(width - 8*cm, y - 1.0*cm, "Szállítólevél sorszám:")
+        p.setFont(font_name, 11)
+        p.drawString(width - 8*cm, y - 1.5*cm, f"{order.delivery_note_number}")
+        y -= 0.6*cm
     
     y -= 0.9*cm
     p.setFont(font_name, 9)
@@ -3133,3 +3479,673 @@ class ChatThreadViewSet(viewsets.ModelViewSet):
         if created:
             return Response({'status': 'ok', 'id': created.id})
         return Response({'error': 'Invalid target'}, status=400)
+
+class DeliveryNoteViewSet(viewsets.ModelViewSet):
+    queryset = DeliveryNote.objects.all().order_by('-created_at')
+    serializer_class = DeliveryNoteSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        # Filter logic
+        q = self.request.query_params.get('q')
+        if q:
+            qs = qs.filter(
+                Q(delivery_note_number__icontains=q) |
+                Q(customer__name__icontains=q) |
+                Q(contact__name__icontains=q)
+            )
+        return qs
+
+    def perform_destroy(self, instance):
+        # We can just delete the DeliveryNote instance. 
+        # Django's CASCADE on DeliveryNoteItem should handle items.
+        # But we need to make sure we don't need any complex inventory reversal here?
+        # Inventory is not yet deducted upon "DeliveryNote creation" but rather upon actual stock movement.
+        # But if it was deducted, we would reverse it here.
+        # For now, just delete.
+        instance.delete()
+
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)')
+    def public_delivery_note(self, request, token=None):
+        dn = get_object_or_404(DeliveryNote, public_token=token)
+        
+        # Auto confirm if > 48h and not confirmed
+        from datetime import timedelta
+        reference_time = dn.created_at
+        limit = reference_time + timedelta(hours=48)
+        if not dn.is_confirmed and timezone.now() > limit:
+             dn.is_confirmed = True
+             dn.confirmed_at = timezone.now()
+             dn.confirmed_by_info = "Automata (48h lejárt)"
+             dn.save()
+             
+        return Response(DeliveryNoteSerializer(dn).data)
+
+
+    @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)/confirm')
+    def public_delivery_note_confirm(self, request, token=None):
+        dn = get_object_or_404(DeliveryNote, public_token=token)
+        
+        # Determine client IP for info
+        x_forwarded_for = request.META.get('HTTP_X_FORWARDED_FOR')
+        if x_forwarded_for:
+            ip = x_forwarded_for.split(',')[0]
+        else:
+            ip = request.META.get('REMOTE_ADDR')
+            
+        notes = request.data.get('notes', '')
+        # confirmed_items = request.data.get('confirmed_items', []) # Currently we just confirm the whole note
+        
+        dn.is_confirmed = True
+        dn.confirmed_at = timezone.now()
+        dn.confirmed_by_info = f"Publikus felület (IP: {ip})"
+        if notes:
+            # Append notes if existing notes are present
+            if dn.notes:
+                dn.notes += f"\n\n{notes}"
+            else:
+                dn.notes = notes
+        dn.save()
+        return Response({'status': 'ok'})
+
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)/pdf')
+    def public_delivery_note_pdf(self, request, token=None):
+        from django.http import HttpResponse
+        from reportlab.lib.pagesizes import A4
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.units import cm
+        from io import BytesIO
+        from apps.core.models import Company as CoreCompany
+        
+        dn = get_object_or_404(DeliveryNote, public_token=token)
+        show_prices = request.query_params.get('show_prices') == 'true'
+        supplier = CoreCompany.objects.filter(is_default=True).first() or CoreCompany.objects.first()
+        
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        
+        # Font setup
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        try:
+            pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+            font_name = 'DejaVu'
+        except:
+            font_name = 'Helvetica' # Fallback, might not support special chars
+            
+        y = height - 2*cm
+        
+        # Supplier Header Left
+        p.setFont(font_name, 10)
+        if supplier:
+            p.setFont(font_name, 9)
+            p.drawString(2*cm, y, "Szállító:")
+            y -= 0.5*cm
+            p.setFont(font_name, 10)
+            p.drawString(2*cm, y, supplier.name)
+            y -= 0.5*cm
+            p.setFont(font_name, 8)
+            p.drawString(2*cm, y, supplier.address)
+            y -= 0.4*cm
+            if supplier.tax_number:
+                p.drawString(2*cm, y, f"Adószám: {supplier.tax_number}")
+                y -= 0.4*cm
+            contact_info = []
+            if supplier.email: contact_info.append(supplier.email)
+            if supplier.phone: contact_info.append(supplier.phone)
+            if contact_info:
+                p.drawString(2*cm, y, " | ".join(contact_info))
+                
+        # Title Right
+        y_title = height - 2*cm
+        p.setFont(font_name, 18)
+        p.drawRightString(width - 2*cm, y_title, "SZÁLLÍTÓLEVÉL")
+        
+        # Number
+        y_title -= 1.5*cm 
+        p.setFont(font_name, 11)
+        p.drawRightString(width - 2*cm, y_title, f"Szám: {dn.delivery_note_number}")
+
+        # Dates (Moved under the number)
+        y_date = y_title - 1.0*cm
+        p.setFont(font_name, 10)
+        p.drawRightString(width - 2*cm, y_date, f"Kiállítás: {dn.issue_date.strftime('%Y-%m-%d')}")
+        y_date -= 0.5*cm
+        if dn.delivery_date:
+            p.drawRightString(width - 2*cm, y_date, f"Szállítás: {dn.delivery_date.strftime('%Y-%m-%d')}")
+        
+        y = height - 6*cm
+        
+        p.setFont(font_name, 9)
+        p.drawString(2*cm, y, "Megrendelő:")
+        y -= 0.5*cm
+        p.setFont(font_name, 11)
+        if dn.customer:
+             p.drawString(2*cm, y, dn.customer.name)
+             y -= 0.5*cm
+             p.setFont(font_name, 9)
+             p.drawString(2*cm, y, dn.customer.full_address)
+             y -= 0.5*cm
+        if dn.contact:
+             p.drawString(2*cm, y, f"Kapcsolattartó: {dn.contact.name}")
+             y -= 0.5*cm
+             
+        y = height - 10*cm
+        
+        # Items Header
+        p.setFont(font_name, 11)
+        p.drawString(2*cm, y+0.4*cm, "Szállított tételek")
+        y -= 0.5*cm
+        
+        p.setFont(font_name, 9)
+        p.drawString(2*cm, y, "Megnevezés")
+        p.drawRightString(11*cm, y, "Mennyiség")
+        p.drawString(11.5*cm, y, "Egység")
+        
+        if show_prices:
+             p.drawRightString(15*cm, y, "Ár/egység")
+             p.drawRightString(18*cm, y, "Összesen")
+             
+        p.line(2*cm, y-0.2*cm, width-2*cm, y-0.2*cm)
+        y -= 0.8*cm
+        
+        total_net = 0
+        
+        for item in dn.items.all():
+            p.setFont(font_name, 9)
+            # Find item code
+            item_code = ""
+            try:
+                # Same logic as serializer
+                coi = item.customer_order_item
+                qi = coi.quote_item
+                if qi.material: item_code = qi.material.code
+                if qi.service: item_code = qi.service.code
+            except:
+                pass
+                
+            # Item name
+            item_text = item.item_name[:40]
+            if item_code:
+                item_text = f"[{item_code}] {item_text}"
+                
+            # Order number
+            order_num = item.customer_order_item.customer_order.order_number if item.customer_order_item and item.customer_order_item.customer_order else ""
+            if order_num:
+                item_text += f" - {order_num}"
+                
+            p.drawString(2*cm, y, item_text)
+            p.drawRightString(11*cm, y, f"{item.quantity}")
+            p.drawString(11.5*cm, y, item.unit)
+            
+            if show_prices:
+                p.drawRightString(15*cm, y, f"{item.net_unit_price:,.2f}")
+                net_line = item.quantity * item.net_unit_price
+                total_net += net_line
+                p.drawRightString(18*cm, y, f"{net_line:,.2f}")
+                
+            y -= 0.6*cm
+            if y < 4*cm:
+                p.showPage()
+                y = height - 2*cm
+                p.setFont(font_name, 10)
+        
+        if show_prices:
+             y -= 0.5*cm
+             p.line(12*cm, y+0.4*cm, 18*cm, y+0.4*cm)
+             p.setFont(font_name, 10)
+             p.drawRightString(18*cm, y, f"Összesen (Nettó): {total_net:,.2f}")
+             
+        # Contacts Footer
+        y = 3*cm
+        p.line(2*cm, y, width-2*cm, y)
+        y -= 0.5*cm
+        p.setFont(font_name, 8)
+        p.drawString(2*cm, y, "Kapcsolattartók:")
+        y -= 0.4*cm
+        contacts_str = ""
+        if dn.customer:
+             contacts = dn.customer.contact_set.all()[:3] 
+             c_list = []
+             for c in contacts:
+                 c_text = c.name
+                 if c.phone: c_text += f" ({c.phone})"
+                 c_list.append(c_text)
+             contacts_str = ", ".join(c_list)
+        p.drawString(2*cm, y, contacts_str)
+        
+        p.save()
+        pdf = buffer.getvalue()
+        buffer.close()
+
+        response = HttpResponse(content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{dn.delivery_note_number}.pdf"'
+        response.write(pdf)
+        return response
+
+    @action(detail=False, methods=['get'])
+    def deliverable_customers(self, request):
+        """
+        Get list of customers (Companies or Contacts) that have orders in 
+        'in_production' or 'ready' status.
+        Returns: { id, name, type, real_id }
+        """
+        orders = CustomerOrder.objects.filter(
+            status__in=['in_production', 'ready']
+        ).select_related('quote_request', 'quote_request__company').prefetch_related('quote_request__contacts')
+        
+        results = {}
+        
+        for order in orders:
+            qr = order.quote_request
+            if qr.company:
+                # Company
+                key = f"company_{qr.company.id}"
+                if key not in results:
+                    results[key] = {
+                        'id': key,
+                        'name': qr.company.name,
+                        'type': 'company',
+                        'real_id': qr.company.id
+                    }
+            else:
+                # Check contacts (Private Individual case)
+                # If multiple contacts, we might list them separately or aggregate?
+                # Usually purely "Private Individual" deals have one main contact or we pick the first.
+                for contact in qr.contacts.all():
+                    key = f"contact_{contact.id}"
+                    if key not in results:
+                        results[key] = {
+                            'id': key,
+                            'name': f"Magánszemély - {contact.name}",
+                            'type': 'contact',
+                            'real_id': contact.id
+                        }
+        
+        return Response(list(results.values()))
+
+    @action(detail=False, methods=['get'])
+    def items_for_customer(self, request):
+        """
+        Get all order items for a specific customer/contact that are not fully delivered.
+        Query params: 
+           customer_id (Company ID) OR
+           contact_id (Contact ID)
+        """
+        customer_id = request.query_params.get('customer_id')
+        contact_id = request.query_params.get('contact_id')
+        
+        if not customer_id and not contact_id:
+            return Response({'error': 'customer_id or contact_id required'}, status=400)
+            
+        # Filter orders
+        # Only active statuses for delivery selection?
+        # User asked for 'in_production' or 'ready' in the dropdown list, 
+        # so logically these are the only ones we can deliver from here.
+        # But maybe also 'confirmed'? Let's keep the filter wide enough but prioritize user's logic.
+        # If user picked a customer from the list (which only included in_production/ready),
+        # querying only those is safe. But technically we could deliver 'confirmed' items too.
+        # Let's stick to what allows delivery.
+        
+        filters = Q(status__in=['in_production', 'ready'])
+        
+        if customer_id:
+            filters &= (Q(quote_request__company_id=customer_id) | Q(quote_request__customer_id=customer_id))
+        elif contact_id:
+            # quote_request__contacts is M2M
+            filters &= Q(quote_request__contacts__id=contact_id)
+            
+        orders = CustomerOrder.objects.filter(filters).distinct()
+        
+        # We need items that have delivered_qty < ordered_qty
+        # But delivered_qty is sum of previous delivery note items.
+        
+        result = []
+        
+        for order in orders:
+            for item in order.items.all():
+                # sum delivered from confirmed delivery notes
+                # Or maybe even unconfirmed ones? Usually confirmed.
+                # Let's count all delivery note items linked to this order item.
+                delivered_agg = DeliveryNoteItem.objects.filter(
+                    customer_order_item=item
+                ).aggregate(total=models.Sum('quantity'))
+                
+                delivered = delivered_agg['total'] or 0
+                ordered = item.quantity
+                remaining = ordered - delivered
+                
+                # If remaining > 0 (or some small epsilon), include it
+                if remaining > 0:
+                    # Get item name/desc
+                    # CustomerOrderItem description or QuoteItem product name
+                    quote_item = item.quote_item
+                    item_name = item.description
+                    if not item_name and quote_item:
+                         ref = (
+                            quote_item.product.name if quote_item.product else (
+                                quote_item.material.name if quote_item.material else (
+                                    quote_item.manufacturing_product.name if quote_item.manufacturing_product else (
+                                        quote_item.service.name if quote_item.service else '-'
+                                    )
+                                )
+                            )
+                        )
+                         item_name = ref
+                        
+                    result.append({
+                        'order_id': order.id,
+                        'order_number': order.order_number,
+                        'order_item_id': item.id,
+                        'item_name': item_name,
+                        'unit': item.unit,
+                        'unit_price': item.net_unit_price,
+                        'ordered_quantity': ordered,
+                        'delivered_quantity': delivered,
+                        'remaining_quantity': remaining,
+                    })
+                    
+        return Response(result)
+
+    def perform_create(self, serializer):
+        # Auto generate delivery note number if not provided
+        # Similar to Order number generation
+        if not serializer.validated_data.get('delivery_note_number'):
+            today_str = timezone.now().strftime('%Y%m%d')
+            last = DeliveryNote.objects.filter(delivery_note_number__startswith=f"DN{today_str}").order_by('-delivery_note_number').first()
+            if last:
+                try:
+                    seq = int(last.delivery_note_number[-4:]) + 1
+                except:
+                    seq = 1
+            else:
+                seq = 1
+            serializer.save(
+                delivery_note_number=f"DN{today_str}{seq:04d}",
+                created_by=self.request.user,
+                public_token=secrets.token_urlsafe(24)
+            )
+        else:
+             serializer.save(
+                 created_by=self.request.user,
+                 public_token=secrets.token_urlsafe(24)
+             )
+             
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        note = self.get_object()
+        if note.is_confirmed:
+            return Response({'error': 'Már visszaigazolva'}, status=400)
+            
+        note.is_confirmed = True
+        note.confirmed_at = timezone.now()
+        note.confirmed_by_user = request.user
+        note.save()
+        return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['post'])
+    def send_email(self, request, pk=None):
+        dn = self.get_object()
+        to = request.data.get('to')
+        cc = request.data.get('cc', '')
+        reply_to = request.data.get('reply_to', '')
+        template_key = request.data.get('template_key', 'delivery_send')
+        signature_key = request.data.get('signature_key')
+        extra_context = request.data.get('context', {}) or {}
+        override_subject = request.data.get('subject')
+        override_body = request.data.get('body')
+        
+        if not to:
+            return Response({'error': 'to szükséges'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Fetch config and templates
+        cfg = EmailServerConfig.objects.filter(is_active=True).first()
+        if not cfg:
+            return Response({'error': 'Nincs aktív email szerver beállítva'}, status=400)
+        tpl = EmailTemplate.objects.filter(key=template_key).first()
+        if not tpl:
+            return Response({'error': 'Hiányzó email sablon'}, status=400)
+        
+        # Use user's default signature if not specified
+        if not signature_key:
+            if hasattr(request.user, 'preferences') and request.user.preferences and request.user.preferences.default_signature:
+                signature_key = request.user.preferences.default_signature.key
+        
+        sig = SignatureTemplate.objects.filter(key=signature_key).first() if signature_key else None
+
+        # Substitute variables in signature
+        if sig and sig.body_html:
+            try:
+                user = request.user
+                try:
+                    employee = user.employee_profile
+                except Exception:
+                    employee = None
+
+                user_name = f"{user.last_name} {user.first_name}".strip()
+                if not user_name:
+                    user_name = user.username
+                
+                user_email = user.email or ''
+                user_position = ''
+                user_phonenumber = ''
+                
+                if employee:
+                    user_phonenumber = employee.phone or ''
+                    if employee.position:
+                        user_position = employee.position.title
+                
+                sig_ctx = {
+                    'user_name': user_name,
+                    'user_email': user_email,
+                    'user_position': user_position,
+                    'user_phonenumber': user_phonenumber
+                }
+                for key, val in sig_ctx.items():
+                    sig.body_html = sig.body_html.replace(f"{{{key}}}", str(val))
+            except Exception:
+                pass
+
+        if not dn.public_token:
+            dn.public_token = secrets.token_urlsafe(24)
+            dn.save(update_fields=['public_token'])
+            
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/delivery-note/{dn.public_token}"
+        
+        contact_names = dn.contact.name if dn.contact else (dn.customer.name if dn.customer else 'Ügyfelünk')
+        
+        ctx = {
+            'dn_number': dn.delivery_note_number,
+            'customer_name': dn.customer.name if dn.customer else '',
+            'public_url': public_url,
+            'contact_names': contact_names,
+            **extra_context,
+        }
+        subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
+        
+        if override_body is not None:
+            body = override_body
+            body_core = override_body
+        else:
+            body_core = (tpl.body_template or '').format(**ctx)
+            if tpl.is_html:
+                body = f"{body_core}{sig.body_html if sig else ''}"
+            else:
+                body = f"{body_core}\n\n{sig.body_html if sig else ''}"
+
+        # Determine sender
+        from_email = cfg.from_email
+        from_name = cfg.from_name
+        try:
+            default_company = CoreCompany.objects.filter(is_default=True).first()
+            if default_company and default_company.email:
+                from_email = default_company.email
+                if default_company.name:
+                    from_name = default_company.name
+        except Exception:
+            pass
+
+        # Build MIME
+        msg = MIMEMultipart('alternative') if tpl.is_html else email.message.EmailMessage()
+        if isinstance(msg, MIMEMultipart):
+            msg['Subject'] = subject
+            msg['From'] = f"{from_name} <{from_email}>" if from_name else from_email
+            msg['To'] = to
+            if cc:
+                msg['Cc'] = cc
+            if reply_to:
+                msg['Reply-To'] = reply_to
+            subtype = 'html' if tpl.is_html else 'plain'
+            msg.attach(MIMEText(body, subtype, 'utf-8'))
+            mime_bytes = msg.as_bytes()
+        else:
+            msg['Subject'] = subject
+            msg['From'] = f"{from_name} <{from_email}>" if from_name else from_email
+            msg['To'] = to
+            if cc:
+                msg['Cc'] = cc
+            if reply_to:
+                msg['Reply-To'] = reply_to
+            msg.set_content(body)
+            mime_bytes = msg.as_bytes()
+
+        recipients = [r.strip() for r in (to.split(',') if isinstance(to, str) else [to]) if r.strip()]
+        if cc:
+            recipients += [r.strip() for r in (cc.split(',') if isinstance(cc, str) else [cc]) if r.strip()]
+
+        try:
+            if cfg.smtp_use_ssl:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(cfg.smtp_host, cfg.smtp_port, context=context) as server:
+                    if cfg.smtp_username:
+                        server.login(cfg.smtp_username, cfg.smtp_password)
+                    server.sendmail(cfg.from_email, recipients, mime_bytes)
+            else:
+                with smtplib.SMTP(cfg.smtp_host, cfg.smtp_port) as server:
+                    server.ehlo()
+                    if cfg.smtp_use_tls:
+                        server.starttls()
+                    if cfg.smtp_username:
+                        server.login(cfg.smtp_username, cfg.smtp_password)
+                    server.sendmail(cfg.from_email, recipients, mime_bytes)
+        except Exception as e:
+            return Response({'error': f'SMTP hiba: {e}'}, status=500)
+
+        # IMAP Append
+        try:
+            if cfg.imap_host and cfg.imap_username:
+                with imaplib.IMAP4_SSL(cfg.imap_host, cfg.imap_port) as M:
+                    M.login(cfg.imap_username, cfg.imap_password)
+                    M.append(cfg.imap_sent_folder or 'Sent', '\\Seen', imaplib.Time2Internaldate(timezone.now().timestamp()), mime_bytes)
+                    M.logout()
+        except Exception:
+            pass
+
+        return Response({'status': 'sent'})
+
+    @action(detail=True, methods=['post'])
+    def render_email(self, request, pk=None):
+        dn = self.get_object()
+        template_key = request.data.get('template_key', 'delivery_send')
+        signature_key = request.data.get('signature_key')
+        extra_context = request.data.get('context', {}) or {}
+        override_subject = request.data.get('subject')
+        override_body = request.data.get('body')
+
+        tpl = EmailTemplate.objects.filter(key=template_key).first()
+        if not tpl:
+            return Response({'error': 'Hiányzó email sablon'}, status=400)
+        sig = SignatureTemplate.objects.filter(key=signature_key).first() if signature_key else None
+
+        if sig and sig.body_html:
+            try:
+                user = request.user
+                try:
+                    employee = user.employee_profile
+                except Exception:
+                    employee = None
+
+                user_name = f"{user.last_name} {user.first_name}".strip()
+                if not user_name:
+                    user_name = user.username
+                
+                user_email = user.email or ''
+                user_position = ''
+                user_phonenumber = ''
+                
+                if employee:
+                    user_phonenumber = employee.phone or ''
+                    if employee.position:
+                        user_position = employee.position.title
+                
+                sig_ctx = {
+                    'user_name': user_name,
+                    'user_email': user_email,
+                    'user_position': user_position,
+                    'user_phonenumber': user_phonenumber
+                }
+                for key, val in sig_ctx.items():
+                    sig.body_html = sig.body_html.replace(f"{{{key}}}", str(val))
+            except Exception:
+                pass
+
+        if not dn.public_token:
+            dn.public_token = secrets.token_urlsafe(24)
+            dn.save(update_fields=['public_token'])
+            
+        public_url = f"{settings.FRONTEND_BASE_URL}/public/delivery-note/{dn.public_token}"
+        contact_names = dn.contact.name if dn.contact else (dn.customer.name if dn.customer else 'Ügyfelünk')
+        
+        ctx = {
+            'dn_number': dn.delivery_note_number,
+            'customer_name': dn.customer.name if dn.customer else '',
+            'public_url': public_url,
+            'contact_names': contact_names,
+            **extra_context,
+        }
+        subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
+        
+        if override_body is not None:
+            body = override_body
+        else:
+            body_core = (tpl.body_template or '').format(**ctx)
+            if tpl.is_html:
+                body = f"{body_core}{sig.body_html if sig else ''}"
+            else:
+                body = f"{body_core}\n\n{sig.body_html if sig else ''}"
+                
+        return Response({'subject': subject, 'body': body, 'is_html': tpl.is_html})
+
+class DeliveryNoteItemViewSet(viewsets.ModelViewSet):
+    queryset = DeliveryNoteItem.objects.all().order_by('-created_at')
+    serializer_class = DeliveryNoteItemSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        
+        # Filtering
+        note_number = self.request.query_params.get('note_number')
+        order_number = self.request.query_params.get('order_number')
+        item_name = self.request.query_params.get('item_name')
+        q = self.request.query_params.get('q')
+
+        if note_number:
+            qs = qs.filter(delivery_note__delivery_note_number__icontains=note_number)
+        if order_number:
+            qs = qs.filter(customer_order_item__customer_order__order_number__icontains=order_number)
+        if item_name:
+             qs = qs.filter(item_name__icontains=item_name)
+             
+        if q:
+            qs = qs.filter(
+                Q(delivery_note__delivery_note_number__icontains=q) |
+                Q(customer_order_item__customer_order__order_number__icontains=q) |
+                Q(item_name__icontains=q) |
+                Q(delivery_note__customer__name__icontains=q) |
+                Q(delivery_note__contact__name__icontains=q)
+            )
+
+        return qs

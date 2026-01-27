@@ -24,9 +24,42 @@ class CompanySerializer(serializers.ModelSerializer):
             'country', 'postal_code', 'city', 'street_name', 'street_type', 'public_place_category',
             'house_number', 'street_number', 'building', 'staircase', 'floor', 'door',
             'address', 'email', 'phone', 'full_address', 'is_active',
-            'created_at', 'updated_at', 'created_by', 'created_by_name'
+            'created_at', 'updated_at', 'created_by', 'created_by_name',
+            'vat_status', 'is_hungarian_taxpayer'
         ]
         read_only_fields = ['created_at', 'updated_at', 'created_by']
+
+    def validate(self, attrs):
+        vat_status = attrs.get('vat_status', getattr(self.instance, 'vat_status', 'DOMESTIC'))
+        attrs['is_hungarian_taxpayer'] = (vat_status == 'DOMESTIC')
+        
+        # Only validate tax number for Hungarian companies
+        if attrs['is_hungarian_taxpayer']:
+            # Allow skipping if it was already valid or unchange (instance check)
+            # But the requirement is to validate format if domestic.
+            # In update, tax_number might not be in attrs.
+            tax_number = attrs.get('tax_number', getattr(self.instance, 'tax_number', '')) or ''
+            
+            # Note: pixierp uses full formatted tax numbers usually? 
+            # The model help_text says "12345678-1-41"
+            # But users might input just 8 digits and we format it?
+            # Or we strictly require format?
+            # The previous validator was strict regex. 
+            # If the user inputs data via UI, we should probably be flexible or enforce format.
+            # Let's enforce strict format if it's provided, OR basic length check if we want to be nice.
+            # But the prompt said "A mezők validációját is ehhez igazítsd." (Align field validation to this).
+            # In PixInvoice, we loosened it to 8 digits.
+            # In PixiERP, the validator was `^\d{8}-\d{1}-\d{2}$`.
+            # I will apply a basic check here. If they want strict format, they should provide it.
+            # But wait, PixiERP UI might be formatting it automatically?
+            # Looking at frontend code later.
+            
+            if tax_number:
+                # Basic sanity check
+                if len(tax_number.replace('-', '')) < 8:
+                     raise serializers.ValidationError({'tax_number': 'Az adószámnak legalább 8 számjegynek kell lennie.'})
+        
+        return attrs
 
 class ContactSerializer(serializers.ModelSerializer):
     """Kapcsolattartó serializer"""
@@ -42,10 +75,10 @@ class ContactSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contact
         fields = [
-            'id', 'name', 'full_name', 'phone', 'email', 'company', 'company_name',
-            'position', 'notes', 'created_at', 'updated_at', 'created_by', 'created_by_name'
+            'id', 'first_name', 'last_name', 'name', 'full_name', 'phone', 'email', 'company', 'company_name',
+            'position', 'is_receipt', 'notes', 'created_at', 'updated_at', 'created_by', 'created_by_name'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'created_by']
+        read_only_fields = ['created_at', 'updated_at', 'created_by', 'name', 'full_name']
 
 class ContactCreateSerializer(serializers.ModelSerializer):
     """Kapcsolattartó létrehozó serializer"""
@@ -65,5 +98,5 @@ class ContactCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = Contact
         fields = [
-            'name', 'phone', 'email', 'company', 'position', 'notes'
+            'first_name', 'last_name', 'phone', 'email', 'company', 'position', 'is_receipt', 'notes'
         ]

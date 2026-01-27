@@ -17,6 +17,7 @@ import {
   PlusOutlined,
   EditOutlined,
   DeleteOutlined,
+  ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -120,6 +121,25 @@ const MaterialGroups: React.FC = () => {
         parent: group.parent || undefined // ensure null becomes undefined for placeholder
     });
     setIsModalVisible(true);
+  };
+
+  const handleCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Bezár',
+        cancelText: 'Mégse',
+        onOk: () => {
+          setIsModalVisible(false);
+          form.resetFields();
+        },
+      });
+    } else {
+      setIsModalVisible(false);
+      form.resetFields();
+    }
   };
 
   const handleSubmit = async () => {
@@ -276,10 +296,7 @@ const MaterialGroups: React.FC = () => {
         title={editingGroup ? 'Kategória szerkesztése' : 'Új kategória'}
         open={isModalVisible}
         onOk={handleSubmit}
-        onCancel={() => {
-          setIsModalVisible(false);
-          form.resetFields();
-        }}
+        onCancel={handleCancel}
         okText="Mentés"
         cancelText="Mégse"
       >

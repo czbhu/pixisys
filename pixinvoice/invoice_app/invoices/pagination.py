@@ -7,4 +7,4 @@ class CustomPageNumberPagination(PageNumberPagination):
     """
     page_size = 20  # Default page size
     page_size_query_param = 'page_size'  # Allow client to override
-    max_page_size = 200  # Maximum limit
+    max_page_size = 50000  # Maximum limit

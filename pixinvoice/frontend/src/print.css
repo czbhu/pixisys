@@ -62,7 +62,7 @@
 }
 
 .print-invoice .inv-seller {
-  max-width: 120mm;
+  max-width: 100%;
   font-size: 11pt;
   line-height: 1.35;
 }
@@ -73,12 +73,26 @@
   margin-bottom: 2mm;
 }
 
-.print-invoice .inv-top-right { display: grid; gap: 3mm; }
-.print-invoice .inv-meta { font-size: 10.5pt; }
-.print-invoice .inv-meta .inv-meta-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0,1fr));
-  gap: 2mm 6mm;
+.print-invoice .inv-meta-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 4mm;
+  font-size: 10.5pt;
+  margin-bottom: 6mm;
+  border-top: 1px solid #eee;
+  padding-top: 4mm;
+}
+
+.print-invoice .inv-meta-row > div {
+  flex: 1;
+}
+
+.print-invoice .inv-col-left {
+  max-width: 100mm;
+}
+
+.print-invoice .inv-col-right {
+  max-width: 100mm;
 }
 .print-invoice .muted { color: #555; font-size: 9pt; }
 
@@ -116,21 +130,30 @@
 
 .print-invoice .inv-items th,
 .print-invoice .inv-items td {
-  border: 1px solid #000;
+  border: 1px solid #ccc;
   padding: 1.2mm 1mm;
-  vertical-align: top;
+  vertical-align: middle;
 }
 
-.print-invoice .inv-items thead th { font-size: 8.5pt; font-weight: 600; }
+.print-invoice .inv-items thead th { 
+    font-size: 8.5pt; 
+    font-weight: 600; 
+    vertical-align: bottom;
+    padding-bottom: 2mm;
+}
 
 .print-invoice .inv-items th {
   font-weight: 700;
 }
 
-.print-invoice .inv-items td.num,
-.print-invoice .inv-items th.num {
+.print-invoice .inv-items td.num {
   text-align: right;
   white-space: nowrap;
+}
+
+.print-invoice .inv-items th.num {
+  text-align: right;
+  white-space: normal; /* Allow wrapping in headers */
 }
 
 .print-invoice .inv-items td.cen,
@@ -138,15 +161,15 @@
   text-align: center;
 }
 
-/* Column width hints for print items table */
-.print-invoice .col-desc { width: 42%; word-break: break-word; }
-.print-invoice .col-qty { width: 6%; }
-.print-invoice .col-unit { width: 6%; }
-.print-invoice .col-unitnet { width: 11%; }
-.print-invoice .col-vatrate { width: 5%; }
-.print-invoice .col-net { width: 10%; }
+/* Column width hints for print items table - sum must be 100% */
+.print-invoice .col-desc { width: 31%; word-break: break-word; }
+.print-invoice .col-qty { width: 7%; }
+.print-invoice .col-unit { width: 7%; }
+.print-invoice .col-unitnet { width: 13%; }
+.print-invoice .col-vatrate { width: 8%; }
+.print-invoice .col-net { width: 11%; }
 .print-invoice .col-vat { width: 10%; }
-.print-invoice .col-gross { width: 10%; }
+.print-invoice .col-gross { width: 13%; }
 
 /* Prevent number columns from wrapping badly */
 .print-invoice .num { white-space: nowrap; }

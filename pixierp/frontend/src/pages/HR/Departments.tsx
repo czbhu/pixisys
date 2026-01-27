@@ -24,7 +24,8 @@ import {
     DeleteOutlined,
     EyeOutlined,
     UserOutlined,
-    SearchOutlined
+    SearchOutlined,
+    ExclamationCircleOutlined
 } from '@ant-design/icons';
 import { hrService } from '../../services/hrService';
 import { rolesService } from '../../services/rolesService';
@@ -121,6 +122,25 @@ const Departments: React.FC = () => {
             setError('Hiba történt az adatok betöltése során');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleCancel = () => {
+        if (form.isFieldsTouched()) {
+            Modal.confirm({
+                title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+                icon: <ExclamationCircleOutlined />,
+                content: 'A módosítások elvesznek.',
+                okText: 'Bezár',
+                cancelText: 'Mégse',
+                onOk: () => {
+                    setIsModalVisible(false);
+                    form.resetFields();
+                },
+            });
+        } else {
+            setIsModalVisible(false);
+            form.resetFields();
         }
     };
 
@@ -366,10 +386,7 @@ const Departments: React.FC = () => {
             <Modal
                 title={editingDepartment ? 'Osztály szerkesztése' : 'Új osztály létrehozása'}
                 open={isModalVisible}
-                onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                }}
+                onCancel={handleCancel}
                 footer={null}
                 width={600}
             >
@@ -454,7 +471,7 @@ const Departments: React.FC = () => {
 
                     <Form.Item style={{ marginBottom: 0, textAlign: 'right' }}>
                         <Space>
-                            <Button onClick={() => setIsModalVisible(false)}>
+                            <Button onClick={handleCancel}>
                                 Mégse
                             </Button>
                             <Button type="primary" htmlType="submit">

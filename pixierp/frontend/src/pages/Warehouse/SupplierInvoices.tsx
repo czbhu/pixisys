@@ -246,6 +246,25 @@ const SupplierInvoices: React.FC = () => {
     setIsModalVisible(true);
   };
   
+  const handleCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Bezár',
+        cancelText: 'Mégse',
+        onOk: () => {
+          setIsModalVisible(false);
+          form.resetFields();
+        },
+      });
+    } else {
+      setIsModalVisible(false);
+      form.resetFields();
+    }
+  };
+
   const showNavSearch = () => {
     navSearchForm.resetFields();
     setNavSearchResults([]);
@@ -838,7 +857,7 @@ const SupplierInvoices: React.FC = () => {
         title={editingInvoice ? 'Számla szerkesztése' : 'Új számla'}
         open={isModalVisible}
         onOk={handleSubmit}
-        onCancel={() => setIsModalVisible(false)}
+        onCancel={handleCancel}
         width={1000}
         okText="Mentés"
         cancelText="Mégse"

@@ -27,12 +27,15 @@ import {
     AppstoreOutlined,
     UnorderedListOutlined,
     SearchOutlined,
+    ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useLocation } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
 
 type Contact = {
     id: number | string;
+    first_name?: string;
+    last_name?: string;
     full_name?: string;
     name?: string;
     email?: string;
@@ -43,6 +46,7 @@ type Contact = {
     contact_type?: string;
     is_primary?: boolean;
     is_active?: boolean;
+    is_receipt?: boolean;
     company?: number | string | null;
     company_name?: string;
     customer_name?: string;
@@ -54,7 +58,8 @@ const { Option } = Select;
 const { Title, Text } = Typography;
 
 const defaultContactValues = {
-    full_name: '',
+    first_name: '',
+    last_name: '',
     email: '',
     phone: '',
     mobile: '',
@@ -64,15 +69,16 @@ const defaultContactValues = {
     company: null,
     is_primary: false,
     is_active: true,
+    is_receipt: false,
 };
 
 const Contacts: React.FC = () => {
     const location = useLocation();
     const [contacts, setContacts] = useState<Contact[]>([]);
     const [companies, setCompanies] = useState<CompanyOption[]>([]);
+    const [extraCompany, setExtraCompany] = useState<CompanyOption | null>(null);
     const [loading, setLoading] = useState(false);
     const [searchQuery, setSearchQuery] = useState('');
-    const [companyFilter, setCompanyFilter] = useState<number | null>(null);
     const [typeFilter, setTypeFilter] = useState<string>('');
     const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
     const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
@@ -111,27 +117,43 @@ const Contacts: React.FC = () => {
 
     const showCreateModal = useCallback(() => {
         setEditingContact(null);
-        form.setFieldsValue({ ...defaultContactValues, company: companyFilter });
+        form.setFieldsValue({ ...defaultContactValues });
         setIsModalVisible(true);
-    }, [companyFilter, form]);
+    }, [form]);
 
     useEffect(() => {
         const searchParams = new URLSearchParams(location.search);
-        const companyParam = searchParams.get('company');
-        if (companyParam) {
-            const cid = parseInt(companyParam, 10);
-            if (!Number.isNaN(cid)) {
-                setCompanyFilter(cid);
-            }
-        }
         const contactIdParam = searchParams.get('contact');
         if (contactIdParam) {
             setContactParam(contactIdParam);
         }
         if (searchParams.get('action') === 'create') {
+            const companyParam = searchParams.get('company');
+            const companyNameParam = searchParams.get('company_name');
             showCreateModal();
+            if (companyParam) {
+                const companyId = parseInt(companyParam, 10);
+                if (!isNaN(companyId)) {
+                    if (companyNameParam) {
+                        setExtraCompany({ id: companyId, name: companyNameParam });
+                        form.setFieldsValue({ company: companyId });
+                    } else {
+                        crmService.getCompany(companyId)
+                            .then((c: any) => {
+                                if (c) {
+                                    setExtraCompany(c);
+                                    form.setFieldsValue({ company: companyId });
+                                }
+                            })
+                            .catch((err: any) => {
+                                console.error('Failed to load company', err);
+                                form.setFieldsValue({ company: companyId });
+                            });
+                    }
+                }
+            }
         }
-    }, [location.search, showCreateModal]);
+    }, [location.search, showCreateModal, form]);
 
     useEffect(() => {
         if (contactParam && contacts.length) {
@@ -146,7 +168,6 @@ const Contacts: React.FC = () => {
     const filteredContacts = useMemo(() => {
         const q = (searchQuery || '').trim().toLowerCase();
         return contacts.filter((c) => {
-            const matchesCompany = companyFilter ? c.company === companyFilter : true;
             const matchesType = typeFilter ? c.contact_type === typeFilter : true;
             const matchesStatus = statusFilter === 'active' ? c.is_active !== false : statusFilter === 'inactive' ? c.is_active === false : true;
             const matchesSearch = !q
@@ -166,9 +187,9 @@ const Contacts: React.FC = () => {
                     .join(' ') 
                     .toLowerCase()
                     .includes(q);
-            return matchesCompany && matchesType && matchesStatus && matchesSearch;
+            return matchesType && matchesStatus && matchesSearch;
         });
-    }, [contacts, companyFilter, typeFilter, statusFilter, searchQuery]);
+    }, [contacts, typeFilter, statusFilter, searchQuery]);
 
     const pagedContacts = useMemo(() => {
         const start = (page - 1) * pageSize;
@@ -186,10 +207,34 @@ const Contacts: React.FC = () => {
         setIsViewModalVisible(true);
     };
 
+    const handleCancel = () => {
+        if (form.isFieldsTouched()) {
+            Modal.confirm({
+                title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+                icon: <ExclamationCircleOutlined />,
+                content: 'A módosítások elvesznek.',
+                okText: 'Bezár',
+                cancelText: 'Mégse',
+                onOk: () => {
+                     setIsModalVisible(false);
+                     setEditingContact(null);
+                     form.resetFields();
+                },
+            });
+        } else {
+             setIsModalVisible(false);
+             setEditingContact(null);
+             form.resetFields();
+        }
+    };
+
     const handleSubmit = async () => {
         try {
             const values = await form.validateFields();
-            const payload = { ...values, company: values.company || null };
+            const payload = { 
+                ...values, 
+                company: values.is_receipt ? null : (values.company || null) 
+            };
             if (editingContact) {
                 await crmService.updateContact(editingContact.id, payload);
                 message.success('Kapcsolattartó frissítve');
@@ -282,14 +327,6 @@ const Contacts: React.FC = () => {
                         onChange={(e) => setSearchQuery(e.target.value)}
                         onSearch={() => { setPage(1); loadData(); }}
                         style={{ width: 280 }}
-                    />
-                    <Select
-                        allowClear
-                        placeholder="Szűrés cég szerint"
-                        style={{ width: 220 }}
-                        value={companyFilter || undefined}
-                        onChange={(val) => { setCompanyFilter(val || null); setPage(1); }}
-                        options={companies.map((c) => ({ label: c.name, value: c.id }))}
                     />
                     <Select
                         value={typeFilter}
@@ -421,7 +458,7 @@ const Contacts: React.FC = () => {
             <Modal
                 open={isModalVisible}
                 title={editingContact ? 'Kapcsolattartó szerkesztése' : 'Új kapcsolattartó'}
-                onCancel={() => { setIsModalVisible(false); setEditingContact(null); form.resetFields(); }}
+                onCancel={handleCancel}
                 onOk={handleSubmit}
                 okText="Mentés"
                 cancelText="Mégse"
@@ -429,12 +466,26 @@ const Contacts: React.FC = () => {
             >
                 <Form form={form} layout="vertical" initialValues={defaultContactValues}>
                     <Row gutter={16}>
+                        <Col span={24}>
+                            <Form.Item name="is_receipt" valuePropName="checked" label="Típus">
+                                <Switch checkedChildren="Nyugtás (Magánszemély)" unCheckedChildren="Normál (Céges)" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
                         <Col span={12}>
-                            <Form.Item name="full_name" label="Név" rules={[{ required: true, message: 'A név kötelező' }]}>
-                                <Input placeholder="Kapcsolattartó neve" />
+                            <Form.Item name="last_name" label="Vezetéknév" rules={[{ required: true, message: 'A vezetéknév kötelező' }]}>
+                                <Input placeholder="Vezetéknév" />
                             </Form.Item>
                         </Col>
                         <Col span={12}>
+                            <Form.Item name="first_name" label="Keresztnév" rules={[{ required: true, message: 'A keresztnév kötelező' }]}>
+                                <Input placeholder="Keresztnév" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col span={24}>
                             <Form.Item name="email" label="E-mail" rules={[{ type: 'email', message: 'Érvénytelen e-mail cím' }]}> 
                                 <Input placeholder="email@example.com" />
                             </Form.Item>
@@ -452,43 +503,52 @@ const Contacts: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item name="position" label="Pozíció">
-                                <Input />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="department" label="Osztály">
-                                <Input />
-                            </Form.Item>
-                        </Col>
-                    </Row>
-                    <Row gutter={16}>
-                        <Col span={12}>
-                            <Form.Item name="contact_type" label="Kapcsolat típusa">
-                                <Select>
-                                    <Option value="primary">Elsődleges</Option>
-                                    <Option value="billing">Számlázási</Option>
-                                    <Option value="technical">Technikai</Option>
-                                    <Option value="sales">Értékesítési</Option>
-                                    <Option value="support">Támogatási</Option>
-                                    <Option value="other">Egyéb</Option>
-                                </Select>
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item name="company" label="Cég">
-                                <Select
-                                    allowClear
-                                    showSearch
-                                    placeholder="Válasszon céget"
-                                    optionFilterProp="label"
-                                    options={companies.map((c) => ({ label: c.name, value: c.id }))}
-                                />
-                            </Form.Item>
-                        </Col>
-                    </Row>
+                    <Form.Item noStyle shouldUpdate={(prev, curr) => prev.is_receipt !== curr.is_receipt}>
+                        {({ getFieldValue }) => !getFieldValue('is_receipt') && (
+                            <>
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="position" label="Pozíció">
+                                            <Input />
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="department" label="Osztály">
+                                            <Input />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                                <Row gutter={16}>
+                                    <Col span={12}>
+                                        <Form.Item name="contact_type" label="Kapcsolat típusa">
+                                            <Select>
+                                                <Option value="primary">Elsődleges</Option>
+                                                <Option value="billing">Számlázási</Option>
+                                                <Option value="technical">Technikai</Option>
+                                                <Option value="sales">Értékesítési</Option>
+                                                <Option value="support">Támogatási</Option>
+                                                <Option value="other">Egyéb</Option>
+                                            </Select>
+                                        </Form.Item>
+                                    </Col>
+                                    <Col span={12}>
+                                        <Form.Item name="company" label="Cég">
+                                            <Select
+                                                allowClear
+                                                showSearch
+                                                placeholder="Válasszon céget"
+                                                optionFilterProp="label"
+                                                options={[
+                                                    ...companies,
+                                                    ...(extraCompany && !companies.find((c) => c.id === extraCompany.id) ? [extraCompany] : []),
+                                                ].map((c) => ({ label: c.name, value: c.id }))}
+                                            />
+                                        </Form.Item>
+                                    </Col>
+                                </Row>
+                            </>
+                        )}
+                    </Form.Item>
                     <Divider orientation="left">Státusz</Divider>
                     <Row gutter={16}>
                         <Col span={8}>

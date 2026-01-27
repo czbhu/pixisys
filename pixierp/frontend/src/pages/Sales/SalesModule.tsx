@@ -13,6 +13,7 @@ import QuoteDetail from './QuoteDetail';
 import CustomerOrders from './CustomerOrders';
 import CustomerOrderDetail from './CustomerOrderDetail';
 import Invoicing from './Invoicing';
+import DeliveryNotes from './DeliveryNotes';
 
 const SalesModule = () => {
   return (
@@ -26,6 +27,7 @@ const SalesModule = () => {
       <Route path="/orders/:id/edit" element={<OrderForm />} />
       <Route path="/customer-orders" element={<CustomerOrders />} />
       <Route path="/customer-orders/:id" element={<CustomerOrderDetail />} />
+      <Route path="/delivery-notes" element={<DeliveryNotes />} />
       <Route path="/invoicing" element={<Invoicing />} />
       <Route path="/invitations" element={<MyInvitations />} />
       <Route path="/projects" element={<Projects />} />

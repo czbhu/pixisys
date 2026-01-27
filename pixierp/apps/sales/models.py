@@ -135,6 +135,7 @@ class CustomerOrder(models.Model):
     # Publikus szállítólevél link
     public_delivery_token = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name="Publikus szállítás token")
     public_delivery_expires_at = models.DateTimeField(blank=True, null=True, verbose_name="Publikus szállítás link lejár")
+    delivery_note_number = models.CharField(max_length=50, blank=True, null=True, unique=True, verbose_name="Szállítólevél sorszám")
     delivery_notes = models.TextField(blank=True, default='', verbose_name="Szállítási megjegyzések")
     delivery_confirmed = models.BooleanField(default=False, verbose_name="Szállítólevél visszaigazolva")
     delivery_confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="Visszaigazolás ideje")
@@ -151,6 +152,42 @@ class CustomerOrder(models.Model):
     def __str__(self):
         return f"{self.order_number} - {self.quote_request.title}"
     
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        old_status = None
+        if not is_new:
+            try:
+                old_instance = CustomerOrder.objects.get(pk=self.pk)
+                old_status = old_instance.status
+            except CustomerOrder.DoesNotExist:
+                pass
+
+        super().save(*args, **kwargs)
+        
+        if not is_new and old_status and self.status != old_status:
+            self.propagate_status_down()
+
+    def propagate_status_down(self):
+        STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        if self.status not in STATUS_ORDER: return
+        
+        try:
+            current_rank = STATUS_ORDER.index(self.status)
+        except ValueError:
+            return
+
+        for item in self.items.exclude(status='cancelled'):
+            if item.status not in STATUS_ORDER: continue
+            
+            try:
+                item_rank = STATUS_ORDER.index(item.status)
+            except ValueError:
+                continue
+                
+            if item_rank < current_rank:
+                item.status = self.status
+                item.save()
+
     def check_auto_delivery(self):
         """48 óra után automatikusan kiszállítva"""
         from django.utils import timezone
@@ -166,8 +203,19 @@ class CustomerOrder(models.Model):
 
 class CustomerOrderItem(models.Model):
     """Megrendelés tételek"""
+    STATUS_CHOICES = [
+        ('new', 'Új'),
+        ('confirmed', 'Megerősítve'),
+        ('in_production', 'Gyártásban'),
+        ('ready', 'Kész'),
+        ('in_delivery', 'Szállítás alatt'),
+        ('delivered', 'Kiszállítva'),
+        ('cancelled', 'Törölve'),
+    ]
+
     customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='items', verbose_name="Megrendelés")
     quote_item = models.ForeignKey('QuoteRequestItem', on_delete=models.CASCADE, verbose_name="Ajánlat tétel")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
     quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Mennyiség")
     unit = models.CharField(max_length=20, verbose_name="Egység")
     net_unit_price = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Nettó egységár")
@@ -181,6 +229,49 @@ class CustomerOrderItem(models.Model):
 
     def __str__(self):
         return f"{self.customer_order.order_number} - {self.description[:50]}"
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        self.check_parent_status()
+
+    def check_parent_status(self):
+        STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        if self.status not in STATUS_ORDER: return
+        if self.status == 'cancelled': return
+
+        parent = self.customer_order
+        if parent.status not in STATUS_ORDER: return
+        
+        # Calculate the minimum status rank of all items
+        items = parent.items.exclude(status='cancelled')
+        if not items.exists(): return
+        
+        min_rank = 999
+        for item in items:
+            s = item.status
+            if s not in STATUS_ORDER: continue 
+            rank = STATUS_ORDER.index(s)
+            if rank < min_rank:
+                min_rank = rank
+        
+        # Current parent rank
+        parent_rank = STATUS_ORDER.index(parent.status)
+        
+        # If the minimum rank of all items is higher than parent's current rank, upgrade parent
+        if min_rank > parent_rank and min_rank != 999:
+            new_status = STATUS_ORDER[min_rank]
+            parent.status = new_status
+            
+            # Update timestamps
+            from django.utils import timezone
+            now = timezone.now()
+            if new_status == 'confirmed' and not parent.confirmed_at: parent.confirmed_at = now
+            if new_status == 'in_production' and not parent.production_started_at: parent.production_started_at = now
+            if new_status == 'ready' and not parent.ready_at: parent.ready_at = now
+            if new_status == 'in_delivery' and not parent.delivery_started_at: parent.delivery_started_at = now
+            if new_status == 'delivered' and not parent.delivered_at: parent.delivered_at = now
+            
+            parent.save()
 
 
 class Quote(models.Model):
@@ -237,11 +328,17 @@ class QuoteRequestItem(models.Model):
     discounted_net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes nettó összesen")
     discounted_gross_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes bruttó összesen")
     description = models.TextField(blank=True, verbose_name="Leírás")
+    
+    # Ordering and Nesting
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
+    parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children', verbose_name="Szülő tétel")
+    
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         verbose_name = "Ajánlatkérés tétel"
         verbose_name_plural = "Ajánlatkérés tételek"
+        ordering = ['sort_order', 'id']
 
     def __str__(self):
         ref = (
@@ -545,4 +642,65 @@ class ChatMessageAttachment(models.Model):
     
     def __str__(self):
         return self.original_filename
+
+class DeliveryNote(models.Model):
+    """Szállítólevél"""
+    delivery_note_number = models.CharField(max_length=50, unique=True, verbose_name="Szállítólevél száma")
+    customer = models.ForeignKey(CrmCompany, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Ügyfél (CRM)")
+    # Fallback legacy customer info storage if needed, but mainly we use CrmCompany.
+    # We can also store contact person.
+    contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Kapcsolattartó")
+    
+    issue_date = models.DateField(default=timezone.now, verbose_name="Kiállítás dátuma")
+    delivery_date = models.DateField(null=True, blank=True, verbose_name="Szállítás dátuma")
+    
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    
+    # Status and Confirmation
+    is_confirmed = models.BooleanField(default=False, verbose_name="Visszaigazolva")
+    confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="Visszaigazolás ideje")
+    confirmed_by_user = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='confirmed_deliveries', verbose_name="Visszaigazolta (Belső)")
+    confirmed_by_info = models.CharField(max_length=255, blank=True, verbose_name="Visszaigazolta (Külső/Egyéb)") 
+    # e.g. "Ügyfél: Kovács János (IP: 1.2.3.4)" or "Automata"
+    
+    rejection_reason = models.TextField(blank=True, verbose_name="Elutasítás oka")
+    
+    notes = models.TextField(blank=True, verbose_name="Megjegyzés")
+    
+    # Public access
+    public_token = models.CharField(max_length=64, blank=True, null=True, unique=True)
+    public_expires_at = models.DateTimeField(blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Szállítólevél"
+        verbose_name_plural = "Szállítólevelek"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.delivery_note_number
+
+class DeliveryNoteItem(models.Model):
+    """Szállítólevél tétel"""
+    delivery_note = models.ForeignKey(DeliveryNote, on_delete=models.CASCADE, related_name='items', verbose_name="Szállítólevél")
+    customer_order_item = models.ForeignKey(CustomerOrderItem, on_delete=models.CASCADE, related_name='delivery_items', verbose_name="Megrendelés tétel")
+    
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Szállított mennyiség")
+    
+    # Snapshot of item details at time of delivery
+    item_name = models.CharField(max_length=255, blank=True, verbose_name="Tétel neve")
+    unit = models.CharField(max_length=20, blank=True, verbose_name="Egység")
+    net_unit_price = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó egységár")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Szállítólevél tétel"
+        verbose_name_plural = "Szállítólevél tételek"
+
+    @property
+    def net_total(self):
+        return self.quantity * self.net_unit_price
 

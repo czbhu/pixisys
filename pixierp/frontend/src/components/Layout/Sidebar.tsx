@@ -44,7 +44,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/dashboard',
       '/personal/invitations', '/personal/orders',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
-      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/invoicing', '/sales/projects',
+      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/product-classes', '/manufacturing/services',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
@@ -206,6 +206,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/sales/customer-orders',
           label: 'Megrendelések',
+        },
+        {
+          key: '/sales/delivery-notes',
+          label: 'Szállítás',
         },
         {
           key: '/sales/invoicing',
@@ -540,17 +544,18 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       }}
     >
       <div style={{
-        height: 32,
-        margin: '8px 16px',
-        background: 'rgba(255, 255, 255, 0.2)',
-        borderRadius: 6,
+        height: 64,
+        margin: '4px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        color: 'white',
-        fontWeight: 'bold',
+        overflow: 'hidden'
       }}>
-        {collapsed ? 'PixiERP' : 'PixiERP Rendszer'}
+        {collapsed ? (
+           <img src="/favicon.svg" alt="PixiERP" style={{ maxHeight: '32px' }} />
+        ) : (
+           <img src="/pixi_logo.png" alt="PixiERP" style={{ maxHeight: '50px', maxWidth: '100%', objectFit: 'contain' }} />
+        )}
       </div>
       <div style={{ paddingBottom: '80px' }}>
         <Menu

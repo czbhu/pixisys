@@ -16,6 +16,7 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [companies, setCompanies] = useState<any[]>([]);
+  const [existingProducts, setExistingProducts] = useState<any[]>([]);
 
   useEffect(() => {
     if (open) {
@@ -39,14 +40,96 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
     try {
       const companiesRes = await api.get('/crm/companies/?is_supplier=true');
       setCompanies(companiesRes.data.results || companiesRes.data || []);
+      
+      const prodsRes = await warehouseService.getMaterials(); // Or products? Assuming materials includes products based on usage
+      setExistingProducts(prodsRes.results || prodsRes || []);
     } catch (e) {
       console.error('Hiba az adatok betöltésekor', e);
     }
   };
 
+    const generateCode = () => {
+      const name = form.getFieldValue('name') || '';
+      let base = (name.substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!base) base = 'PROD';
+      
+      let i = 1;
+      let suffix = '001';
+      const codes = new Set(existingProducts.map(p => p.code));
+      
+      while (codes.has(`${base}-${suffix}`)) {
+          i++;
+          suffix = i.toString().padStart(3, '0');
+          if (i > 999) break;
+      }
+      form.setFieldsValue({ code: `${base}-${suffix}` });
+  };
+
+  const handleCodeBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+      const val = e.target.value;
+      if (!val) return;
+
+      const isDuplicate = existingProducts.some(p => 
+          p.code && p.code.toLowerCase() === val.toLowerCase()
+      );
+
+      if (isDuplicate) {
+          message.warning('Ez a kód már létezik! Automatikus léptetés...');
+          
+          let newCode = val;
+          const match = val.match(/^(.*?)(\d+)$/);
+          
+          if (match) {
+             const prefix = match[1];
+             const numStr = match[2];
+             const width = Math.max(numStr.length, 3);
+             const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+             
+             let maxNum = parseInt(numStr, 10);
+             
+             existingProducts.forEach(p => {
+                 if (!p.code) return;
+                 const m = p.code.match(regex);
+                 if (m) {
+                     const n = parseInt(m[1], 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+                 if (p.code.toLowerCase() === val.toLowerCase()) {
+                     const n = parseInt(numStr, 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+             });
+             
+             newCode = `${prefix}${(maxNum + 1).toString().padStart(width, '0')}`;
+          } else {
+             const prefix = val + (val.endsWith('-') ? '' : '-');
+             const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+             let maxNum = 0;
+             existingProducts.forEach(p => {
+                 if (!p.code) return;
+                 const m = p.code.match(regex);
+                 if (m) {
+                     const n = parseInt(m[1], 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+             });
+             newCode = `${prefix}${(maxNum + 1).toString().padStart(3, '0')}`;
+          }
+          
+          form.setFieldValue('code', newCode);
+          message.success(`Új kód generálva: ${newCode}`);
+      }
+  };
+
   const handleOk = async () => {
     try {
       const values = await form.validateFields();
+      if (!values.code) {
+           generateCode();
+           values.code = form.getFieldValue('code');
+      }
       setSubmitting(true);
       const created = await warehouseService.createMaterial({
         ...values,
@@ -114,13 +197,17 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
                   <Input />
                 </Form.Item>
 
-                <Form.Item
-                  name="code"
-                  label="Kód"
-                  rules={[{ required: true, message: 'Kötelező mező' }]}
-                >
-                  <Input />
-                </Form.Item>
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <Form.Item
+                    name="code"
+                    label="Kód"
+                    rules={[{ required: true, message: 'Kötelező mező' }]}
+                    style={{ flex: 1 }}
+                  >
+                    <Input onBlur={handleCodeBlur} />
+                  </Form.Item>
+                  <Button style={{ marginTop: 30 }} onClick={generateCode}>Generál</Button>
+                </div>
 
                 <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
                   <Form.Item

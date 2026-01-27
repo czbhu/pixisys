@@ -7,7 +7,8 @@ import {
   Settings as SettingsIcon,
   ChevronRight,
   Database,
-  Upload
+  Upload,
+  Coins
 } from 'lucide-react';
 import styled from 'styled-components';
 
@@ -161,6 +162,12 @@ const Settings = () => {
       icon: Users,
       title: 'Jogosultságok',
       description: 'Szerepkörök és menü jogosultságok kezelése'
+    },
+    {
+      path: '/settings/currencies',
+      icon: Coins,
+      title: 'Deviza árfolyamok',
+      description: 'Devizák és árfolyamok kezelése, MNB szinkronizáció'
     }
   ];
 

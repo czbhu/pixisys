@@ -1,10 +1,11 @@
 import React, { useEffect, useState, useMemo } from 'react';
 import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { manufacturingService, ProductClass, Project } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
 import { salesService } from '../../services/salesService';
+import { hrService } from '../../services/hrService';
 import api from '../../services/api';
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
   onCancel: () => void;
   onCreated: (mp: any) => void;
   customer?: { id: any; name: string };
+  editingProduct?: any;
 }
 
 interface CostItem {
@@ -28,9 +30,11 @@ interface CostItem {
     selling_price: number;
     supplier_id?: number | null;
     is_per_unit?: boolean;
+    is_internal?: boolean;
+    department_id?: number | null;
 }
 
-const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated, customer }) => {
+const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated, customer, editingProduct }) => {
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
@@ -50,11 +54,13 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [materials, setMaterials] = useState<any[]>([]);
   const [services, setServices] = useState<any[]>([]);
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [materialGroups, setMaterialGroups] = useState<any[]>([]);
   const [existingProducts, setExistingProducts] = useState<any[]>([]);
   const [activeTab, setActiveTab] = useState('1');
   const [dimensionsPerUnit, setDimensionsPerUnit] = useState(true);
   const [calculatedVolumes, setCalculatedVolumes] = useState({ unit: 0, total: 0 });
+  const [isFixedQuantity, setIsFixedQuantity] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -64,29 +70,53 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       setActiveTab('1');
       setDimensionsPerUnit(true);
       setCalculatedVolumes({ unit: 0, total: 0 });
+      setIsFixedQuantity(false);
       
-      form.setFieldsValue({
-        status: 'quote_request_open',
-        quantity: 1,
-        quantity_unit: 'db',
-        dimension_unit: 'mm',
-        customer_id: customer ? customer.id : 'all',
-      });
-      // Generate code if customer is present and we are creating new? 
-      // User says "General Button". So wait.
+      if (editingProduct) {
+          setIsFixedQuantity(editingProduct.is_fixed_quantity || false);
+          // Fill form from editingProduct
+          form.setFieldsValue({
+              ...editingProduct,
+              customer_id: editingProduct.contact || editingProduct.customer || (customer ? customer.id : undefined),
+              project_id: editingProduct.project, // check field name in MP
+              product_class_id: editingProduct.product_class, // check field name
+          });
+          // Also date fields usually moment/dayjs
+          if (editingProduct.date) form.setFieldValue('date', dayjs(editingProduct.date));
+          if (editingProduct.deadline) form.setFieldValue('deadline', dayjs(editingProduct.deadline));
+          
+          if (editingProduct.cost_items && Array.isArray(editingProduct.cost_items)) {
+              setCostItems(editingProduct.cost_items.map((c: any) => ({
+                  ...c,
+                  id: c.id || Date.now() + Math.random(),
+                  supplier_id: c.supplier || c.supplier_id, // Map supplier FK to supplier_id
+                  department_id: c.department || c.department_id,
+                  is_internal: c.is_internal || false
+              })));
+          }
+      } else {
+        form.setFieldsValue({
+            status: 'quote_request_open',
+            quantity: 1,
+            quantity_unit: 'db',
+            dimension_unit: 'mm',
+            customer_id: customer ? customer.id : 'all',
+        });
+      }
     }
-  }, [open, customer]);
+  }, [open, customer, editingProduct]);
 
   const loadData = async () => {
     try {
-      const [pcs, projs, custs, matsRes, servsRes, suppsRes, prodsRes] = await Promise.all([
+      const [pcs, projs, custs, matsRes, servsRes, suppsRes, prodsRes, deptsRes] = await Promise.all([
         manufacturingService.getProductClasses(),
         manufacturingService.getOpenProjects(),
         crmService.getCompanies(),
-        api.get('/warehouse/materials/?filter_type=all'), 
+        api.get('/warehouse/materials/?filter_type=all&page_size=1000'), 
         salesService.getServices(),
-        api.get('/crm/companies/?is_supplier=true'),
-        manufacturingService.getProducts(),
+        api.get('/crm/companies/?is_supplier=true&page_size=1000'),
+        api.get('/manufacturing/products/?page_size=10000'),
+        hrService.getDepartments(),
       ]);
       
       const mList = (matsRes.data.results ?? matsRes.data).map((m: any) => ({
@@ -94,15 +124,27 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
           name: m.code ? `[${m.code}] ${m.name}` : m.name
       }));
       const sList = servsRes.results ?? servsRes;
-      const suppList = (suppsRes.data.results ?? suppsRes.data).sort((a: any, b: any) => a.name.localeCompare(b.name));
+      let suppList = (suppsRes.data.results ?? suppsRes.data).sort((a: any, b: any) => a.name.localeCompare(b.name));
       
+      // Ensure Internal Production is at the top
+      const internalIdx = suppList.findIndex((s: any) => {
+          const name = (s.name || '').trim().toLowerCase();
+          return name.includes('belső gyártás') || name.includes('internal') || name.includes('belső márka');
+      });
+      if (internalIdx > -1) {
+          const internalSupp = suppList[internalIdx];
+          suppList.splice(internalIdx, 1);
+          suppList.unshift(internalSupp);
+      }
+
       setProductClasses(pcs);
       setProjects(projs);
       setCustomers(((custs as any).results || custs));
       setMaterials(mList);
       setServices(sList);
       setSuppliers(suppList);
-      setExistingProducts(prodsRes);
+      setDepartments((deptsRes.results ?? deptsRes));
+      setExistingProducts(((prodsRes as any).data?.results ?? (prodsRes as any).data ?? []));
     } catch (e) {
       console.error(e);
     }
@@ -260,11 +302,91 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     form.setFieldsValue({ code: `${prefix}-${suffix}` });
   };
 
+  const handleCodeBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (!val) return;
+
+    const isDuplicate = existingProducts.some(p => 
+        p.code && 
+        p.code.toLowerCase() === val.toLowerCase() && 
+        (!editingProduct || p.id !== editingProduct.id)
+    );
+
+    if (isDuplicate) {
+        message.warning('Ez a cikkszám már létezik! Automatikus léptetés...');
+        
+        let newCode = val;
+        
+        // Check if ends with digits
+        const match = val.match(/^(.*?)(\d+)$/);
+        
+        if (match) {
+             const prefix = match[1];
+             const numStr = match[2];
+             const width = Math.max(numStr.length, 3);
+             
+             // Escape prefix for regex
+             const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+             
+             let maxNum = parseInt(numStr, 10);
+             
+             existingProducts.forEach(p => {
+                 if (!p.code || (editingProduct && p.id === editingProduct.id)) return;
+                 const m = p.code.match(regex);
+                 if (m) {
+                     const n = parseInt(m[1], 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+                 // Also check the exact duplicate (val) which we already found
+                 if (p.code.toLowerCase() === val.toLowerCase()) {
+                     const n = parseInt(numStr, 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+             });
+             
+             const nextNum = maxNum + 1;
+             newCode = `${prefix}${nextNum.toString().padStart(width, '0')}`;
+             
+        } else {
+             // No digits at end, append -001
+             const prefix = val + (val.endsWith('-') ? '' : '-');
+             
+             const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+             const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+
+             let maxNum = 0;
+             existingProducts.forEach(p => {
+                 if (!p.code || (editingProduct && p.id === editingProduct.id)) return;
+                 const m = p.code.match(regex);
+                 if (m) {
+                     const n = parseInt(m[1], 10);
+                     if (n > maxNum) maxNum = n;
+                 }
+             });
+             
+             newCode = `${prefix}${(maxNum + 1).toString().padStart(3, '0')}`;
+        }
+        
+        form.setFieldValue('code', newCode);
+        message.success(`Új cikkszám generálva: ${newCode}`);
+    }
+  };
+
   const handleAddCost = (type: 'material' | 'service' | 'other') => {
-    // Find default supplier if exists
+    // Find default supplier
     let defaultSupplierId = null;
-    const defaultSupplier = suppliers.find(s => s.name === 'Belső Gyártás');
-    if (defaultSupplier) defaultSupplierId = defaultSupplier.id;
+    if (type === 'other') {
+        const defaultSupplier = suppliers.find(s => 
+            (s.name || '').trim().toLowerCase().includes('belső márka') ||
+            (s.name || '').trim().toLowerCase().includes('belső gyártás') || 
+            (s.name || '').trim().toLowerCase().includes('saját') ||
+            (s.name || '').trim().toLowerCase().includes('internal')
+        );
+        // If not found, try finding any with "internal" or similar
+        // If still not found, and we have suppliers, maybe select the first one?
+        if (defaultSupplier) defaultSupplierId = defaultSupplier.id;
+    }
 
     const newItem: CostItem = {
         id: Date.now() + Math.random(),
@@ -277,7 +399,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
         markup_percent: 30,
         selling_unit_price: 0,
         selling_price: 0,
-        supplier_id: type === 'other' ? defaultSupplierId : null,
+        supplier_id: defaultSupplierId, // Set default supplier
+        is_internal: false,
     };
     setCostItems([...costItems, newItem]);
   };
@@ -354,9 +477,13 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     try {
         const v = await form.validateFields();
         // Validation for Cost Items
-        const invalidCosts = costItems.filter(c => !c.name || (c.type === 'other' && !c.supplier_id));
+        const invalidCosts = costItems.filter(c => 
+            !c.name || 
+            (c.type === 'other' && !c.is_internal && !c.supplier_id) ||
+            (c.type === 'other' && c.is_internal && !c.department_id)
+        );
         if (invalidCosts.length > 0) {
-            message.error('Kérjük töltsön ki minden kötelező mezőt a költségeknél! (Név, Beszállító)');
+            message.error('Kérjük töltsön ki minden kötelező mezőt a költségeknél!');
             setActiveTab('2');
             return;
         }
@@ -383,21 +510,40 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
              form.setFieldsValue({ name: v.name }); // update UI
         }
 
+      // Calculate totals for saving
+      const productQty = v.quantity || 1;
+      let calculatedTotalSelling = 0;
+      
+      costItems.forEach(item => {
+          const itemSelling = Number(item.selling_unit_price) || 0;
+          const itemQty = Number(item.quantity) || 0;
+          const multiplier = item.is_per_unit ? productQty : 1;
+          calculatedTotalSelling += (itemSelling * itemQty) * multiplier;
+      });
+      
+      const calculatedUnitSelling = productQty > 0 ? calculatedTotalSelling / productQty : 0;
+
       setSubmitting(true);
       
       const payload = {
         ...v,
+        net_total_price: Number(calculatedTotalSelling.toFixed(2)),
+        net_unit_price: Number(calculatedUnitSelling.toFixed(2)),
+        is_fixed_quantity: isFixedQuantity,
         cost_items: costItems.map(c => ({
-            type: c.type,
-            ref_id: c.ref_id,
+            type: c.type || 'other',
+            ref_id: c.ref_id || null, // Ensure null if empty or undefined
             name: c.name,
-            quantity: c.quantity,
-            unit: c.unit,
-            unit_price: c.unit_price,
-            cost_price: c.cost_price,
-            markup_percent: c.markup_percent,
-            selling_price: c.selling_price,
-            supplier_id: c.supplier_id
+            quantity: Number(Number(c.quantity).toFixed(4)) || 0,
+            unit: c.unit || 'db',
+            unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
+            markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
+            selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
+            supplier: c.supplier_id || null, // Ensure null if empty, do not send empty string
+            department: c.department_id || null,
+            is_internal: c.is_internal || false
         })),
         customer_id: v.customer_id === 'all' ? null : v.customer_id,
         is_private_person: v.customer_id === 'private',
@@ -406,13 +552,21 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
         deadline: dayjs().add(14, 'day').format('YYYY-MM-DD'),
       };
 
-      const created = await manufacturingService.createProduct(payload);
-      message.success('Egyedi gyártás létrehozva');
+      let created;
+      if (editingProduct && editingProduct.id) {
+          created = await manufacturingService.updateProduct(editingProduct.id, payload);
+          message.success('Egyedi gyártás frissítve');
+      } else {
+          created = await manufacturingService.createProduct(payload);
+          message.success('Egyedi gyártás létrehozva');
+      }
       onCreated(created);
       form.resetFields();
     } catch (e: any) {
         console.error(e);
-      if (e.errorFields) {
+        if (e.response && e.response.data) {
+             message.error(`Mentési hiba: ${JSON.stringify(e.response.data)}`);
+        } else if (e.errorFields) {
           // Form validation error
           setActiveTab('1');
           form.scrollToField(e.errorFields[0].name);
@@ -489,39 +643,79 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.quantity} onChange={v => updateCostItem(r.id, 'quantity', v)} min={0} controls={false} /> },
     { title: 'Egység', key: 'unit', width: 70, render: (_: any, r: CostItem) => r.type === 'other' ? <Input value={r.unit} onChange={e => updateCostItem(r.id, 'unit', e.target.value)} /> : r.unit },
     { title: 'Beker. ár', key: 'cost_price', width: 90, render: (_: any, r: CostItem) => <InputNumber value={r.cost_price} onChange={v => updateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} /> }, 
-    { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} /> },
+    { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} precision={2} /> },
     { title: 'Eladási e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CostItem) => <InputNumber value={r.selling_unit_price} onChange={v => updateCostItem(r.id, 'selling_unit_price', v)} disabled={r.type !== 'other'} controls={false} /> },
-    { title: 'Beszállító', key: 'supplier_id', width: 230, render: (_: any, r: CostItem) => {
+    { title: 'Beszállító', key: 'supplier_id', width: 260, render: (_: any, r: CostItem) => {
         if (r.type !== 'other') return null;
         return (
-            <Select 
-                style={{ width: '100%' }} 
-                value={r.supplier_id} 
-                onChange={v => updateCostItem(r.id, 'supplier_id', v)} 
-                allowClear
-                showSearch
-                optionFilterProp="label"
-                optionLabelProp="shortLabel"
-                status={!r.supplier_id ? 'error' : ''}
-                popupMatchSelectWidth={false}
-                dropdownStyle={{ minWidth: 300, maxWidth: 500 }}
-                dropdownRender={(menu) => (
-                    <>
-                        {menu}
-                        <div style={{ padding: '8px', borderTop: '1px solid #e8e8e8' }}>
-                            <Button type="link" icon={<PlusOutlined />} block onClick={() => {
-                                window.open('/crm/companies?action=create&preset=supplier', '_blank');
-                            }}>Új beszállító</Button>
-                        </div>
-                    </>
-                )}
-            >
-                {suppliers.map(s => (
-                    <Select.Option key={s.id} value={s.id} label={s.name} shortLabel={s.name.length > 20 ? `${s.name.substring(0, 20)}...` : s.name}>
-                        {s.name}
-                    </Select.Option>
-                ))}
-            </Select>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                 <Checkbox 
+                    checked={r.is_internal} 
+                    onChange={e => {
+                        const checked = e.target.checked;
+                        updateCostItem(r.id, 'is_internal', checked);
+                        // Clear previous selection to avoid confusion
+                        if (checked) {
+                            updateCostItem(r.id, 'department_id', null);
+                            updateCostItem(r.id, 'supplier_id', null);
+                        } else {
+                            updateCostItem(r.id, 'department_id', null);
+                            updateCostItem(r.id, 'supplier_id', null);
+                        }
+                    }}
+                 >
+                    Belső
+                 </Checkbox>
+                 {r.is_internal ? (
+                    <Select 
+                        style={{ width: '100%' }} 
+                        value={r.department_id} 
+                        onChange={v => updateCostItem(r.id, 'department_id', v)} 
+                        allowClear
+                        placeholder="Válassz részleget"
+                    >
+                        {departments.map(d => (
+                            <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>
+                        ))}
+                    </Select>
+                 ) : (
+                    <Select 
+                        style={{ width: '100%' }} 
+                        value={r.supplier_id} 
+                        onChange={(v) => {
+                            let val = v;
+                            if (!val) {
+                                // Default to nothing if cleared, or implement default logic if desired
+                            }
+                            updateCostItem(r.id, 'supplier_id', val);
+                        }} 
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        optionLabelProp="shortLabel"
+                        status={!r.supplier_id ? 'error' : ''}
+                        placeholder={!r.supplier_id ? "Válassz beszállítót" : ""}
+                        popupMatchSelectWidth={false}
+                        dropdownStyle={{ minWidth: 300, maxWidth: 500 }}
+                        dropdownRender={(menu) => (
+                            <>
+                                {menu}
+                                <div style={{ padding: '8px', borderTop: '1px solid #e8e8e8' }}>
+                                    <Button type="link" icon={<PlusOutlined />} block onClick={() => {
+                                        window.open('/crm/companies?action=create&preset=supplier', '_blank');
+                                    }}>Új beszállító</Button>
+                                </div>
+                            </>
+                        )}
+                    >
+                        {suppliers.slice(0, 50).map(s => (
+                            <Select.Option key={s.id} value={s.id} label={s.name} shortLabel={s.name.length > 20 ? `${s.name.substring(0, 20)}...` : s.name}>
+                                {s.name}
+                            </Select.Option>
+                        ))}
+                    </Select>
+                 )}
+            </div>
         );
     }},
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> }
@@ -533,8 +727,25 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const { totalCost, totalSelling, unitCost, unitSelling, quantity } = displayedTotals;
   const totalProfit = totalSelling - totalCost;
 
+  const handleInternalCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Igen',
+        cancelText: 'Mégse',
+        onOk: () => {
+          onCancel();
+        },
+      });
+    } else {
+      onCancel();
+    }
+  };
+
   return (
-    <Modal open={open} onCancel={onCancel} onOk={handleOk} confirmLoading={submitting} title="Új Egyedi Gyártás" width={1100} destroyOnHidden>
+    <Modal open={open} onCancel={handleInternalCancel} onOk={handleOk} confirmLoading={submitting} title={editingProduct ? "Egyedi Gyártás szerkesztése" : "Új Egyedi Gyártás"} width={1100} destroyOnHidden>
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
             {
                 key: '1',
@@ -551,7 +762,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                      </Form.Item>
                      <div style={{ display: 'flex', gap: 8 }}>
                         <Form.Item label="Cikkszám" name="code" rules={[{ required: true }]} style={{ flex: 1 }}>
-                            <Input />
+                            <Input onBlur={handleCodeBlur} />
                         </Form.Item>
                         <Button style={{ marginTop: 30 }} onClick={generateCode}>Generál</Button>
                      </div>
@@ -564,8 +775,21 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                      </Form.Item>
                      <Row gutter={16}>
                         <Col span={8}>
-                             <Form.Item label="Mennyiség" name="quantity" initialValue={1}> 
-                               <InputNumber min={0.01} style={{ width: '100%' }} />
+                             <Form.Item label="Mennyiség" style={{ marginBottom: 0 }}>
+                                <Space.Compact style={{ width: '100%' }}>
+                                     <Form.Item name="quantity" initialValue={1} noStyle>
+                                        <InputNumber min={0.01} style={{ width: '100%' }} disabled={isFixedQuantity} />
+                                     </Form.Item>
+                                     <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8, border: '1px solid #d9d9d9', borderLeft: 0, backgroundColor: '#fafafa', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}>
+                                         <Checkbox 
+                                            checked={isFixedQuantity} 
+                                            onChange={e => setIsFixedQuantity(e.target.checked)}
+                                            style={{ marginRight: 8 }}
+                                         >
+                                            fix
+                                         </Checkbox>
+                                     </div>
+                                </Space.Compact>
                              </Form.Item>
                         </Col>
                         <Col span={8}>
@@ -582,6 +806,20 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                              </Form.Item>
                         </Col>
                      </Row>
+
+                     <Row gutter={16} style={{ marginTop: 16 }}>
+                        <Col span={12}>
+                            <Form.Item label="Leírás" name="description">
+                                <Input.TextArea rows={3} />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item label="Belső leírás" name="internal_description">
+                                <Input.TextArea rows={3} />
+                            </Form.Item>
+                        </Col>
+                     </Row>
+
                      <Row gutter={16} style={{ marginBottom: 24, background: '#fafafa', padding: 12, borderRadius: 4 }}>
                          <Col span={8}>
                              <span style={{ display: 'block', color: '#666', fontSize: 12 }}>Egységár (Eladási):</span>

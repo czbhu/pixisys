@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 
@@ -160,6 +160,25 @@ const Materials: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [form] = Form.useForm();
+
+  const handleCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Bezár',
+        cancelText: 'Mégse',
+        onOk: () => {
+          setModalVisible(false);
+          form.resetFields();
+        },
+      });
+    } else {
+      setModalVisible(false);
+      form.resetFields();
+    }
+  };
 
   useEffect(() => {
     if (searchParams.get('create') === 'true') {
@@ -632,12 +651,12 @@ const Materials: React.FC = () => {
         Modal.confirm({
           title: 'Visszatérés az ajánlathoz',
           content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a terméket?',
-          okText: 'Igen',
-          cancelText: 'Nem',
+          okText: 'Alkalmazás',
+          cancelText: 'Mégse',
           onOk: () => {
             const channel = new BroadcastChannel('pixi_rfq_item_creation');
-            channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedMaterial, itemType: 'material' } });
-            window.close();
+            channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedMaterial, itemType: 'product' } });
+            setTimeout(() => window.close(), 100);
           }
         });
       }
@@ -1240,13 +1259,13 @@ const Materials: React.FC = () => {
       <Modal
         title={editingMaterial ? 'Alapanyag/Termék szerkesztése' : 'Új alapanyag/termék'}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={handleCancel}
         footer={null}
         width={900}
         style={{ top: 20 }}
       >
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginBottom: 16 }}>
-          <Button onClick={() => setModalVisible(false)}>Bezárás</Button>
+          <Button onClick={handleCancel}>Bezárás</Button>
           <Button type="primary" onClick={() => form.submit()}>Mentés</Button>
         </div>
         <Tabs 

@@ -19,6 +19,7 @@ import {
     Pagination,
     Segmented,
     Spin,
+    Radio,
 } from 'antd';
 import {
     PlusOutlined,
@@ -28,6 +29,7 @@ import {
     ReloadOutlined,
     PoweroffOutlined,
     SearchOutlined,
+    ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
@@ -55,14 +57,21 @@ type Company = {
     street_name?: string;
     street_type?: string;
     house_number?: string;
+    building?: string;
+    staircase?: string;
+    floor?: string;
+    door?: string;
     address?: string;
     full_address?: string;
     email?: string;
     phone?: string;
     payment_due_days?: number;
+    payment_method?: string;
     is_customer?: boolean;
     is_supplier?: boolean;
     is_active?: boolean;
+    vat_status?: string;
+    is_hungarian_taxpayer?: boolean;
     bank_accounts?: BankAccount[];
 };
 
@@ -85,14 +94,21 @@ const defaultFormValues = {
     tax_number: '',
     group_tax_number: '',
     eu_tax_number: '',
+    vat_status: 'DOMESTIC',
+    is_hungarian_taxpayer: true,
     country: 'Magyarország',
     postal_code: '',
     city: '',
     street_name: '',
     street_type: 'utca',
     house_number: '',
+    building: '',
+    staircase: '',
+    floor: '',
+    door: '',
     address: '',
     payment_due_days: 8,
+    payment_method: 'CASH',
     is_customer: true,
     is_supplier: false,
     is_active: true,
@@ -121,6 +137,11 @@ const Companies: React.FC = () => {
     const [companyContacts, setCompanyContacts] = useState<ContactSummary[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
     const [form] = Form.useForm();
+    const [taxThinking, setTaxThinking] = useState(false);
+    const [viesThinking, setViesThinking] = useState(false);
+    const watchedCountry = Form.useWatch('country', form);
+    const watchedVatStatus = Form.useWatch('vat_status', form);
+    const isHungarianTaxpayer = watchedVatStatus === 'DOMESTIC';
 
     const loadCompanies = useCallback(async (opts?: { query?: string }) => {
         try {
@@ -229,11 +250,17 @@ const Companies: React.FC = () => {
             const rawDetail = await crmService.getCompany(company.id);
             const detail = normalizeDetail(rawDetail);
             const bankAccounts = (detail as any)?.bank_accounts || [];
+            
+            // Vat Status initialization (Default DOMESTIC if not present)
+            const vatStatus = detail.vat_status || (detail.is_hungarian_taxpayer !== false ? 'DOMESTIC' : 'OTHER');
+            
             setEditingCompany(detail);
             form.setFieldsValue({
                 ...defaultFormValues,
                 ...company,
                 ...detail,
+                vat_status: vatStatus,
+                is_hungarian_taxpayer: vatStatus === 'DOMESTIC',
                 bank_accounts: bankAccounts.length ? bankAccounts : [{ currency: 'HUF', is_primary: true }],
             });
             setIsModalVisible(true);
@@ -260,6 +287,27 @@ const Companies: React.FC = () => {
             message.error('Nem sikerült lekérni a cég adatlapját');
         } finally {
             setDetailLoading(false);
+        }
+    };
+
+    const handleCancel = () => {
+        if (form.isFieldsTouched()) {
+            Modal.confirm({
+                title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+                icon: <ExclamationCircleOutlined />,
+                content: 'A módosítások elvesznek.',
+                okText: 'Bezár',
+                cancelText: 'Mégse',
+                onOk: () => {
+                    setIsModalVisible(false);
+                    setEditingCompany(null);
+                    form.resetFields();
+                },
+            });
+        } else {
+            setIsModalVisible(false);
+            setEditingCompany(null);
+            form.resetFields();
         }
     };
 
@@ -313,6 +361,123 @@ const Companies: React.FC = () => {
             loadCompanies({ query: searchQuery });
         } catch (err) {
             message.error('Nem sikerült frissíteni a státuszt');
+        }
+    };
+
+    const handleTaxLookup = async (value?: string) => {
+        // Use value from search event or get from form
+        const currentTax = typeof value === 'string' ? value : form.getFieldValue('tax_number');
+        const digits = String(currentTax || '').replace(/[^0-9]/g, '');
+        
+        if (digits.length < 8) {
+            message.warning('Kérjük adjon meg legalább az első 8 számjegyet!');
+            return;
+        }
+
+        try {
+            setTaxThinking(true);
+            
+            // Check for duplicates first
+            const existingCompanies = await crmService.searchCompanies(digits.slice(0, 8));
+            const duplicate = existingCompanies?.find((c: any) => 
+                (c.tax_number || '').replace(/[^0-9]/g, '').startsWith(digits.slice(0, 8))
+            );
+
+            if (duplicate && !editingCompany) {
+                Modal.confirm({
+                    title: 'Már létezik cég ezzel az adószámmal',
+                    content: (
+                        <div>
+                            <p>A következő cég már szerepel a rendszerben:</p>
+                            <p><strong>{duplicate.name}</strong><br />Adószám: {duplicate.tax_number}</p>
+                            <p>Szeretné betölteni az adatait szerkesztéshez?</p>
+                        </div>
+                    ),
+                    okText: 'Igen, betöltés',
+                    cancelText: 'Mégse',
+                    onOk: () => {
+                        showEditModal(duplicate);
+                    },
+                    onCancel: () => {
+                       // User cancelled, do nothing? Or allow them to continue? 
+                       // Usually we stop them from creating exact duplicate.
+                    }
+                });
+                return;
+            }
+
+            // Proceed with NAV lookup
+            const result = await crmService.lookupCompanyByNav(digits, { debug: true });
+            
+            if (result && result.found && 'name' in result) {
+                // ... (rest of logic same)
+                const navResult = result as any;
+                form.setFieldsValue({
+                    name: navResult.name,
+                    // If short name is not present, we leave it or empty.
+                    
+                    // PixiERP requires full format 12345678-1-11
+                    tax_number: navResult.full_tax_number || navResult.tax_number,
+                    full_tax_number: navResult.full_tax_number || navResult.tax_number,
+                    
+                    vat_code: navResult.vat_code,
+                    county_code: navResult.county_code,
+                    
+                    postal_code: navResult.postal_code,
+                    city: navResult.city,
+                    street_name: navResult.street_name,
+                    street_type: navResult.street_type,
+                    house_number: navResult.house_number,
+                    building: '', // Reset these as NAV address structure might not parse them deeply or assumes they are in house_number/street_name if complex
+                    staircase: '',
+                    floor: '',
+                    door: '',
+                    
+                    group_tax_number: navResult.group_tax_number,
+                    eu_tax_number: navResult.eu_tax_number,
+                    vat_group_id: navResult.vat_group_id,
+                    vat_group_member_tax_number: navResult.vat_group_member_tax_number,
+                });
+                
+                message.success('Cégadatok sikeresen betöltve a NAV-tól');
+            } else {
+                message.warning('Nem található cég a NAV rendszerében ezzel az adószámmal.');
+            }
+        } catch (err) {
+            // eslint-disable-next-line no-console
+            console.error(err);
+            message.error('Hiba történt a NAV lekérdezés során');
+        } finally {
+            setTaxThinking(false);
+        }
+    };
+
+    const handleViesLookup = async () => {
+        const euVat = form.getFieldValue('eu_tax_number');
+        if (!euVat) {
+            message.warning('Kérjük adjon meg EU adószámot!');
+            return;
+        }
+        
+        setViesThinking(true);
+        try {
+            const resp = await crmService.validateEuVat({ vat_number: euVat });
+            const data = resp; 
+            
+            if (data && data.valid) {
+                message.success(`Érvényes EU adószám: ${data.name || 'OK'}`);
+                 form.setFieldsValue({
+                    name: data.name || form.getFieldValue('name'),
+                    address: data.address || form.getFieldValue('address'),
+                    country: data.countryCode ? (data.countryCode === 'HU' ? 'Magyarország' : data.countryCode) : form.getFieldValue('country'),
+                 });
+            } else {
+                message.error('Érvénytelen EU adószám.');
+            }
+        } catch (err: any) {
+            message.error('Hiba a VIES lekérdezés során: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setViesThinking(false);
         }
     };
 
@@ -452,7 +617,7 @@ const Companies: React.FC = () => {
             <Modal
                 open={isModalVisible}
                 title={editingCompany ? 'Cég szerkesztése' : 'Új cég'}
-                onCancel={() => { setIsModalVisible(false); setEditingCompany(null); form.resetFields(); }}
+                onCancel={handleCancel}
                 onOk={handleSubmit}
                 okText="Mentés"
                 cancelText="Mégse"
@@ -463,10 +628,72 @@ const Companies: React.FC = () => {
                     form={form}
                     initialValues={defaultFormValues}
                 >
+                    <Form.Item name="full_tax_number" hidden><Input /></Form.Item>
+                    <Form.Item name="vat_code" hidden><Input /></Form.Item>
+                    <Form.Item name="county_code" hidden><Input /></Form.Item>
+                    <Form.Item name="vat_group_id" hidden><Input /></Form.Item>
+
+                    <Form.Item name="vat_status" label="Vevő adóalanyisága">
+                        <Radio.Group>
+                            <Radio value="DOMESTIC">Magyar adószámos</Radio>
+                            <Radio value="PRIVATE_PERSON">Magánszemély</Radio>
+                            <Radio value="OTHER">Egyéb (EU/3. ország)</Radio>
+                        </Radio.Group>
+                    </Form.Item>
+
+                    {isHungarianTaxpayer && (
                     <Row gutter={16}>
                         <Col xs={24} md={12}>
-                            <Form.Item name="name" label="Cégnév" rules={[{ required: true, message: 'Kötelező mező' }]}>
-                                <Input placeholder="Cégnév" />
+                            <Form.Item name="tax_number" label="Adószám">
+                                <Input.Search
+                                    placeholder="12345678-1-42 (NAV keresés)"
+                                    enterButton={<><SearchOutlined /> NAV</>}
+                                    onSearch={handleTaxLookup}
+                                    loading={taxThinking}
+                                />
+                                <Text type="secondary" style={{ fontSize: '12px' }}>Magyar adószám (8 számjegy)</Text>
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                             <Form.Item name="eu_tax_number" label="EU adószám">
+                                <Input.Search
+                                    placeholder="HU..."
+                                    enterButton={viesThinking ? <Spin size="small" /> : 'VIES'}
+                                    onSearch={handleViesLookup}
+                                    loading={viesThinking}
+                                />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    )}
+
+                    {!isHungarianTaxpayer && watchedVatStatus === 'OTHER' && (
+                        <Row gutter={16}>
+                             <Col xs={24} md={12}>
+                                <Form.Item name="eu_tax_number" label="EU adószám - VIES ellenőrzés">
+                                    <Input.Search
+                                        placeholder="EU adószám (pl. HU12345678)"
+                                        enterButton={viesThinking ? <Spin size="small" /> : 'VIES'}
+                                        onSearch={handleViesLookup}
+                                        loading={viesThinking}
+                                    />
+                                </Form.Item>
+                            </Col>
+                             <Col xs={24} md={12}>
+                                <Form.Item name="tax_number" label="Adószám (Opcionális)">
+                                    <Input placeholder="Adószám (opcionális)" />
+                                </Form.Item>
+                            </Col>
+                        </Row>
+                    )}
+
+                    {/* Magánszemélynek nem kell adószám mező, vagy opcionális? PixInvoice-nál nincs */}
+                    
+                    <Divider orientation="left">Cégadatok</Divider>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="name" label="Név" rules={[{ required: true, message: 'Kötelező mező' }]}>
+                                <Input placeholder="Hivatalos cégnév" />
                             </Form.Item>
                         </Col>
                         <Col xs={24} md={12}>
@@ -475,31 +702,22 @@ const Companies: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    
                     <Row gutter={16}>
-                        <Col xs={24} md={12}>
-                            <Form.Item name="tax_number" label="Adószám">
-                                <Input placeholder="12345678-1-42" />
-                            </Form.Item>
-                        </Col>
                         <Col xs={24} md={12}>
                             <Form.Item name="group_tax_number" label="Csoportos adószám">
-                                <Input />
+                                <Input placeholder="12345678-1-12" />
                             </Form.Item>
                         </Col>
-                    </Row>
-                    <Row gutter={16}>
+                        {isHungarianTaxpayer && (
                         <Col xs={24} md={12}>
-                            <Form.Item name="eu_tax_number" label="EU adószám">
-                                <Input placeholder="HU..." />
+                             <Form.Item name="vat_group_member_tax_number" label="Csoport tag adószáma">
+                                <Input placeholder="" disabled={true} />
                             </Form.Item>
                         </Col>
-                        <Col xs={24} md={12}>
-                            <Form.Item name="payment_due_days" label="Fizetési határidő (nap)">
-                                <Input type="number" min={0} />
-                            </Form.Item>
-                        </Col>
+                        )}
                     </Row>
-
+                    
                     <Divider orientation="left">Cím</Divider>
                     <Row gutter={16}>
                         <Col xs={24} md={8}>
@@ -518,45 +736,98 @@ const Companies: React.FC = () => {
                             </Form.Item>
                         </Col>
                     </Row>
+                    
+                    {watchedCountry && watchedCountry !== 'Magyarország' && watchedCountry !== 'HU' ? (
+                        <Form.Item name="address" label="Cím (Utca, házszám)">
+                             <TextArea rows={2} placeholder="Utca, házszám..." />
+                        </Form.Item>
+                    ) : (
+                        <>
+                            <Row gutter={16}>
+                                <Col xs={24} md={12}>
+                                    <Form.Item name="street_name" label="Közterület neve">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="street_type" label="Közterület jellege">
+                                        <Select
+                                            allowClear
+                                            showSearch
+                                            optionFilterProp="label"
+                                            options={STREET_TYPES.map((t) => ({ label: t, value: t }))}
+                                            placeholder="pl. utca"
+                                        />
+                                    </Form.Item>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="house_number" label="Házszám">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                            </Row>
+                            <Row gutter={16}>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="building" label="Épület">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="staircase" label="Lépcsőház">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="floor" label="Emelet">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                                <Col xs={12} md={6}>
+                                    <Form.Item name="door" label="Ajtó">
+                                        <Input />
+                                    </Form.Item>
+                                </Col>
+                            </Row>
+                            
+                            <Form.Item name="address" label="Egyéb cím / megjegyzés">
+                                <TextArea rows={2} />
+                            </Form.Item>
+                        </>
+                    )}
+
+                    <Divider orientation="left">Kapcsolattartás</Divider>
                     <Row gutter={16}>
                         <Col xs={24} md={12}>
-                            <Form.Item name="street_name" label="Közterület neve">
-                                <Input />
+                            <Form.Item name="email" label="E-mail">
+                                <Input type="email" placeholder="pelda@ceg.hu" />
                             </Form.Item>
                         </Col>
-                        <Col xs={12} md={6}>
-                            <Form.Item name="street_type" label="Közterület jellege">
-                                <Select
-                                    allowClear
-                                    showSearch
-                                    optionFilterProp="label"
-                                    options={STREET_TYPES.map((t) => ({ label: t, value: t }))}
-                                    placeholder="pl. utca / útja"
-                                />
-                            </Form.Item>
-                        </Col>
-                        <Col xs={12} md={6}>
-                            <Form.Item name="house_number" label="Házszám">
-                                <Input />
+                        <Col xs={24} md={12}>
+                            <Form.Item name="phone" label="Telefon">
+                                <Input placeholder="+36..." />
                             </Form.Item>
                         </Col>
                     </Row>
-                    <Form.Item name="address" label="Egyéb cím / megjegyzés">
-                        <TextArea rows={2} />
-                    </Form.Item>
-
+                    
+                    <Divider orientation="left">Beállítások</Divider>
                     <Row gutter={16}>
-                        <Col xs={24} md={8}>
-                            <Form.Item name="email" label="E-mail">
-                                <Input type="email" />
+                        <Col xs={24} md={12}>
+                             <Form.Item name="payment_due_days" label="Fizetési határidő (nap)">
+                                <Input type="number" min={0} />
                             </Form.Item>
                         </Col>
-                        <Col xs={24} md={8}>
-                            <Form.Item name="phone" label="Telefon">
-                                <Input />
+                         <Col xs={24} md={12}>
+                            <Form.Item name="payment_method" label="Fizetési mód">
+                                <Select>
+                                    <Option value="CASH">Készpénz</Option>
+                                    <Option value="TRANSFER">Átutalás</Option>
+                                </Select>
                             </Form.Item>
                         </Col>
-                        <Col xs={24} md={8}>
+                    </Row>
+                    
+                     <Row gutter={16}>
+                        <Col xs={24} md={24}>
                             <Form.Item label="Szerepkörök">
                                 <Space>
                                     <Form.Item name="is_customer" valuePropName="checked" noStyle>

@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.utils import timezone
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
@@ -390,7 +391,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
         model = CustomerOrder
         fields = [
             'id', 'quote_request', 'quote_request_id', 'quote_request_title', 'customer_name',
-            'order_number', 'status', 'order_date', 'total_amount',
+            'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount',
             'project_id', 'project_name', 'created_by_name',
             'contact_names', 'contact_email', 'deadline',
             'confirmed_at', 'production_started_at', 'ready_at',
@@ -535,6 +536,177 @@ class ChatThreadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ChatThread
         fields = '__all__'
+
+from .models import DeliveryNote, DeliveryNoteItem
+
+class DeliveryNoteItemSerializer(serializers.ModelSerializer):
+    order_number = serializers.CharField(source='customer_order_item.customer_order.order_number', read_only=True)
+    delivery_note_number = serializers.CharField(source='delivery_note.delivery_note_number', read_only=True)
+    issue_date = serializers.DateField(source='delivery_note.issue_date', read_only=True)
+    customer_name = serializers.CharField(source='delivery_note.customer.name', read_only=True)
+    contact_name = serializers.CharField(source='delivery_note.contact.name', read_only=True)
+    contact_names = serializers.SerializerMethodField()
+    notes = serializers.CharField(source='delivery_note.notes', read_only=True)
+    is_confirmed = serializers.BooleanField(source='delivery_note.is_confirmed', read_only=True)
+    confirmed_by_info = serializers.CharField(source='delivery_note.confirmed_by_info', read_only=True)
+    confirmed_at = serializers.DateTimeField(source='delivery_note.confirmed_at', read_only=True)
+    confirmed_by_user_name = serializers.CharField(source='delivery_note.confirmed_by_user.get_full_name', read_only=True)
+    delivery_note_public_url = serializers.SerializerMethodField()
+    item_code = serializers.SerializerMethodField()
+
+    class Meta:
+        model = DeliveryNoteItem
+        fields = '__all__'
+
+    def get_item_code(self, obj):
+        try:
+            qi = obj.customer_order_item.quote_item
+            if qi.product: return "" # Product model has no code field apparently
+            if qi.material: return qi.material.code
+            if qi.service: return qi.service.code
+            # Manufacturing?
+        except:
+            pass
+        return ""
+
+    def get_contact_names(self, obj):
+        # Infer contacts from the Customer Order -> Quote Request
+        try:
+            # Go up to Order -> QuoteRequest
+            qr = obj.customer_order_item.customer_order.quote_request
+            if qr and qr.contacts.exists():
+                return ", ".join([c.name for c in qr.contacts.all()])
+        except:
+            pass
+        # Fallback to DeliveryNote contact 
+        if obj.delivery_note.contact:
+            return obj.delivery_note.contact.name
+        return ""
+
+    def get_delivery_note_public_url(self, obj):
+        dn = obj.delivery_note
+        if not dn.public_token:
+            import secrets
+            dn.public_token = secrets.token_urlsafe(24)
+            dn.save(update_fields=['public_token'])
+        from django.conf import settings
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', '')
+        return f"{frontend_url}/public/delivery-note/{dn.public_token}"
+
+class DeliveryNoteSerializer(serializers.ModelSerializer):
+    items = DeliveryNoteItemSerializer(many=True, read_only=True)
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    customer_address = serializers.CharField(source='customer.full_address', read_only=True)
+    contact_name = serializers.CharField(source='contact.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    confirmed_by_user_name = serializers.CharField(source='confirmed_by_user.get_full_name', read_only=True)
+    
+    # Computed totals
+    total_quantity = serializers.SerializerMethodField()
+    item_count = serializers.SerializerMethodField()
+    public_url = serializers.SerializerMethodField()
+    customer_contacts = serializers.SerializerMethodField()
+    supplier_info = serializers.SerializerMethodField()
+
+    
+    # For writing
+    items_data = serializers.ListField(
+        child=serializers.DictField(),
+        write_only=True,
+        required=False
+    )
+    
+    class Meta:
+        model = DeliveryNote
+        fields = '__all__'
+        read_only_fields = ['delivery_note_number', 'created_by', 'confirmed_by_user', 'confirmed_at', 'created_at', 'updated_at']
+        
+    def get_total_quantity(self, obj):
+        return sum(item.quantity for item in obj.items.all())
+        
+    def get_item_count(self, obj):
+        return obj.items.count()
+
+    def get_public_url(self, obj):
+        if not obj.public_token:
+            import secrets
+            obj.public_token = secrets.token_urlsafe(24)
+            obj.save(update_fields=['public_token'])
+        from django.conf import settings
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', '')
+        return f"{frontend_url}/public/delivery-note/{obj.public_token}"
+
+    def get_customer_contacts(self, obj):
+        contacts = []
+        # Gather contacts from QuoteRequests associated with the items
+        # Usually a DN is for one Customer, possibly multiple Orders
+        # We find unique contacts attached to the orders' quote requests.
+        seen_ids = set()
+        
+        # Optimize: get relevant order IDs first
+        from .models import CustomerOrderItem
+        # Use relation paths
+        order_ids = obj.items.values_list('customer_order_item__customer_order_id', flat=True).distinct()
+        
+        # Now get contacts across those orders (via QuoteRequest)
+        # We need to import models or do deep query
+        # Easier to iterate if few
+        for item in obj.items.all():
+            try:
+                co = item.customer_order_item.customer_order
+                qr = co.quote_request
+                for c in qr.contacts.all():
+                    if c.id not in seen_ids:
+                        contacts.append({
+                            'name': c.name,
+                            'email': c.email,
+                            'phone': c.phone,
+                            'position': c.position
+                        })
+                        seen_ids.add(c.id)
+            except:
+                pass
+                
+        # If no specific contacts on quote, maybe fallback to Customer company contacts? 
+        # User said "Csak azokat... akik az ajánlathoz...". So if empty, maybe show none.
+        return contacts
+
+    def get_supplier_info(self, obj):
+        from apps.core.models import Company
+        company = Company.objects.filter(is_default=True).first()
+        if not company:
+            company = Company.objects.first()
+        if company:
+            return {
+                'name': company.name,
+                'address': company.address,
+                'tax_number': company.tax_number,
+                'email': company.email,
+                'phone': company.phone
+            }
+        return {}
+
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items_data', [])
+        
+        # Ensure issue_date is a date object to prevent AssertionError in to_representation
+        if 'issue_date' not in validated_data:
+            validated_data['issue_date'] = timezone.now().date()
+            
+        delivery_note = super().create(validated_data)
+        
+        for item_data in items_data:
+            # item_data should have 'customer_order_item' (ID) and 'quantity'
+            # If the key is 'customer_order_item' and value is an ID, we need to use 'customer_order_item_id'
+            if 'customer_order_item' in item_data and isinstance(item_data['customer_order_item'], (int, str)):
+                item_data['customer_order_item_id'] = item_data.pop('customer_order_item')
+                
+            DeliveryNoteItem.objects.create(
+                delivery_note=delivery_note,
+                **item_data
+            )
+        return delivery_note
 
 
 

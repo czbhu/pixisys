@@ -30,18 +30,40 @@ class Company(models.Model):
     is_customer = models.BooleanField(default=True, verbose_name="Ügyfél")
     is_supplier = models.BooleanField(default=False, verbose_name="Beszállító")
     
+    PAYMENT_METHOD_CHOICES = [
+        ('CASH', 'Készpénz'),
+        ('TRANSFER', 'Átutalás')
+    ]
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='CASH', verbose_name="Fizetési mód")
+    
     # Adószám mezők - egyik sem kötelező
+    # Validators removed from model to allow conditional validation in Serializer/Form
     tax_number = models.CharField(
         max_length=20, 
         blank=True,
         null=True,
         verbose_name="Adószám",
-        validators=[validate_hungarian_tax_number],
         help_text="Magyar adószám: 12345678-1-41"
     )
     full_tax_number = models.CharField(max_length=50, blank=True, default='', verbose_name="Teljes adószám")
     vat_code = models.CharField(max_length=10, blank=True, default='', verbose_name="ÁFA kód")
     county_code = models.CharField(max_length=10, blank=True, default='', verbose_name="Megye kód")
+    
+    VAT_STATUS_CHOICES = [
+        ('DOMESTIC', 'Magyar adószámos'),
+        ('PRIVATE_PERSON', 'Magánszemély'),
+        ('OTHER', 'Egyéb')
+    ]
+    vat_status = models.CharField(max_length=20, choices=VAT_STATUS_CHOICES, default='DOMESTIC', verbose_name="Vevő adóalanyisága")
+    is_hungarian_taxpayer = models.BooleanField(default=True, verbose_name="Magyar adóalany")
+    
+    group_tax_number = models.CharField(
+        max_length=20, 
+        blank=True, 
+        null=True, 
+        verbose_name="Csoport adószám",
+        help_text="Csoport adószám: 12345678-1-12"
+    )
     group_tax_number = models.CharField(
         max_length=20, 
         blank=True,
@@ -137,7 +159,9 @@ class Company(models.Model):
 
 class Contact(models.Model):
     """Kapcsolattartó modell"""
-    name = models.CharField(max_length=100, verbose_name="Név")
+    last_name = models.CharField(max_length=50, verbose_name="Vezetéknév", default="")
+    first_name = models.CharField(max_length=50, verbose_name="Keresztnév", default="")
+    name = models.CharField(max_length=100, verbose_name="Teljes név", blank=True)
     phone = models.CharField(
         max_length=20, 
         blank=True,
@@ -157,6 +181,7 @@ class Contact(models.Model):
         verbose_name="Cég"
     )
     position = models.CharField(max_length=100, blank=True, verbose_name="Pozíció")
+    is_receipt = models.BooleanField(default=False, verbose_name="Nyugtás")
     notes = models.TextField(blank=True, verbose_name="Megjegyzések")
     external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Külső azonosító")
     
@@ -170,6 +195,10 @@ class Contact(models.Model):
         verbose_name_plural = "Kapcsolattartók"
         ordering = ['name']
     
+    def save(self, *args, **kwargs):
+        self.name = f"{self.last_name} {self.first_name}".strip()
+        super().save(*args, **kwargs)
+
     def __str__(self):
         company_name = f" ({self.company.name})" if self.company else ""
         return f"{self.name}{company_name}"

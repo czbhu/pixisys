@@ -34,7 +34,7 @@ const ProformaForm = () => {
   const updateItem = (idx, key, val) => setItems(prev => prev.map((it,i)=> i===idx ? { ...it, [key]: val } : it));
 
   const { data: companies } = useQuery(['companies', { is_active: true }], () => companyAPI.getCompanies({ is_active: true }), { select: (res) => res.data });
-  const { data: customers } = useQuery('customers', () => customerAPI.getCustomers({ page_size: 1000 }), { select: (res) => res.data });
+  const { data: customers } = useQuery('customers', () => customerAPI.getCustomers({ page_size: 5000 }), { select: (res) => res.data });
 
   // Default company to sidebar selection on new
   React.useEffect(() => {

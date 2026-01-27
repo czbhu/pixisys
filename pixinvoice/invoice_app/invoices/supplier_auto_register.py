@@ -209,12 +209,7 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
     Returns:
         (customer, conflict_data) tuple
         - customer: A létrehozott/megtalált Customer objektum vagy None
-        - conflict_data: Ha van ütközés, akkor dict a különbségekkel, különben None
-            {
-                'existing_customer': {...},
-                'new_data': {...},
-                'differences': [...]
-            }
+        - conflict_data: Ha volt változás vagy új bankszámla, visszaadja az infót (monitorozáshoz)
     """
     supplier_data = extract_supplier_data_from_invoice_xml(xml_text)
     
@@ -228,39 +223,58 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
     existing = Customer.objects.filter(tax_number=tax_number).first()
     
     if existing:
-        # Összehasonlítás
-        differences = compare_customer_data(existing, supplier_data)
+        changes = []
+        requires_save = False
+
+        # 1. Update basic fields if changed (except bank account)
+        fields_map = {
+            'name': 'name',
+            'city': 'city',
+            'postal_code': 'postal_code',
+            'address': 'address',
+            'street_name': 'street_name',
+            'street_number': 'street_number',
+            'country': 'country'
+        }
         
-        if differences:
-            # Van különbség, visszaadjuk a konfliktust
-            conflict_data = {
-                'existing_customer': {
-                    'id': str(existing.id),
-                    'name': existing.name,
-                    'tax_number': existing.tax_number,
-                    'address': existing.address or '',
-                    'city': existing.city or '',
-                    'postal_code': existing.postal_code or '',
-                },
-                'new_data': supplier_data,
-                'differences': differences
-            }
-            logger.info(f"Beszállító adatok eltérnek: {tax_number}, különbségek: {differences}")
-            return existing, conflict_data
-        else:
-            # Nincs különbség, de ellenőrizzük a bankszámlát
-            if supplier_data.get('bank_account') and payment_method == 'TRANSFER':
-                # Hozzáadjuk a bankszámlát, ha még nincs
-                bank_account = supplier_data['bank_account']
-                if not existing.bank_accounts.filter(account_number=bank_account).exists():
-                    CustomerBankAccount.objects.create(
-                        customer=existing,
-                        account_number=bank_account,
-                        is_default=not existing.bank_accounts.exists()
-                    )
-                    logger.info(f"Új bankszámla hozzáadva a beszállítóhoz: {tax_number} -> {bank_account}")
+        for xml_key, model_key in fields_map.items():
+            new_val = supplier_data.get(xml_key)
+            if new_val and getattr(existing, model_key) != new_val:
+                old_val = getattr(existing, model_key)
+                setattr(existing, model_key, new_val)
+                changes.append(f"{model_key}: '{old_val}' -> '{new_val}'")
+                requires_save = True
+
+        if requires_save:
+            existing.save()
+            logger.info(f"Beszállító adatai frissítve ({tax_number}): {changes}")
+        
+        # 2. Handle Bank Account - Check if new one is needed
+        status_msg = None
+        if supplier_data.get('bank_account'):
+            new_bank_acc = supplier_data['bank_account']
+            existing_bank_accounts = list(existing.bank_accounts.values_list('account_number', flat=True))
             
-            return existing, None
+            # Normalize for comparison (remove spaces/dashes if any remained, though extract normalizes)
+            normalized_new = new_bank_acc.replace(' ', '').replace('-', '')
+            normalized_existing = [acc.replace(' ', '').replace('-', '') for acc in existing_bank_accounts if acc]
+            
+            if normalized_new not in normalized_existing:
+                CustomerBankAccount.objects.create(
+                    customer=existing,
+                    account_number=normalized_new,
+                    is_primary=False,
+                    is_approved=False 
+                )
+                msg = f"Új (jóváhagyásra váró) bankszámla hozzáadva: {normalized_new}"
+                changes.append(msg)
+                status_msg = {'bank_account_pending': normalized_new}
+                logger.info(f"{msg} ({tax_number})")
+
+        if changes:
+            return existing, {'updated': True, 'changes': changes, 'status': status_msg}
+            
+        return existing, None
     else:
         # Nincs még ilyen ügyfél, létrehozzuk
         try:
@@ -293,16 +307,19 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
             
             customer = Customer.objects.create(**customer_defaults)
             
-            # Bankszámla hozzáadása ha van
+            # Bankszámla hozzáadása ha van (új ügyfélnél automatikusan jóváhagyottnak tekintjük?)
+            # A prompt szerint: "hogy ha új bankszámla kerülne az ügyfélhez... usernek jóváhagyni".
+            # Ha az ügyfél teljesen új, akkor a bankszámla is új. De talán itt elfogadható, hogy az első valid.
             if supplier_data.get('bank_account'):
                 CustomerBankAccount.objects.create(
                     customer=customer,
                     account_number=supplier_data['bank_account'],
-                    is_default=True
+                    is_primary=True,
+                    is_approved=True 
                 )
             
             logger.info(f"Új beszállító létrehozva: {customer.name} ({tax_number})")
-            return customer, None
+            return customer, {'created': True}
             
         except Exception as e:
             logger.error(f"Hiba a beszállító létrehozása során: {e}")

@@ -40,6 +40,7 @@ import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
 import BackupRestore from './pages/Settings/BackupRestore';
 import NavAuditExport from './pages/Settings/NavAuditExport';
+import Currencies from './pages/Settings/Currencies';
 import ApiAccess from './pages/ApiAccess';
 import DataImport from './pages/DataImport';
 
@@ -106,6 +107,7 @@ function AppContent() {
                 <Route path="/contacts/:id" element={guard('contacts', <ContactDetail />)} />
                 <Route path="/contacts/:id/edit" element={guard('contacts', <ContactForm />)} />
                 <Route path="/settings" element={guard('settings', <Settings />)} />
+                <Route path="/settings/currencies" element={guard('settings', <Currencies />)} />
                 <Route path="/settings/vat-types" element={guard('settings_vat_types', <VATTypes />)} />
                 <Route path="/settings/email" element={guard('settings_email', <EmailSettings />)} />
                 <Route path="/settings/companies" element={guard('settings_companies', <Companies />)} />

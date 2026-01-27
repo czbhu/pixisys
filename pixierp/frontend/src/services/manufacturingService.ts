@@ -33,11 +33,14 @@ export interface Currency {
 
 export interface ManufacturingProduct {
     id: number;
+    code?: string;
     date: string;
     name: string;
     description: string;
     internal_description: string;
     quantity: number;
+    is_fixed_quantity?: boolean;
+    cost_items?: any[];
     quantity_unit?: string;
     product_class_name?: string;
     project_name?: string;

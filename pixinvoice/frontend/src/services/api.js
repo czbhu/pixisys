@@ -109,6 +109,16 @@ export const invoiceAPI = {
   getStatistics: () => api.get('/api/invoices/statistics/'),
 };
 
+export const currencyAPI = {
+  getCurrencies: (params) => api.get('/api/currencies/', { params }),
+  getCurrency: (id) => api.get(`/api/currencies/${id}/`),
+  createCurrency: (data) => api.post('/api/currencies/', data),
+  updateCurrency: (id, data) => api.put(`/api/currencies/${id}/`, data),
+  deleteCurrency: (id) => api.delete(`/api/currencies/${id}/`),
+  updateMNB: () => api.post('/api/currencies/update-mnb/'),
+  getMNBCurrencies: () => api.get('/api/currencies/mnb-currencies/'),
+};
+
 export const customerAPI = {
   // Get all customers
   getCustomers: (params = {}) => api.get('/api/customers/', { params }),
@@ -139,6 +149,8 @@ export const customerAPI = {
     tax_number: taxNumber, 
     customer_id: customerId 
   }),
+  // Validate EU VAT number
+  validateEuVat: (data) => api.post('/api/customers/validate_eu_vat/', data),
   // Fetch bank accounts from external registry (stubbed backend)
   fetchBankAccounts: (customerId) => api.post(`/api/customers/${customerId}/fetch_bank_accounts/`),
 };

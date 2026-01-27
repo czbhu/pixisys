@@ -56,17 +56,18 @@ from django.shortcuts import get_object_or_404
 from django.db import models
 from django.db.models import Q, Sum, Max
 from django.utils import timezone
-from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile
+from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile, Currency
 from django.contrib.auth.hashers import make_password
 from invoices.serializers import (
     CustomerSerializer, InvoiceSerializer, InvoiceCreateSerializer,
     InvoiceItemSerializer, NAVConfigurationSerializer, ContactSerializer, ContactCreateSerializer,
     CompanySerializer, SystemUserSerializer, SystemUserCreateSerializer, RoleSerializer, InvoiceBlockSerializer, CompanyNAVConfigurationSerializer,
     CustomerBankAccountSerializer, CompanyBankAccountSerializer, VATTypeSerializer, BankStatementSerializer,
-    ProformaSerializer, ProformaCreateSerializer
+    ProformaSerializer, ProformaCreateSerializer, CurrencySerializer
 )
 from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer
 from invoices.nav_service import NAVService
+from invoices.mnb_api import MNBApiClient
 from invoices.supplier_auto_register import auto_register_or_update_supplier, get_supplier_bank_account_for_invoice
 import logging
 import time
@@ -106,6 +107,40 @@ ROLE_MENU_OPTIONS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+class CurrencyViewSet(viewsets.ModelViewSet):
+    queryset = Currency.objects.all()
+    serializer_class = CurrencySerializer
+    permission_classes = []
+
+    @action(detail=False, methods=['post'], url_path='update-mnb')
+    def update_mnb(self, request):
+        try:
+            client = MNBApiClient()
+            updated_count = client.update_exchange_rates()
+            return Response({'message': f'{updated_count} árfolyam frissítve.'})
+        except Exception as e:
+            logger.error(f"MNB update error: {str(e)}")
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'], url_path='mnb-currencies')
+    def mnb_currencies(self, request):
+        """Returns list of currencies from MNB with current rates"""
+        try:
+            client = MNBApiClient()
+            rates = client.get_current_exchange_rates()
+            data = []
+            for code, details in rates.items():
+                data.append({
+                    'code': code,
+                    'name': details['name'],
+                    'current_rate': details['rate_huf']
+                })
+            data.sort(key=lambda x: x['code'])
+            return Response(data)
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class CustomerViewSet(viewsets.ModelViewSet):
@@ -180,6 +215,40 @@ class CustomerViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_409_CONFLICT)
         
         return super().update(request, *args, **kwargs)
+
+    @action(detail=False, methods=['post'])
+    def validate_eu_vat(self, request):
+        """Validate EU VAT number using VIES API"""
+        import requests
+        vat_number = request.data.get('vat_number', '').strip()
+        if not vat_number:
+            return Response({'error': 'Adószám megadása kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Remove country code if present (2 chars)
+        country_code = vat_number[:2].upper()
+        number_part = vat_number[2:]
+        
+        # Check if first 2 chars are letters
+        if not country_code.isalpha():
+             return Response({'error': 'Az adószámnak kétbetűs országkóddal kell kezdődnie (pl. DE123456789)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # VIES API REST
+        url = "https://ec.europa.eu/taxation_customs/vies/rest-api/check-vat-number"
+        payload = {
+            "countryCode": country_code,
+            "vatNumber": number_part
+        }
+        
+        try:
+            resp = requests.post(url, json=payload, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                return Response(data)
+            else:
+                return Response({'error': 'VIES API hiba', 'details': resp.text}, status=resp.status_code)
+        except Exception as e:
+            return Response({'error': f'VIES hálózati hiba: {str(e)}'}, status=500)
+
 
 
 class ApiAccessViewSet(viewsets.ViewSet):
@@ -2976,9 +3045,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 )
                 # Auto-register supplier
                 try:
-                    customer, conflict = auto_register_or_update_supplier(company, xml_text)
-                    if conflict:
-                        logger.warning(f"Beszállító adatok eltérnek ({d.supplier_tax_number}): {conflict['differences']}")
+                    customer, result = auto_register_or_update_supplier(company, xml_text)
+                    if result:
+                        if result.get('created'):
+                             pass # Already logged in function
+                        elif result.get('updated'):
+                             logger.info(f"Beszállító automatikusan frissítve ({d.supplier_tax_number}): {result.get('changes')}")
+                        elif result.get('differences'): 
+                             # Fallback or strict mode
+                             logger.warning(f"Beszállító adatok eltérnek ({d.supplier_tax_number}): {result['differences']}")
                 except Exception as e:
                     logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                 created += 1

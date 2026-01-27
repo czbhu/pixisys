@@ -191,7 +191,8 @@ const Invoicing: React.FC = () => {
         const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
 
         // Open PixInvoice in new tab with data in URL parameter
-        const pixinvoiceUrl = `http://localhost:4000/invoices/new?erp_data=${encodedData}`;
+        const PixInvoiceUrl = process.env.REACT_APP_PIXINVOICE_URL || 'https://inv.pixisys.eu';
+        const pixinvoiceUrl = `${PixInvoiceUrl}/invoices/new?erp_data=${encodedData}`;
         window.open(pixinvoiceUrl, '_blank');
         
         message.success(`Számla előkészítve: ${companyName}`);

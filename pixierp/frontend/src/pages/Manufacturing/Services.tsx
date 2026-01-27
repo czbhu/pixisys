@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -144,7 +144,7 @@ const Services: React.FC = () => {
 
   const fetchSuppliers = async () => {
     try {
-      const response = await api.get('/crm/companies/?company_type=supplier');
+      const response = await api.get('/crm/companies/?is_supplier=true&page_size=1000');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
       // Sort alphabetically by name
       const sorted = data.sort((a: Supplier, b: Supplier) => a.name.localeCompare(b.name, 'hu'));
@@ -184,30 +184,87 @@ const Services: React.FC = () => {
     }
   };
 
-  const fetchAddedSuppliers = async (serviceId: number) => {
+  const fetchAddedSuppliers = async (service: Service) => {
     try {
-      const response = await api.get(`/manufacturing/service-cost-items/?service_id=${serviceId}`);
+      const response = await api.get(`/manufacturing/service-cost-items/?service_id=${service.id}`);
       const allCostItems = Array.isArray(response.data) ? response.data : (response.data.results || []);
       
       // Get unique suppliers from cost items
-      const uniqueSuppliers: Map<string, Supplier & { is_internal?: boolean }> = new Map();
+      const uniqueSuppliers: Map<string, Supplier & { is_internal?: boolean; total_price?: number }> = new Map();
       
-      // Check for internal production
-      const hasInternal = allCostItems.some((item: CostItem) => item.is_internal);
-      if (hasInternal) {
-        uniqueSuppliers.set('internal', { id: -1, name: 'Belső gyártás', is_internal: true });
+      // Define helper for key
+      const getKey = (isInt: boolean, id: number) => isInt ? `int_${id}` : `ext_${id}`;
+
+      // Check for internal production from Service settings
+      if (service.is_internal_production && service.internal_production_department) {
+         const deptId = service.internal_production_department;
+         const dept = departments.find(d => d.id === deptId); // Note: departments state might be empty if not loaded yet
+         // We might need to rely on what we have or just store ID
+         uniqueSuppliers.set(getKey(true, deptId), { 
+             id: deptId,
+             name: dept ? dept.name : 'Belső gyártás', 
+             is_internal: true,
+             total_price: 0
+         });
       }
       
-      // Add external suppliers
+      // Process Cost Items to build unique suppliers list AND calculate totals
       allCostItems.forEach((item: CostItem) => {
-        if (item.supplier && item.supplier_name && !uniqueSuppliers.has(`supplier_${item.supplier}`)) {
-          uniqueSuppliers.set(`supplier_${item.supplier}`, { 
-            id: item.supplier, 
-            name: item.supplier_name,
-            is_internal: false 
-          });
-        }
+          let key = '';
+          let supplierObj: any = null;
+
+          if (item.is_internal) {
+              // Usually internal cost items might not store department ID directly if the model is simple?
+              // But if we have multiples, we need to know which one.
+              // Assuming cost items for internal are just "internal".
+              // But wait, if we have multiple internal departments, we need to distinguish.
+              // Currently backend likely stores `is_internal=True`. 
+              // Does it store `internal_production_department`? Likely not on CostItem.
+              // So for now, all internal cost items are lumped together?
+              // Or does the service have only ONE internal department selected? -> Yes, likely one per service.
+              
+              if (service.internal_production_department) {
+                  key = getKey(true, service.internal_production_department);
+                  const dept = departments.find(d => d.id === service.internal_production_department);
+                  supplierObj = {
+                      id: service.internal_production_department,
+                      name: dept ? dept.name : 'Belső gyártás',
+                      is_internal: true
+                  };
+              }
+          } else if (item.supplier) {
+              key = getKey(false, item.supplier);
+              supplierObj = {
+                  id: item.supplier,
+                  name: item.supplier_name,
+                  is_internal: false
+              };
+          }
+
+          if (key && supplierObj) {
+              if (!uniqueSuppliers.has(key)) {
+                  uniqueSuppliers.set(key, { ...supplierObj, total_price: 0 });
+              }
+              const current = uniqueSuppliers.get(key)!;
+              current.total_price = (current.total_price || 0) + Number(item.selling_price || 0); // or unit_price? user said "calculated price", usually selling price
+          }
       });
+
+      // Ensure default supplier is present (even if no cost items yet)
+      if (service.default_supplier) {
+          const key = getKey(false, service.default_supplier);
+          if (!uniqueSuppliers.has(key)) {
+              const s = suppliers.find(sup => sup.id === service.default_supplier);
+              if (s) {
+                  uniqueSuppliers.set(key, {
+                      id: s.id,
+                      name: s.name,
+                      is_internal: false,
+                      total_price: 0
+                  });
+              }
+          }
+      }
       
       setAddedSuppliers(Array.from(uniqueSuppliers.values()));
     } catch (error) {
@@ -227,15 +284,42 @@ const Services: React.FC = () => {
     setModalVisible(true);
   };
 
+  const handleCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Bezár',
+        cancelText: 'Mégse',
+        onOk: () => {
+          setModalVisible(false);
+          form.resetFields();
+        },
+      });
+    } else {
+      setModalVisible(false);
+      form.resetFields();
+    }
+  };
+
   const handleEdit = (service: Service) => {
     setEditingService(service);
     setIsInternalProduction(service.is_internal_production);
     form.setFieldsValue(service);
     
     // Load added suppliers
-    fetchAddedSuppliers(service.id);
+    fetchAddedSuppliers(service);
     
     // Load default source cost items
+    const defSupp = service.default_supplier || (service.is_internal_production ? 'internal' : null);
+    // If default is not set, pick first added
+    let initSource = defSupp;
+    // However, addedSuppliers is populated async in fetchAddedSuppliers...
+    // We can't synchronously anticipate addedSuppliers here easily without awaiting.
+    // But fetchAddedSuppliers calls setAddedSuppliers.
+    // We can just set selectedSourceForCost based on service data.
+    
     if (service.is_internal_production) {
       setSelectedSourceForCost('internal');
       fetchCostItems(service.id, 'internal');
@@ -243,8 +327,10 @@ const Services: React.FC = () => {
       setSelectedSourceForCost(service.default_supplier);
       fetchCostItems(service.id, service.default_supplier);
     } else {
-      setSelectedSourceForCost(null);
-      setCostItems([]);
+        // Try to fetch first available?
+        // Let's rely on fetchAddedSuppliers being fast or user clicking manually.
+        setSelectedSourceForCost(null);
+        setCostItems([]);
     }
     
     setModalVisible(true);
@@ -259,6 +345,39 @@ const Services: React.FC = () => {
       message.error('Hiba a törlés során');
       console.error(error);
     }
+  };
+
+  const generateCode = () => {
+    const name = form.getFieldValue('name');
+    if (!name) {
+      message.warning('Előbb add meg a szolgáltatás nevét!');
+      return;
+    }
+
+    let base = name.substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = 'SERV';
+    
+    // Existing codes
+    const codes = new Set(services.map(s => s.code));
+    
+    let i = 1;
+    let suffix = '001';
+    let candidate = `${base}-${suffix}`;
+    
+    // Safety break loop
+    let loops = 0;
+    while (codes.has(candidate)) {
+        i++;
+        suffix = i.toString().padStart(3, '0');
+        candidate = `${base}-${suffix}`;
+        loops++;
+        if (loops > 200) { // Should be enough
+            message.error('Nem sikerült egyedi kódot generálni (túl sok próbálkozás)');
+            return;
+        }
+    }
+    
+    form.setFieldsValue({ code: candidate });
   };
 
   const handleSubmit = async (values: any) => {
@@ -280,12 +399,12 @@ const Services: React.FC = () => {
         Modal.confirm({
           title: 'Visszatérés az ajánlathoz',
           content: 'Szeretnél visszatérni az ajánlathoz és beilleszteni ezt a szolgáltatást?',
-          okText: 'Igen',
-          cancelText: 'Nem',
+          okText: 'Alkalmazás',
+          cancelText: 'Mégse',
           onOk: () => {
-            const channel = new BroadcastChannel('pixi_rfq_item_creation');
-            channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedService, itemType: 'service' } });
-            window.close();
+             const channel = new BroadcastChannel('pixi_rfq_item_creation');
+             channel.postMessage({ type: 'ITEM_CREATED', data: { item: savedService, itemType: 'service' } });
+             setTimeout(() => window.close(), 100);
           }
         });
       }
@@ -432,6 +551,7 @@ const Services: React.FC = () => {
       message.success('Költség elem törölve');
       if (editingService && selectedSourceForCost) {
         fetchCostItems(editingService.id, selectedSourceForCost);
+        fetchAddedSuppliers(editingService);
       }
     } catch (error) {
       message.error('Hiba a törlés során');
@@ -451,6 +571,7 @@ const Services: React.FC = () => {
       setCostItemModalVisible(false);
       if (editingService && selectedSourceForCost) {
         fetchCostItems(editingService.id, selectedSourceForCost);
+        fetchAddedSuppliers(editingService);
       }
     } catch (error: any) {
       message.error(error.response?.data?.detail || 'Hiba a mentés során');
@@ -504,7 +625,7 @@ const Services: React.FC = () => {
 
   const columns = [
     {
-      title: 'Kód',
+      title: 'Cikkszám',
       dataIndex: 'code',
       key: 'code',
       width: 100,
@@ -653,7 +774,7 @@ const Services: React.FC = () => {
       <Modal
         title={editingService ? 'Szolgáltatás szerkesztése' : 'Új szolgáltatás'}
         open={modalVisible}
-        onCancel={() => setModalVisible(false)}
+        onCancel={handleCancel}
         onOk={() => form.submit()}
         width={900}
         style={{ top: 20 }}
@@ -682,12 +803,33 @@ const Services: React.FC = () => {
                 <Input />
               </Form.Item>
 
-              <Form.Item
-                name="code"
-                label="Kód"
-                rules={[{ required: true, message: 'Kötelező mező' }]}
-              >
-                <Input />
+              <Form.Item label="Cikkszám" required>
+                 <Space>
+                    <Form.Item 
+                       name="code" 
+                       noStyle 
+                       rules={[
+                          { required: true, message: 'Kötelező mező' },
+                          {
+                            validator: async (_, value) => {
+                               if (!value) return;
+                               const exists = services.find(s => s.code === value && s.id !== editingService?.id);
+                               if (exists) {
+                                   return Promise.reject(new Error('Ez a cikkszám már létezik!'));
+                               }
+                               return Promise.resolve();
+                            }
+                          }
+                       ]}
+                    >
+                      <Input />
+                    </Form.Item>
+                    <Button 
+                      icon={<ThunderboltOutlined />} 
+                      onClick={generateCode}
+                      title="Cikkszám generálás"
+                    />
+                 </Space>
               </Form.Item>
 
               <Form.Item name="description" label="Leírás">
@@ -769,127 +911,167 @@ const Services: React.FC = () => {
                 </Select>
               </Form.Item>
 
-              <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók</h4>
-              
-              {editingService && (
-                <>
-                  <div style={{ marginBottom: 16 }}>
-                    <Space>
-                      <AutoComplete
-                        style={{ width: 300 }}
-                        value={supplierSearchValue}
-                        options={filteredSuppliersForAdd}
-                        onSearch={handleSupplierSearchForAdd}
-                        onSelect={handleAddSupplier}
-                        onFocus={() => handleSupplierSearchForAdd('')}
-                        placeholder="Keress beszállítót hozzáadáshoz..."
-                      />
-                      <Button 
-                        icon={<PlusOutlined />}
-                        onClick={() => {
-                          if (!addedSuppliers.some(s => s.is_internal)) {
-                            setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
-                            message.success('Belső gyártás hozzáadva');
-                          } else {
-                            message.warning('Belső gyártás már hozzá van adva');
+              <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók / Források</h4>
+              <div style={{ marginBottom: 16 }}>
+                 <Space>
+                    <Select 
+                       style={{ width: 300 }} 
+                       placeholder="Beszállító hozzáadása..." 
+                       value={undefined}
+                       showSearch
+                       onChange={(val: number) => {
+                          const supp = suppliers.find(s => s.id === val);
+                          if (supp && !addedSuppliers.find(s => s.id === val && !s.is_internal)) {
+                              setAddedSuppliers([...addedSuppliers, { ...supp, is_internal: false }]);
+                              message.success('Beszállító hozzáadva');
                           }
-                        }}
-                      >
-                        Belső gyártás hozzáadása
-                      </Button>
-                    </Space>
-                  </div>
-                  
-                  <Table
-                    size="small"
-                    dataSource={addedSuppliers}
-                    pagination={false}
-                    style={{ marginBottom: 16 }}
-                    columns={[
-                      {
-                        title: 'Beszállító neve',
-                        dataIndex: 'name',
-                        key: 'name',
-                        render: (text: string, record: Supplier & { is_internal?: boolean }) => (
-                          <Tag color={record.is_internal ? 'green' : 'blue'}>{text}</Tag>
-                        ),
-                      },
-                      {
-                        title: 'Műveletek',
-                        key: 'actions',
-                        width: 100,
-                        render: (_: any, record: Supplier & { is_internal?: boolean }) => (
-                          <Popconfirm
-                            title="Biztosan törli? Az összes költségelem is törlődik!"
-                            onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
-                            okText="Igen"
-                            cancelText="Nem"
-                          >
-                            <Button type="link" danger icon={<DeleteOutlined />} />
-                          </Popconfirm>
-                        ),
-                      },
-                    ]}
-                  />
-                </>
-              )}
+                       }}
+                       filterOption={(input, option) => (option?.children as unknown as string).toLowerCase().includes(input.toLowerCase())}
+                    >
+                        {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name}</Option>)}
+                     </Select>
+                     
+                     <Select
+                       style={{ width: 250 }}
+                       placeholder="Belső gyártás hozzáadása..."
+                       value={undefined}
+                       onChange={(val: number) => {
+                          const dept = departments.find(d => d.id === val);
+                          if (dept) {
+                              if (!addedSuppliers.find(s => s.is_internal && s.id === val)) {
+                                  setAddedSuppliers([...addedSuppliers, { id: val, name: dept.name, is_internal: true }]);
+                                  message.success('Belső gyártás hozzáadva');
+                              }
+                          }
+                       }}
+                     >
+                         {departments.map(d => <Option key={d.id} value={d.id}>{d.name}</Option>)}
+                     </Select>
+                 </Space>
+              </div>
+              
+              <Table 
+                 dataSource={addedSuppliers}
+                 rowKey={(r) => r.is_internal ? `int_${r.id}` : `ext_${r.id}`}
+                 pagination={false}
+                 size="small"
+                 columns={[
+                     { title: 'Név', dataIndex: 'name' },
+                     { title: 'Típus', render: (r: any) => r.is_internal ? <Tag color="blue">Belső</Tag> : <Tag color="green">Külső</Tag> },
+                     { 
+                         title: '1 egységre jutó ár', 
+                         render: (r: any) => {
+                             if (r.total_price !== undefined) {
+                                 return `${r.total_price.toLocaleString()} HUF`;
+                             }
+                             return '-';
+                         }
+                     },
+                     {
+                         title: 'Művelet',
+                         render: (r) => (
+                             <Popconfirm
+                                title="Biztosan törli?"
+                                onConfirm={() => {
+                                    if(editingService) {
+                                        handleRemoveSupplier(r.id, r.is_internal || false);
+                                    } else {
+                                        setAddedSuppliers(addedSuppliers.filter(s => {
+                                            if(r.is_internal) return !(s.is_internal && s.id === r.id);
+                                            return !( !s.is_internal && s.id === r.id );
+                                        }));
+                                        
+                                        // Auto-clear defaults if removed
+                                        const currentDeptId = form.getFieldValue('internal_production_department');
+                                        const currentSuppId = form.getFieldValue('default_supplier');
+                                        if (r.is_internal && currentDeptId === r.id) {
+                                            form.setFieldsValue({ internal_production_department: null, default_source_unified: null });
+                                        }
+                                        if (!r.is_internal && currentSuppId === r.id) {
+                                            form.setFieldsValue({ default_supplier: null, default_source_unified: null });
+                                        }
+                                    }
+                                }}
+                             >
+                                <Button danger size="small" icon={<DeleteOutlined />} />
+                             </Popconfirm>
+                         )
+                     }
+                 ]}
+              />
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Alapértelmezett forrás</h4>
-
               <Form.Item 
-                name="is_internal_production" 
-                label="Forrás típusa"
+                  name="default_source_unified" 
+                  label="Válassz alapértelmezett forrást"
+                  rules={[{ required: true, message: 'Válassz forrást' }]}
               >
-                <Select 
-                  onChange={(value) => setIsInternalProduction(value)}
-                  placeholder="Válassz forrást"
-                >
-                  <Option value={true}>Belső gyártás</Option>
-                  <Option value={false}>Külső beszállító</Option>
-                </Select>
+                  <Select 
+                    placeholder="Válassz a hozzáadott források közül"
+                    onChange={(val) => {
+                       // val format: "int_ID" or "ext_ID"
+                       const [type, idStr] = val.split('_');
+                       const id = parseInt(idStr, 10);
+                       
+                       if (type === 'int') {
+                           form.setFieldsValue({
+                               is_internal_production: true,
+                               internal_production_department: id,
+                               default_supplier: null
+                           });
+                       } else {
+                           form.setFieldsValue({
+                               is_internal_production: false,
+                               internal_production_department: null,
+                               default_supplier: id
+                           });
+                       }
+                    }}
+                  >
+                      {addedSuppliers.map(s => {
+                          const key = s.is_internal ? `int_${s.id}` : `ext_${s.id}`;
+                          return <Option key={key} value={key}>
+                              {s.is_internal ? `[Belső] ${s.name}` : `[Külső] ${s.name}`}
+                          </Option>
+                      })}
+                  </Select>
               </Form.Item>
+              
+              {/* Hidden fields to store actual data model structure */}
+              <Form.Item name="is_internal_production" hidden><Input /></Form.Item>
+              <Form.Item name="internal_production_department" hidden><Input /></Form.Item>
+              <Form.Item name="default_supplier" hidden><Input /></Form.Item>
 
-              {isInternalProduction ? (
-                <Form.Item
-                  name="internal_production_department"
-                  label="Gyártó osztály"
-                  rules={[{ required: true, message: 'Válassz osztályt' }]}
-                >
-                  <Select placeholder="Válassz osztályt" allowClear>
-                    {departments.map(dept => (
-                      <Option key={dept.id} value={dept.id}>{dept.name}</Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              ) : (
-                <Form.Item 
-                  name="default_supplier" 
-                  label="Alapértelmezett beszállító"
-                  rules={[{ required: true, message: 'Válassz beszállítót' }]}
-                >
-                  <Select placeholder="Válassz a hozzáadott beszállítók közül" allowClear>
-                    {addedSuppliers
-                      .filter(s => !s.is_internal)
-                      .map(supplier => (
-                        <Option key={supplier.id} value={supplier.id}>{supplier.name}</Option>
-                      ))}
-                  </Select>
-                </Form.Item>
-              )}
+
+
             </Form>
           </TabPane>
 
-          <TabPane tab="Beszállítók és árkalkuláció" key="2" disabled={!editingService}>
+
+          <TabPane tab="Beszállítók és árkalkuláció" key="2" disabled={!editingService && addedSuppliers.length === 0}>
             <div style={{ marginBottom: 16 }}>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                   <Select
                     style={{ width: 400 }}
                     placeholder="Válassz beszállítót a költségelemek kezeléséhez"
-                    onChange={handleSourceChange}
+                    onChange={(val: number | 'internal') => {
+                        setSelectedSourceForCost(val);
+                        if (editingService) {
+                           fetchCostItems(editingService.id, val);
+                        } else {
+                           // Allow new service creation flow -> filter local costItems? 
+                           // Currently costItems are single list.
+                           // If new service, we store costItems with reference to supplier?
+                           // The local costItems state is an array. We need to filter it visually?
+                           // NO, we should probably allow editing one context at a time.
+                        }
+                    }}
                     value={selectedSourceForCost === 'internal' ? 'internal' : selectedSourceForCost}
+                    // Default value logic: currently 'selectedSourceForCost' state
                     showSearch
                     optionFilterProp="children"
+                    filterOption={(input, option) => (option?.children as unknown as string).toLowerCase().includes(input.toLowerCase())}
                   >
                     {addedSuppliers.map(supplier => (
                       <Option 

@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Save, ArrowLeft, FileText, Hash } from 'lucide-react';
 import styled from 'styled-components';
-import { invoiceBlockAPI, companyAPI, companyNAVConfigAPI } from '../services/api';
+import { invoiceBlockAPI, companyAPI, companyNAVConfigAPI, currencyAPI, companyBankAccountAPI } from '../services/api';
 
 const FormContainer = styled.div`
   background: white;
@@ -192,7 +192,6 @@ const InvoiceBlockForm = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isEdit = Boolean(id);
-
   const { data: block, isLoading: blockLoading } = useQuery(
     ['invoice-block', id],
     () => invoiceBlockAPI.getInvoiceBlock(id),
@@ -201,6 +200,10 @@ const InvoiceBlockForm = () => {
       select: (response) => response.data
     }
   );
+
+  const getId = (val) => (val && typeof val === 'object' ? val.id : val) || '';
+
+  const hasInvoices = (block?.invoice_count || 0) > 0;
 
   const { data: companies, isLoading: companiesLoading, error: companiesError } = useQuery(
     ['companies'],
@@ -223,10 +226,15 @@ const InvoiceBlockForm = () => {
       nav_configuration_id: '',
       invoice_appearance: 'ELECTRONIC',
       footer_note: '',
+      default_currency: 'HUF',
+      default_bank_account: '',
+      language: 'hu',
+      second_language: '',
     }
   });
 
   const selectedCompany = watch('company');
+  const [bilingual, setBilingual] = useState(false);
 
   // Load draft (new only)
   React.useEffect(() => {
@@ -272,6 +280,21 @@ const InvoiceBlockForm = () => {
       enabled: !!selectedCompany,
       select: (response) => response.data?.results || []
     }
+  );
+
+  const { data: currencies } = useQuery(
+    ['currencies'],
+    () => currencyAPI.getCurrencies().then(res => res.data?.results || [])
+  );
+  
+  const activeCurrencies = React.useMemo(() => {
+     return (currencies || []).filter(c => c.is_active !== false);
+  }, [currencies]);
+
+  const { data: bankAccounts } = useQuery(
+    ['company-bank-accounts', { company: selectedCompany }],
+    () => selectedCompany ? companyBankAccountAPI.getAccounts({ company_id: selectedCompany }).then(res => res.data?.results || []) : Promise.resolve([]),
+    { enabled: !!selectedCompany }
   );
 
   const createBlockMutation = useMutation(
@@ -331,25 +354,36 @@ const InvoiceBlockForm = () => {
 
   React.useEffect(() => {
     if (block) {
-      setValue('company', block.company);
+      setValue('company', getId(block.company));
       setValue('name', block.name);
       setValue('prefix', block.prefix);
       setValue('start_number', block.start_number);
       setValue('is_active', block.is_active);
       setValue('invoice_appearance', block.invoice_appearance || 'ELECTRONIC');
       setValue('footer_note', block.footer_note || '');
-    }
-  }, [block, setValue]);
-
-  // Ha a NAV konfig nem elérhető a listában elsőre, akkor is állítsuk be, majd ha megjön a lista, tartsuk meg az értéket
-  React.useEffect(() => {
-    if (block && block.nav_configuration) {
-      const current = watch('nav_configuration_id');
-      if (!current) {
-        setValue('nav_configuration_id', block.nav_configuration);
+      setValue('default_currency', block.default_currency || 'HUF');
+      setValue('default_bank_account', getId(block.default_bank_account));
+      setValue('language', block.language || 'hu');
+      setValue('second_language', block.second_language || '');
+      setBilingual(!!block.second_language);
+      
+      // Handle NAV config from block object if needed
+      const navId = getId(block.nav_configuration);
+      if(navId && !watch('nav_configuration_id')){
+         setValue('nav_configuration_id', navId); 
       }
     }
   }, [block, setValue]);
+
+  // Auto-select NAV config if only one exists
+  React.useEffect(() => {
+      if (navConfigs && navConfigs.length === 1) {
+           const current = watch('nav_configuration_id');
+           if (!current) {
+               setValue('nav_configuration_id', navConfigs[0].id);
+           }
+      }
+  }, [navConfigs, setValue, watch]);
 
   const onSubmit = (data) => {
     const formData = {
@@ -414,6 +448,7 @@ const InvoiceBlockForm = () => {
             id="company"
             {...register('company', { required: 'Cég kiválasztása kötelező' })}
             className={errors.company ? 'error' : ''}
+            disabled={hasInvoices}
           >
             <option value="">Válasszon céget...</option>
             {companies && companies.map((company) => (
@@ -428,8 +463,69 @@ const InvoiceBlockForm = () => {
         </FormGroup>
 
         <FormGroup>
+          <Label>Számla nyelve</Label>
+          <div style={{ display: 'flex', gap: '16px', marginBottom: '8px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '14px' }}>
+               <input 
+                  type="radio" 
+                  name="lang_mode" 
+                  checked={!bilingual} 
+                  onChange={() => {
+                      setBilingual(false);
+                      setValue('second_language', '');
+                  }} 
+               />
+               Egynyelvű
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '14px' }}>
+               <input 
+                  type="radio" 
+                  name="lang_mode" 
+                  checked={bilingual} 
+                  onChange={() => {
+                      setBilingual(true);
+                      // Default to English if not set
+                      if(!watch('second_language')) setValue('second_language', 'en'); 
+                  }} 
+               />
+               Kétnyelvű
+            </label>
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: bilingual ? '1fr 1fr' : '1fr', gap: '16px' }}>
+              <div>
+                  <Label htmlFor="language" style={{fontSize: '13px', color: '#666'}}>
+                      {bilingual ? 'Elsődleges nyelv' : 'Nyelv'}
+                  </Label>
+                  <Select id="language" {...register('language')}>
+                    <option value="hu">Magyar</option>
+                    <option value="en">Angol</option>
+                    <option value="de">Német</option>
+                  </Select>
+              </div>
+              
+              {bilingual && (
+                  <div>
+                      <Label htmlFor="second_language" style={{fontSize: '13px', color: '#666'}}>
+                          Másodlagos nyelv
+                      </Label>
+                      <Select id="second_language" {...register('second_language')}>
+                        <option value="en">Angol</option>
+                        <option value="de">Német</option>
+                        <option value="hu">Magyar</option>
+                      </Select>
+                  </div>
+              )}
+          </div>
+        </FormGroup>
+
+        <FormGroup>
           <Label htmlFor="invoice_appearance">Megjelenési forma</Label>
-          <Select id="invoice_appearance" {...register('invoice_appearance')}>
+          <Select 
+            id="invoice_appearance" 
+            {...register('invoice_appearance')}
+            disabled={hasInvoices}
+          >
             <option value="PAPER">Papíralapú</option>
             <option value="ELECTRONIC">Elektronikus</option>
           </Select>
@@ -441,7 +537,12 @@ const InvoiceBlockForm = () => {
             name="nav_configuration_id"
             control={control}
             render={({ field }) => (
-              <Select id="nav_configuration_id" value={field.value || ''} onChange={(e) => field.onChange(e.target.value)}>
+              <Select 
+                id="nav_configuration_id" 
+                value={field.value || ''} 
+                onChange={(e) => field.onChange(e.target.value)}
+                disabled={hasInvoices}
+              >
                 <option value="">Nincs hozzárendelve</option>
                 {navConfigs && navConfigs.map((cfg) => (
                   <option key={cfg.id} value={cfg.id}>
@@ -449,7 +550,7 @@ const InvoiceBlockForm = () => {
                   </option>
                 ))}
                 {(() => {
-                  const current = field.value || (block?.nav_configuration || '');
+                  const current = field.value || getId(block?.nav_configuration);
                   const exists = (navConfigs || []).some(c => c.id === current);
                   if (current && !exists) {
                     return (
@@ -461,6 +562,50 @@ const InvoiceBlockForm = () => {
                   return null;
                 })()}
               </Select>
+            )}
+          />
+        </FormGroup>
+
+        <FormGroup>
+          <Label htmlFor="default_currency">Alapértelmezett pénznem</Label>
+          <Select 
+            id="default_currency" 
+            {...register('default_currency')}
+            disabled={hasInvoices}
+          >
+            {activeCurrencies && activeCurrencies.map(curr => (
+               <option key={curr.code} value={curr.code}>{curr.code} - {curr.name}</option>
+            ))}
+            {(!activeCurrencies || activeCurrencies.length === 0) && <option value="HUF">HUF</option>}
+          </Select>
+        </FormGroup>
+
+        <FormGroup>
+          <Label htmlFor="default_bank_account">Alapértelmezett bankszámla</Label>
+          <Controller
+            name="default_bank_account"
+            control={control}
+            render={({ field }) => (
+                <Select id="default_bank_account" {...field} value={field.value || ''}>
+                <option value="">Nincs kiválasztva</option>
+                {bankAccounts && bankAccounts.map(acc => (
+                <option key={acc.id} value={acc.id}>
+                    {acc.bank_name} - {acc.currency} - {acc.iban || acc.account_number}
+                </option>
+                ))}
+                {(() => {
+                  const current = field.value || getId(block?.default_bank_account);
+                  const exists = (bankAccounts || []).some(a => a.id === current);
+                  if (current && !exists) {
+                    return (
+                        <option value={current}>
+                           Kiválasztott bankszámla (inaktív vagy nem betöltött)
+                        </option>
+                    );
+                  }
+                  return null;
+                })()}
+            </Select>
             )}
           />
         </FormGroup>
@@ -488,6 +633,12 @@ const InvoiceBlockForm = () => {
           )}
         </FormGroup>
 
+        {hasInvoices && (
+            <InfoBox style={{ borderColor: '#f39c12', backgroundColor: '#fcf8e3', color: '#8a6d3b' }}>
+                <strong>Figyelem:</strong> Mivel ez a számlatömb már tartalmaz számlát, az előtag és a kezdő sorszám nem módosítható.
+            </InfoBox>
+        )}
+
         <FormGroup>
           <Label htmlFor="prefix">Előtag *</Label>
           <Input
@@ -495,6 +646,7 @@ const InvoiceBlockForm = () => {
             {...register('prefix', { required: 'Előtag megadása kötelező' })}
             className={errors.prefix ? 'error' : ''}
             placeholder="pl. INV"
+            disabled={hasInvoices}
           />
           {errors.prefix && (
             <ErrorMessage>{errors.prefix.message}</ErrorMessage>
@@ -516,6 +668,7 @@ const InvoiceBlockForm = () => {
             })}
             className={errors.start_number ? 'error' : ''}
             placeholder="1"
+            disabled={hasInvoices}
           />
           {errors.start_number && (
             <ErrorMessage>{errors.start_number.message}</ErrorMessage>

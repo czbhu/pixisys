@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker } from 'antd';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import dayjs from 'dayjs';
+import { OrderItemsDrawer } from './OrderItemsDrawer';
 
 const { Search } = Input;
 
@@ -29,6 +30,8 @@ interface CustomerOrder {
   notes: string;
   items: any[];
   created_by_name?: string;
+  delivery_note_number?: string;
+  invoice_number?: string;
 }
 
 const CustomerOrders: React.FC = () => {
@@ -36,13 +39,16 @@ const CustomerOrders: React.FC = () => {
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  // Default filter: show everything EXCEPT cancelled and invoiced/delivered (archived)
+  const [statusFilter, setStatusFilter] = useState<string[]>(['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']);
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [timestampModalOpen, setTimestampModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedTimestamp, setSelectedTimestamp] = useState<dayjs.Dayjs | null>(null);
   const [timestampAction, setTimestampAction] = useState<string>('');
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+  const [itemsDrawerOpen, setItemsDrawerOpen] = useState(false);
+  const [drawerOrder, setDrawerOrder] = useState<{id: number, number: string} | null>(null);
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -63,14 +69,22 @@ const CustomerOrders: React.FC = () => {
     fetchOrders();
   }, []);
 
-  const statusTag = (status: string) => {
+  const statusTag = (status: string, record: CustomerOrder) => {
+    if (record.invoice_number) {
+        return (
+            <Space direction="vertical" size={0}>
+                <Tag color="purple">Kiszámlázva</Tag>
+                <span style={{fontSize: 10, color: '#666'}}>{record.invoice_number}</span>
+            </Space>
+        );
+    }
     const statusMap: Record<string, { color: string; text: string }> = {
       new: { color: 'blue', text: 'Új' },
       confirmed: { color: 'cyan', text: 'Megerősítve' },
       in_production: { color: 'orange', text: 'Gyártásban' },
       ready: { color: 'green', text: 'Kész' },
       in_delivery: { color: 'purple', text: 'Szállítás alatt' },
-      delivered: { color: 'success', text: 'Kiszállítva' },
+      delivered: { color: 'success', text: 'Leszállítva' },
       cancelled: { color: 'red', text: 'Törölve' },
     };
     const { color, text } = statusMap[status] || { color: 'default', text: status };
@@ -144,11 +158,23 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'customer_name',
       key: 'customer_name',
       ellipsis: true,
-      responsive: ['md'],
-      render: (text: string) => text || 'Magánszemély',
+      width: 140,
+      responsive: ['sm'],
+      render: (text: string, record: CustomerOrder) => (
+         <div>
+             <div style={{fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '20ch'}}>
+                 {text || 'Magánszemély'}
+             </div>
+             {record.contact_names && (
+                 <div style={{fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '25ch'}} title={record.contact_names}>
+                     {record.contact_names}
+                 </div>
+             )}
+         </div>
+      )
     },
     {
-      title: 'Kapcsolattartók',
+      title: 'Kapcsolattartók', 
       dataIndex: 'contact_names',
       key: 'contact_names',
       ellipsis: true,
@@ -190,7 +216,7 @@ const CustomerOrders: React.FC = () => {
       dataIndex: 'status',
       key: 'status',
       width: 130,
-      render: (status: string) => statusTag(status),
+      render: (status: string, record: CustomerOrder) => statusTag(status, record),
     },
     {
       title: 'Műveletek',
@@ -220,31 +246,19 @@ const CustomerOrders: React.FC = () => {
             </Tooltip>
           )}
           
-          {['confirmed', 'in_production'].includes(record.status) && (
-            <Tooltip title="Munkalap nyomtatás">
+          {record.status === 'confirmed' && (
+            <Tooltip title="Gyártás indítása">
               <Button
-                icon={<PrinterOutlined />}
+                type="primary"
+                icon={<RocketOutlined />}
                 size="small"
-                onClick={async () => {
-                  try {
-                    const response = await api.get(
-                      `/sales/customer-orders/${record.id}/work_sheet/`,
-                      {
-                        responseType: 'blob',
-                      }
-                    );
-                    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-                    window.open(url, '_blank');
-                  } catch (error: any) {
-                    message.error('Hiba a munkalap letöltése során');
-                  }
-                }}
+                onClick={() => handleStatusChange(record.id, 'start_production', 'Gyártás indítása')}
               >
-                Munkalap
+                Gyártás
               </Button>
             </Tooltip>
           )}
-          
+
           {record.status === 'in_production' && (
             <Tooltip title="Készre jelentés">
               <Button
@@ -270,8 +284,7 @@ const CustomerOrders: React.FC = () => {
                 icon={<CarOutlined />}
                 size="small"
                 onClick={() => {
-                  setSelectedOrder(record);
-                  setDeliveryModalOpen(true);
+                  window.open(`/sales/delivery-notes?create_from_order=${record.id}`, '_blank');
                 }}
               >
                 Szállítás
@@ -294,6 +307,42 @@ const CustomerOrders: React.FC = () => {
               >
                 Leszállítva
               </Button>
+            </Tooltip>
+          )}
+
+          {record.status !== 'cancelled' && (
+            <Tooltip title="Tételek">
+              <Button 
+                icon={<UnorderedListOutlined />} 
+                size="small" 
+                onClick={() => {
+                  setDrawerOrder({ id: record.id, number: record.order_number });
+                  setItemsDrawerOpen(true);
+                }}
+              />
+            </Tooltip>
+          )}
+
+          {['confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'].includes(record.status) && (
+            <Tooltip title="Munkalap nyomtatás">
+              <Button
+                icon={<PrinterOutlined />}
+                size="small"
+                onClick={async () => {
+                  try {
+                    const response = await api.get(
+                      `/sales/customer-orders/${record.id}/work_sheet/`,
+                      {
+                        responseType: 'blob',
+                      }
+                    );
+                    const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+                    window.open(url, '_blank');
+                  } catch (error: any) {
+                    message.error('Hiba a munkalap letöltése során');
+                  }
+                }}
+              />
             </Tooltip>
           )}
           
@@ -328,7 +377,30 @@ const CustomerOrders: React.FC = () => {
 
   const filteredOrders = orders.filter((order) => {
     // Status filter
-    if (statusFilter !== 'all' && order.status !== statusFilter) return false;
+    if (statusFilter && statusFilter.length > 0) {
+       // 'invoiced' is a pseudo-status
+       const isInvoiced = !!order.invoice_number;
+       
+       let match = false;
+       
+       if (isInvoiced) {
+           if (statusFilter.includes('invoiced')) match = true;
+       } else {
+           if (statusFilter.includes(order.status)) match = true;
+       }
+       
+       // Special case: if order is delivered but NOT invoiced, 
+       // it should match if 'delivered' is in filter.
+       // The logic above handles this: if !isInvoiced, we check if order.status ('delivered') is in filter.
+       
+       // However, if order is delivered AND invoiced, 
+       // filter check 'delivered' would match above logic if we only checked status.
+       // But we prioritize 'invoiced' state.
+       // So: if Invoiced -> MUST have 'invoiced' in filter.
+       // If NOT Invoiced -> MUST have status ('delivered', 'new', etc) in filter.
+       
+       if (!match) return false;
+    }
 
     // Creator filter
     if (creatorFilter && order.created_by_name !== creatorFilter) return false;
@@ -361,19 +433,22 @@ const CustomerOrders: React.FC = () => {
             ))}
           </Select>
           <Select
-            style={{ width: 150 }}
+            mode="multiple"
+            style={{ minWidth: 200, maxWidth: 400 }}
+            placeholder="Szűrés státuszra"
             value={statusFilter}
             onChange={setStatusFilter}
             options={[
-              { value: 'all', label: 'Összes státusz' },
               { value: 'new', label: 'Új' },
               { value: 'confirmed', label: 'Megerősítve' },
               { value: 'in_production', label: 'Gyártásban' },
               { value: 'ready', label: 'Kész' },
               { value: 'in_delivery', label: 'Szállítás alatt' },
-              { value: 'delivered', label: 'Kiszállítva' },
+              { value: 'delivered', label: 'Leszállítva (Számlázatlan)' },
+              { value: 'invoiced', label: 'Kiszámlázva' },
               { value: 'cancelled', label: 'Törölve' },
             ]}
+            maxTagCount="responsive"
           />
           <Search
             placeholder="Keresés..."
@@ -479,6 +554,11 @@ const CustomerOrders: React.FC = () => {
         width={600}
       >
         <div style={{ marginBottom: 16 }}>
+          {selectedOrder?.delivery_note_number && (
+             <div style={{ marginBottom: 12, fontSize: 16, fontWeight: 'bold' }}>
+                Szállítólevél sorszám: <span style={{ color: '#1890ff' }}>{selectedOrder.delivery_note_number}</span>
+             </div>
+          )}
           <label htmlFor="delivery-email-input" style={{ display: 'block', marginBottom: 8, fontWeight: 'bold' }}>
             E-mail cím (ügyfél):
           </label>
@@ -513,6 +593,13 @@ const CustomerOrders: React.FC = () => {
           </label>
         </div>
       </Modal>
+      <OrderItemsDrawer 
+        open={itemsDrawerOpen} 
+        onClose={() => setItemsDrawerOpen(false)} 
+        orderId={drawerOrder?.id || null} 
+        orderNumber={drawerOrder?.number}
+        onOrderUpdate={fetchOrders}
+      />
     </Card>
   );
 };

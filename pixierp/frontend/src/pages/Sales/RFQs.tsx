@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -472,6 +472,25 @@ const RFQs: React.FC = () => {
     setCreateOpen(true);
   };
 
+  const handleCancel = () => {
+    if (form.isFieldsTouched()) {
+      Modal.confirm({
+        title: 'Biztos, hogy mentés nélkül be akarja zárni?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'A módosítások elvesznek.',
+        okText: 'Bezár',
+        cancelText: 'Mégse',
+        onOk: () => {
+          setCreateOpen(false);
+          form.resetFields();
+        },
+      });
+    } else {
+      setCreateOpen(false);
+      form.resetFields();
+    }
+  };
+
   const onIssueDateChange = async (value: dayjs.Dayjs | null) => {
     const date = value || dayjs();
     const nn = await salesService.getNextQuoteRequestNumber(date.format('YYYY-MM-DD'));
@@ -777,7 +796,7 @@ const RFQs: React.FC = () => {
         title="Új árajánlat"
         open={createOpen}
         onOk={handleCreate}
-        onCancel={() => setCreateOpen(false)}
+        onCancel={handleCancel}
         okText="Létrehozás"
         cancelText="Mégse"
         width={1100}
@@ -916,6 +935,10 @@ const RFQs: React.FC = () => {
                         let url = '/crm/contacts?action=create';
                         if (companyId && companyId !== 'private') {
                           url += `&company=${companyId}`;
+                          const company = companies.find((c: any) => c.id === companyId);
+                          if (company?.name) {
+                            url += `&company_name=${encodeURIComponent(company.name)}`;
+                          }
                         }
                         window.open(url, '_blank');
                       }}

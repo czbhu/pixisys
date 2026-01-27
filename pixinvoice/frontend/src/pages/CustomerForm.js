@@ -556,6 +556,33 @@ const COUNTRIES = [
   'Brazília', 'Argentína', 'Mexikó', 'Dél-Afrika', 'Egyéb'
 ];
 
+const COUNTRY_CODE_MAP = {
+  'HU': 'Magyarország',
+  'DE': 'Németország',
+  'AT': 'Ausztria',
+  'RO': 'Románia',
+  'SK': 'Szlovákia',
+  'HR': 'Horvátország',
+  'SI': 'Szlovénia',
+  'PL': 'Lengyelország',
+  'CZ': 'Csehország',
+  'IT': 'Olaszország',
+  'FR': 'Franciaország',
+  'ES': 'Spanyolország',
+  'NL': 'Hollandia',
+  'BE': 'Belgium',
+  'CH': 'Svájc',
+  'GB': 'Egyesült Királyság',
+  'IE': 'Írország',
+  'SE': 'Svédország',
+  'NO': 'Norvégia',
+  'FI': 'Finnország',
+  'DK': 'Dánia',
+  'PT': 'Portugália',
+  'GR': 'Görögország',
+  'BG': 'Bulgária'
+};
+
 // Közterület típusok listája (legtöbbször használt 5 elöl)
 const PUBLIC_PLACE_CATEGORIES = [
   'ÚT', 'TÉR', 'KÖZ', 'SÉTÁLY', 'KERT', // Legtöbbször használt 5
@@ -584,6 +611,11 @@ const SearchableSelectComponent = ({
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredOptions, setFilteredOptions] = useState(options);
 
+  // Sync searchTerm with value prop
+  React.useEffect(() => {
+    setSearchTerm(value || '');
+  }, [value]);
+
   // Ékezetes betűk eltávolítása a kereséshez
   const removeAccents = (str) => {
     return str.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -600,13 +632,19 @@ const SearchableSelectComponent = ({
 
   const handleSelect = (option) => {
     onChange(option);
+    // setSearchTerm is handled by useEffect when value changes, but update immediate for UI responsiveness
     setSearchTerm(option);
     setIsOpen(false);
   };
 
   const handleInputChange = (e) => {
-    setSearchTerm(e.target.value);
+    const val = e.target.value;
+    setSearchTerm(val);
     setIsOpen(true);
+    // Ha törli a mezőt, a parent-nek is jelezzük
+    if (val === '') {
+      onChange('');
+    }
   };
 
   const handleInputFocus = (e) => {
@@ -625,7 +663,7 @@ const SearchableSelectComponent = ({
       <SearchInput
         id={id}
         name={name}
-        value={searchTerm || value}
+        value={searchTerm}
         onChange={handleInputChange}
         onFocus={handleInputFocus}
         onBlur={handleInputBlur}
@@ -734,6 +772,8 @@ const CustomerForm = () => {
     setValue,
     getValues,
     watch,
+    clearErrors,
+    unregister,
   } = useForm({
     defaultValues: {
       name: '',
@@ -761,6 +801,7 @@ const CustomerForm = () => {
       is_hungarian_taxpayer: true,
       eu_tax_number: '',
       payment_due_days: 8,
+      payment_method: 'CASH',
       is_supplier: false,
       is_customer: true,
     },
@@ -1188,8 +1229,19 @@ const CustomerForm = () => {
     setIsHungarianTaxpayer(isHu);
     setValue('vat_status', status);
     setValue('is_hungarian_taxpayer', isHu);
+    
+    // Explicitly unregister fields that might have lingering validation rules
     if (!isHu) {
-      setValue('tax_number', '');
+        clearErrors('tax_number');
+        unregister('tax_number');
+    }
+
+    if (!isHu) {
+      // Don't clear tax_number immediately if switching to edit mode where it might be populated? 
+      // Actually if status != DOMESTIC, tax_number is optional, so keeping it is fine, but usually it's empty for private person.
+      // For Other (EU), user enters into EU tax number field, or normal tax number field?
+      // "Egyéb" block renders TWO inputs: tax_number (optional) and eu_tax_number (optional)
+      
       setValue('full_tax_number', '');
       setValue('vat_code', '');
       setValue('county_code', '');
@@ -1231,6 +1283,8 @@ const CustomerForm = () => {
       setValue('vat_group_id', c.vat_group_id || '');
       setValue('vat_group_member_tax_number', c.vat_group_member_tax_number || '');
       setValue('payment_due_days', c.payment_due_days ?? 8);
+      setValue('payment_method', c.payment_method || 'CASH');
+      setValue('default_currency', c.default_currency || 'HUF');
       setValue('is_supplier', c.is_supplier ?? false);
       setValue('is_customer', c.is_customer ?? true);
       const status = c.vat_status || (c.is_hungarian_taxpayer ? 'DOMESTIC' : 'OTHER');
@@ -1239,9 +1293,13 @@ const CustomerForm = () => {
       const hu = status === 'DOMESTIC';
       setValue('is_hungarian_taxpayer', hu);
       setIsHungarianTaxpayer(hu);
+      if (!hu) {
+         clearErrors('tax_number');
+         setValue('tax_number', c.tax_number || '');
+      }
       setValue('eu_tax_number', c.eu_tax_number || '');
     }
-  }, [customer, setValue]);
+  }, [customer, setValue, clearErrors]);
 
   React.useEffect(() => {
     if (lookupMessage) {
@@ -1257,6 +1315,42 @@ const CustomerForm = () => {
       setIsLookingUp(false);
     }
   }, [isRetrying]);
+
+  const handleViesLookup = async () => {
+    const euVat = getValues('eu_tax_number');
+    if (!euVat) {
+      setLookupMessage({ type: 'warning', message: 'Kérjük adjon meg EU adószámot!' });
+      return;
+    }
+    
+    setIsLookingUp(true);
+    setLookupMessage(null);
+    
+    try {
+      const resp = await customerAPI.validateEuVat({ vat_number: euVat });
+      const data = resp.data;
+      if (data && data.valid) {
+        setLookupMessage({ type: 'success', message: 'Érvényes EU adószám: ' + (data.name || 'OK') });
+        // Auto-fill fields if available
+        if (data.name) setValue('name', data.name);
+        if (data.address) {
+           setValue('address', data.address);
+        }
+        if (data.countryCode) {
+            const mappedCountry = COUNTRY_CODE_MAP[data.countryCode];
+            if (mappedCountry) {
+                setValue('country', mappedCountry);
+            }
+        }
+      } else {
+        setLookupMessage({ type: 'error', message: 'Érvénytelen EU adószám.' });
+      }
+    } catch (err) {
+      setLookupMessage({ type: 'error', message: 'Hiba a VIES lekérdezés során: ' + (err.response?.data?.error || err.message || JSON.stringify(err)) });
+    } finally {
+      setIsLookingUp(false);
+    }
+  };
 
   const onSubmit = (data) => {
     console.log('CustomerForm onSubmit data:', data);
@@ -1366,11 +1460,35 @@ const CustomerForm = () => {
         </FormGroup>
 
         <FormGroup>
+          <Label htmlFor="payment_method">Fizetési mód</Label>
+          <Select
+            id="payment_method"
+            {...register('payment_method')}
+          >
+            <option value="CASH">Készpénz</option>
+            <option value="TRANSFER">Átutalás</option>
+          </Select>
+        </FormGroup>
+
+        <FormGroup>
+          <Label htmlFor="default_currency">Alapértelmezett deviza</Label>
+          <Select
+            id="default_currency"
+            {...register('default_currency')}
+          >
+            <option value="HUF">HUF</option>
+            <option value="EUR">EUR</option>
+            <option value="USD">USD</option>
+          </Select>
+        </FormGroup>
+
+        <FormGroup>
           <Label htmlFor="payment_due_days">Esedékesség (nap)</Label>
           <Input
             id="payment_due_days"
             type="number"
             min="0"
+            disabled={watch('payment_method') === 'CASH'}
             {...register('payment_due_days', { valueAsNumber: true })}
             placeholder="Alapértelmezés: 8"
           />
@@ -1626,18 +1744,39 @@ const CustomerForm = () => {
               <Label htmlFor="tax_number">Adószám (opcionális)</Label>
               <Input
                 id="tax_number"
-                {...register('tax_number')}
+                {...register('tax_number', { required: false, pattern: null })}
                 placeholder="Adószám (opcionális)"
               />
+              {errors.tax_number && (
+                 <ErrorMessage>{errors.tax_number.message}</ErrorMessage>
+              )}
             </FormGroup>
 
             <FormGroup>
-              <Label htmlFor="eu_tax_number">EU adószám (opcionális)</Label>
-              <Input
-                id="eu_tax_number"
-                {...register('eu_tax_number')}
-                placeholder="EU adószám (opcionális)"
-              />
+              <Label htmlFor="eu_tax_number">EU adószám (opcionális) - VIES ellenőrzés</Label>
+              <TaxNumberGroup>
+                <Input
+                  id="eu_tax_number"
+                  {...register('eu_tax_number')}
+                  placeholder="EU adószám (pl. HU12345678)"
+                />
+                <LookupButton
+                  type="button"
+                  onClick={handleViesLookup}
+                  disabled={isLookingUp}
+                  style={{ width: 'auto', minWidth: '140px' }}
+                >
+                  {isLookingUp ? (
+                    <>
+                      <Loader size={16} /> Ellenőrzés...
+                    </>
+                  ) : (
+                    <>
+                      <Search size={16} /> VIES
+                    </>
+                  )}
+                </LookupButton>
+              </TaxNumberGroup>
             </FormGroup>
           </>
         )}
@@ -1668,12 +1807,26 @@ const CustomerForm = () => {
           </FormGroup>
         </FormGrid>
 
+        {!isHungarianTaxpayer && (
+          <FormGroup>
+            <Label htmlFor="address">Cím (Utca, házszám)</Label>
+            <Input
+              id="address"
+              {...register('address')}
+              placeholder="Utca, házszám, emelet, ajtó..."
+            />
+          </FormGroup>
+        )}
+
         <FormGroup>
           <Label htmlFor="country">Ország *</Label>
           <SearchableSelectComponent
             id="country"
             value={watch('country') || ''}
-            onChange={(value) => setValue('country', value)}
+            onChange={(value) => {
+                setValue('country', value);
+                if (value) clearErrors('country');
+            }}
             options={COUNTRIES}
             placeholder="Válasszon országot..."
             className={errors.country ? 'error' : ''}
@@ -1681,6 +1834,11 @@ const CustomerForm = () => {
           {errors.country && (
             <ErrorMessage>{errors.country.message}</ErrorMessage>
           )}
+          {/* Rejtett input a validációhoz */}
+          <input 
+            type="hidden" 
+            {...register('country', { required: 'Ország megadása kötelező' })} 
+          />
         </FormGroup>
 
         <FormGrid>

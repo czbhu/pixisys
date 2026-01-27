@@ -293,10 +293,12 @@ class ManufacturingProduct(models.Model):
     
     date = models.DateField(default=timezone.now, verbose_name="Dátum")
     name = models.CharField(max_length=200, verbose_name="Név")
+    code = models.CharField(max_length=50, blank=True, null=True, verbose_name="Cikkszám")
     description = models.TextField(blank=True, verbose_name="Leírás")
     internal_description = models.TextField(blank=True, verbose_name="Belső leírás")
     quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Mennyiség")
     quantity_unit = models.CharField(max_length=20, default='db', verbose_name="Mennyiségi egység")
+    is_fixed_quantity = models.BooleanField(default=False, verbose_name="Fix mennyiség")
     product_class = models.ForeignKey(ProductClass, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Termék osztály")
     project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Projekt")
     net_unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Nettó egység ár")
@@ -320,6 +322,31 @@ class ManufacturingProduct(models.Model):
         # Automatikus nettó ár számítás
         self.net_total_price = self.quantity * self.net_unit_price
         super().save(*args, **kwargs)
+
+
+class ManufacturingCostItem(models.Model):
+    """Gyártási termék költség elem"""
+    product = models.ForeignKey(ManufacturingProduct, on_delete=models.CASCADE, related_name='cost_items', verbose_name="Termék")
+    type = models.CharField(max_length=20, default='other', verbose_name="Típus") # material, service, other
+    ref_id = models.IntegerField(null=True, blank=True, verbose_name="Referencia ID") # material_id or service_id
+    name = models.CharField(max_length=200, verbose_name="Megnevezés")
+    quantity = models.DecimalField(max_digits=10, decimal_places=4, default=1, verbose_name="Mennyiség")
+    unit = models.CharField(max_length=20, default='db', verbose_name="Egység")
+    unit_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name="Egységár (Eladási)")
+    cost_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name="Bekerülési ár")
+    markup_percent = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name="Haszonkulcs %")
+    selling_unit_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name="Eladási egységár")
+    selling_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name="Eladási ár összesen")
+    supplier = models.ForeignKey('crm.Company', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Beszállító")
+    is_internal = models.BooleanField(default=False, verbose_name="Belső gyártás")
+    department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Belső részleg")
+
+    class Meta:
+        verbose_name = "Gyártási költség elem"
+        verbose_name_plural = "Gyártási költség elemek"
+
+    def __str__(self):
+        return f"{self.name} ({self.product.name})"
 
 
 class Service(models.Model):

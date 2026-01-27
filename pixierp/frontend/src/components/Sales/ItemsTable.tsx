@@ -1,6 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
 import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image } from 'antd';
-import { FileOutlined } from '@ant-design/icons';
+import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined } from '@ant-design/icons';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { salesService } from '../../services/salesService';
 
 interface Item {
@@ -20,6 +23,9 @@ interface Item {
   discounted_net_total?: number;
   vat_rate?: number;
   gross_total?: number;
+  sort_order?: number;
+  parent?: number | null;
+  attachments?: any[];
 }
 
 interface ItemsTableProps {
@@ -33,9 +39,156 @@ interface ItemsTableProps {
   hidePrices?: boolean;
 }
 
+interface RowContextProps {
+  setActivatorNodeRef?: (element: HTMLElement | null) => void;
+  listeners?: any;
+}
+
+const RowContext = createContext<RowContextProps>({});
+
+const DragHandle = () => {
+  const { setActivatorNodeRef, listeners } = useContext(RowContext);
+  return (
+    <Button
+      type="text"
+      size="small"
+      icon={<MenuOutlined style={{ cursor: 'grab', color: '#999' }} />}
+      ref={setActivatorNodeRef}
+      {...listeners}
+    />
+  );
+};
+
+const DraggableRow = ({ children, ...props }: any) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    setActivatorNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({
+    id: props['data-row-key'],
+  });
+
+  const style: React.CSSProperties = {
+    ...props.style,
+    transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }),
+    transition,
+    ...(isDragging ? { position: 'relative', zIndex: 9999, background: '#e6f7ff' } : {}),
+  };
+
+  return (
+    <RowContext.Provider value={{ setActivatorNodeRef, listeners }}>
+      <tr {...props} ref={setNodeRef} style={style} {...attributes}>
+        {children}
+      </tr>
+    </RowContext.Provider>
+  );
+};
+
 export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
+  const [dataSource, setDataSource] = useState<Item[]>([]);
+
+  useEffect(() => {
+    if (items) {
+      // Sort by sort_order
+      const sorted = [...items].sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      setDataSource(sorted);
+    }
+  }, [items]);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    })
+  );
+
+  const depthMap = useMemo(() => {
+    const map = new Map<number, number>();
+    const getDepth = (id: number | null | undefined, visited = new Set<number>()): number => {
+        if (!id) return 0;
+        if (visited.has(id)) return 0;
+        visited.add(id);
+        
+        if (map.has(id)) return map.get(id)!;
+        
+        const item = dataSource.find(i => i.id === id);
+        if (!item || !item.parent) {
+            map.set(id, 0);
+            return 0;
+        }
+        const d = 1 + getDepth(item.parent, visited);
+        map.set(id, d);
+        return d;
+    };
+    dataSource.forEach(i => getDepth(i.id));
+    return map;
+  }, [dataSource]);
+
+  const saveOrder = async (newItems: Item[]) => {
+    if (!quoteRequestId) return;
+    try {
+        const payload = newItems.map(i => ({ id: i.id, sort_order: i.sort_order || 0, parent_id: i.parent || null }));
+        await salesService.reorderRfqItems(quoteRequestId, payload);
+        onRefresh && onRefresh();
+    } catch (e) {
+        message.error('Sorrend mentése sikertelen');
+    }
+  };
+
+  const onDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (active.id !== over?.id) {
+      setDataSource((prev) => {
+        const oldIndex = prev.findIndex((i) => i.id === active.id);
+        const newIndex = prev.findIndex((i) => i.id === over?.id);
+        const newData = arrayMove(prev, oldIndex, newIndex);
+        const updated = newData.map((item, index) => ({ ...item, sort_order: index }));
+        saveOrder(updated);
+        return updated;
+      });
+    }
+  };
+
+  const onIndent = (record: Item) => {
+    const index = dataSource.findIndex(i => i.id === record.id);
+    if (index <= 0) return;
+    const prevItem = dataSource[index - 1];
+    
+    let current = prevItem;
+    while(current && current.parent) {
+      if (current.parent === record.id) {
+        message.warning('Nem lehet alárendelni (körhivatkozás)');
+        return;
+      }
+      // eslint-disable-next-line no-loop-func
+      const p = dataSource.find(i => i.id === current.parent);
+      if (!p) break;
+      current = p;
+    }
+
+    const newItem = { ...record, parent: prevItem.id };
+    updateItemParent(newItem);
+  };
+
+  const onOutdent = (record: Item) => {
+    if (!record.parent) return;
+    const parentItem = dataSource.find(i => i.id === record.parent);
+    const newParentId = parentItem ? parentItem.parent : null;
+    const newItem = { ...record, parent: newParentId };
+    updateItemParent(newItem);
+  };
+
+  const updateItemParent = (item: Item) => {
+    const newData = dataSource.map(i => i.id === item.id ? item : i);
+    setDataSource(newData);
+    saveOrder(newData);
+  };
   
   const deleteItem = async (record: any) => {
     try {
@@ -85,16 +238,25 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       message.error('Nem sikerült másolni a tételt');
     }
   };
+
   const columns: any[] = [
+    {
+      key: 'sort',
+      width: 30,
+      render: () => <DragHandle />,
+    },
     { 
       title: 'Tétel', 
       key: 'item_info', 
-      render: (r: any) => (
-        <div>
-           <div style={{ fontWeight: 600 }}>{r.material_code || r.product_code || r.service_code || '-'}</div>
-           <div>{r.material_name || r.product_name || r.manufacturing_product_name || r.service_name}</div>
-        </div>
-      )
+      render: (r: any) => {
+        const depth = depthMap.get(r.id) || 0;
+        return (
+            <div style={{ paddingLeft: depth * 24, transition: 'padding 0.3s' }}>
+            <div style={{ fontWeight: 600 }}>{r.material_code || r.product_code || r.service_code || '-'}</div>
+            <div>{r.material_name || r.product_name || r.manufacturing_product_name || r.service_name}</div>
+            </div>
+        );
+      }
     },
     { title: 'Leírás', dataIndex: 'description', key: 'description', responsive: ['md'] },
     { 
@@ -131,14 +293,22 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     });
   }
 
+  // Actions column with Indent/Outdent
   if (onEditItem || quoteRequestId || onDeleteItem || onCopyItem) {
     columns.push({
       title: 'Műveletek',
       key: 'actions',
       render: (_: any, record: any) => (
         <Space wrap>
+            <Tooltip title="Szint csökkenés (kifelé)">
+                <Button size="small" icon={<LeftOutlined />} onClick={() => onOutdent(record)} disabled={!record.parent} />
+            </Tooltip>
+            <Tooltip title="Szint növelés (alárendel)">
+                <Button size="small" icon={<RightOutlined />} onClick={() => onIndent(record)} />
+            </Tooltip>
+          
           {onEditItem ? (
-            <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerkesztés</Button>
+            <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
           <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>
           {record.attachments && record.attachments.length > 0 && (
@@ -157,7 +327,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           )}
           {(quoteRequestId || onDeleteItem) ? (
             <Popconfirm title="Biztos törlöd?" onConfirm={() => deleteItem(record)}>
-              <Button danger size="small">Törlés</Button>
+              <Button danger size="small">X</Button>
             </Popconfirm>
           ) : null}
         </Space>
@@ -173,7 +343,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       gross: 0,
       byVat: new Map<number, { net: number; vat: number; gross: number }>(),
     };
-    for (const it of items || []) {
+    for (const it of dataSource || []) {
       const net = Number(it.net_total || 0);
       const netDisc = Number((it as any).discounted_net_total ?? it.net_total ?? 0);
       const vatRate = Number(it.vat_rate || 0);
@@ -190,11 +360,33 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       summary.byVat.set(vatRate, entry);
     }
     return summary;
-  }, [items]);
+  }, [dataSource]);
 
   return (
     <Card size="small" title="Tételek">
-      <Table columns={columns} dataSource={items || []} rowKey="id" pagination={false} scroll={{ x: 'max-content' }} />
+        <DndContext 
+            sensors={sensors} 
+            collisionDetection={closestCenter} 
+            onDragEnd={onDragEnd}
+        >
+            <SortableContext 
+                items={dataSource.map(i => i.id)} 
+                strategy={verticalListSortingStrategy}
+            >
+                <Table 
+                    components={{
+                        body: {
+                            row: DraggableRow,
+                        },
+                    }}
+                    columns={columns} 
+                    dataSource={dataSource} 
+                    rowKey="id" 
+                    pagination={false} 
+                    scroll={{ x: 'max-content' }} 
+                />
+            </SortableContext>
+        </DndContext>
       {!hidePrices && (
       <div style={{ marginTop: 12, textAlign: 'right' }}>
         <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>

@@ -1,13 +1,33 @@
 import api from './api';
 
+type NavLookupResult = {
+    name: string;
+    company_type: string;
+    tax_number: string;
+    group_tax_number: string;
+    eu_tax_number: string;
+    country: string;
+    postal_code: string;
+    city: string;
+    street_name: string;
+    street_type: string;
+    house_number: string;
+    full_address: string;
+    vat_code: string;
+    county_code: string;
+    full_tax_number: string;
+    vat_group_id: string;
+    vat_group_member_tax_number: string;
+    found: boolean;
+};
+
 export const crmService = {
     // Companies
     async getCompanies(params?: Record<string, any>) {
         const response = await api.get('/crm/companies/', { params });
         return response.data;
     },
-
-    async getCompany(id: number) {
+    async getCompany(id: number | string) {
         const response = await api.get(`/crm/companies/${id}/`);
         return response.data;
     },
@@ -17,7 +37,7 @@ export const crmService = {
         return response.data;
     },
 
-    async updateCompany(id: number, data: any) {
+    async updateCompany(id: number | string, data: any) {
         const response = await api.put(`/crm/companies/${id}/`, data);
         return response.data;
     },
@@ -31,8 +51,7 @@ export const crmService = {
         const response = await api.get('/crm/companies/', { params: { q: query } });
         return response.data?.results || response.data;
     },
-
-    async lookupCompanyByNav(tax: string, opts?: { debug?: boolean }) {
+    async lookupCompanyByNav(tax: string, opts?: { debug?: boolean }): Promise<NavLookupResult | { found: false }> {
         const digits = String(tax || '').replace(/[^0-9]/g, '');
         const tax8 = digits.slice(0, 8);
         // Normalizáló util a NAV válaszhoz
@@ -71,6 +90,14 @@ export const crmService = {
                     street_type,
                     house_number,
                     full_address,
+                    
+                    // Extra mezők, amik a modellben benne vannak
+                    vat_code: vatc,
+                    county_code: ctyc,
+                    full_tax_number: taxNumber,
+                    vat_group_id: d.vat_group_membership?.vatGroupId || '',
+                    vat_group_member_tax_number: d.vat_group_membership?.vatGroupMemberTaxNumber || '',
+                    
                     found: Boolean(name || postal_code || city || street_name),
                 };
             }
@@ -142,5 +169,10 @@ export const crmService = {
     async searchContacts(query: string) {
         const response = await api.get('/crm/contacts/', { params: { q: query } });
         return response.data?.results || response.data;
+    },
+
+    async validateEuVat(data: { vat_number: string }) {
+        const response = await api.post('/crm/companies/validate_eu_vat/', data);
+        return response.data;
     },
 };
