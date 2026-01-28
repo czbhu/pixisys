@@ -63,13 +63,13 @@
 
 .print-invoice .inv-seller {
   max-width: 100%;
-  font-size: 11pt;
-  line-height: 1.35;
+  font-size: 9pt;
+  line-height: 1.25;
 }
 
 .print-invoice .inv-seller-name {
   font-weight: 700;
-  font-size: 13pt;
+  font-size: 11pt;
   margin-bottom: 2mm;
 }
 
@@ -77,7 +77,7 @@
   display: flex;
   justify-content: space-between;
   gap: 4mm;
-  font-size: 10.5pt;
+  font-size: 9.5pt;
   margin-bottom: 6mm;
   border-top: 1px solid #eee;
   padding-top: 4mm;
@@ -97,7 +97,7 @@
 .print-invoice .muted { color: #555; font-size: 9pt; }
 
 .print-invoice .inv-title {
-  font-size: 18pt;
+  font-size: 16pt;
   font-weight: 700;
   margin-bottom: 2mm;
 }
@@ -105,9 +105,10 @@
 .print-invoice .inv-number {
   font-weight: 600;
   margin-bottom: 2mm;
+  font-size: 11pt;
 }
 
-.print-invoice .inv-buyer-sm { font-size: 10.5pt; }
+.print-invoice .inv-buyer-sm { font-size: 9pt; }
 
 .print-invoice .inv-block-title {
   font-weight: 700;
@@ -136,14 +137,92 @@
 }
 
 .print-invoice .inv-items thead th { 
-    font-size: 8.5pt; 
+    font-size: 6pt; 
     font-weight: 600; 
     vertical-align: bottom;
     padding-bottom: 2mm;
+    line-height: 1.1;
+    white-space: normal; /* Ensure text can wrap if needed */
+    overflow-wrap: break-word;
+}
+
+.print-invoice .inv-items td.vat-rate-cell {
+    font-size: 6pt;
+    white-space: normal;
+    line-height: 1.1;
+    overflow-wrap: break-word;
+}
+
+.print-invoice .inv-items td .bilingual-label {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.print-invoice .inv-items th .bilingual-label {
+    display: inline;
+}
+
+.print-invoice .inv-items td.cen .bilingual-label {
+    align-items: center;
+}
+
+.print-invoice .inv-items td.num .bilingual-label {
+    align-items: flex-end;
+}
+
+.print-invoice .inv-items .bilingual-label .secondary {
+    margin-left: 0 !important;
+    font-size: 0.8em !important;
+    color: #666 !important;
+}
+
+.print-invoice .inv-items th .bilingual-label .secondary {
+    margin-left: 3px !important;
+    display: inline;
+}
+
+.print-invoice .inv-items td .bilingual-label .secondary .separator {
+    display: none;
+}
+
+.print-invoice .inv-items th .bilingual-label .secondary .separator {
+    display: inline;
+}
+
+/* VAT Summary Table Customization - Make it smaller */
+.print-invoice table.vat-summary-table {
+    margin-top: 2mm;
+}
+.print-invoice table.vat-summary-table th,
+.print-invoice table.vat-summary-table td {
+    padding: 1px 4px;
+    font-size: 8.5pt;
+    line-height: 1.25;
+}
+.print-invoice table.vat-summary-table .vat-desc-col {
+    font-size: 7.5pt; /* Smaller than date (9.5pt) to fit long text */
+    white-space: normal;
+}
+.print-invoice table.vat-summary-table th {
+    font-weight: 700;
+    vertical-align: bottom;
+    padding-bottom: 2px;
+}
+
+/* Ensure footer notes are smaller (approx 20% smaller than 9.5pt -> ~7.5pt) */
+.print-invoice .inv-notes {
+  margin-top: 3mm;
+  font-size: 7.5pt;
+  line-height: 1.3;
+}
+.print-invoice .inv-words {
+  font-size: 7.5pt;
 }
 
 .print-invoice .inv-items th {
   font-weight: 700;
+  vertical-align: bottom;
 }
 
 .print-invoice .inv-items td.num {
@@ -162,29 +241,42 @@
 }
 
 /* Column width hints for print items table - sum must be 100% */
-.print-invoice .col-desc { width: 31%; word-break: break-word; }
-.print-invoice .col-qty { width: 7%; }
-.print-invoice .col-unit { width: 7%; }
-.print-invoice .col-unitnet { width: 13%; }
-.print-invoice .col-vatrate { width: 8%; }
-.print-invoice .col-net { width: 11%; }
-.print-invoice .col-vat { width: 10%; }
+.print-invoice .col-desc { width: 25%; word-break: break-word; }
+.print-invoice .col-qty { width: 8%; }
+.print-invoice .col-unit { width: 8%; }
+.print-invoice .col-unitnet { width: 11%; } /* Reduced */
+.print-invoice .col-vatrate { width: 11%; } /* Increased to fit text */
+.print-invoice .col-net { width: 13%; } /* Reduced */
+.print-invoice .col-vat { width: 11%; }
 .print-invoice .col-gross { width: 13%; }
 
-/* Prevent number columns from wrapping badly */
-.print-invoice .num { white-space: nowrap; }
+/* Prevent number columns from wrapping badly ONLY in body */
+.print-invoice td.num { white-space: nowrap; }
+.print-invoice th.num { white-space: normal !important; vertical-align: bottom; }
+
+/* Dynamic font size for long VAT labels */
+.print-invoice td.vat-long {
+  font-size: 6.5pt !important;
+  line-height: 1.1 !important;
+  white-space: normal !important;
+  word-break: break-word;
+}
+.print-invoice td.vat-extra-long {
+  font-size: 5.5pt !important;
+  line-height: 1.0 !important;
+}
 
 .print-invoice .inv-summary {
   margin-top: 4mm;
   margin-left: auto;
   width: 75mm;
-  font-size: 10.5pt;
+  font-size: 9pt;
 }
 
 .print-invoice .inv-sum-row {
   display: flex;
   justify-content: space-between;
-  padding: 2mm 0;
+  padding: 1mm 0;
   border-bottom: 1px solid #000;
 }
 
@@ -192,14 +284,11 @@
   font-weight: 700;
 }
 
-.print-invoice .inv-notes {
-  margin-top: 4mm;
-  font-size: 9.5pt;
-}
+/* inv-notes defined earlier with smaller font */
 
 .print-invoice .inv-footer {
-  margin-top: 8mm;
-  font-size: 9pt;
+  margin-top: 4mm;
+  font-size: 7.5pt;
 }
 
 .print-invoice .inv-fineprint {

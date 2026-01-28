@@ -496,6 +496,7 @@ const TRANSLATIONS = {
         'Nettó': 'Net',
         'Nettó összeg': 'Net Amount',
         'ÁFA': 'VAT',
+        'ÁFA értéke': 'VAT Value',
         'ÁFA összeg': 'VAT Amount',
         'Bruttó': 'Gross',
         'Bruttó összeg': 'Gross Amount',
@@ -559,6 +560,7 @@ const TRANSLATIONS = {
         'Nettó': 'Netto',
         'Nettó összeg': 'Netto Betrag',
         'ÁFA': 'MwSt',
+        'ÁFA értéke': 'MwSt Wert',
         'ÁFA összeg': 'MwSt Betrag',
         'Bruttó': 'Brutto',
         'Bruttó összeg': 'Brutto Betrag',
@@ -601,9 +603,9 @@ const BilingualLabel = ({ label, translationMap, show, customLabel }) => {
     if(!translated) return customLabel || label;
     
     return (
-        <span>
-            {customLabel || label}
-            <span style={{ color: '#7f8c8d', fontWeight: 'normal', fontSize: '0.9em', marginLeft: '6px' }}>/ {translated}</span>
+        <span className="bilingual-label">
+            <span className="primary">{customLabel || label}</span>
+            <span className="secondary" style={{ color: '#7f8c8d', fontWeight: 'normal', fontSize: '0.85em', marginLeft: '4px' }}> <span className="separator">/</span> {translated}</span>
         </span>
     );
 };
@@ -1310,14 +1312,23 @@ const InvoiceForm = () => {
       const rate = Number(item?.vat_rate || 0);
       const { netAmount, vatAmount, grossAmount } = calculateItemTotals(item);
       const key = rate.toFixed(2);
-      if (!map.has(key)) map.set(key, { net: 0, vat: 0, gross: 0 });
+      if (!map.has(key)) map.set(key, { net: 0, vat: 0, gross: 0, names: new Set() });
       const acc = map.get(key);
       acc.net += netAmount;
       acc.vat += vatAmount;
       acc.gross += grossAmount;
+
+      // Collect VAT name
+      let vName = '';
+      if (item.vat_type_id && vatTypes) {
+           const vt = vatTypes.find(v => v.id === item.vat_type_id);
+           if (vt) vName = vt.name || vt.code;
+      }
+      if (vName) acc.names.add(vName);
     });
     const rows = Array.from(map.entries()).map(([rate, v]) => ({
       rate: Number(rate),
+      names: Array.from(v.names),
       net: v.net,
       vat: v.vat,
       gross: v.gross,
@@ -2756,15 +2767,15 @@ const InvoiceForm = () => {
           <SectionTitle>Összesítés</SectionTitle>
           <SummaryRow>
             <span>Nettó összeg:</span>
-            <span>{totals.netTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</span>
+            <span>{totals.netTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
           </SummaryRow>
           <SummaryRow>
             <span>ÁFA összeg:</span>
-            <span>{totals.vatTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</span>
+            <span>{totals.vatTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
           </SummaryRow>
           <SummaryRow>
             <span>Bruttó összeg:</span>
-            <span>{totals.grossTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</span>
+            <span>{totals.grossTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
           </SummaryRow>
 
           {/* ÁFA részletező */}
@@ -2783,17 +2794,17 @@ const InvoiceForm = () => {
                 <tbody>
                   {vb.rows.map(r => (
                     <tr key={r.rate}>
-                      <td>{r.rate.toLocaleString('hu-HU')}%</td>
-                      <td>{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</td>
-                      <td>{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</td>
-                      <td>{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</td>
+                      <td>{r.names && r.names.length > 0 ? r.names.join(', ') : `${r.rate.toLocaleString('hu-HU')}%`}</td>
+                      <td>{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
+                      <td>{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
+                      <td>{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
                     </tr>
                   ))}
                   <tr>
                     <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} /></th>
-                    <th>{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</th>
-                    <th>{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</th>
-                    <th>{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft</th>
+                    <th>{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
+                    <th>{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
+                    <th>{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
                   </tr>
                 </tbody>
               </VatTable>
@@ -2805,162 +2816,9 @@ const InvoiceForm = () => {
         </FormContainer>
       </div>
 
-      {/* Printable Invoice Layout */}
+      {/* Printable Invoice Layout - Table Based for Headers */}
       <div className="print-invoice print-only">
-        <div className="inv-container">
-          <div className="inv-header">
-            {/* LEFT COLUMN: Seller */}
-            <div className="inv-col-left">
-              <div className="inv-seller">
-                <div className="inv-block-title" style={{ marginBottom: '1mm', fontSize: '0.9em', color:'#666' }}>
-                   <BilingualLabel label="Eladó" translationMap={translations} show={bilingual} />:
-                </div>
-                <div className="inv-seller-name">{selectedCompany?.name || '—'}</div>
-                {(selectedBlock?.nav_configuration?.tax_number || selectedCompany?.tax_number || selectedCompany?.full_tax_number) && (
-                  <div>Adószám: {selectedBlock?.nav_configuration?.tax_number || formatFullTax(selectedCompany)}</div>
-                )}
-                {selectedCompany?.eu_tax_number && (
-                  <div>EU adószám: {selectedCompany.eu_tax_number}</div>
-                )}
-                {selectedCompany?.vat_group_id && (
-                  <div>Csoport azonosító: {selectedCompany.vat_group_id}</div>
-                )}
-                {selectedCompany?.vat_group_member_tax_number && (
-                  <div>Csoport tag adószám: {selectedCompany.vat_group_member_tax_number}</div>
-                )}
-                {(selectedCompany?.postal_code || selectedCompany?.city) && (
-                  <div>{(selectedCompany?.postal_code || '')} {selectedCompany?.city || ''}</div>
-                )}
-                {(() => { const s = (selectedCompany && (selectedCompany.address || (([selectedCompany.street_name, selectedCompany.public_place_category, selectedCompany.street_number].filter(Boolean).join(' ') + ([selectedCompany.building, selectedCompany.staircase, selectedCompany.floor, selectedCompany.door].filter(Boolean).join(' ') ? (', ' + [selectedCompany.building, selectedCompany.staircase, selectedCompany.floor, selectedCompany.door].filter(Boolean).join(' ')) : '')))) || ''); return s ? (<div>{s}</div>) : null; })()}
-                {selectedCompany?.country && (<div>{selectedCompany.country}</div>)}
-                {(selectedCompany?.email || selectedCompany?.phone) && (
-                  <div style={{ marginTop: '1mm' }}>
-                    {selectedCompany?.email && (<div>E-mail: {selectedCompany.email}</div>)}
-                    {selectedCompany?.phone && (<div>Telefon: {selectedCompany.phone}</div>)}
-                  </div>
-                )}
-                {(() => {
-                  let list = (companyBankAccounts && companyBankAccounts.length ? companyBankAccounts : (invoice?.company?.bank_accounts || []));
-                  
-                  // If block specifies a default bank account, try to use exactly that one
-                  if (selectedBlock?.default_bank_account) {
-                      const specific = list.find(a => a.id === selectedBlock.default_bank_account);
-                      if (specific) {
-                          list = [specific];
-                      }
-                  }
-
-                  const want = String(currency || '').toUpperCase();
-                  const filtered = list.filter(acc => String(acc?.currency || '').toUpperCase() === want);
-                  if (!filtered.length) return null;
-                  return (
-                    <div style={{ marginTop: '2mm' }}>
-                      <div style={{ fontWeight: 600 }}>
-                        <BilingualLabel label="Bankszámlák" translationMap={translations} show={bilingual} />
-                      </div>
-                      {filtered.map((acc, i) => (
-                        <div key={acc.id || i}>
-                          {acc.account_number && (<span>{(acc.currency || want)}: {acc.account_number} </span>)}
-                          {acc.iban && (<span>IBAN: {acc.iban} </span>)}
-                          {acc.swift_bic && (<span>SWIFT/BIC: {acc.swift_bic} </span>)}
-                          {acc.bank_name && (<span>({acc.bank_name})</span>)}
-                        </div>
-                      ))}
-                    </div>
-                  );
-                })()}
-              </div>
-            </div>
-
-            {/* RIGHT COLUMN: Invoice Number, Buyer, Payment Info */}
-            <div className="inv-col-right">
-                <div className="inv-title">
-                  {isProforma ? 
-                    <BilingualLabel label="Díjbekérő" translationMap={translations} show={bilingual} /> : 
-                    <BilingualLabel label="Számla" translationMap={translations} show={bilingual} />
-                  }
-                </div>
-                <div className="inv-number">
-                  {isProforma ? 
-                    <BilingualLabel label="Díjbekérő száma" translationMap={translations} show={bilingual} /> : 
-                    <BilingualLabel label="Számlaszám" translationMap={translations} show={bilingual} />
-                  }: {invoiceNumberValue || '—'}
-                </div>
-
-                <div className="inv-buyer-sm" style={{ marginTop: '4mm' }}>
-                  <div className="inv-block-title">
-                    <BilingualLabel label="Vevő" translationMap={translations} show={bilingual} />
-                  </div>
-                  <div className="inv-buyer-name">{selectedCustomer?.name || '—'}</div>
-                    {(selectedCustomer?.tax_number || selectedCustomer?.full_tax_number) && (
-                      <div>Adószám: {formatFullTax(selectedCustomer)}</div>
-                    )}
-                    {selectedCustomer?.eu_tax_number && (<div>EU adószám: {selectedCustomer.eu_tax_number}</div>)}
-                    {selectedCustomer?.vat_group_id && (<div>Csoport azonosító: {selectedCustomer.vat_group_id}</div>)}
-                    {selectedCustomer?.vat_group_member_tax_number && (<div>Csoport tag adószám: {selectedCustomer.vat_group_member_tax_number}</div>)}
-                    {(selectedCustomer?.postal_code || selectedCustomer?.city) && (
-                      <div>{(selectedCustomer?.postal_code || '')} {selectedCustomer?.city || ''}</div>
-                    )}
-                    {selectedCustomer?.address ? (
-                      <div>{selectedCustomer.address}</div>
-                    ) : (
-                      <div>
-                        {(selectedCustomer?.street_name || '')}
-                        {selectedCustomer?.public_place_category ? ` ${selectedCustomer.public_place_category}` : ''}
-                        {selectedCustomer?.street_number ? ` ${selectedCustomer.street_number}` : ''}
-                        {selectedCustomer?.building ? ` ${selectedCustomer.building}` : ''}
-                        {selectedCustomer?.staircase ? ` ${selectedCustomer.staircase}` : ''}
-                        {selectedCustomer?.floor ? ` ${selectedCustomer.floor}` : ''}
-                        {selectedCustomer?.door ? ` ${selectedCustomer.door}` : ''}
-                      </div>
-                    )}
-                    {selectedCustomer?.country && (
-                      <div style={{ marginTop: '1mm' }}>{selectedCustomer.country}</div>
-                    )}
-                </div>
-
-                <div className="inv-highlight" style={{ marginTop: '4mm' }}>
-                  <div className="inv-amount">
-                    <span className="label"><BilingualLabel label={payLabel} translationMap={translations} show={bilingual} /></span>
-                    <span className="value">{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
-                  </div>
-                  {paymentMethod === 'transfer' && (
-                    <div className="inv-deadline">
-                      <span className="muted"><BilingualLabel label="Fizetési határidő" translationMap={translations} show={bilingual} /></span>
-                      <span className="date-pill">{dueDateStr || '—'}</span>
-                    </div>
-                  )}
-                </div>
-            </div>
-          </div>
-
-          {/* META ROW: Dates, Currency, Mode */}
-          <div className="inv-meta-row">
-              <div>
-                <div className="muted"><BilingualLabel label="Kelt" translationMap={translations} show={bilingual} /></div>
-                <div>{issueDateStr || '—'}</div>
-              </div>
-              <div>
-                <div className="muted"><BilingualLabel label="Teljesítés" translationMap={translations} show={bilingual} /></div>
-                <div>{deliveryDateStr || issueDateStr || '—'}</div>
-              </div>
-              <div>
-                <div className="muted"><BilingualLabel label="Pénznem" translationMap={translations} show={bilingual} /></div>
-                <div>{currency}</div>
-              </div>
-              {(exchangeRateValue > 0 && String(currency) !== 'HUF') && (
-                  <div>
-                    <div className="muted"><BilingualLabel label="Árfolyam" translationMap={translations} show={bilingual} /></div>
-                    <div>{Number(exchangeRateValue).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} HUF/{currency}</div>
-                  </div>
-              )}
-              <div>
-                <div className="muted"><BilingualLabel label="Fizetési mód" translationMap={translations} show={bilingual} /></div>
-                <div>{paymentMethod === 'transfer' ? <BilingualLabel label="Átutalás" translationMap={translations} show={bilingual} /> : (paymentMethod === 'cash' ? <BilingualLabel label="Készpénz" translationMap={translations} show={bilingual} /> : paymentMethod)}</div>
-              </div>
-          </div>
-
-          <table className="inv-items">
+        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
             <colgroup>
               <col className="col-desc" />
               <col className="col-qty" />
@@ -2973,17 +2831,170 @@ const InvoiceForm = () => {
             </colgroup>
             <thead>
               <tr>
-                <th><BilingualLabel label="Megnevezés" translationMap={translations} show={bilingual} /></th>
-                <th className="cen"><BilingualLabel label="Menny." translationMap={translations} show={bilingual} /></th>
-                <th className="cen"><BilingualLabel label="Egység" translationMap={translations} show={bilingual} /></th>
-                <th className="num">
-                   <div><BilingualLabel label="Egységár" translationMap={translations} show={bilingual} /></div>
-                   <div className="muted" style={{ fontSize: '0.9em' }}>(<BilingualLabel label="Nettó" translationMap={translations} show={bilingual} />)</div>
+                <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+                  <div className="inv-header">
+                    {/* LEFT COLUMN: Seller */}
+                    <div className="inv-col-left">
+                      <div className="inv-seller">
+                        <div className="inv-block-title" style={{ marginBottom: '1mm', fontSize: '0.9em', color:'#666' }}>
+                          <BilingualLabel label="Eladó" translationMap={translations} show={bilingual} />:
+                        </div>
+                        <div className="inv-seller-name">{selectedCompany?.name || '—'}</div>
+                        {(selectedBlock?.nav_configuration?.tax_number || selectedCompany?.tax_number || selectedCompany?.full_tax_number) && (
+                          <div>Adószám: {selectedBlock?.nav_configuration?.tax_number || formatFullTax(selectedCompany)}</div>
+                        )}
+                        {selectedCompany?.eu_tax_number && (
+                          <div>EU adószám: {selectedCompany.eu_tax_number}</div>
+                        )}
+                        {selectedCompany?.vat_group_id && (
+                          <div>Csoport azonosító: {selectedCompany.vat_group_id}</div>
+                        )}
+                        {selectedCompany?.vat_group_member_tax_number && (
+                          <div>Csoport tag adószám: {selectedCompany.vat_group_member_tax_number}</div>
+                        )}
+                        {(selectedCompany?.postal_code || selectedCompany?.city) && (
+                          <div>{(selectedCompany?.postal_code || '')} {selectedCompany?.city || ''}</div>
+                        )}
+                        {(() => { const s = (selectedCompany && (selectedCompany.address || (([selectedCompany.street_name, selectedCompany.public_place_category, selectedCompany.street_number].filter(Boolean).join(' ') + ([selectedCompany.building, selectedCompany.staircase, selectedCompany.floor, selectedCompany.door].filter(Boolean).join(' ') ? (', ' + [selectedCompany.building, selectedCompany.staircase, selectedCompany.floor, selectedCompany.door].filter(Boolean).join(' ')) : '')))) || ''); return s ? (<div>{s}</div>) : null; })()}
+                        {selectedCompany?.country && (<div>{selectedCompany.country}</div>)}
+                        {(selectedCompany?.email || selectedCompany?.phone) && (
+                          <div style={{ marginTop: '1mm' }}>
+                            {selectedCompany?.email && (<div>E-mail: {selectedCompany.email}</div>)}
+                            {selectedCompany?.phone && (<div>Telefon: {selectedCompany.phone}</div>)}
+                          </div>
+                        )}
+                        {(() => {
+                          let list = (companyBankAccounts && companyBankAccounts.length ? companyBankAccounts : (invoice?.company?.bank_accounts || []));
+                          if (selectedBlock?.default_bank_account) {
+                              const specific = list.find(a => a.id === selectedBlock.default_bank_account);
+                              if (specific) list = [specific];
+                          }
+                          const want = String(currency || '').toUpperCase();
+                          const filtered = list.filter(acc => String(acc?.currency || '').toUpperCase() === want);
+                          if (!filtered.length) return null;
+                          return (
+                            <div style={{ marginTop: '2mm' }}>
+                              <div style={{ fontWeight: 600 }}>
+                                <BilingualLabel label="Bankszámlák" translationMap={translations} show={bilingual} />
+                              </div>
+                              {filtered.map((acc, i) => (
+                                <div key={acc.id || i}>
+                                  {acc.account_number && (<span>{(acc.currency || want)}: {acc.account_number} </span>)}
+                                  {acc.iban && (<span>IBAN: {acc.iban} </span>)}
+                                  {acc.swift_bic && (<span>SWIFT/BIC: {acc.swift_bic} </span>)}
+                                  {acc.bank_name && (<span>({acc.bank_name})</span>)}
+                                </div>
+                              ))}
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* RIGHT COLUMN: Invoice Number, Buyer, Payment Info */}
+                    <div className="inv-col-right">
+                        <div className="inv-title">
+                          {isProforma ? 
+                            <BilingualLabel label="Díjbekérő" translationMap={translations} show={bilingual} /> : 
+                            <BilingualLabel label="Számla" translationMap={translations} show={bilingual} />
+                          }
+                        </div>
+                        <div className="inv-number">
+                          {isProforma ? 
+                            <BilingualLabel label="Díjbekérő száma" translationMap={translations} show={bilingual} /> : 
+                            <BilingualLabel label="Számlaszám" translationMap={translations} show={bilingual} />
+                          }: {invoiceNumberValue || '—'}
+                        </div>
+
+                        <div className="inv-buyer-sm" style={{ marginTop: '4mm' }}>
+                          <div className="inv-block-title">
+                            <BilingualLabel label="Vevő" translationMap={translations} show={bilingual} />
+                          </div>
+                          <div className="inv-buyer-name">{selectedCustomer?.name || '—'}</div>
+                            {(selectedCustomer?.tax_number || selectedCustomer?.full_tax_number) && (
+                              <div>Adószám: {formatFullTax(selectedCustomer)}</div>
+                            )}
+                            {selectedCustomer?.eu_tax_number && (<div>EU adószám: {selectedCustomer.eu_tax_number}</div>)}
+                            {selectedCustomer?.vat_group_id && (<div>Csoport azonosító: {selectedCustomer.vat_group_id}</div>)}
+                            {selectedCustomer?.vat_group_member_tax_number && (<div>Csoport tag adószám: {selectedCustomer.vat_group_member_tax_number}</div>)}
+                            {(selectedCustomer?.postal_code || selectedCustomer?.city) && (
+                              <div>{(selectedCustomer?.postal_code || '')} {selectedCustomer?.city || ''}</div>
+                            )}
+                            {selectedCustomer?.address ? (
+                              <div>{selectedCustomer.address}</div>
+                            ) : (
+                              <div>
+                                {(selectedCustomer?.street_name || '')}
+                                {selectedCustomer?.public_place_category ? ` ${selectedCustomer.public_place_category}` : ''}
+                                {selectedCustomer?.street_number ? ` ${selectedCustomer.street_number}` : ''}
+                                {selectedCustomer?.building ? ` ${selectedCustomer.building}` : ''}
+                                {selectedCustomer?.staircase ? ` ${selectedCustomer.staircase}` : ''}
+                                {selectedCustomer?.floor ? ` ${selectedCustomer.floor}` : ''}
+                                {selectedCustomer?.door ? ` ${selectedCustomer.door}` : ''}
+                              </div>
+                            )}
+                            {selectedCustomer?.country && (
+                              <div style={{ marginTop: '1mm' }}>{selectedCustomer.country}</div>
+                            )}
+                        </div>
+
+                        <div className="inv-highlight" style={{ marginTop: '4mm' }}>
+                          <div className="inv-amount">
+                            <span className="label"><BilingualLabel label={payLabel} translationMap={translations} show={bilingual} /></span>
+                            <span className="value">{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
+                          </div>
+                          {paymentMethod === 'transfer' && (
+                            <div className="inv-deadline">
+                              <span className="muted"><BilingualLabel label="Fizetési határidő" translationMap={translations} show={bilingual} /></span>
+                              <span className="date-pill">{dueDateStr || '—'}</span>
+                            </div>
+                          )}
+                        </div>
+                    </div>
+                  </div>
+
+                  {/* META ROW */}
+                  <div className="inv-meta-row" style={{ marginTop: 0, paddingTop: '4mm' }}>
+                      <div>
+                        <div className="muted"><BilingualLabel label="Kelt" translationMap={translations} show={bilingual} /></div>
+                        <div>{issueDateStr || '—'}</div>
+                      </div>
+                      <div>
+                        <div className="muted"><BilingualLabel label="Teljesítés" translationMap={translations} show={bilingual} /></div>
+                        <div>{deliveryDateStr || issueDateStr || '—'}</div>
+                      </div>
+                      <div>
+                        <div className="muted"><BilingualLabel label="Pénznem" translationMap={translations} show={bilingual} /></div>
+                        <div>{currency}</div>
+                      </div>
+                      {(exchangeRateValue > 0 && String(currency) !== 'HUF') && (
+                          <div>
+                            <div className="muted"><BilingualLabel label="Árfolyam" translationMap={translations} show={bilingual} /></div>
+                            <div>{Number(exchangeRateValue).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} HUF/{currency}</div>
+                          </div>
+                      )}
+                      <div>
+                        <div className="muted"><BilingualLabel label="Fizetési mód" translationMap={translations} show={bilingual} /></div>
+                        <div>{paymentMethod === 'transfer' ? <BilingualLabel label="Átutalás" translationMap={translations} show={bilingual} /> : (paymentMethod === 'cash' ? <BilingualLabel label="Készpénz" translationMap={translations} show={bilingual} /> : paymentMethod)}</div>
+                      </div>
+                  </div>
+                </td>
+              </tr>
+              {/* Item Headers - Must be in THEAD to repeat */}
+              <tr className="inv-items-header-row">
+                <th className="col-desc" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Megnevezés" translationMap={translations} show={bilingual} separator=" / " /></th>
+                <th className="cen col-qty" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Menny." translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="cen col-unit" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Egység" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-unitnet" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>
+                   <BilingualLabel label="Egységár" translationMap={translations} show={bilingual} separator="/" />
+                   <div className="muted" style={{ fontSize: '0.8em', fontWeight: 'normal' }}>
+                      <BilingualLabel label="(Nettó)" translationMap={translations} show={bilingual} separator="/" />
+                   </div>
                 </th>
-                <th className="cen"><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} /> %</th>
-                <th className="num"><BilingualLabel label="Nettó" translationMap={translations} show={bilingual} /></th>
-                <th className="num"><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} /></th>
-                <th className="num"><BilingualLabel label="Bruttó" translationMap={translations} show={bilingual} /></th>
+                <th className="cen col-vatrate" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-net" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Nettó" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-vat" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="ÁFA értéke" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-gross" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Bruttó" translationMap={translations} show={bilingual} separator="/" /></th>
               </tr>
             </thead>
             <tbody>
@@ -3004,98 +3015,134 @@ const InvoiceForm = () => {
                    }
                 }
                 
+                // Dynamic font class for long VAT labels
+                let vatClass = "cen col-vatrate vat-rate-cell";
+                if (vatLabel.length > 40) {
+                    vatClass += " vat-extra-long";
+                } else if (vatLabel.length > 20) {
+                    vatClass += " vat-long";
+                }
+                
                 return (
                   <tr key={idx}>
-                    <td>{it?.description || ''}</td>
-                    <td className="cen">{qty.toLocaleString('hu-HU')}</td>
-                    <td className="cen">{unit}</td>
-                    <td className="num">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="cen">{vatLabel}</td>
-                    <td className="num">{net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num">{vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num">{gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="col-desc" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{it?.description || ''}</td>
+                    <td className="cen col-qty" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{qty.toLocaleString('hu-HU')}</td>
+                    <td className="cen col-unit" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{unit}</td>
+                    <td className="num col-unitnet" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className={vatClass} style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{vatLabel}</td>
+                    <td className="num col-net" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-vat" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-gross" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
                   </tr>
                 );
               })}
             </tbody>
-          </table>
-
-          {(() => { const vb = vatBreakdown(); return (
-            <table className="inv-items" style={{ marginTop: '6mm' }}>
-              <colgroup>
-                <col style={{ width: '20%' }} />
-                <col style={{ width: '26%' }} />
-                <col style={{ width: '27%' }} />
-                <col style={{ width: '27%' }} />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th className="cen"><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} /> %</th>
-                  <th className="num"><BilingualLabel label="Nettó összeg" translationMap={translations} show={bilingual} /></th>
-                  <th className="num"><BilingualLabel label="ÁFA összeg" translationMap={translations} show={bilingual} /></th>
-                  <th className="num"><BilingualLabel label="Bruttó összeg" translationMap={translations} show={bilingual} /></th>
-                </tr>
-              </thead>
-              <tbody>
-                {vb.rows.map(r => (
-                  <tr key={r.rate}>
-                    <td className="cen">{r.rate.toLocaleString('hu-HU')}%</td>
-                    <td className="num">{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num">{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num">{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} /></th>
-                  <th className="num">{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                  <th className="num">{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                  <th className="num inv-gross-total">{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
-                </tr>
-              </tbody>
-            </table>
-          ); })()}
-
-          {(() => {
-            const advs = snapshot?.advances_used || [];
-            if (!Array.isArray(advs) || !advs.length) return null;
-            return (
-              <div className="inv-notes" style={{ marginTop: '4mm' }}>
-                <div className="inv-block-title">Felhasznált előlegek</div>
-                <ul style={{ margin: 0, paddingLeft: '5mm' }}>
-                  {advs.map((a, i) => (
-                    <li key={i}>Előleg számla: {a.invoice_number} — felhasználva: {Number(a.amount||0).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</li>
-                  ))}
-                </ul>
-              </div>
-            );
-          })()}
-
-          <div className="inv-words" style={{ marginTop: '4mm', fontSize: '9pt' }}>
-            {amountToWordsHU(totals.grossTotal, currency)}
-          </div>
-
-          {notesVal && (
-            <div className="inv-notes">
-              <div className="inv-block-title">Megjegyzés</div>
-              <div>{notesVal}</div>
-            </div>
-          )}
-
-          {blockFootnote && (
-            <div className="inv-notes">
-              <div className="inv-block-title">Lábjegyzék</div>
-              <div>{blockFootnote}</div>
-            </div>
-          )}
-
-          <div className="inv-footer">
-            <div>
-              {paymentMethod === 'transfer' ? 'Kérjük az összeget átutalással rendezni a fenti bankszámlára.' : 'Köszönjük a fizetést.'}
-            </div>
-            <div className="inv-fineprint">Ez a számla elektronikus úton készült és aláírás nélkül is érvényes.</div>
-          </div>
-        </div>
-      </div>
+            {/* Summary Section should not break inside */}
+            <tbody style={{ pageBreakInside: 'avoid' }}>
+               <tr>
+                 <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+                    {(() => { const vb = vatBreakdown(); return (
+                      <table className="inv-items vat-summary-table" style={{ marginTop: '2mm', width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+                        <colgroup>
+                          <col style={{ width: '20%' }} />
+                          <col style={{ width: '26%' }} />
+                          <col style={{ width: '27%' }} />
+                          <col style={{ width: '27%' }} />
+                        </colgroup>
+                        <thead>
+                          <tr>
+                            <th className="cen"><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} separator="/" /></th>
+                            <th className="num"><BilingualLabel label="Nettó összeg" translationMap={translations} show={bilingual} separator="/" /></th>
+                            <th className="num"><BilingualLabel label="ÁFA összeg" translationMap={translations} show={bilingual} separator="/" /></th>
+                            <th className="num"><BilingualLabel label="Bruttó összeg" translationMap={translations} show={bilingual} separator="/" /></th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {vb.rows.map(r => (
+                            <tr key={r.rate}>
+                              <td className="cen vat-desc-col">
+                                  {r.names && r.names.length > 0 ? r.names.join(', ') : `${r.rate.toLocaleString('hu-HU')}%`}
+                              </td>
+                              <td className="num">{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                              <td className="num">{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                              <td className="num">{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                          <tr>
+                            <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} separator="/" /> ({currency})</th>
+                            <th className="num">{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                            <th className="num">{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                            <th className="num inv-gross-total">{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                          </tr>
+                          
+                          {/* Dual Language Native Currency Summary */}
+                          {(bilingual && currency !== 'HUF') && (() => {
+                              const exRate = Number(exchangeRateValue) || 1;
+                              const hufNet = vb.totals.net * exRate;
+                              const hufVat = vb.totals.vat * exRate;
+                              const hufGross = vb.totals.gross * exRate;
+                              return (
+                                  <tr style={{ borderTop: '2px solid #000' }}>
+                                    <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} separator="/" /> (HUF)</th>
+                                    <th className="num">{hufNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                                    <th className="num">{hufVat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                                    <th className="num inv-gross-total">{hufGross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} HUF</th>
+                                  </tr>
+                              );
+                          })()}
+                        </tbody>
+                      </table>
+                    ); })()}
+            
+                    {(() => {
+                      const advs = snapshot?.advances_used || [];
+                      if (!Array.isArray(advs) || !advs.length) return null;
+                      return (
+                        <div className="inv-notes" style={{ marginTop: '4mm' }}>
+                          <div className="inv-block-title">Felhasznált előlegek</div>
+                          <ul style={{ margin: 0, paddingLeft: '5mm' }}>
+                            {advs.map((a, i) => (
+                              <li key={i}>Előleg számla: {a.invoice_number} — felhasználva: {Number(a.amount||0).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })()}
+            
+                    <div className="inv-words" style={{ marginTop: '4mm' }}>
+                      {amountToWordsHU(totals.grossTotal, currency)}
+                    </div>
+            
+                    {notesVal && (
+                      <div className="inv-notes">
+                        <div className="inv-block-title">Megjegyzés</div>
+                        <div>{notesVal}</div>
+                      </div>
+                    )}
+            
+                    {blockFootnote && (
+                      <div className="inv-notes">
+                        <div className="inv-block-title">Lábjegyzék</div>
+                        <div>{blockFootnote}</div>
+                      </div>
+                    )}
+                 </td>
+               </tr>
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+                    <div className="inv-footer" style={{ marginTop: '5mm' }}>
+                      <div>
+                        {paymentMethod === 'transfer' ? 'Kérjük az összeget átutalással rendezni a fenti bankszámlára.' : 'Köszönjük a fizetést.'}
+                      </div>
+                      <div className="inv-fineprint">Ez a számla elektronikus úton készült és aláírás nélkül is érvényes.</div>
+                    </div>
+                </td>
+              </tr>
+            </tfoot>
+        </table>
+      </div>,oldString:
     </>
   );
 };

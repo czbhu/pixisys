@@ -1,6 +1,6 @@
 {
   "name": "invoice-frontend",
-  "version": "0.9.0",
+  "version": "0.702.0",
   "private": true,
   "dependencies": {
     "@ant-design/icons": "^6.1.0",
