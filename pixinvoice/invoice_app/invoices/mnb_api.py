@@ -41,6 +41,82 @@ class MNBApiClient:
         except Exception as e:
             print(f"MNB API error: {e}")
             return {}
+
+    def get_exchange_rate_for_date(self, currency: str, date_str: str) -> Optional[float]:
+        """
+        Adott deviza árfolyamának lekérése egy konkrét dátumra (vagy az azt megelőző utolsó közzétett árfolyam).
+        MNB API GetExchangeRates műveletet használ, 10 napos visszatekintéssel.
+        """
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d')
+            start_date = (target_date - timedelta(days=15)).strftime('%Y-%m-%d')
+            end_date = target_date.strftime('%Y-%m-%d')
+            
+            soap_request = f"""<?xml version="1.0" encoding="utf-8"?>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap:Body>
+    <GetExchangeRates xmlns="http://www.mnb.hu/webservices/">
+      <startDate>{start_date}</startDate>
+      <endDate>{end_date}</endDate>
+      <currencyNames>{currency}</currencyNames>
+    </GetExchangeRates>
+  </soap:Body>
+</soap:Envelope>"""
+
+            headers = {
+                'Content-Type': 'text/xml; charset=utf-8',
+                'SOAPAction': 'http://www.mnb.hu/webservices/GetExchangeRates'
+            }
+
+            response = requests.post(self.SOAP_URL, data=soap_request, headers=headers, timeout=10)
+            response.raise_for_status()
+            
+            # Find the result string inside SOAP response
+            root = ET.fromstring(response.text)
+            res_str = None
+            for elem in root.iter():
+                if 'GetExchangeRatesResult' in elem.tag:
+                    res_str = elem.text
+                    break
+            
+            if not res_str:
+                return None
+                
+            inner_root = ET.fromstring(res_str)
+            
+            latest_date = None
+            latest_rate = None
+            
+            days = inner_root.findall('Day')
+            for day in days:
+                d_str = day.get('date')
+                try:
+                    d_obj = datetime.strptime(d_str, '%Y-%m-%d')
+                except:
+                    continue
+                    
+                if d_obj <= target_date:
+                    if latest_date is None or d_obj > latest_date:
+                        # Keresés attribútum szerint (ElementTree-ben: Rate[@curr='EUR'])
+                        # De vigyázzunk az @ syntaxra findall-ban
+                        for rate_el in day.findall('Rate'):
+                            if rate_el.get('curr') == currency:
+                                if rate_el.text:
+                                    try:
+                                        val_str = rate_el.text.replace(',', '.')
+                                        val = float(val_str)
+                                        unit = float(rate_el.get('unit', '1'))
+                                        latest_date = d_obj
+                                        latest_rate = val / unit
+                                    except:
+                                        pass
+                                break
+                                
+            return latest_rate
+
+        except Exception as e:
+            print(f"MNB GetExchangeRates error: {e}")
+            return None
     
     def get_currencies(self) -> List[Dict[str, str]]:
         """

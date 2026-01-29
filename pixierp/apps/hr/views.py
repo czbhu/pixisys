@@ -21,6 +21,7 @@ from apps.core.permissions import (
     check_permission,
     has_own_data_permission,
 )
+from apps.core.services import send_notification
 from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog, AttendanceKioskConfig
 from .serializers import (
     DepartmentSerializer, PositionSerializer, EmployeeSerializer,
@@ -164,12 +165,45 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def status(self, request):
         user = request.user
-        today = date.today()
+        today = timezone.localdate()
         # Find employee profile
         try:
             employee = user.employee_profile
         except Employee.DoesNotExist:
              return Response({'error': 'Employee profile not found'}, status=404)
+
+        # Find active session (AccessLog from today/ongoing)
+        active_log = AccessLog.objects.filter(
+            employee=employee,
+            check_out_time__isnull=True
+        ).order_by('-check_in_time').first()
+        
+        # Calculate daily worked seconds (sum of closed logs for today)
+        today_start_aware = timezone.make_aware(datetime.combine(today, dt_time.min))
+        today_end_aware = timezone.make_aware(datetime.combine(today, dt_time.max))
+
+        closed_logs_today = AccessLog.objects.filter(
+            employee=employee,
+            check_in_time__range=(today_start_aware, today_end_aware),
+            check_out_time__isnull=False
+        )
+        
+        daily_worked_seconds = 0
+        for log in closed_logs_today:
+            delta = log.check_out_time - log.check_in_time
+            daily_worked_seconds += delta.total_seconds()
+            
+        # Determine Max Inactivity Timeout from User's Departments
+        # Default to 60 if no department or not set
+        max_timeout = 60
+        if employee.departments.exists():
+            from django.db.models import Max
+            result = employee.departments.aggregate(Max('inactivity_timeout'))
+            if result['inactivity_timeout__max'] is not None:
+                max_timeout = result['inactivity_timeout__max']
+                
+        # If max_timeout is 0, it means inactivity check is disabled
+
 
         attendance = Attendance.objects.filter(employee=employee, date=today).first()
         
@@ -177,16 +211,107 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'is_clocked_in': False,
             'check_in': None,
             'check_out': None,
-            'employee_name': f"{user.last_name} {user.first_name}"
+            'employee_name': f"{user.last_name} {user.first_name}",
+            'daily_worked_seconds': daily_worked_seconds,
+            'inactivity_timeout': max_timeout
         }
         
-        if attendance:
-            data['check_in'] = attendance.check_in
-            data['check_out'] = attendance.check_out
-            if attendance.check_in and not attendance.check_out:
-                data['is_clocked_in'] = True
-                
+        if active_log:
+            # Active session found -> Use its start time
+            data['is_clocked_in'] = True
+            data['check_in'] = active_log.check_in_time.isoformat() # Already datetime aware
+            # data['check_out'] remains None
+        elif attendance:
+            # No active log, but attendance exists (maybe clocked out or just have record)
+            # Find last closed log for today to maybe show something?
+            # Or just fallback to attendance aggregated times
+            
+            if attendance.check_in:
+                 # Check if attendance says clocked in (but active_log missing?? Inconsistent state fallback)
+                 # Or if attendance.check_out is null
+                 if not attendance.check_out:
+                     # This shouldn't happen if AccessLog logic is sound, but if it does:
+                     data['is_clocked_in'] = True
+                     data['check_in'] = datetime.combine(attendance.date, attendance.check_in).isoformat()
+                 else:
+                     # Clocked out for the day (or break)
+                     data['is_clocked_in'] = False
+                     data['check_in'] = datetime.combine(attendance.date, attendance.check_in).isoformat()
+                     data['check_out'] = datetime.combine(attendance.date, attendance.check_out).isoformat()
+                     
         return Response(data)
+
+    @action(detail=False, methods=['post'])
+    def inactive_checkout(self, request):
+        """
+        Check out user due to inactivity.
+        Sets check_out time to the provided valid last_activity timestamp.
+        """
+        user = request.user
+        last_activity = request.data.get('last_activity')
+        
+        if not last_activity:
+             return Response({'error': 'Last activity time is required'}, status=400)
+             
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+             return Response({'error': 'Employee profile not found'}, status=404)
+
+        # Parse timestamp
+        from django.utils.dateparse import parse_datetime
+        checkout_time = parse_datetime(last_activity)
+        
+        if not checkout_time:
+             return Response({'error': 'Invalid date format'}, status=400)
+             
+        if timezone.is_naive(checkout_time):
+             checkout_time = timezone.make_aware(checkout_time)
+             
+        # Find Active Log
+        active_log = AccessLog.objects.filter(
+            employee=employee,
+            check_out_time__isnull=True
+        ).order_by('-check_in_time').first()
+
+        if active_log:
+            # Ensure checkout time is not before check-in
+            if checkout_time < active_log.check_in_time:
+                 # If last activity was somehow before checkin (impossible), fallback to now
+                 checkout_time = timezone.now()
+
+            active_log.check_out_time = checkout_time
+            
+            # AccessLog note
+            note_msg = "Inaktívitás miatt kilépve"
+            if active_log.notes:
+                if note_msg not in active_log.notes:
+                    active_log.notes += f"\n{note_msg}"
+            else:
+                active_log.notes = note_msg
+                
+            active_log.save()
+            
+            # Update Attendance
+            log_date = timezone.localtime(active_log.check_in_time).date()
+            local_checkout_time = timezone.localtime(checkout_time).time()
+            
+            attendance = Attendance.objects.filter(employee=employee, date=log_date).first()
+            if attendance:
+                 attendance.check_out = local_checkout_time
+                 
+                 # Attendance note
+                 if attendance.notes:
+                     if note_msg not in attendance.notes:
+                         attendance.notes += f"\n{note_msg}"
+                 else:
+                     attendance.notes = note_msg
+                     
+                 attendance.save()
+                
+            return Response({'message': 'Inactive checkout successful'})
+            
+        return Response({'message': 'No active session found'})
 
     @action(detail=False, methods=['post'])
     def initiate(self, request):
@@ -325,7 +450,16 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                      return Response({'message': 'Already checked out'}, status=200)
             
             # Optional: Push notification to user via WebSocket?
+            message_str = f"Sikeres { 'belépés' if action_type == 'check_in' else 'kilépés' }: {now.strftime('%H:%M:%S')}"
             
+            send_notification(
+                user=user,
+                title="Jelenlét frissítés",
+                message=message_str,
+                link="/personal/attendance",
+                type="success"
+            )
+
             return Response({'status': 'success', 'action': action_type}, status=200)
 
         except SignatureExpired:
@@ -379,9 +513,13 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             defaults={
                 'check_in': local_now.time(),
                 'break_duration': timedelta(0),
-                'overtime_hours': 0
+                'overtime_hours': 0,
+                'last_activity': now # Initialize last_activity on check-in
             }
         )
+        if created:
+            attendance_today.last_activity = now
+            attendance_today.save()
         
         # Find Active Log (Any open log from past)
         active_log = AccessLog.objects.filter(
@@ -452,6 +590,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             )
             
             attendance_today.check_out = None
+            attendance_today.last_activity = now # Reset/Update last acitivity on check-in
             attendance_today.save()
             
             message_str = f"Sikeres belépés: {local_now.strftime('%H:%M:%S')}"
@@ -474,6 +613,15 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 }
             }
         )
+
+        # Notify User (for Web UI refresh)
+        send_notification(
+            user=user,
+            title="Jelenlét frissítés",
+            message=message_str,
+            link="/personal/attendance",
+            type="success"
+        )
                  
         return Response({
             'message': message_str, 
@@ -481,6 +629,145 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'user_name': f"{user.last_name} {user.first_name}",
             'action': action_type
         })
+    
+    @action(detail=False, methods=['post'])
+    def update_heartbeat(self, request):
+        """Update last_activity timestamp for the current open attendance"""
+        user = request.user
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+            return Response(status=404)
+            
+        today = timezone.localdate()
+        now = timezone.now()
+        
+        attendance = Attendance.objects.filter(employee=employee, date=today, check_out__isnull=True).first()
+        if attendance:
+            attendance.last_activity = now
+            attendance.save(update_fields=['last_activity'])
+            return Response({'status': 'updated', 'last_activity': now.isoformat()})
+            
+        return Response({'status': 'no_active_attendance'})
+        
+    @action(detail=False, methods=['get'])
+    def status(self, request):
+        """Get current attendance status and inactivity info"""
+        user = request.user
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+            return Response({'check_in': None})
+            
+        today = timezone.localdate()
+        attendance = Attendance.objects.filter(employee=employee, date=today).first()
+        
+        # Calculate daily worked seconds (including previous closed logs for today)
+        daily_logs = AccessLog.objects.filter(
+            employee=employee,
+            check_in_time__date=today,
+            check_out_time__isnull=False
+        )
+        worked_seconds = sum([(log.check_out_time - log.check_in_time).total_seconds() for log in daily_logs])
+        
+        # Get Max Inactivity Timeout from user's departments (min: 60 minutes default)
+        timeout_minutes = 60
+        timeout_values = []
+        
+        # Check direct departments
+        for dept in employee.departments.all():
+             if dept.inactivity_timeout:
+                 timeout_values.append(dept.inactivity_timeout)
+                 
+        # Check position's department
+        if employee.position and employee.position.department:
+             if employee.position.department.inactivity_timeout:
+                 timeout_values.append(employee.position.department.inactivity_timeout)
+        
+        if timeout_values:
+            timeout_minutes = max(timeout_values)
+        
+        result = {
+            'check_in': None,
+            'daily_worked_seconds': worked_seconds,
+            'inactivity_timeout': timeout_minutes,
+            'last_activity': None
+        }
+        
+        if attendance and not attendance.check_out:
+            # Active session
+            active_log = AccessLog.objects.filter(
+                employee=employee, 
+                check_out_time__isnull=True
+            ).last()
+            
+            if active_log:
+                result['check_in'] = active_log.check_in_time
+            elif attendance.check_in:
+                 # Fallback if no access log but attendance exists (shouldn't happen logic wise but safe)
+                 # Combine Date + Time
+                 local_dt = datetime.combine(attendance.date, attendance.check_in)
+                 result['check_in'] = timezone.make_aware(local_dt)
+            
+            if attendance.last_activity:
+                result['last_activity'] = attendance.last_activity
+        
+        return Response(result)
+
+    @action(detail=False, methods=['post'])
+    def inactive_checkout(self, request):
+        """Force checkout due to inactivity"""
+        user = request.user
+        last_activity_str = request.data.get('last_activity')
+        
+        try:
+            employee = user.employee_profile
+        except Employee.DoesNotExist:
+             return Response(status=404)
+             
+        today = timezone.localdate()
+        now = timezone.now()
+        
+        # Use provided last activity or current time if missing
+        checkout_time = now
+        if last_activity_str:
+            try:
+                from dateutil.parser import parse
+                checkout_time = parse(last_activity_str)
+                # Ensure timezone aware
+                if timezone.is_naive(checkout_time):
+                    checkout_time = timezone.make_aware(checkout_time)
+            except:
+                pass
+        
+        # If we have a stored last_activity in Attendance that is more recent/accurate?
+        # Actually user wants "last active counts", so if frontend claims X, trusting it is risky?
+        # Better: use the max of stored and reported? 
+        # Or simplistic: If Attendance has last_activity, use that.
+        
+        attendance = Attendance.objects.filter(employee=employee, date=today, check_out__isnull=True).first()
+        if not attendance:
+            return Response({'message': 'Already checked out'})
+            
+        if attendance.last_activity:
+             # Prefer server side stored activity if available
+             checkout_time = attendance.last_activity
+        
+        # Perform Checkout logic similar to scan
+        active_log = AccessLog.objects.filter(
+            employee=employee,
+            check_out_time__isnull=True
+        ).last()
+        
+        if active_log:
+            active_log.check_out_time = checkout_time
+            active_log.location = "Auto/Inactivity"
+            active_log.save()
+            
+        attendance.check_out = timezone.localtime(checkout_time).time()
+        attendance.save()
+        
+        return Response({'status': 'checked_out', 'time': checkout_time})
 
 
 class LeaveRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):

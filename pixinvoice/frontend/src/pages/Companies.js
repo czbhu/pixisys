@@ -1,7 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { 
   Plus, 
   Search, 
@@ -12,7 +13,8 @@ import {
   ArrowLeft,
   Eye,
   EyeOff,
-  RefreshCw
+  RefreshCw,
+  GripVertical
 } from 'lucide-react';
 import styled from 'styled-components';
 import { companyAPI } from '../services/api';
@@ -232,6 +234,25 @@ const Companies = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [regenLoading, setRegenLoading] = useState({});
   const [syncLoading, setSyncLoading] = useState({});
+  const [localCompanies, setLocalCompanies] = useState([]);
+
+  // Sync state with server data
+  const { data: serverCompanies, isLoading, error } = useQuery(
+    ['companies', { search: searchTerm, is_active: statusFilter }],
+    () => companyAPI.getCompanies({
+      search: searchTerm || undefined,
+      is_active: statusFilter || undefined,
+    }),
+    {
+      select: (response) => response.data?.results || []
+    }
+  );
+
+  useEffect(() => {
+    if (serverCompanies) {
+      setLocalCompanies(serverCompanies);
+    }
+  }, [serverCompanies]);
 
   const handleRegenerateApiKey = async (company) => {
     setRegenLoading(l => ({ ...l, [company.id]: true }));
@@ -266,14 +287,15 @@ const Companies = () => {
     }
   };
 
-  const { data: companies, isLoading, error } = useQuery(
+  const { data: companies_IGNORED, isLoading: isLoading_IGNORED, error: error_IGNORED } = useQuery(
     ['companies', { search: searchTerm, is_active: statusFilter }],
     () => companyAPI.getCompanies({
       search: searchTerm || undefined,
       is_active: statusFilter || undefined,
     }),
     {
-      select: (response) => response.data?.results || []
+      select: (response) => response.data?.results || [],
+      enabled: false // We use the one defined above
     }
   );
 
@@ -305,6 +327,21 @@ const Companies = () => {
     }
   );
 
+  const updateOrderMutation = useMutation(
+    ({ id, orderIndex }) => companyAPI.patchCompany(id, { order_index: orderIndex }),
+    {
+      onSuccess: () => {
+        queryClient.invalidateQueries(['companies']);
+        toast.success('Sorrend frissítve');
+        // Trigger generic event to update sidebar
+        try { window.dispatchEvent(new Event('companyChanged')); } catch {}
+      },
+      onError: (e) => {
+        toast.error('Hiba a sorrend frissítésekor');
+      }
+    }
+  );
+
   const handleDelete = (company) => {
     if (window.confirm(`Biztosan törölni szeretné a(z) "${company.name}" céget?`)) {
       deleteCompanyMutation.mutate(company.id);
@@ -315,6 +352,39 @@ const Companies = () => {
     toggleActiveMutation.mutate({
       id: company.id,
       isActive: !company.is_active
+    });
+  };
+
+  const handleOrderChange = (company, newValue) => {
+    const val = parseInt(newValue, 10);
+    if (isNaN(val)) return;
+    // Check against server data or just save
+    const original = serverCompanies.find(x => x.id === company.id);
+    if (!original || original.order_index !== val) {
+      updateOrderMutation.mutate({ id: company.id, orderIndex: val });
+    }
+  };
+
+  const onDragEnd = (result) => {
+    if (!result.destination) {
+      return;
+    }
+
+    const items = Array.from(localCompanies);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+
+    const updatedItems = items.map((item, index) => ({
+      ...item,
+      order_index: (index + 1) * 10
+    }));
+    setLocalCompanies(updatedItems);
+    
+    updatedItems.forEach(c => {
+      const original = serverCompanies.find(x => x.id === c.id);
+      if (!original || original.order_index !== c.order_index) {
+         updateOrderMutation.mutate({ id: c.id, orderIndex: c.order_index });
+      }
     });
   };
 
@@ -329,7 +399,7 @@ const Companies = () => {
   if (error) {
     return (
       <Container>
-        <div>Hiba történt a cégek betöltése során: {error.message}</div>
+        <div>Hiba történt a cégek betöltése során: {error_IGNORED?.message || error?.message}</div>
       </Container>
     );
   }
@@ -370,16 +440,19 @@ const Companies = () => {
         </FilterSelect>
       </SearchAndFilter>
 
-      {companies.length === 0 ? (
+      {localCompanies.length === 0 ? (
         <EmptyState>
           <Building2 size={48} style={{ marginBottom: '16px', opacity: 0.5 }} />
           <h3>Nincsenek cégek</h3>
           <p>Kezdje el egy új cég hozzáadásával</p>
         </EmptyState>
       ) : (
+        <DragDropContext onDragEnd={onDragEnd}>
         <Table>
           <TableHeader>
             <tr>
+              <TableHeaderCell style={{ width: '40px' }}></TableHeaderCell>
+              <TableHeaderCell style={{ width: '80px' }}>Sorrend</TableHeaderCell>
               <TableHeaderCell>Cég neve</TableHeaderCell>
               <TableHeaderCell>Adószám</TableHeaderCell>
               <TableHeaderCell>Város</TableHeaderCell>
@@ -389,85 +462,132 @@ const Companies = () => {
               <TableHeaderCell>Műveletek</TableHeaderCell>
             </tr>
           </TableHeader>
-          <TableBody>
-            {companies.map((company) => (
-              <TableRow key={company.id}>
-                <TableCell>
-                  <div>
-                    <div style={{ fontWeight: '500', marginBottom: '2px' }}>
-                      {company.name}
-                    </div>
-                    {company.short_name && (
-                      <div style={{ fontSize: '12px', color: '#7f8c8d' }}>
-                        {company.short_name}
-                      </div>
+          <Droppable droppableId="companies-list">
+            {(provided) => (
+              <TableBody
+                {...provided.droppableProps}
+                ref={provided.innerRef}
+              >
+                {localCompanies.map((company, index) => (
+                  <Draggable key={company.id} draggableId={company.id} index={index}>
+                    {(provided, snapshot) => (
+                      <TableRow
+                        ref={provided.innerRef}
+                        {...provided.draggableProps}
+                        style={{
+                          ...provided.draggableProps.style,
+                          background: snapshot.isDragging ? '#e3f2fd' : 'white',
+                          display: snapshot.isDragging ? "table" : undefined
+                        }}
+                      >
+                        <TableCell>
+                           <div {...provided.dragHandleProps} style={{ cursor: 'grab', display: 'flex', alignItems: 'center' }}>
+                            <GripVertical size={20} color="#bdc3c7" />
+                           </div>
+                        </TableCell>
+                        <TableCell>
+                          <input 
+                            type="number" 
+                            value={company.order_index || 0}
+                            onChange={(e) => {
+                                const val = e.target.value;
+                                setLocalCompanies(current => 
+                                    current.map(c => c.id === company.id ? { ...c, order_index: val } : c)
+                                );
+                            }}
+                            onBlur={(e) => handleOrderChange(company, e.target.value)}
+                            onKeyDown={(e) => {
+                               if(e.key === 'Enter') {
+                                  e.target.blur();
+                               }
+                            }}
+                            style={{ width: '60px', padding: '4px', border: '1px solid #ddd', borderRadius: '4px' }}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <div>
+                            <div style={{ fontWeight: '500', marginBottom: '2px' }}>
+                              {company.name}
+                            </div>
+                            {company.short_name && (
+                              <div style={{ fontSize: '12px', color: '#7f8c8d' }}>
+                                {company.short_name}
+                              </div>
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>{company.tax_number}</TableCell>
+                        <TableCell>{company.city}</TableCell>
+                        <TableCell>{company.email || '-'}</TableCell>
+                        <TableCell>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <code style={{ 
+                              background: '#f8f9fa', 
+                              padding: '2px 4px', 
+                              borderRadius: '4px',
+                              fontSize: '12px'
+                            }}>
+                              {company.api_key ? `${company.api_key.substring(0, 8)}...` : '-'}
+                            </code>
+                            <ActionButton 
+                              className="sync" 
+                              onClick={() => handleRegenerateApiKey(company)}
+                              title="API-kulcs újragenerálása"
+                              disabled={regenLoading[company.id]}
+                            >
+                              <RefreshCw size={14} className={regenLoading[company.id] ? 'spin' : ''} />
+                            </ActionButton>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <StatusBadge className={company.is_active ? 'active' : 'inactive'}>
+                            {company.is_active ? 'Aktív' : 'Inaktív'}
+                          </StatusBadge>
+                        </TableCell>
+                        <TableCell>
+                          <ActionButtons>
+                            <ActionButton 
+                              className="edit"
+                              onClick={() => navigate(`/settings/companies/${company.id}`)}
+                              title="Szerkesztés"
+                            >
+                              <Edit size={16} />
+                            </ActionButton>
+                            <ActionButton 
+                              className="toggle" 
+                              active={company.is_active}
+                              onClick={() => handleToggleActive(company)}
+                              title={company.is_active ? 'Deaktiválás' : 'Aktiválás'}
+                            >
+                              {company.is_active ? <Eye size={16} /> : <EyeOff size={16} />}
+                            </ActionButton>
+                            <ActionButton 
+                              className="sync" 
+                              onClick={() => handleFullSync(company)}
+                              title="Teljes NAV visszatöltés"
+                              disabled={syncLoading[company.id]}
+                            >
+                              <RefreshCw size={16} className={syncLoading[company.id] ? 'spin' : ''} />
+                            </ActionButton>
+                            <ActionButton 
+                              className="delete" 
+                              onClick={() => handleDelete(company)}
+                              title="Törlés"
+                            >
+                              <Trash2 size={16} />
+                            </ActionButton>
+                          </ActionButtons>
+                        </TableCell>
+                      </TableRow>
                     )}
-                  </div>
-                </TableCell>
-                <TableCell>{company.tax_number}</TableCell>
-                <TableCell>{company.city}</TableCell>
-                <TableCell>{company.email || '-'}</TableCell>
-                <TableCell>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <span style={{ fontFamily: 'monospace', fontSize: 12, background: '#f8f9fa', padding: '2px 6px', borderRadius: 4 }}>{company.api_key || '-'}</span>
-                    {company.api_key && (
-                      <>
-                        <button
-                          style={{ padding: '2px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #eee', background: '#e3f2fd', cursor: 'pointer' }}
-                          onClick={() => { navigator.clipboard.writeText(company.api_key); toast.success('API-kulcs vágólapra másolva'); }}
-                        >Másolás</button>
-                        <button
-                          style={{ padding: '2px 8px', fontSize: 12, borderRadius: 4, border: '1px solid #eee', background: '#ffe0e0', cursor: regenLoading[company.id] ? 'not-allowed' : 'pointer' }}
-                          disabled={regenLoading[company.id]}
-                          onClick={() => handleRegenerateApiKey(company)}
-                        >{regenLoading[company.id] ? '...' : 'Új API-kulcs'}</button>
-                      </>
-                    )}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <StatusBadge className={company.is_active ? 'active' : 'inactive'}>
-                    {company.is_active ? 'Aktív' : 'Inaktív'}
-                  </StatusBadge>
-                </TableCell>
-                <TableCell>
-                  <ActionButtons>
-                    <ActionButton
-                      className="toggle"
-                      active={company.is_active}
-                      onClick={() => handleToggleActive(company)}
-                      title={company.is_active ? 'Deaktiválás' : 'Aktiválás'}
-                    >
-                      {company.is_active ? <EyeOff size={16} /> : <Eye size={16} />}
-                    </ActionButton>
-                    <ActionButton
-                      className="sync"
-                      onClick={() => handleFullSync(company)}
-                      title="Bejövő számlák letöltése a NAV-tól"
-                      disabled={syncLoading[company.id]}
-                    >
-                      {syncLoading[company.id] ? '…' : <RefreshCw size={16} />}
-                    </ActionButton>
-                    <ActionButton
-                      className="edit"
-                      onClick={() => navigate(`/settings/companies/${company.id}/edit`)}
-                      title="Szerkesztés"
-                    >
-                      <Edit size={16} />
-                    </ActionButton>
-                    <ActionButton
-                      className="delete"
-                      onClick={() => handleDelete(company)}
-                      title="Törlés"
-                    >
-                      <Trash2 size={16} />
-                    </ActionButton>
-                  </ActionButtons>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
+                  </Draggable>
+                ))}
+                {provided.placeholder}
+              </TableBody>
+            )}
+          </Droppable>
         </Table>
+        </DragDropContext>
       )}
     </Container>
   );

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Form, Input, InputNumber, Switch, Button, message, Space, Divider, Modal } from 'antd';
-import { SendOutlined } from '@ant-design/icons';
+import { Card, Form, Input, InputNumber, Switch, Button, message, Space, Divider, Modal, Select } from 'antd';
+import { SendOutlined, SyncOutlined } from '@ant-design/icons';
 import { settingsService } from '../../../services/settingsService';
 
 const EmailServerPage: React.FC = () => {
@@ -11,6 +11,8 @@ const EmailServerPage: React.FC = () => {
   const [testEmailRecipient, setTestEmailRecipient] = useState('');
   const [sendingTest, setSendingTest] = useState(false);
   const [testLog, setTestLog] = useState<string[]>([]);
+  const [mailboxes, setMailboxes] = useState<any[]>([]);
+  const [imapLoading, setImapLoading] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -80,6 +82,33 @@ const EmailServerPage: React.FC = () => {
     }
   };
 
+  const handleAutoDetect = async () => {
+    try {
+        const values = form.getFieldsValue(['imap_host', 'imap_port', 'imap_username', 'imap_password']);
+        if (!values.imap_host || !values.imap_username) {
+            message.warning('Adja meg az IMAP hostot és felhasználót!');
+            return;
+        }
+        setImapLoading(true);
+        const res = await settingsService.detectIMAPSent(values);
+        if (res.success) {
+            setMailboxes(res.mailboxes || []);
+            if (res.suggested) {
+                form.setFieldsValue({ imap_sent_folder: res.suggested });
+                message.success(`Talált mappa: ${res.suggested}`);
+            } else {
+                message.info('Válasszon mappát a listából.');
+            }
+        } else {
+            message.error(res.error || 'IMAP hiba');
+        }
+    } catch (e: any) {
+        message.error(e.message || 'Hiba történt');
+    } finally {
+        setImapLoading(false);
+    }
+  };
+
   return (
     <>
       <Card title="E-mail szerver" loading={loading}>
@@ -97,8 +126,24 @@ const EmailServerPage: React.FC = () => {
           <Form.Item label="IMAP port" name="imap_port"><InputNumber style={{ width: '100%' }} /></Form.Item>
           <Form.Item label="IMAP felhasználó" name="imap_username"><Input /></Form.Item>
           <Form.Item label="IMAP jelszó" name="imap_password"><Input.Password /></Form.Item>
-          <Form.Item label="Sent mappa" name="imap_sent_folder"><Input /></Form.Item>
-          <Form.Item label="Aktív" name="is_active" valuePropName="checked"><Switch /></Form.Item>
+          <Form.Item label="Sent mappa" style={{ marginBottom: 0 }}>
+             <Space.Compact style={{ width: '100%' }}>
+                <Form.Item name="imap_sent_folder" noStyle>
+                    <Input placeholder="Pl. Sent" />
+                </Form.Item>
+                <Button loading={imapLoading} icon={<SyncOutlined />} onClick={handleAutoDetect}>Auto-detekció</Button>
+             </Space.Compact>
+          </Form.Item>
+          {mailboxes.length > 0 && (
+             <Form.Item label="Elérhető mappák" style={{ marginTop: 8 }}>
+                <Select placeholder="Válassz mappát..." onChange={(val) => form.setFieldsValue({ imap_sent_folder: val })}>
+                    {mailboxes.map((m: any, idx) => (
+                        <Select.Option key={idx} value={m.name}>{m.label || m.name}</Select.Option>
+                    ))}
+                </Select>
+             </Form.Item>
+          )}
+          <Form.Item label="Aktív" name="is_active" valuePropName="checked" style={{ marginTop: 24 }}><Switch /></Form.Item>
           
           <Space>
             <Button type="primary" onClick={onSave}>Mentés</Button>

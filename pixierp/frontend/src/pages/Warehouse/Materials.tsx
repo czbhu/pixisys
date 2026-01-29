@@ -181,8 +181,36 @@ const Materials: React.FC = () => {
   };
 
   useEffect(() => {
-    if (searchParams.get('create') === 'true') {
-      handleCreate();
+    const create = searchParams.get('create') === 'true';
+    const copyFrom = searchParams.get('copy_from');
+    const editId = searchParams.get('edit');
+    
+    if (create) {
+      if (copyFrom) {
+         setLoading(true);
+         api.get(`/warehouse/materials/${copyFrom}/`).then(res => {
+             const data = res.data;
+             // Remove ID and creation info
+             const { id, created_at, created_by_name, ...rest } = data;
+             
+             setEditingMaterial(null); // Ensure create mode
+             form.setFieldsValue(rest);
+             setModalVisible(true);
+         }).catch(err => {
+             console.error(err);
+             message.error('Hiba a másolandó tétel betöltésekor');
+         }).finally(() => setLoading(false));
+      } else {
+         handleCreate();
+      }
+    } else if (editId) {
+        setLoading(true);
+        api.get(`/warehouse/materials/${editId}/`).then(res => {
+            handleEdit(res.data);
+        }).catch(err => {
+            console.error(err);
+            message.error('Hiba a tétel betöltésekor');
+        }).finally(() => setLoading(false));
     }
   }, [searchParams]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);

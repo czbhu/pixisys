@@ -82,8 +82,48 @@ const Products: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (searchParams.get('create') === 'true') {
-            showModal();
+        const create = searchParams.get('create') === 'true';
+        const copyFrom = searchParams.get('copy_from');
+        const editId = searchParams.get('edit');
+
+        if (create) {
+            if (copyFrom) {
+                setLoading(true);
+                manufacturingService.getProduct(Number(copyFrom)).then(prod => {
+                    if (prod) {
+                        // Create a copy without ID and with reset status
+                        const { id, created_at, updated_at, ...rest } = prod;
+                        const copy = { 
+                            ...rest, 
+                            status: 'quote_request_open', 
+                            date: dayjs().format('YYYY-MM-DD'),
+                            // Ensure cost items also lose their IDs if present
+                            cost_items: (prod.cost_items || []).map((ci: any) => {
+                                const { id, ...ciRest } = ci;
+                                return ciRest;
+                            })
+                        };
+                        setEditingProduct(copy as any);
+                        setCreateModalOpen(true);
+                    }
+                }).catch(err => {
+                    console.error(err);
+                    message.error('Hiba a másolandó tétel betöltésekor');
+                }).finally(() => setLoading(false));
+            } else {
+                showModal();
+            }
+        } else if (editId) {
+            setLoading(true);
+            manufacturingService.getProduct(Number(editId)).then(prod => {
+                if (prod) {
+                    setEditingProduct(prod);
+                    setCreateModalOpen(true);
+                }
+            }).catch(err => {
+                console.error(err);
+                message.error('Hiba a termék betöltésekor');
+            }).finally(() => setLoading(false));
         }
     }, [searchParams]);
 
@@ -309,7 +349,8 @@ const Products: React.FC = () => {
                     prod.project_name || '',
                     prod.contact_name || '',
                     prod.contact_company_name || '',
-                    prod.status_display || ''
+                    prod.status_display || '',
+                    prod.allowed_companies_data?.map(c => c.name).join(' ') || ''
                 ].join(' \u0001 ');
                 return normalize(hay).includes(q);
             });
@@ -319,12 +360,11 @@ const Products: React.FC = () => {
 
     const columns = [
         {
-            title: 'Dátum',
-            dataIndex: 'date',
-            key: 'date',
-            width: 100,
-            sorter: (a: ManufacturingProduct, b: ManufacturingProduct) =>
-                dayjs(a.date).unix() - dayjs(b.date).unix(),
+            title: 'Cikkszám',
+            dataIndex: 'code',
+            key: 'code',
+            width: 120,
+            sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => (a.code || '').localeCompare(b.code || ''),
         },
         {
             title: 'Név',
@@ -357,13 +397,6 @@ const Products: React.FC = () => {
             render: (name: string) => name || '-',
         },
         {
-            title: 'Projekt',
-            dataIndex: 'project_name',
-            key: 'project_name',
-            width: 150,
-            render: (name: string) => name || '-',
-        },
-        {
             title: 'Nettó ár',
             dataIndex: 'net_total_price',
             key: 'net_total_price',
@@ -375,43 +408,32 @@ const Products: React.FC = () => {
             sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => a.net_total_price - b.net_total_price,
         },
         {
-            title: 'Állapot',
-            dataIndex: 'status_display',
-            key: 'status_display',
-            width: 150,
-            render: (status: string, record: ManufacturingProduct) => (
-                <Tag color={STATUS_COLORS[record.status] || 'default'}>
-                    {status}
-                </Tag>
-            ),
-            sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => (a.status_display || '').localeCompare(b.status_display || ''),
-        },
-        {
             title: 'Ügyfél',
-            dataIndex: 'contact_name',
-            key: 'contact_name',
+            key: 'allowed_companies_data', // Keep key mostly same or change
             width: 200,
-            render: (name: string, record: ManufacturingProduct) => {
-                if (name && record.contact_company_name) {
-                    return `${name} - ${record.contact_company_name}`;
-                } else if (name) {
-                    return name;
+            render: (_: any, record: ManufacturingProduct) => {
+                const companies = record.allowed_companies_data || [];
+                const contacts = record.allowed_contacts_data || [];
+                const all = [...companies, ...contacts];
+
+                if (all.length > 0) {
+                    return (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                            {all.map((c, i) => (
+                                <Tooltip title={c.name} key={i}>
+                                    <Tag style={{ marginRight: 0 }}>{c.name.substring(0, 6)}</Tag>
+                                </Tooltip>
+                            ))}
+                        </div>
+                    );
                 }
-                return '-';
+                return null;
             },
             sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => {
-                const aName = a.contact_name || '';
-                const bName = b.contact_name || '';
-                return aName.localeCompare(bName);
+                 const aNames = [...(a.allowed_companies_data || []), ...(a.allowed_contacts_data || [])].map(c => c.name).join('') || '';
+                 const bNames = [...(b.allowed_companies_data || []), ...(b.allowed_contacts_data || [])].map(c => c.name).join('') || '';
+                 return aNames.localeCompare(bNames);
             },
-        },
-        {
-            title: 'Határidő',
-            dataIndex: 'deadline',
-            key: 'deadline',
-            width: 100,
-            sorter: (a: ManufacturingProduct, b: ManufacturingProduct) =>
-                dayjs(a.deadline).unix() - dayjs(b.deadline).unix(),
         },
         {
             title: 'Műveletek',
@@ -613,13 +635,7 @@ const Products: React.FC = () => {
                             <Col span={12}>
                                 <p><strong>Nettó egység ár:</strong> {viewingProduct.net_unit_price.toLocaleString('hu-HU')} {viewingProduct.currency_info?.symbol || 'Ft'}</p>
                                 <p><strong>Nettó ár:</strong> {viewingProduct.net_total_price.toLocaleString('hu-HU')} {viewingProduct.currency_info?.symbol || 'Ft'}</p>
-                                <p><strong>Állapot:</strong>
-                                    <Tag color={STATUS_COLORS[viewingProduct.status] || 'default'} style={{ marginLeft: 8 }}>
-                                        {viewingProduct.status_display}
-                                    </Tag>
-                                </p>
                                 <p><strong>Ügyfél:</strong> {viewingProduct.contact_name || '-'}</p>
-                                <p><strong>Határidő:</strong> {dayjs(viewingProduct.deadline).format('YYYY.MM.DD')}</p>
                             </Col>
                         </Row>
                         {viewingProduct.description && (

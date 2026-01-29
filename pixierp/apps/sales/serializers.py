@@ -305,6 +305,10 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     service_name = serializers.SerializerMethodField()
     service_code = serializers.SerializerMethodField()
     item_type = serializers.SerializerMethodField()
+    # Descriptions
+    product_description = serializers.SerializerMethodField()
+    internal_description = serializers.SerializerMethodField()
+    
     attachments = serializers.SerializerMethodField()
     # Price calculations
     net_total = serializers.SerializerMethodField()
@@ -365,6 +369,21 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     
     def get_item_type(self, obj):
         return obj.quote_item.item_type if obj.quote_item else None
+
+    def get_product_description(self, obj):
+        if not obj.quote_item: return ""
+        qi = obj.quote_item
+        if qi.product: return qi.product.description
+        if qi.manufacturing_product: return qi.manufacturing_product.description
+        if qi.service: return qi.service.description
+        if qi.material: return ""
+        return ""
+    
+    def get_internal_description(self, obj):
+        if not obj.quote_item: return ""
+        qi = obj.quote_item
+        if qi.manufacturing_product: return qi.manufacturing_product.internal_description
+        return ""
     
     def get_attachments(self, obj):
         """Get attachments from the related quote_item"""
@@ -378,6 +397,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     quote_request = QuoteRequestSerializer(read_only=True)
     quote_request_id = serializers.SerializerMethodField()
     total_amount = serializers.SerializerMethodField()
+    total_net_amount = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     quote_request_title = serializers.SerializerMethodField()
     project_id = serializers.SerializerMethodField()
@@ -391,7 +411,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
         model = CustomerOrder
         fields = [
             'id', 'quote_request', 'quote_request_id', 'quote_request_title', 'customer_name',
-            'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount',
+            'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount', 'total_net_amount',
             'project_id', 'project_name', 'created_by_name',
             'contact_names', 'contact_email', 'deadline',
             'confirmed_at', 'production_started_at', 'ready_at',
@@ -401,7 +421,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
         ]
     
     def get_total_amount(self, obj):
-        """Calculate total amount from items"""
+        """Calculate total amount from items (Bruttó)"""
         total = 0
         for item in obj.items.all():
             net = item.net_unit_price * item.quantity
@@ -409,6 +429,16 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             net_discounted = net - discount
             gross = net_discounted * (1 + item.vat_rate / 100)
             total += gross
+        return round(total, 2)
+
+    def get_total_net_amount(self, obj):
+        """Calculate total net amount from items"""
+        total = 0
+        for item in obj.items.all():
+            net = item.net_unit_price * item.quantity
+            discount = net * (item.discount_percent / 100)
+            net_discounted = net - discount
+            total += net_discounted
         return round(total, 2)
     
     def get_customer_name(self, obj):

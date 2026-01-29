@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload } from 'antd';
-import { UploadOutlined } from '@ant-design/icons';
+import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip } from 'antd';
+import { UploadOutlined, SyncOutlined, EditOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
@@ -38,7 +38,7 @@ interface ItemSelectorModalProps {
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number }>;
-  customer?: { id: any; name: string };
+  customer?: { id: any; name: string; company_id?: any };
 }
 
 const { Search } = Input;
@@ -158,6 +158,35 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       
       let pList = prodRes.results ?? prodRes;
       let mList = (manuRes as any).results ?? manuRes;
+
+      // Filter by Customer (Multi-Client Visibility)
+      mList = mList.filter((p: any) => {
+          // p.allowed_companies stores local IDs (integers) in standard API response, 
+          // BUT we might have injected 'allowed_companies_data' which contains external UUIDs.
+          // Or we updated the serializer to return a list of Mixed IDs?
+          
+          // Let's rely on allowed_companies_data if available (rich objects), else allowed_companies.
+          // Note: The Serializer now returns 'allowed_companies_data' with {id: "UUID or Int"}.
+          
+          let validIds: any[] = [];
+          if (p.allowed_companies_data && Array.isArray(p.allowed_companies_data)) {
+              validIds = p.allowed_companies_data.map((c: any) => String(c.id));
+          } else if (p.allowed_companies && Array.isArray(p.allowed_companies)) {
+              validIds = p.allowed_companies.map((id: any) => String(id));
+          }
+
+          const restricted = validIds.length > 0;
+          
+          if (!restricted) return true; // Public product
+          
+          if (!customer) return false; // Restricted product, but no customer context -> hide
+          
+          const custId = String(customer.id);
+          const custCompanyId = customer.company_id ? String(customer.company_id) : null; // PixInvoice often has both
+          
+          return validIds.includes(custId) || (custCompanyId && validIds.includes(custCompanyId));
+      });
+
       let sList = svcRes.results ?? svcRes;
 
       // Handle specific item for editing
@@ -423,6 +452,42 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     }
   };
 
+  const createCopy = async () => {
+    if (!selected) return;
+    setCreateError(null);
+    let url = '';
+    const currentType = (activeKey === 'all' ? (selected as any).__type : activeKey);
+
+    if (currentType === 'product') {
+      url = `/warehouse/materials?create=true&from_rfq=true&copy_from=${selected.id}`;
+    } else if (currentType === 'service') {
+      url = `/manufacturing/services?create=true&from_rfq=true&copy_from=${selected.id}`;
+    } else {
+      url = `/manufacturing/products?create=true&from_rfq=true&copy_from=${selected.id}`;
+    }
+    
+    if (url) {
+      window.open(url, '_blank');
+    }
+  };
+
+  const openEdit = (record: any) => {
+    let url = '';
+    const currentType = (activeKey === 'all' ? (record.__type as any) : activeKey);
+
+    if (currentType === 'product') {
+      url = `/warehouse/materials?edit=${record.id}&from_rfq=true`;
+    } else if (currentType === 'service') {
+      url = `/manufacturing/services?edit=${record.id}&from_rfq=true`;
+    } else {
+      url = `/manufacturing/products?edit=${record.id}&from_rfq=true`;
+    }
+    
+    if (url) {
+      window.open(url, '_blank');
+    }
+  };
+
   const columnsByType: Record<ItemType, any[]> = {
     product: [
       { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: (v: any) => v || '-' },
@@ -452,7 +517,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: (v: any) => v || '-' },
       { title: 'Szolgáltatás neve', dataIndex: 'name', key: 'name' },
       { title: 'Leírás', dataIndex: 'description', key: 'description' },
-      { title: 'Nettó ár', dataIndex: 'base_price', key: 'base_price' },
+      { 
+        title: 'Nettó ár', 
+        key: 'base_price', 
+        render: (r: any) => {
+            const val = r.unit_selling_price ?? r.base_price ?? r.net_unit_price ?? 0;
+            return val.toLocaleString('hu-HU') + ' Ft';
+        }
+      },
       { title: 'Egység', dataIndex: 'unit', key: 'unit' },
     ],
     all: [
@@ -485,7 +557,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         : (columnsByType as any)[type]) as any}
       dataSource={filtered[type]}
       pagination={{ pageSize: 8 }}
-      onRow={(record) => ({ onClick: () => handleRowClick(record) })}
+      onRow={(record) => ({ 
+        onClick: () => handleRowClick(record),
+        onDoubleClick: () => {
+             handleRowClick(record);
+             confirmAdd();
+        }
+      })}
       rowClassName={(record) => (selected && record.id === selected.id ? 'ant-table-row-selected' : '')}
     />
   );
@@ -504,13 +582,37 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         />
         <Space align="start" style={{ gap: 8 }}>
           <Search placeholder="Gyors keresés" allowClear onSearch={setSearch as any} onChange={(e) => setSearch(e.target.value)} style={{ width: 360 }} />
+          <Button icon={<SyncOutlined />} onClick={() => loadData()} title="Lista frissítése" />
           {allowCreate && mode === 'add' && (
-            <Button onClick={createNew} type="dashed">
-              {activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás'}
-            </Button>
+            <>
+              <Button onClick={createNew} type="dashed">
+                {activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás'}
+              </Button>
+              <Button onClick={createCopy} disabled={!selected} title="Másolás és szerkesztés újként">
+                Másol
+              </Button>
+            </>
           )}
         </Space>
         {renderTable(activeKey)}
+        {selected && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0 }}>
+               <Tooltip 
+                  title={
+                    <div>
+                        <div style={{marginBottom: 4}}><strong>Külső leírás:</strong> {selected.description || '-'}</div>
+                        <div><strong>Belső leírás:</strong> {selected.internal_description || '-'}</div>
+                    </div>
+                  }
+                  placement="topLeft"
+               >
+                  <div style={{ flex: 1 }}>
+                    <Alert message={`Kiválasztva: ${selected.name} (${selected.code || 'nincs kód'})`} type="info" showIcon style={{ marginBottom: 0 }} />
+                  </div>
+               </Tooltip>
+               <Button icon={<EditOutlined />} onClick={() => openEdit(selected)} title="Tétel szerkesztése új lapon" />
+            </div>
+        )}
         <Form layout="vertical" form={form}>
           {commonFields}
         </Form>

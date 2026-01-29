@@ -27,11 +27,14 @@ import {
 import dayjs from 'dayjs';
 import 'dayjs/locale/hu';
 import customParseFormat from 'dayjs/plugin/customParseFormat';
+import duration from 'dayjs/plugin/duration';
 import ClockPicker from '../../components/ClockPicker';
 import api from '../../services/api';
+import { useAuth } from '../../contexts/AuthContext';
 
 dayjs.locale('hu');
 dayjs.extend(customParseFormat);
+dayjs.extend(duration);
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -73,7 +76,12 @@ interface AttendanceSummary {
     end_date: string;
 }
 
-const AttendanceReport: React.FC = () => {
+interface AttendanceReportProps {
+    isPersonal?: boolean;
+}
+
+const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false }) => {
+    const { user } = useAuth();
     const [loading, setLoading] = useState(false);
     const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -95,14 +103,54 @@ const AttendanceReport: React.FC = () => {
     const [selectedSegmentsRecord, setSelectedSegmentsRecord] = useState<AttendanceRecord | null>(null);
     const [addSegmentForm] = Form.useForm();
 
-    useEffect(() => {
-        fetchEmployees();
-        fetchAttendanceData();
-    }, []);
+    // Activity tracking
+    const [currentTime, setCurrentTime] = useState(dayjs());
+    const [lastActivityTime, setLastActivityTime] = useState(dayjs());
+    const [statusData, setStatusData] = useState<{check_in: string | null, daily_worked_seconds?: number} | null>(null);
 
     useEffect(() => {
-        fetchAttendanceData();
-    }, [selectedEmployee, dateRange, monthFilter]);
+        const timer = setInterval(() => setCurrentTime(dayjs()), 1000);
+        
+        const updateActivity = () => setLastActivityTime(dayjs());
+        // Using window level events
+        window.addEventListener('keydown', updateActivity);
+        window.addEventListener('click', updateActivity);
+        window.addEventListener('scroll', updateActivity);
+        window.addEventListener('touchmove', updateActivity);
+        window.addEventListener('touchstart', updateActivity);
+        
+        // Fetch status for displaying "Logged in" time based on Kiosk check-in
+        if (isPersonal) {
+             api.get('/hr/attendances/status/')
+                .then(res => setStatusData(res.data))
+                .catch(console.error);
+        }
+
+        return () => {
+             clearInterval(timer);
+             window.removeEventListener('keydown', updateActivity);
+             window.removeEventListener('click', updateActivity);
+             window.removeEventListener('scroll', updateActivity);
+             window.removeEventListener('touchmove', updateActivity);
+             window.removeEventListener('touchstart', updateActivity);
+        };
+    }, [isPersonal]);
+
+    useEffect(() => {
+        if (isPersonal) {
+             if (user?.employee_id) {
+                 setSelectedEmployee(user.employee_id);
+             }
+        } else {
+            fetchEmployees();
+        }
+    }, [isPersonal, user]);
+
+    useEffect(() => {
+        if (!isPersonal || (isPersonal && selectedEmployee)) {
+             fetchAttendanceData();
+        }
+    }, [selectedEmployee, dateRange, monthFilter, isPersonal]);
 
     const fetchEmployees = async () => {
         try {
@@ -406,7 +454,7 @@ const AttendanceReport: React.FC = () => {
     };
 
     const columns = [
-        {
+        ...(!isPersonal ? [{
             title: 'Alkalmazott',
             dataIndex: 'employee_name',
             key: 'employee_name',
@@ -418,7 +466,7 @@ const AttendanceReport: React.FC = () => {
                     <span>{text}</span>
                 </Space>
             ),
-        },
+        }] : []),
         {
             title: 'Dátum',
             dataIndex: 'date',
@@ -583,12 +631,54 @@ const AttendanceReport: React.FC = () => {
                 title={
                     <Space>
                         <CalendarOutlined />
-                        <span>Jelenlét - Alkalmazottak nyilvántartása</span>
+                        <span>{isPersonal ? 'Saját jelenléti ív' : 'Jelenlét - Alkalmazottak nyilvántartása'}</span>
                     </Space>
                 }
             >
+                {/* Live Status Cards (only for personal view or generally useful) */}
+                <Row gutter={16} style={{ marginBottom: 24 }}>
+                    <Col span={12}>
+                        <Card size="small">
+                            <Statistic 
+                                title="Bejelentkezve (Munkakezdés)" 
+                                valueRender={() => (
+                                    <span>
+                                        {(statusData?.check_in && dayjs(statusData.check_in).isValid())
+                                            ? dayjs.duration(currentTime.diff(dayjs(statusData.check_in))).format('HH:mm:ss')
+                                            : 'Nincs rögzítve'}
+                                        
+                                        {(statusData?.daily_worked_seconds !== undefined) && (
+                                           <span style={{ marginLeft: 16, fontSize: '0.8em', color: '#888' }}>
+                                               | Mai nap: {(() => {
+                                                   const currentSessionSeconds = (statusData?.check_in && dayjs(statusData.check_in).isValid()) 
+                                                        ? currentTime.diff(dayjs(statusData.check_in), 'second') 
+                                                        : 0;
+                                                   const totalSeconds = (statusData.daily_worked_seconds || 0) + currentSessionSeconds;
+                                                   return dayjs.duration(totalSeconds > 0 ? totalSeconds : 0, 'seconds').format('HH:mm:ss');
+                                               })()}
+                                           </span>
+                                        )}
+                                    </span>
+                                )}
+                                value=" " // Dummy value to keep layout
+                                prefix={<ClockCircleOutlined style={{ color: '#1890ff' }} />}
+                            />
+                        </Card>
+                    </Col>
+                    <Col span={12}>
+                        <Card size="small">
+                             <Statistic 
+                                title="Inaktív idő" 
+                                value={dayjs.duration(currentTime.diff(lastActivityTime)).format('HH:mm:ss')}
+                                prefix={<ClockCircleOutlined style={{ color: '#faad14' }} />}
+                            />
+                        </Card>
+                    </Col>
+                </Row>
+
                 {/* Filters */}
                 <Row gutter={16} style={{ marginBottom: 16 }}>
+                    {!isPersonal && (
                     <Col span={6}>
                         <Select
                             style={{ width: '100%' }}
@@ -599,13 +689,14 @@ const AttendanceReport: React.FC = () => {
                             value={selectedEmployee}
                             onChange={setSelectedEmployee}
                         >
-                            {employees.map((emp) => (
+                            {employees.map(emp => (
                                 <Option key={emp.id} value={emp.id}>
-                                    {emp.full_name} ({emp.employee_id})
+                                    {emp.user_last_name} {emp.user_first_name}
                                 </Option>
                             ))}
                         </Select>
                     </Col>
+                    )}
                     <Col span={6}>
                         <Select
                             style={{ width: '100%' }}

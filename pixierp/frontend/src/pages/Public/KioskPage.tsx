@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Typography, Result, Button, message } from 'antd';
-import { ClockCircleOutlined, CheckCircleOutlined } from '@ant-design/icons';
+import { ClockCircleOutlined, CheckCircleOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Title, Text } = Typography;
@@ -20,6 +20,7 @@ const KioskPage: React.FC = () => {
     const [deviceId] = useState(getDeviceId());
     const [deviceStatus, setDeviceStatus] = useState<string>('pending'); // pending, approved, blocked
     const [loading, setLoading] = useState(true);
+    const [isFullscreen, setIsFullscreen] = useState(false);
     
     // Original state
     const [status, setStatus] = useState<'IDLE' | 'SHOW_QR' | 'SUCCESS' | 'TIMEOUT'>('IDLE');
@@ -35,6 +36,26 @@ const KioskPage: React.FC = () => {
     const [isIdle, setIsIdle] = useState(false);
     const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
+
+    const toggleFullscreen = () => {
+        if (!document.fullscreenElement) {
+            document.documentElement.requestFullscreen().catch((err) => {
+                console.error(`Error attempting to enable fullscreen: ${err.message} (${err.name})`);
+            });
+        } else {
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            }
+        }
+    };
+
+    useEffect(() => {
+       const handler = () => {
+           setIsFullscreen(!!document.fullscreenElement);
+       };
+       document.addEventListener('fullscreenchange', handler);
+       return () => document.removeEventListener('fullscreenchange', handler);
+    }, []);
 
     const checkDeviceStatus = async () => {
         try {
@@ -303,6 +324,16 @@ const KioskPage: React.FC = () => {
                     )}
                 </div>
             )}
+            {/* Fullscreen Toggle */}
+            <div style={{ position: 'absolute', bottom: 20, left: 20, zIndex: 10, opacity: 0.3, transition: 'opacity 0.3s' }} 
+                 onMouseEnter={(e) => e.currentTarget.style.opacity = '1'} 
+                 onMouseLeave={(e) => e.currentTarget.style.opacity = '0.3'}>
+                <Button 
+                    type="text" 
+                    icon={isFullscreen ? <FullscreenExitOutlined style={{color: 'white', fontSize: 24}} /> : <FullscreenOutlined style={{color: 'white', fontSize: 24}} />} 
+                    onClick={toggleFullscreen} 
+                />
+            </div>
         </div>
     );
 };

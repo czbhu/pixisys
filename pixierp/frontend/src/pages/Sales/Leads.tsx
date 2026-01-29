@@ -183,9 +183,23 @@ const Leads: React.FC = () => {
                 title={editingCustomer ? 'Ügyfél szerkesztése' : 'Új ügyfél'}
                 open={isModalVisible}
                 onCancel={() => {
-                    setIsModalVisible(false);
-                    form.resetFields();
-                    setEditingCustomer(null);
+                    if (form.isFieldsTouched()) {
+                        Modal.confirm({
+                            title: 'Biztosan bezárja?',
+                            content: 'A nem mentett változtatások elvesznek.',
+                            okText: 'Igen',
+                            cancelText: 'Nem',
+                            onOk: () => {
+                                setIsModalVisible(false);
+                                form.resetFields();
+                                setEditingCustomer(null);
+                            }
+                        });
+                    } else {
+                        setIsModalVisible(false);
+                        form.resetFields();
+                        setEditingCustomer(null);
+                    }
                 }}
                 onOk={() => form.submit()}
             >

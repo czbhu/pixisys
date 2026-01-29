@@ -121,6 +121,7 @@ class Company(models.Model):
     xml_logging_enabled = models.BooleanField(default=True, verbose_name="XML log mentés engedélyezve")
     round_transfer_to_whole = models.BooleanField(default=False, verbose_name="Csak egész számos utalás")
     is_active = models.BooleanField(default=True, verbose_name="Active")
+    order_index = models.IntegerField(default=0, verbose_name="Order Index")
     api_key = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name="API-kulcs")
 
     def save(self, *args, **kwargs):
@@ -134,7 +135,7 @@ class Company(models.Model):
     class Meta:
         verbose_name = "Company"
         verbose_name_plural = "Companies"
-        ordering = ['name']
+        ordering = ['order_index', 'name']
 
     def __str__(self):
         return f"{self.name} ({self.tax_number})"
@@ -748,6 +749,8 @@ class InvoiceBlock(models.Model):
         verbose_name="Default Bank Account"
     )
     
+    footer_note = models.TextField(blank=True, null=True, verbose_name="Lábjegyzék")
+
     LANGUAGE_CHOICES = [
         ('hu', 'Magyar'),
         ('en', 'Angol'),

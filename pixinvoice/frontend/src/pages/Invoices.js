@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import styled from 'styled-components';
 import { toast } from 'react-toastify';
-import { invoiceAPI, emailSettingsAPI } from '../services/api';
+import { invoiceAPI, invoiceBlockAPI, emailSettingsAPI } from '../services/api';
 import EmailModal from '../components/EmailModal';
 import Modal from '../components/Modal';
 
@@ -237,6 +237,7 @@ const EmptyState = styled.div`
 const Invoices = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [blockFilter, setBlockFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedCompanyId, setSelectedCompanyId] = useState(() => {
     try { return localStorage.getItem('selectedCompanyId'); } catch { return null; }
@@ -271,11 +272,18 @@ const Invoices = () => {
   // Reset page when company changes
   React.useEffect(() => { setCurrentPage(1); }, [selectedCompanyId]);
 
+  const { data: invoiceBlocks } = useQuery(
+    ['invoiceBlocks', { company_id: selectedCompanyId }],
+    () => invoiceBlockAPI.getInvoiceBlocks({ company_id: selectedCompanyId }).then(res => res.data?.results || res.data),
+    { enabled: !!selectedCompanyId }
+  );
+
   const { data: invoices, isLoading, error } = useQuery(
-    ['invoices', { search: searchTerm, status: statusFilter, page: currentPage, company_id: selectedCompanyId }],
+    ['invoices', { search: searchTerm, status: statusFilter, block: blockFilter, page: currentPage, company_id: selectedCompanyId }],
     () => invoiceAPI.getInvoices({
       search: searchTerm || undefined,
       status: statusFilter || undefined,
+      invoice_block: blockFilter || undefined,
       page: currentPage,
       company_id: selectedCompanyId || undefined,
     }),
@@ -438,6 +446,7 @@ const Invoices = () => {
     `${companyTax}`,
   ].join('\n');
     let defaultFrom = invoice?.company?.email || '';
+    let defaultReplyTo = defaultFrom;
     let defaultUseThunderbird = false;
     let defaultThunderbirdPath = '';
     try {
@@ -446,60 +455,56 @@ const Invoices = () => {
         const res = await emailSettingsAPI.getSettings({ company_id: companyId });
         const s = (res.data?.results && res.data.results[0]) || (Array.isArray(res.data) ? res.data[0] : res.data);
         if (s) {
-          if (s.smtp_from) defaultFrom = s.smtp_from;
+          if (s.smtp_from) {
+             defaultFrom = s.smtp_from;
+             defaultReplyTo = s.smtp_from;
+          }
           defaultUseThunderbird = !!s.use_thunderbird;
           defaultThunderbirdPath = s.thunderbird_path || '';
           const bilingual = (invoice.currency || '').toUpperCase() !== 'HUF';
+
+          // Generate items table string
+          let itemsTable = 'Megnevezés\tMennyiség\tNettó ár\tBruttó ár';
+          if (Array.isArray(invoice.items)) {
+             const lines = invoice.items.map(item => {
+                 const n = item.name || '';
+                 const q = `${item.quantity || 0} ${item.unit || ''}`;
+                 const net = (item.net_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                 const gr = (item.gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                 return `${n}\t${q}\t${net}\t${gr}`;
+             });
+             if (lines.length > 0) itemsTable += '\n' + lines.join('\n');
+          }
+
           const fill = (tpl) => (tpl || '')
-            .replace('{invoice_number}', invoice.invoice_number || '')
-            .replace('{customer_name}', invoice.customer?.name || '')
-            .replace('{company_name}', invoice.company?.name || '');
+            .replace(/{invoice_number}/g, invoice.invoice_number || '')
+            .replace(/{customer_name}/g, invoice.customer?.name || '')
+            .replace(/{company_name}/g, invoice.company?.name || '')
+            .replace(/{due_date}/g, invoice.due_date || '')
+            .replace(/{total}/g, `${(invoice.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${invoice.currency || ''}`)
+            .replace(/{invoice_items_table}/g, itemsTable);
+
           if (s.default_subject_template) subject = fill(s.default_subject_template);
           if (s.default_body_template) body = fill(s.default_body_template);
           if (bilingual) {
             const enSubj = fill(s.subject_template_en) || `Invoice ${invoice.invoice_number}`;
             const enBody = fill(s.body_template_en) || `Dear ${invoice.customer?.name || 'Customer'},\n\nPlease find attached invoice ${invoice.invoice_number}.\n\nBest regards,\n${invoice.company?.name || ''}`;
-            subject = `${subject} / ${enSubj}`;
-            body = `${body}\n\n---\n\n${enBody}`;
-          }
-          // If Thunderbird is set, skip modal and download EML immediately
-          if (defaultUseThunderbird) {
-            try {
-              const resDraft = await invoiceAPI.draftEML(invoice.id, {
-                to: defTo,
-                cc: [],
-                bcc: [],
-                subject,
-                body,
-              });
-              const blob = new Blob([resDraft.data], { type: 'message/rfc822' });
-              const url = window.URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = url;
-              a.download = `invoice_${invoice.invoice_number || invoice.id}.eml`;
-              document.body.appendChild(a);
-              a.click();
-              a.remove();
-              window.URL.revokeObjectURL(url);
-              toast.success('EML letöltve');
-              return; // do not open modal
-            } catch (err) {
-              toast.error('EML generálási hiba');
-              return;
-            }
+            subject = `${enSubj} / ${subject}`;
+            body = `${enBody}\n\n---\n\n${body}`;
           }
         }
       }
     } catch (e) {}
     setEmailDefaults({
       defaultFrom,
+      defaultReplyTo,
       defaultTo: defTo,
       defaultCc: [],
       defaultBcc: [],
       defaultSubject: subject,
       defaultBody: body,
-      defaultUseThunderbird,
-      defaultThunderbirdPath,
+      defaultUseThunderbird: false,
+      defaultThunderbirdPath: '',
     });
     setEmailModalOpen(true);
   };
@@ -511,6 +516,7 @@ const Invoices = () => {
     setBulkMode(true);
     const companyId = list[0]?.company?.id || localStorage.getItem('selectedCompanyId');
     let defaultFrom = list[0]?.company?.email || '';
+    let defaultReplyTo = defaultFrom;
     let to = [];
     const sameCustomer = list.every(inv => inv.customer?.id === list[0]?.customer?.id);
     if (sameCustomer && list[0]?.customer?.email) to = [list[0].customer.email];
@@ -523,7 +529,10 @@ const Invoices = () => {
         const res = await emailSettingsAPI.getSettings({ company_id: companyId });
         const s = (res.data?.results && res.data.results[0]) || (Array.isArray(res.data) ? res.data[0] : res.data);
         if (s) {
-          if (s.smtp_from) defaultFrom = s.smtp_from;
+          if (s.smtp_from) {
+             defaultFrom = s.smtp_from;
+             defaultReplyTo = s.smtp_from;
+          }
           defaultUseThunderbird = !!s.use_thunderbird;
           defaultThunderbirdPath = s.thunderbird_path || '';
           const fill = (tpl, inv) => (tpl || '')
@@ -598,6 +607,7 @@ const Invoices = () => {
 
     setEmailDefaults({
       defaultFrom,
+      defaultReplyTo,
       defaultTo: to,
       defaultCc: [],
       defaultBcc: [],
@@ -612,43 +622,14 @@ const Invoices = () => {
 
   const sendEmailFromModal = async (payload) => {
     try {
-      const isWin = navigator.platform.toLowerCase().includes('win') || navigator.userAgent.includes('Windows');
-      const wantsThunderbird = !!payload.use_thunderbird;
       if (bulkMode) {
         const ids = emailDefaults?.invoiceIds || Array.from(selectedIds);
-        if (wantsThunderbird && isWin) {
-          // Generate EML for Windows and trigger download
-          const res = await invoiceAPI.draftBulkEML({ ...payload, invoice_ids: ids });
-          const blob = new Blob([res.data], { type: 'message/rfc822' });
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `invoices_${ids.length}_db.eml`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-        } else {
-          await invoiceAPI.sendBulkEmail({ ...payload, invoice_ids: ids });
-        }
+        await invoiceAPI.sendBulkEmail({ ...payload, invoice_ids: ids });
       } else {
         if (!emailInvoice) return;
-        if (wantsThunderbird && isWin) {
-          const res = await invoiceAPI.draftEML(emailInvoice.id, payload);
-          const blob = new Blob([res.data], { type: 'message/rfc822' });
-          const url = window.URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = `invoice_${emailInvoice.invoice_number || emailInvoice.id}.eml`;
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          window.URL.revokeObjectURL(url);
-        } else {
-          await invoiceAPI.sendEmail(emailInvoice.id, payload);
-        }
+        await invoiceAPI.sendEmail(emailInvoice.id, payload);
       }
-      toast.success(wantsThunderbird && isWin ? 'EML letöltve' : 'E-mail elküldve');
+      toast.success('E-mail elküldve');
       queryClient.invalidateQueries('invoices');
       if (bulkMode) setSelectedIds(new Set());
     } catch (e) {
@@ -658,11 +639,12 @@ const Invoices = () => {
     }
   };
 
-  const formatCurrency = (amount) => {
+  const formatCurrency = (amount, currency = 'HUF') => {
     return new Intl.NumberFormat('hu-HU', {
       style: 'currency',
-      currency: 'HUF',
-      minimumFractionDigits: 0,
+      currency: currency,
+      minimumFractionDigits: currency === 'HUF' ? 0 : 2,
+      maximumFractionDigits: currency === 'HUF' ? 0 : 2,
     }).format(amount);
   };
 
@@ -719,6 +701,18 @@ const Invoices = () => {
             <option value="submitted_to_nav">NAV-ban</option>
             <option value="nav_processed">NAV feldolgozva</option>
             <option value="nav_rejected">NAV elutasítva</option>
+          </FilterSelect>
+          <FilterSelect
+            value={blockFilter}
+            onChange={(e) => setBlockFilter(e.target.value)}
+            style={{ minWidth: '150px' }}
+          >
+            <option value="">Összes számlatömb</option>
+            {(invoiceBlocks || []).map(b => (
+              <option key={b.id} value={b.id}>
+                {b.name} ({b.prefix})
+              </option>
+            ))}
           </FilterSelect>
           <ActionButton to="/invoices/new">
             <Plus size={16} />
@@ -833,7 +827,23 @@ const Invoices = () => {
                 <TableCell>{invoice.delivery_date ? formatDate(invoice.delivery_date) : '—'}</TableCell>
                 <TableCell>{formatDate(invoice.due_date)}</TableCell>
                 <TableCell>{payLabel(invoice.payment_method)}</TableCell>
-                <TableCell>{formatCurrency(invoice.total_gross_amount)}</TableCell>
+                <TableCell>
+                  {(() => {
+                    const amount = parseFloat(invoice.total_gross_amount || 0);
+                    const curr = invoice.currency || 'HUF';
+                    const rate = parseFloat(invoice.exchange_rate || 1);
+                    return (
+                      <>
+                        <div style={{ fontWeight: 500 }}>{formatCurrency(amount, curr)}</div>
+                        {curr !== 'HUF' && (
+                          <div style={{ fontSize: 12, color: '#7f8c8d', marginTop: 2 }}>
+                            {formatCurrency(amount * rate, 'HUF')}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </TableCell>
                 <TableCell>
                   <StatusBadge status={invoice.status}>
                     {getStatusLabel(invoice.status)}
@@ -858,21 +868,14 @@ const Invoices = () => {
                 </TableCell>
                 <TableCell>
                   <ActionButtons>
+                    {/* Előnézet (nyomtatási kép) gomb eltávolítva kérésre */}
                     <IconButton
                       variant="view"
-                      title="Előnézet (nyomtatási kép)"
-                      as={Link}
-                      to={`/invoices/${invoice.id}/edit?mode=view&print=1`}
-                    >
-                      <Eye size={16} />
-                    </IconButton>
-                    <IconButton
-                      variant="edit"
                       title="Megnyitás (olvasás)"
                       as={Link}
                       to={`/invoices/${invoice.id}/edit?mode=view`}
                     >
-                      <Edit size={16} />
+                      <Eye size={16} />
                     </IconButton>
                     <IconButton
                       variant="copy"
@@ -1006,6 +1009,7 @@ const Invoices = () => {
         onClose={() => setEmailModalOpen(false)}
         onSend={sendEmailFromModal}
         defaultFrom={emailDefaults.defaultFrom}
+        defaultReplyTo={emailDefaults.defaultReplyTo}
         defaultTo={emailDefaults.defaultTo}
         defaultCc={emailDefaults.defaultCc}
         defaultBcc={emailDefaults.defaultBcc}
@@ -1065,7 +1069,7 @@ const Invoices = () => {
           <div style={{ background: '#f8f9fa', padding: 12, borderRadius: 6, marginBottom: 16 }}>
             <div><strong>Számlaszám:</strong> {stornoInvoice.invoice_number}</div>
             <div><strong>Ügyfél:</strong> {stornoInvoice.customer?.name}</div>
-            <div><strong>Összeg:</strong> {formatCurrency(stornoInvoice.total_gross_amount)}</div>
+            <div><strong>Összeg:</strong> {formatCurrency(stornoInvoice.total_gross_amount, stornoInvoice.currency)}</div>
           </div>
           
           {/* Tételek táblázat */}
@@ -1096,8 +1100,8 @@ const Invoices = () => {
                         <td style={{ padding: '8px' }}>{item.product_code_value || '—'}</td>
                         <td style={{ padding: '8px', textAlign: 'right' }}>{item.quantity}</td>
                         <td style={{ padding: '8px', textAlign: 'center' }}>{item.unit_of_measure || 'db'}</td>
-                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.unit_price)}</td>
-                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.net_amount)}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.unit_price, stornoInvoice.currency)}</td>
+                        <td style={{ padding: '8px', textAlign: 'right' }}>{formatCurrency(item.net_amount, stornoInvoice.currency)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -18,6 +18,10 @@ export const settingsService = {
     const r = await api.post(`/core/email-servers/${id}/send_test_email/`, { recipient });
     return r.data;
   },
+  async detectIMAPSent(data: any) {
+    const r = await api.post('/core/email-servers/detect_imap_sent/', data);
+    return r.data;
+  },
   async getEmailTemplates() {
     const r = await api.get('/core/email-templates/');
     const d = r.data;

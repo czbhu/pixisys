@@ -45,6 +45,7 @@ interface Department {
     created_at: string;
     updated_at: string;
     employee_count?: number;
+    inactivity_timeout?: number;
 }
 
 interface Employee {
@@ -157,7 +158,8 @@ const Departments: React.FC = () => {
             description: department.description || '',
             managers: department.managers || [],
             roles: department.roles || [],
-            budget: department.budget || 0
+            budget: department.budget || 0,
+            inactivity_timeout: department.inactivity_timeout || 60
         });
         setIsModalVisible(true);
     };
@@ -466,6 +468,19 @@ const Departments: React.FC = () => {
                             placeholder="0"
                             min={0}
                             step={1000}
+                        />
+                    </Form.Item>
+
+                    <Form.Item
+                        name="inactivity_timeout"
+                        label="Inaktivitási időkorlát (perc)"
+                        tooltip="Ennyi perc inaktivitás után kap figyelmeztetést a felhasználó, majd automatikusan kilépteti a rendszer. 0 = kikapcsolva."
+                        initialValue={60}
+                    >
+                        <Input
+                            type="number"
+                            placeholder="60"
+                            min={0}
                         />
                     </Form.Item>
 

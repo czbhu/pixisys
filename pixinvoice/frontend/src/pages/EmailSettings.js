@@ -2,6 +2,8 @@ import React, { useEffect, useState } from 'react';
 import styled from 'styled-components';
 import { emailSettingsAPI } from '../services/api';
 import { toast } from 'react-toastify';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 const Container = styled.div`
   background: white;
@@ -24,7 +26,8 @@ const Grid = styled.div`
 `;
 
 const Label = styled.label`
-  align-self: center;
+  align-self: flex-start;
+  padding-top: 10px;
 `; 
 
 const Input = styled.input`
@@ -37,6 +40,18 @@ const Textarea = styled.textarea`
   padding: 8px 10px;
   border: 1px solid #ccc;
   border-radius: 6px;
+`;
+
+const EditorWrapper = styled.div`
+  .ql-container {
+    min-height: 200px;
+    border-bottom-left-radius: 6px;
+    border-bottom-right-radius: 6px;
+  }
+  .ql-toolbar {
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+  }
 `;
 
 const Row = styled.div`
@@ -62,8 +77,13 @@ export default function EmailSettings() {
   const [recentEmails, setRecentEmails] = useState([]);
 
   useEffect(() => {
-    const cid = localStorage.getItem('selectedCompanyId');
-    setCompanyId(cid);
+    const updateCid = () => {
+      const cid = localStorage.getItem('selectedCompanyId');
+      setCompanyId(cid);
+    };
+    updateCid();
+    window.addEventListener('companyChanged', updateCid);
+    return () => window.removeEventListener('companyChanged', updateCid);
   }, []);
 
   useEffect(() => {
@@ -278,15 +298,23 @@ export default function EmailSettings() {
         <Label>Alap tárgy sablon</Label>
         <Input value={data?.default_subject_template || ''} onChange={(e)=>setData({ ...data, default_subject_template: e.target.value })} />
 
+        <Row style={{ fontSize: '13px', color: '#555', padding: '8px 0 4px 180px' }}>
+          Használható változók: <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{invoice_number}'}</code>, <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{customer_name}'}</code>, <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{company_name}'}</code>, <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{due_date}'}</code>, <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{total}'}</code>, <code style={{ background: '#f5f5f5', padding: '2px 4px', borderRadius: 4 }}>{'{invoice_items_table}'}</code>
+        </Row>
+
         <Label>Alap levél sablon</Label>
-        <Textarea rows={8} value={data?.default_body_template || ''} onChange={(e)=>setData({ ...data, default_body_template: e.target.value })} />
+        <EditorWrapper>
+          <ReactQuill theme="snow" value={data?.default_body_template || ''} onChange={(val)=>setData({ ...data, default_body_template: val })} />
+        </EditorWrapper>
 
         <Row />
         <Label>Angol tárgy sablon</Label>
         <Input value={data?.subject_template_en || ''} onChange={(e)=>setData({ ...data, subject_template_en: e.target.value })} />
 
         <Label>Angol levél sablon</Label>
-        <Textarea rows={8} value={data?.body_template_en || ''} onChange={(e)=>setData({ ...data, body_template_en: e.target.value })} />
+        <EditorWrapper>
+          <ReactQuill theme="snow" value={data?.body_template_en || ''} onChange={(val)=>setData({ ...data, body_template_en: val })} />
+        </EditorWrapper>
 
         <Row />
         <Label>Feladó neve</Label>
@@ -294,13 +322,6 @@ export default function EmailSettings() {
 
         <Label>Feladó telefon</Label>
         <Input value={data?.default_sender_phone || ''} onChange={(e)=>setData({ ...data, default_sender_phone: e.target.value })} />
-
-        <Row />
-        <Label>Thunderbird használata</Label>
-        <input type="checkbox" checked={!!data?.use_thunderbird} onChange={(e)=>setData({ ...data, use_thunderbird: e.target.checked })} />
-
-        <Label>Thunderbird elérési út</Label>
-        <Input placeholder="pl. /usr/bin/thunderbird" value={data?.thunderbird_path || ''} onChange={(e)=>setData({ ...data, thunderbird_path: e.target.value })} />
       </Grid>
 
       <Actions>

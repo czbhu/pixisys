@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker } from 'antd';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined } from '@ant-design/icons';
+import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown } from 'antd';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -40,7 +40,7 @@ const CustomerOrders: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
   // Default filter: show everything EXCEPT cancelled and invoiced/delivered (archived)
-  const [statusFilter, setStatusFilter] = useState<string[]>(['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']);
+  const [statusFilter, setStatusFilter] = useState<string[]>(['new', 'confirmed', 'in_production']);
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [timestampModalOpen, setTimestampModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
@@ -49,6 +49,12 @@ const CustomerOrders: React.FC = () => {
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
   const [itemsDrawerOpen, setItemsDrawerOpen] = useState(false);
   const [drawerOrder, setDrawerOrder] = useState<{id: number, number: string} | null>(null);
+  const [isItemsView, setIsItemsView] = useState(false);
+  
+  // Column visibility for Items View
+  const [descriptionVisible, setDescriptionVisible] = useState(true); // "Leírás" (Product Desc)
+  const [internalDescriptionVisible, setInternalDescriptionVisible] = useState(false); // "Belső leírás"
+  const [noteVisible, setNoteVisible] = useState(true); // "Megjegyzés" (Item Note)
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -101,129 +107,51 @@ const CustomerOrders: React.FC = () => {
     }
   };
 
-  const columns: ColumnsType<CustomerOrder> = [
-    {
-      title: 'Dátum',
-      dataIndex: 'order_date',
-      key: 'order_date',
-      width: 120,
-      render: (date: string, record: CustomerOrder) => (
-        <div>
-          <div>
-            {new Date(date).toLocaleDateString('hu-HU', {
-              year: 'numeric',
-              month: '2-digit',
-              day: '2-digit',
-            })}
-          </div>
-          {record.created_by_name && (
-            <div style={{ fontSize: '11px', color: '#888' }}>
-              {record.created_by_name}
-            </div>
-          )}
-        </div>
-      ),
-    },
-    {
-      title: 'Megr. szám',
-      dataIndex: 'order_number',
-      key: 'order_number',
-      width: 150,
-      render: (text: string, record: CustomerOrder) => (
-        <Button type="link" onClick={() => navigate(`/sales/customer-orders/${record.id}`)}>
-          {text}
-        </Button>
-      ),
-    },
-    {
-      title: 'Árajánlat',
-      dataIndex: 'quote_request_title',
-      key: 'quote_request_title',
-      ellipsis: true,
-      responsive: ['lg'],
-      render: (text: string, record: CustomerOrder) => (
-        <Tooltip title={text}>
-          {record.quote_request_id ? (
-            <Button type="link" onClick={() => navigate(`/sales/rfqs/${record.quote_request_id}`)}>
-              {text}
-            </Button>
-          ) : (
-            <span>{text || '-'}</span>
-          )}
-        </Tooltip>
-      ),
-    },
-    {
-      title: 'Ügyfél',
-      dataIndex: 'customer_name',
-      key: 'customer_name',
-      ellipsis: true,
-      width: 140,
-      responsive: ['sm'],
-      render: (text: string, record: CustomerOrder) => (
-         <div>
-             <div style={{fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '20ch'}}>
-                 {text || 'Magánszemély'}
-             </div>
-             {record.contact_names && (
-                 <div style={{fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '25ch'}} title={record.contact_names}>
-                     {record.contact_names}
-                 </div>
-             )}
-         </div>
-      )
-    },
-    {
-      title: 'Kapcsolattartók', 
-      dataIndex: 'contact_names',
-      key: 'contact_names',
-      ellipsis: true,
-      hidden: true,
-      width: 150,
-      responsive: ['xl'],
-    },
-    {
-      title: 'Határidő',
-      dataIndex: 'deadline',
-      key: 'deadline',
-      width: 110,
-      responsive: ['sm'],
-      render: (date: string | null) => {
-        if (!date) return '-';
-        return new Date(date).toLocaleDateString('hu-HU', {
-          year: 'numeric',
-          month: '2-digit',
-          day: '2-digit',
-        });
-      },
-    },
-    {
-      title: 'Összeg',
-      dataIndex: 'total_amount',
-      key: 'total_amount',
-      width: 130,
-      align: 'right',
-      render: (amount: number) => {
-        if (!amount && amount !== 0) return '-';
-        return new Intl.NumberFormat('hu-HU', {
-          minimumFractionDigits: 0,
-          maximumFractionDigits: 0,
-        }).format(amount) + ' Ft';
-      },
-    },
-    {
-      title: 'Státusz',
-      dataIndex: 'status',
-      key: 'status',
-      width: 130,
-      render: (status: string, record: CustomerOrder) => statusTag(status, record),
-    },
-    {
-      title: 'Műveletek',
-      key: 'actions',
-      width: 400,
-      fixed: 'right',
-      render: (_: any, record: CustomerOrder) => (
+  const handleItemStatusChange = async (itemId: number, newStatus: string) => {
+    try {
+        await api.patch(`/sales/customer-order-items/${itemId}/`, { status: newStatus });
+        message.success('Tétel státusza frissítve');
+        fetchOrders(); // Refresh to see changes
+    } catch (error) {
+        message.error('Hiba a státusz frissítésekor');
+    }
+  };
+
+  const handleItemDelete = (itemId: number) => {
+      Modal.confirm({
+          title: 'Biztosan törli a tételt?',
+          content: 'A művelet nem visszavonható.',
+          okText: 'Törlés',
+          okType: 'danger',
+          cancelText: 'Mégse',
+          onOk: async () => {
+              try {
+                  await api.delete(`/sales/customer-order-items/${itemId}/`);
+                  message.success('Tétel törölve');
+                  fetchOrders();
+              } catch (error) {
+                  message.error('Hiba a tétel törlésekor');
+              }
+          }
+      });
+  };
+
+  const statusColumn = {
+    title: 'Státusz',
+    dataIndex: 'status',
+    key: 'status',
+    width: 130,
+    render: (status: string, record: any) => statusTag(status, record.originalOrder || record),
+  };
+
+  const actionsColumn = {
+    title: 'Műveletek',
+    key: 'actions',
+    width: 400,
+    fixed: 'right' as const,
+    render: (_: any, item: any) => {
+      const record = item.originalOrder || item;
+      return (
         <Space size="small" wrap>
           <Tooltip title="Részletek">
             <Button
@@ -310,7 +238,7 @@ const CustomerOrders: React.FC = () => {
             </Tooltip>
           )}
 
-          {record.status !== 'cancelled' && (
+          {record.status !== 'cancelled' && !isItemsView && (
             <Tooltip title="Tételek">
               <Button 
                 icon={<UnorderedListOutlined />} 
@@ -366,7 +294,339 @@ const CustomerOrders: React.FC = () => {
             </Tooltip>
           )}
         </Space>
+      );
+    }
+  };
+
+  const columns: ColumnsType<CustomerOrder> = [
+    {
+      title: 'Dátum',
+      dataIndex: 'order_date',
+      key: 'order_date',
+      width: 120,
+      render: (date: string, record: CustomerOrder) => (
+        <div>
+          <div>
+            {new Date(date).toLocaleDateString('hu-HU', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            })}
+          </div>
+          {record.created_by_name && (
+            <div style={{ fontSize: '11px', color: '#888' }}>
+              {record.created_by_name}
+            </div>
+          )}
+        </div>
       ),
+    },
+    {
+      title: 'Megr. szám',
+      dataIndex: 'order_number',
+      key: 'order_number',
+      width: 150,
+      render: (text: string, record: CustomerOrder) => (
+        <Button type="link" onClick={() => navigate(`/sales/customer-orders/${record.id}`)}>
+          {text}
+        </Button>
+      ),
+    },
+    {
+      title: 'Árajánlat',
+      dataIndex: 'quote_request_title',
+      key: 'quote_request_title',
+      ellipsis: true,
+      responsive: ['lg'] as any,
+      render: (text: string, record: CustomerOrder) => (
+        <Tooltip title={text}>
+          {record.quote_request_id ? (
+            <Button type="link" onClick={() => navigate(`/sales/rfqs/${record.quote_request_id}`)}>
+              {text}
+            </Button>
+          ) : (
+            <span>{text || '-'}</span>
+          )}
+        </Tooltip>
+      ),
+    },
+    {
+      title: 'Ügyfél',
+      dataIndex: 'customer_name',
+      key: 'customer_name',
+      ellipsis: true,
+      width: 140,
+      responsive: ['sm'] as any,
+      render: (text: string, record: CustomerOrder) => (
+         <div>
+             <div style={{fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '20ch'}}>
+                 {text || 'Magánszemély'}
+             </div>
+             {record.contact_names && (
+                 <div style={{fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '25ch'}} title={record.contact_names}>
+                     {record.contact_names}
+                 </div>
+             )}
+         </div>
+      )
+    },
+    {
+      title: 'Kapcsolattartók', 
+      dataIndex: 'contact_names',
+      key: 'contact_names',
+      ellipsis: true,
+      hidden: true,
+      width: 150,
+      responsive: ['xl'] as any,
+    },
+    {
+      title: 'Határidő',
+      dataIndex: 'deadline',
+      key: 'deadline',
+      width: 110,
+      responsive: ['sm'] as any,
+      render: (date: string | null) => {
+        if (!date) return '-';
+        return new Date(date).toLocaleDateString('hu-HU', {
+          year: 'numeric',
+          month: '2-digit',
+          day: '2-digit',
+        });
+      },
+    },
+    {
+      title: 'Nettó összeg',
+      dataIndex: 'total_net_amount',
+      key: 'total_net_amount',
+      width: 130,
+      align: 'right',
+      render: (amount: number) => {
+        if (!amount && amount !== 0) return '-';
+        return new Intl.NumberFormat('hu-HU', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(amount) + ' Ft';
+      },
+    },
+    statusColumn,
+    actionsColumn as any,
+  ];
+
+  const itemsColumns: ColumnsType<any> = [
+    {
+      title: 'Dátum',
+      dataIndex: 'order_date',
+      key: 'order_date',
+      width: 120,
+      render: (date: string, record: any) => (
+        <div>
+          <div>
+            {new Date(date).toLocaleDateString('hu-HU', {
+              year: 'numeric',
+              month: '2-digit',
+              day: '2-digit',
+            })}
+          </div>
+          {record.created_by_name && (
+            <div style={{ fontSize: '11px', color: '#888' }}>
+              {record.created_by_name}
+            </div>
+          )}
+        </div>
+      ),
+    },
+    {
+      title: 'Megr. szám',
+      dataIndex: 'order_number',
+      key: 'order_number',
+      width: 150,
+      render: (text: string, record: any) => (
+        <Button type="link" onClick={() => navigate(`/sales/customer-orders/${record.originalOrder.id}`)}>
+          {text}
+        </Button>
+      ),
+    },
+    {
+        title: 'Tétel neve',
+        key: 'name',
+        ellipsis: true,
+        render: (_: any, record: any) => {
+            const name = record.product_name || 
+                         record.manufacturing_product_name || 
+                         record.material_name || 
+                         record.service_name || 
+                        '-';
+            const code = record.product_code || 
+                         record.material_code || 
+                         record.service_code;
+            
+            return (
+                <div>
+                    <div style={{ fontWeight: 500 }}>{name}</div>
+                    {code && <div style={{ fontSize: '11px', color: '#666' }}>{code}</div>}
+                </div>
+            );
+        },
+    },
+    ...(descriptionVisible ? [{
+        title: 'Leírás',
+        dataIndex: 'product_description',
+        key: 'product_description',
+        width: 200,
+        render: (t: string) => (
+             <div title={t} style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                fontSize: 12, color: '#555'
+            }}>
+                {t}
+            </div>
+        )
+    }] : []),
+    ...(internalDescriptionVisible ? [{
+        title: 'Belső leírás',
+        dataIndex: 'internal_description',
+        key: 'internal_description',
+        width: 200,
+        render: (t: string) => (
+             <div title={t} style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 3,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden',
+                fontSize: 12, color: '#844'
+            }}>
+                {t}
+            </div>
+        )
+    }] : []),
+    ...(noteVisible ? [{
+        title: 'Megjegyzés',
+        dataIndex: 'description',
+        key: 'description',
+        responsive: ['md'] as any,
+        width: 200,
+        render: (t: string) => (
+            <div title={t} style={{
+                display: '-webkit-box',
+                WebkitLineClamp: 4,
+                WebkitBoxOrient: 'vertical',
+                overflow: 'hidden'
+            }}>
+                {t}
+            </div>
+        )
+    }] : []),
+    {
+        title: 'Beszállítók',
+        dataIndex: 'supplier_name',
+        key: 'supplier_name',
+        ellipsis: true,
+        responsive: ['lg'] as any,
+    },
+    {
+      title: 'Ügyfél',
+      dataIndex: 'customer_name',
+      key: 'customer_name',
+      ellipsis: true,
+      width: 140,
+      responsive: ['sm'] as any,
+       render: (text: string, record: any) => (
+         <div>
+             <div style={{fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '20ch'}}>
+                 {text || 'Magánszemély'}
+             </div>
+             {record.contact_names && (
+                 <div style={{fontSize: 11, color: '#666', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '25ch'}} title={record.contact_names}>
+                     {record.contact_names}
+                 </div>
+             )}
+         </div>
+       )
+    },
+    {
+      title: 'Határidő',
+      dataIndex: 'deadline',
+      key: 'deadline',
+      width: 110,
+      responsive: ['sm'] as any,
+      render: (date: string | null) => (date ? new Date(date).toLocaleDateString('hu-HU', {year:'numeric', month:'2-digit', day:'2-digit'}) : '-'),
+    },
+    {
+      title: 'Nettó összeg',
+      dataIndex: 'net_total', 
+      key: 'net_total',
+      width: 100,
+      align: 'right',
+      render: (amount: number) => {
+        if (!amount && amount !== 0) return '-';
+        return new Intl.NumberFormat('hu-HU', {
+          minimumFractionDigits: 0,
+          maximumFractionDigits: 0,
+        }).format(amount) + ' Ft';
+      },
+    },
+    statusColumn,
+    {
+      title: 'Műveletek',
+      key: 'actions',
+      width: 150,
+      render: (_: any, record: any) => (
+        <Space>
+        <Tooltip title="Tétel munkalap">
+          <Button
+            icon={<PrinterOutlined />}
+            size="small"
+            onClick={async () => {
+              try {
+                // record is the flattened item. It has originalOrder and properties from items.
+                // We need QuoteRequestItem ID for the backend.
+                // record.quote_item.id if exists, else record.id might be CustomerOrderItem ID.
+                // The backend currently expects QuoteRequestItem.id 
+                // Let's rely on record.quote_item object if coming from CustomerOrderItemSerializer
+                const qriId = record.quote_item ? record.quote_item.id : record.id;
+                
+                const response = await api.get(
+                  `/sales/customer-orders/${record.originalOrder.id}/item_work_sheet/?item_id=${qriId}`,
+                  { responseType: 'blob' }
+                );
+                const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+                window.open(url, '_blank');
+              } catch (error) {
+                message.error('Hiba a munkalap letöltése során');
+              }
+            }}
+          />
+        </Tooltip>
+        
+        <Dropdown
+            menu={{
+                items: [
+                   { key: 'new', label: 'Új' },
+                   { key: 'confirmed', label: 'Megerősítve' },
+                   { key: 'in_production', label: 'Gyártásban' },
+                   { key: 'ready', label: 'Kész' },
+                   { key: 'in_delivery', label: 'Szállítás alatt' },
+                   { key: 'delivered', label: 'Leszállítva' },
+                ],
+                onClick: (e) => handleItemStatusChange(record.id, e.key)
+            }}
+        >
+            <Button size="small" icon={<SyncOutlined />} />
+        </Dropdown>
+
+        <Tooltip title="Törlés">
+            <Button
+                danger
+                icon={<DeleteOutlined />}
+                size="small"
+                onClick={() => handleItemDelete(record.id)}
+            />
+        </Tooltip>
+        </Space>
+      )
     },
   ];
 
@@ -416,11 +676,56 @@ const CustomerOrders: React.FC = () => {
     );
   });
 
+  const flattenedItems = useMemo(() => {
+    if (!isItemsView) return [];
+    const res: any[] = [];
+    filteredOrders.forEach(order => {
+        if (order.items && Array.isArray(order.items)) {
+            order.items.forEach((item, idx) => {
+                res.push({
+                    ...item,
+                    uniqueId: `${order.id}_${item.id || idx}`,
+                    originalOrder: order,
+                    // Copy order fields needed for columns/filtering
+                    order_date: order.order_date,
+                    order_number: order.order_number,
+                    customer_name: order.customer_name,
+                    deadline: order.deadline,
+                    status: order.status,
+                    created_by_name: order.created_by_name,
+                    contact_names: order.contact_names,
+                    invoice_number: order.invoice_number,
+                });
+            });
+        }
+    });
+    return res;
+  }, [filteredOrders, isItemsView]);
+
   return (
     <Card
       title="Megrendelések"
       extra={
         <Space>
+           <Switch 
+              checkedChildren="Tételek" 
+              unCheckedChildren="Megrendelések"
+              checked={isItemsView}
+              onChange={setIsItemsView} 
+           />
+           {isItemsView && (
+            <Dropdown
+              menu={{
+                items: [
+                   { key: 'desc', label: 'Leírás', icon: descriptionVisible ? <CheckOutlined /> : <CloseOutlined />, onClick: () => setDescriptionVisible(!descriptionVisible) },
+                   { key: 'internal', label: 'Belső leírás', icon: internalDescriptionVisible ? <CheckOutlined /> : <CloseOutlined />, onClick: () => setInternalDescriptionVisible(!internalDescriptionVisible) },
+                   { key: 'note', label: 'Megjegyzés', icon: noteVisible ? <CheckOutlined /> : <CloseOutlined />, onClick: () => setNoteVisible(!noteVisible) },
+                ]
+              }}
+            >
+                <Button icon={<EyeOutlined />}>Oszlopok</Button>
+            </Dropdown>
+          )}
           <Select
             placeholder="Szűrés rögzítőre"
             allowClear
@@ -432,6 +737,29 @@ const CustomerOrders: React.FC = () => {
               <Select.Option key={name} value={name}>{name}</Select.Option>
             ))}
           </Select>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'not_ready',
+                  label: 'Nincs kész (Új, Megerősítve, Gyártásban)',
+                  onClick: () => setStatusFilter(['new', 'confirmed', 'in_production']),
+                },
+                {
+                  key: 'not_delivered',
+                  label: 'Nincs leszállítva (Minden aktív)',
+                  onClick: () => setStatusFilter(['new', 'confirmed', 'in_production', 'ready', 'in_delivery']),
+                },
+                {
+                  key: 'all',
+                  label: 'Minden (kivéve törölt/számlázott)',
+                  onClick: () => setStatusFilter(['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']),
+                },
+              ]
+            }}
+          >
+              <Button icon={<FilterOutlined />}>Gyorsszűrők</Button>
+          </Dropdown>
           <Select
             mode="multiple"
             style={{ minWidth: 200, maxWidth: 400 }}
@@ -461,9 +789,9 @@ const CustomerOrders: React.FC = () => {
       }
     >
       <Table
-        columns={columns}
-        dataSource={filteredOrders}
-        rowKey="id"
+        columns={isItemsView ? itemsColumns : columns}
+        dataSource={isItemsView ? flattenedItems : filteredOrders}
+        rowKey={isItemsView ? 'uniqueId' : 'id'}
         loading={loading}
         scroll={{ x: 'max-content' }}
         pagination={{

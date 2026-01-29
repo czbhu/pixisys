@@ -1,6 +1,7 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Products from './Products';
+import OrderedProducts from './OrderedProducts';
 import ProductClasses from './ProductClasses';
 import Projects from './Projects';
 import Services from './Services';
@@ -12,6 +13,7 @@ const ManufacturingModule: React.FC = () => {
         <Routes>
             <Route path="/" element={<Navigate to="/manufacturing/products" replace />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/ordered-products" element={<OrderedProducts />} />
             <Route path="/product-classes" element={<ProductClasses />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/services" element={<Services />} />

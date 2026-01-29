@@ -1031,8 +1031,21 @@ const RFQDetail: React.FC = () => {
         title="Új cég létrehozása"
         open={isCompanyModalVisible}
         onCancel={() => {
-          setIsCompanyModalVisible(false);
-          companyForm.resetFields();
+          if (companyForm.isFieldsTouched()) {
+            Modal.confirm({
+              title: 'Biztosan bezárja?',
+              content: 'A nem mentett változtatások elvesznek.',
+              okText: 'Igen',
+              cancelText: 'Nem',
+              onOk: () => {
+                setIsCompanyModalVisible(false);
+                companyForm.resetFields();
+              }
+            });
+          } else {
+            setIsCompanyModalVisible(false);
+            companyForm.resetFields();
+          }
         }}
         footer={null}
         width={800}

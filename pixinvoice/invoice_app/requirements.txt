@@ -11,6 +11,6 @@ lxml==4.9.3
 xmltodict==0.13.0
 pycryptodome==3.19.0
 reportlab==4.0.4
-WeasyPrint==53.3
+WeasyPrint>=60.0
 gunicorn==21.2.0
 setuptools

@@ -364,6 +364,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
 
   return (
     <Card size="small" title="Tételek">
+      <div style={{ position: 'relative', zIndex: 0 }}>
         <DndContext 
             sensors={sensors} 
             collisionDetection={closestCenter} 
@@ -387,6 +388,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                 />
             </SortableContext>
         </DndContext>
+      </div>
       {!hidePrices && (
       <div style={{ marginTop: 12, textAlign: 'right' }}>
         <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>

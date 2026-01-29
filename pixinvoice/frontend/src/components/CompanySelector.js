@@ -175,6 +175,7 @@ const CompanySelector = ({ selectedCompany, onCompanyChange, collapsed = false }
   const handleCompanySelect = (company) => {
     onCompanyChange(company);
     try { localStorage.setItem(STORAGE_KEY, company.id); } catch {}
+    try { window.dispatchEvent(new Event('companyChanged')); } catch {}
     setIsOpen(false);
   };
 

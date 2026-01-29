@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useForm, useFieldArray, Controller } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
@@ -482,6 +483,7 @@ const TRANSLATIONS = {
         'Esedékesség dátuma': 'Due Date',
         'Fizetési mód': 'Payment Method',
         'Megrendelésszám': 'Order Reference',
+        'Hivatkozási szám': 'Reference Number',
         'Pénznem': 'Currency',
         'Árfolyam': 'Exchange Rate',
         'Vevő': 'Buyer',
@@ -546,6 +548,7 @@ const TRANSLATIONS = {
         'Esedékesség dátuma': 'Fälligkeitsdatum',
         'Fizetési mód': 'Zahlungsart',
         'Megrendelésszám': 'Bestellnummer',
+        'Hivatkozási szám': 'Referenznummer',
         'Pénznem': 'Währung',
         'Árfolyam': 'Wechselkurs',
         'Vevő': 'Kunde',
@@ -623,6 +626,14 @@ const InvoiceForm = () => {
   
   const [exchangeRate, setExchangeRate] = useState(null);
   const [bilingual, setBilingual] = useState(false);
+  // Store historical view-only metadata like VAT names and original units to bypass RHF limitations in View Mode
+  const [itemMeta, setItemMeta] = useState({});
+
+  // Dynamic print styles for page numbering
+  const printPageContent = bilingual 
+    ? '"Oldal/Page " counter(page) " / " counter(pages)' 
+    : '"Oldal " counter(page) " / " counter(pages)';
+
   const [secLang, setSecLang] = useState(null);
   const [translations, setTranslations] = useState({});
   const copyFrom = params.get('copy_from') || '';
@@ -642,7 +653,7 @@ const InvoiceForm = () => {
     setValue,
     getValues,
     setError,
-    formState: { errors },
+    formState: { errors, dirtyFields },
   } = useForm({
     defaultValues: {
       items: [{ description: '', quantity: 1, unit_price: 0, vat_rate: 27, unit_of_measure: 'db' }],
@@ -745,6 +756,25 @@ const InvoiceForm = () => {
         try {
           // In read-only mode always hydrate from server
           if (!isReadOnly && hasDraftRef.current) return;
+
+          // Restore block and bilingual state
+          if (inv.invoice_block) {
+            const blkId = (typeof inv.invoice_block === 'object') ? inv.invoice_block.id : inv.invoice_block;
+            setValue('invoice_block_id', blkId);
+          } else if (inv.currency) {
+            // Attempt auto-select block by currency if missing
+            const bestBlock = (invoiceBlocks?.results || []).find(b => b.currency === inv.currency);
+            if (bestBlock) setValue('invoice_block_id', bestBlock.id);
+          }
+
+          let isBi = false;
+          if (inv.print_snapshot && typeof inv.print_snapshot.bilingual !== 'undefined') {
+            isBi = inv.print_snapshot.bilingual;
+          } else {
+            isBi = (inv.currency && inv.currency !== 'HUF');
+          }
+          setBilingual(isBi);
+
           setValue('invoice_number', inv.invoice_number || '');
           if (inv.customer && inv.customer.id) setValue('customer_id', inv.customer.id);
           if (inv.issue_date) setValue('issue_date', new Date(inv.issue_date));
@@ -754,23 +784,46 @@ const InvoiceForm = () => {
           if (typeof inv.exchange_rate !== 'undefined') setValue('exchange_rate', inv.exchange_rate);
           if (inv.payment_method) setValue('payment_method', inv.payment_method);
           if (inv.payment_date) setValue('payment_date', new Date(inv.payment_date));
-          setValue('notes', inv.notes || '');
+          if (typeof inv.invoice_appearance !== 'undefined') setValue('invoice_appearance', inv.invoice_appearance);
+          setValue('notes', inv.notes || null);
+          if (inv.invoice_category) setValue('invoice_category', inv.invoice_category);
+          if (typeof inv.completeness_indicator !== 'undefined') setValue('completeness_indicator', inv.completeness_indicator);
+          setValue('order_reference', inv.order_reference || '');
+          
           if (Array.isArray(inv.items) && inv.items.length) {
-            setValue('items', inv.items.map((item) => {
+            const metaMap = {};
+            
+            const newItems = inv.items.map((item, idx) => {
               const rate = Number(
                 item.vat_rate ?? item.vat_percentage ?? item.vat?.percentage ?? item.vat_type?.percentage ?? 0
               );
               const vatTypeId = item.vat_type_id || item.vat_type?.id || item.vat?.id || item.vat_type || undefined;
+              
+              // Extract VAT name and Unit directly if available or from snapshot
+              let vatName = item.vat_type?.name || item.vat?.name || undefined;
+              let uom = item.unit_of_measure;
+
+              if (inv.print_snapshot?.items?.[idx]) {
+                 const snap = inv.print_snapshot.items[idx];
+                 if (!vatName) vatName = snap._vat_name || snap.vat_name || undefined;
+                 if (!uom) uom = snap.unit_of_measure || snap.unit || undefined;
+              }
+              
+              metaMap[idx] = { vat_name: vatName, uom: uom || 'db' };
+
               return {
                 description: item.description,
                 quantity: item.quantity,
                 unit_price: item.unit_price,
                 vat_rate: rate,
-                unit_of_measure: item.unit_of_measure || 'db',
+                unit_of_measure: uom || 'db',
                 nature_indicator: item.nature_indicator || 'PRODUCT',
                 vat_type_id: vatTypeId,
+                _vat_name: vatName
               };
-            }));
+            });
+            setValue('items', newItems);
+            setItemMeta(metaMap);
           }
         } catch {}
       }
@@ -795,6 +848,92 @@ const InvoiceForm = () => {
         .map(c => ({ value: c.code, label: `${c.code} - ${c.name}` }));
   }, [availableCurrencies]);
 
+  // Auto-fetch exchange rate when currency or date changes
+  React.useEffect(() => {
+    const cur = watch('currency');
+    const dateVal = watch('issue_date');
+    if (!cur || cur === 'HUF') {
+        const currentRate = getValues('exchange_rate');
+        if (currentRate !== 1) setValue('exchange_rate', 1);
+        return;
+    }
+
+    // Only fetch if:
+    // 1. New invoice (creation)
+    // 2. OR User explicitly changed currency/date (dirty)
+    // 3. OR Invoice has wrong default rate (1.0) despite being foreign currency
+    const isDirty = dirtyFields.currency || dirtyFields.issue_date;
+    const currentRate = parseFloat(getValues('exchange_rate') || 0);
+    const hasDefaultRate = Math.abs(currentRate - 1) < 0.0001;
+
+    if (!isReadOnly && (isDirty || (!isEdit) || (isEdit && hasDefaultRate))) {
+        const dateStr = dateVal ? (dateVal instanceof Date ? dateVal.toISOString().split('T')[0] : dateVal) : new Date().toISOString().split('T')[0];
+        
+        utilsAPI.getExchangeRate(cur, dateStr)
+            .then(res => {
+                if (res.data && res.data.rate) {
+                    // Update only if rate is different to avoid loops
+                    const newRate = parseFloat(res.data.rate);
+                    if (Math.abs(newRate - currentRate) > 0.0001) {
+                        setValue('exchange_rate', newRate, { shouldValidate: true, shouldDirty: true });
+                        // Also update visual state if needed
+                        setExchangeRate(newRate);
+                        toast.info(`Árfolyam frissítve: 1 ${cur} = ${newRate} HUF (${res.data.date})`, { autoClose: 2000 });
+                    }
+                }
+            })
+            .catch(err => {
+                console.error("Exchange rate fetch failed", err);
+            });
+    }
+  }, [watch('currency'), watch('issue_date'), isEdit, isReadOnly, dirtyFields]);
+
+  // Fallback: If editing or viewing an invoice with no block saved, try to find a matching block by currency
+  React.useEffect(() => {
+    if (invoiceLoading || !invoiceBlocks?.results) return;
+    
+    // Check if we are in a mode where we should have a block (Edit or View)
+    if (!isEdit && !isReadOnly) return;
+
+    const currentBlockId = getValues('invoice_block_id');
+    const currentCurrency = getValues('currency');
+    
+    // Only if we have NO block but DO have a currency
+    if (!currentBlockId && currentCurrency) {
+        const best = invoiceBlocks.results.find(b => b.currency === currentCurrency);
+        if (best) {
+            setValue('invoice_block_id', best.id);
+             // Also force bilingual if block dictates it
+            if (best.second_language) {
+               setBilingual(true);
+            }
+        }
+    }
+  }, [isEdit, invoiceLoading, isReadOnly, invoiceBlocks, watch('invoice_block_id'), watch('currency')]);
+
+  // Sync visual settings (translations) from block in ReadOnly/Edit mode
+  // This ensures that when viewing an existing invoice, the correct language resources are loaded
+  React.useEffect(() => {
+     const currentBlockId = getValues('invoice_block_id');
+     if (!invoiceBlocks?.results || !currentBlockId) return;
+     
+     const blk = invoiceBlocks.results.find(b => b.id === currentBlockId);
+     if (blk) {
+         // Load translation maps
+         if (blk.second_language) {
+             setSecLang(blk.second_language);
+             setTranslations(TRANSLATIONS[blk.second_language] || {});
+             
+             // If the block is bilingual, ensure the UI reflects it
+             // This fixes cases where the invoice doesn't have 'bilingual' saved in snapshot 
+             // but uses a bilingual block.
+             if (!bilingual) {
+                 setBilingual(true);
+             }
+         }
+     }
+  }, [invoiceBlocks, watch('invoice_block_id'), isReadOnly, bilingual]);
+
   // Set defaults from selected block (currency, bank_account)
   React.useEffect(() => {
     const currentBlockId = watch('invoice_block_id');
@@ -815,7 +954,8 @@ const InvoiceForm = () => {
       setSecLang(blk.second_language);
       setTranslations(TRANSLATIONS[blk.second_language] || {});
 
-      const newCurrency = blk.default_currency || 'HUF';
+      // If block has no default currency, stick to the current one
+      const newCurrency = blk.default_currency || prevCurrency || 'HUF';
       let newRate = 1;
       let oldRate = 1;
 
@@ -932,6 +1072,15 @@ const InvoiceForm = () => {
       onSuccess: (base) => {
         try {
           if (base && base.company && base.company.id) setValue('company_id', base.company.id);
+          // Restore invoice block if copying
+          if (base && base.invoice_block) {
+             const blkId = (typeof base.invoice_block === 'object') ? base.invoice_block.id : base.invoice_block;
+             setValue('invoice_block_id', blkId);
+          } else if (base && base.currency && invoiceBlocks?.results) {
+             // Fallback: try to match block by currency if block ID is missing on source invoice
+             const best = invoiceBlocks.results.find(b => b.currency === base.currency);
+             if (best) setValue('invoice_block_id', best.id);
+          }
           if (base && base.customer && base.customer.id) setValue('customer_id', base.customer.id);
           const today = new Date();
           setValue('issue_date', today);
@@ -2044,6 +2193,17 @@ const InvoiceForm = () => {
 
   return (
     <>
+      <style type="text/css" media="print">
+        {`
+          @page {
+            @bottom-right {
+              content: ${printPageContent};
+              font-size: 8pt;
+              font-family: sans-serif;
+            }
+          }
+        `}
+      </style>
       <div className="no-print">
         <FormContainer>
           <FormHeader>
@@ -2201,9 +2361,10 @@ const InvoiceForm = () => {
                           return option.data._norm.includes(term);
                         }}
                         styles={{ container: (base) => ({ ...base, zIndex: 10 }) }}
+                        isDisabled={isReadOnly}
                       />
                     </div>
-                    {!isEdit && (
+                    {!isEdit && !isReadOnly && (
                       <Button type="button" variant="secondary" onClick={() => navigate(`/customers/new?return=${encodeURIComponent(currentPath || '/invoices/new')}`)}>
                         + Új
                       </Button>
@@ -2355,6 +2516,7 @@ const InvoiceForm = () => {
               </Label>
               <ReactSelect
                 inputId="currency"
+                isDisabled={isReadOnly}
                 options={currencyOptions}
                 value={{ value: watch('currency') || 'HUF', label: watch('currency') || 'HUF' }}
                 onChange={async (opt) => {
@@ -2481,12 +2643,13 @@ const InvoiceForm = () => {
                 return (
                   <TableRow key={field.id}>
                     <TableCell>
+                      <input type="hidden" {...register(`items.${index}._vat_name`)} />
                       <TextArea
                         {...register(`items.${index}.description`, { required: 'Leírás kötelező' })}
                         placeholder="Tétel neve / leírása"
                         style={{ minHeight: 40, minWidth: 180 }}
-                        readOnly={isAutoAdvance}
-                        disabled={isAutoAdvance}
+                        readOnly={isReadOnly || isAutoAdvance}
+                        disabled={isReadOnly || isAutoAdvance}
                       />
                     </TableCell>
                     {isSimplified && (
@@ -2501,8 +2664,8 @@ const InvoiceForm = () => {
                         pattern="[0-9]*[.,]?[0-9]*"
                         onInput={normalizeInput}
                         onFocus={selectAll}
-                        readOnly={isStornoCreation || isAutoAdvance}
-                        disabled={isStornoCreation || isAutoAdvance}
+                        readOnly={isReadOnly || isStornoCreation || isAutoAdvance}
+                        disabled={isReadOnly || isStornoCreation || isAutoAdvance}
                         {...register(`items.${index}.quantity`, { 
                           required: 'Mennyiség kötelező',
                           valueAsNumber: true,
@@ -2515,10 +2678,15 @@ const InvoiceForm = () => {
                       />
                     </TableCell>
                     <TableCell>
+                      {isReadOnly ? (
+                          <div style={{ padding: '8px', background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '4px' }}>
+                              {itemMeta[index]?.uom || watch(`items.${index}.unit_of_measure`) || 'db'}
+                          </div>
+                      ) : (
                       <CreatableSelect
                         inputId={`uom_${index}`}
                         styles={{ container: base => ({ ...base, minWidth: 120 }) }}
-                        isDisabled={isStornoCreation || isAutoAdvance}
+                        isDisabled={isReadOnly || isStornoCreation || isAutoAdvance}
                         options={[
                           { value: 'db', label: 'db' },
                           { value: 'l', label: 'l' },
@@ -2536,18 +2704,35 @@ const InvoiceForm = () => {
                         isClearable
                         placeholder="egység"
                       />
+                      )}
                     </TableCell>
                     <TableCell>
-                      {vatTypes && vatTypes.length > 0 ? (
+                      {isReadOnly ? (
+                         <div style={{ padding: '8px', background: '#f8f9fa', border: '1px solid #dee2e6', borderRadius: '4px', minWidth: 180 }}>
+                            {itemMeta[index]?.vat_name || item._vat_name || (()=> {
+                                 const id = watch(`items.${index}.vat_type_id`);
+                                 const found = vatTypeOptions?.flat?.find(o=>o.value===id);
+                                 return found?.label || '-';
+                            })()}
+                         </div>
+                      ) : (
+                      vatTypes && vatTypes.length > 0 ? (
                         <InlineFlex>
                           <ReactSelect
                             inputId={`vat_type_${index}`}
                             options={vatTypeOptions.groups}
                             value={(() => {
                               const id = watch(`items.${index}.vat_type_id`) || '';
-                              return vatTypeOptions.flat.find(o=>o.value===id) || null;
+                              const found = vatTypeOptions.flat.find(o=>o.value===id);
+                              if (found) return found;
+                              // Fallback support for displaying stored VAT name if ID is not in active list (View Mode)
+                              const storedName = item._vat_name;
+                              if (isReadOnly && id && storedName) {
+                                  return { value: id, label: storedName };
+                              }
+                              return null;
                             })()}
-                            isDisabled={isStornoCreation || isAutoAdvance}
+                            isDisabled={isReadOnly || isStornoCreation || isAutoAdvance}
                             onChange={(opt) => {
                               const id = opt ? opt.value : '';
                               setValue(`items.${index}.vat_type_id`, id);
@@ -2577,13 +2762,14 @@ const InvoiceForm = () => {
                           {(() => { const id = watch(`items.${index}.vat_type_id`); const vt = (vatTypes||[]).find(v => v.id === id); return (
                             vt && vt.category !== 'PERCENT' ? (
                               <SmallInput style={{ marginTop: 6 }} placeholder="ÁFA indok (pl. AAM/TAM részletezés)"
+                                disabled={isReadOnly || isStornoCreation || isAutoAdvance}
                                 {...register(`items.${index}.vat_reason`)} />
                             ) : null
                           ); })()}
                         </InlineFlex>
                       ) : (
                         <ItemSelect
-                          disabled={isStornoCreation || isAutoAdvance}
+                          disabled={isReadOnly || isStornoCreation || isAutoAdvance}
                           {...register(`items.${index}.vat_rate`, { 
                               required: 'ÁFA kulcs kötelező',
                               valueAsNumber: true,
@@ -2597,7 +2783,7 @@ const InvoiceForm = () => {
                             <option key={r.value} value={r.value}>{r.label}</option>
                           ))}
                         </ItemSelect>
-                      )}
+                      ))}
                     </TableCell>
                     <TableCell>
                       <ItemInput
@@ -2606,6 +2792,8 @@ const InvoiceForm = () => {
                         pattern="[0-9]*[.,]?[0-9]*"
                         onInput={normalizeInput}
                         onFocus={selectAll}
+                        readOnly={isReadOnly || isStornoCreation || isAutoAdvance}
+                        disabled={isReadOnly || isStornoCreation || isAutoAdvance}
                         value={getItemStr(index, 'unit_price_str', item?.unit_price)}
                         onChange={(e) => {
                           const str = (e.target.value ?? '').toString();
@@ -2627,6 +2815,8 @@ const InvoiceForm = () => {
                         pattern="[0-9]*[.,]?[0-9]*"
                         onInput={normalizeInput}
                         onFocus={selectAll}
+                        readOnly={isReadOnly || isStornoCreation || isAutoAdvance}
+                        disabled={isReadOnly || isStornoCreation || isAutoAdvance}
                         value={getItemStr(index, 'gross_unit_price_str', ((item?.unit_price || 0) * (1 + (item?.vat_rate || 0)/100)).toFixed(2))}
                         onChange={(e) => {
                           const str = (e.target.value ?? '').toString();
@@ -2647,14 +2837,18 @@ const InvoiceForm = () => {
                     {!isSimplified && (
                       <>
                         <TableCell>
-                          <ItemSelect {...register(`items.${index}.nature_indicator`)}>
-                            <option value="PRODUCT">Termék</option>
+                          <ItemSelect
+                            disabled={isReadOnly}
+                            {...register(`items.${index}.nature_indicator`)}>
+                            <option value="PRODUCT">Termék</option>Note: The tool call failed because the `newString` contained `Note: ...` which probably wasn't intended. The thought process continues below.
                             <option value="SERVICE">Szolgáltatás</option>
                             <option value="OTHER">Egyéb</option>
                           </ItemSelect>
                         </TableCell>
                         <TableCell>
-                          <ItemSelect {...register(`items.${index}.product_code_category`)}>
+                          <ItemSelect
+                            disabled={isReadOnly}
+                            {...register(`items.${index}.product_code_category`)}>
                             <option value="">—</option>
                             <option value="VTSZ">VTSZ</option>
                             <option value="SZJ">SZJ</option>
@@ -2663,7 +2857,11 @@ const InvoiceForm = () => {
                           </ItemSelect>
                         </TableCell>
                         <TableCell>
-                          <SmallInput {...register(`items.${index}.product_code_value`)} placeholder="Kód érték" />
+                          <SmallInput
+                            disabled={isReadOnly}
+                            {...register(`items.${index}.product_code_value`)}
+                            placeholder="Kód érték"
+                          />
                         </TableCell>
                       </>
                     )}
@@ -2816,23 +3014,41 @@ const InvoiceForm = () => {
         </FormContainer>
       </div>
 
-      {/* Printable Invoice Layout - Table Based for Headers */}
+      {/* Printable Invoice Layout - v3 Simplified thead */}
+      {createPortal((
       <div className="print-invoice print-only">
-        <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
-            <colgroup>
-              <col className="col-desc" />
-              <col className="col-qty" />
-              <col className="col-unit" />
-              <col className="col-unitnet" />
-              <col className="col-vatrate" />
-              <col className="col-net" />
-              <col className="col-vat" />
-              <col className="col-gross" />
-            </colgroup>
+        <table className="inv-main-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead>
+            {/* v5 - SINGLE ROW REPEATING HEADER - only essential info */}
+            <tr style={{ borderBottom: '2px solid #000' }}>
+              <td colSpan="2" style={{ padding: '2mm', border: 'none' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ width: '35%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top' }}>
+                        <strong>{selectedCompany?.name || '—'}</strong><br/>
+                        {formatFullTax(selectedCompany)}
+                      </td>
+                      <td style={{ width: '30%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top', textAlign: 'center' }}>
+                        <strong style={{ fontSize: '11pt' }}>{invoiceNumberValue || '—'}</strong><br/>
+                        Kelt: {issueDateStr || '—'}
+                      </td>
+                      <td style={{ width: '35%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top', textAlign: 'right' }}>
+                        <strong>{selectedCustomer?.name || '—'}</strong><br/>
+                        Fizetendő: <strong>{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </thead>
+            <tbody>
+              {/* Full detailed header - only on first page */}
               <tr>
-                <td colSpan={8} style={{ border: 'none', padding: 0 }}>
-                  <div className="inv-header">
+                <td colSpan="2" style={{ border: 'none', padding: 0 }}>
+                  <div className="inv-header-wrapper inv-header-first-page">
+                    <div className="inv-header">
                     {/* LEFT COLUMN: Seller */}
                     <div className="inv-col-left">
                       <div className="inv-seller">
@@ -2905,6 +3121,11 @@ const InvoiceForm = () => {
                             <BilingualLabel label="Számlaszám" translationMap={translations} show={bilingual} />
                           }: {invoiceNumberValue || '—'}
                         </div>
+                        {watch('order_reference') && (
+                            <div className="inv-number" style={{ marginTop: '1mm', fontSize: '9pt', fontWeight: 'normal' }}>
+                                <BilingualLabel label="Hivatkozási szám" translationMap={translations} show={bilingual} />: {watch('order_reference')}
+                            </div>
+                        )}
 
                         <div className="inv-buyer-sm" style={{ marginTop: '4mm' }}>
                           <div className="inv-block-title">
@@ -2978,29 +3199,38 @@ const InvoiceForm = () => {
                         <div>{paymentMethod === 'transfer' ? <BilingualLabel label="Átutalás" translationMap={translations} show={bilingual} /> : (paymentMethod === 'cash' ? <BilingualLabel label="Készpénz" translationMap={translations} show={bilingual} /> : paymentMethod)}</div>
                       </div>
                   </div>
+                  </div>
                 </td>
               </tr>
-              {/* Item Headers - Must be in THEAD to repeat */}
+
+              {/* Items table */}
+              <tr>
+                <td colSpan="2" style={{ border: 'none', padding: 0 }}>
+        
+                  {/* Items Table */}
+                  <table className="inv-items" style={{ width: '100%', marginTop: '4mm' }}>
+            <thead>
               <tr className="inv-items-header-row">
-                <th className="col-desc" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Megnevezés" translationMap={translations} show={bilingual} separator=" / " /></th>
-                <th className="cen col-qty" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Menny." translationMap={translations} show={bilingual} separator="/" /></th>
-                <th className="cen col-unit" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Egység" translationMap={translations} show={bilingual} separator="/" /></th>
-                <th className="num col-unitnet" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>
+                <th className="col-desc"><BilingualLabel label="Megnevezés" translationMap={translations} show={bilingual} separator=" / " /></th>
+                <th className="cen col-qty"><BilingualLabel label="Menny." translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="cen col-unit"><BilingualLabel label="Egység" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-unitnet">
                    <BilingualLabel label="Egységár" translationMap={translations} show={bilingual} separator="/" />
                    <div className="muted" style={{ fontSize: '0.8em', fontWeight: 'normal' }}>
                       <BilingualLabel label="(Nettó)" translationMap={translations} show={bilingual} separator="/" />
                    </div>
                 </th>
-                <th className="cen col-vatrate" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} separator="/" /></th>
-                <th className="num col-net" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Nettó" translationMap={translations} show={bilingual} separator="/" /></th>
-                <th className="num col-vat" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="ÁFA értéke" translationMap={translations} show={bilingual} separator="/" /></th>
-                <th className="num col-gross" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}><BilingualLabel label="Bruttó" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="cen col-vatrate"><BilingualLabel label="ÁFA" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-net"><BilingualLabel label="Nettó" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-vat"><BilingualLabel label="ÁFA értéke" translationMap={translations} show={bilingual} separator="/" /></th>
+                <th className="num col-gross"><BilingualLabel label="Bruttó" translationMap={translations} show={bilingual} separator="/" /></th>
               </tr>
             </thead>
             <tbody>
               {(watchedItems || []).map((it, idx) => {
                 const qty = Number(it?.quantity || 0) || 0;
-                const unit = (it?.unit || 'db');
+                // Prefer historical metadata or direct item value
+                const unit = (itemMeta[idx]?.uom || it?.unit_of_measure || it?.unit || 'db');
                 const unitPrice = Number(it?.unit_price || 0) || 0;
                 const vatRate = Number(it?.vat_rate || 0) || 0;
                 const net = qty * unitPrice;
@@ -3008,7 +3238,12 @@ const InvoiceForm = () => {
                 const gross = net + vat;
                 
                 let vatLabel = `${vatRate.toLocaleString('hu-HU')}%`;
-                if (it.vat_type_id && vatTypes) {
+                // Prefer historical VAT name
+                if (itemMeta[idx]?.vat_name) {
+                   vatLabel = itemMeta[idx].vat_name;
+                } else if (it._vat_name) {
+                   vatLabel = it._vat_name;
+                } else if (it.vat_type_id && vatTypes) {
                    const vt = vatTypes.find(v => v.id === it.vat_type_id);
                    if (vt) {
                        vatLabel = vt.name || vt.code || vatLabel;
@@ -3019,28 +3254,28 @@ const InvoiceForm = () => {
                 let vatClass = "cen col-vatrate vat-rate-cell";
                 if (vatLabel.length > 40) {
                     vatClass += " vat-extra-long";
-                } else if (vatLabel.length > 20) {
+                } else if (vatLabel.length > 15) {
                     vatClass += " vat-long";
                 }
                 
                 return (
                   <tr key={idx}>
-                    <td className="col-desc" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{it?.description || ''}</td>
-                    <td className="cen col-qty" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{qty.toLocaleString('hu-HU')}</td>
-                    <td className="cen col-unit" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{unit}</td>
-                    <td className="num col-unitnet" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className={vatClass} style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{vatLabel}</td>
-                    <td className="num col-net" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num col-vat" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num col-gross" style={{ border: '1px solid #ccc', padding: '1.2mm 1mm' }}>{gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="col-desc">{it?.description || ''}</td>
+                    <td className="cen col-qty">{qty.toLocaleString('hu-HU')}</td>
+                    <td className="cen col-unit">{unit}</td>
+                    <td className="num col-unitnet">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className={vatClass}>{vatLabel}</td>
+                    <td className="num col-net">{net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-vat">{vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-gross">{gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
                   </tr>
                 );
               })}
             </tbody>
-            {/* Summary Section should not break inside */}
-            <tbody style={{ pageBreakInside: 'avoid' }}>
-               <tr>
-                 <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+        </table>
+        
+        {/* Summary Section */}
+        <div style={{ pageBreakInside: 'avoid', marginTop: '4mm' }}>
                     {(() => { const vb = vatBreakdown(); return (
                       <table className="inv-items vat-summary-table" style={{ marginTop: '2mm', width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
                         <colgroup>
@@ -3122,27 +3357,26 @@ const InvoiceForm = () => {
             
                     {blockFootnote && (
                       <div className="inv-notes">
-                        <div className="inv-block-title">Lábjegyzék</div>
                         <div>{blockFootnote}</div>
                       </div>
                     )}
-                 </td>
-               </tr>
-            </tbody>
-            <tfoot>
-              <tr>
-                <td colSpan={8} style={{ border: 'none', padding: 0 }}>
-                    <div className="inv-footer" style={{ marginTop: '5mm' }}>
-                      <div>
-                        {paymentMethod === 'transfer' ? 'Kérjük az összeget átutalással rendezni a fenti bankszámlára.' : 'Köszönjük a fizetést.'}
-                      </div>
-                      <div className="inv-fineprint">Ez a számla elektronikus úton készült és aláírás nélkül is érvényes.</div>
-                    </div>
+                </div>
+            
+            {/* Footer */}
+            <div className="inv-footer" style={{ marginTop: '5mm' }}>
+              <div>
+                {paymentMethod === 'transfer' ? 'Kérjük az összeget átutalással rendezni a fenti bankszámlára.' : 'Köszönjük a fizetést.'}
+              </div>
+              <div className="inv-fineprint">Ez a számla elektronikus úton készült és aláírás nélkül is érvényes.</div>
+            </div>
                 </td>
               </tr>
-            </tfoot>
+            </tbody>
         </table>
-      </div>,oldString:
+      </div>
+      ),
+      document.body
+      )}
     </>
   );
 };

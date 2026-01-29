@@ -213,6 +213,9 @@ export const companyAPI = {
   
   // Update company
   updateCompany: (id, data) => api.put(`/api/companies/${id}/`, data),
+
+  // Patch company (partial update)
+  patchCompany: (id, data) => api.patch(`/api/companies/${id}/`, data),
   
   // Delete company
   deleteCompany: (id) => api.delete(`/api/companies/${id}/`),
@@ -357,7 +360,7 @@ export const customerBankAccountAPI = {
 };
 
 export const utilsAPI = {
-  getExchangeRate: (currency) => api.get('/api/utils/exchange_rate/', { params: { currency } }),
+  getExchangeRate: (currency, date) => api.get('/api/utils/exchange_rate/', { params: { currency, date } }),
 };
 
 export const vatTypesAPI = {

@@ -301,6 +301,8 @@ class ManufacturingProduct(models.Model):
     is_fixed_quantity = models.BooleanField(default=False, verbose_name="Fix mennyiség")
     product_class = models.ForeignKey(ProductClass, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Termék osztály")
     project = models.ForeignKey(Project, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Projekt")
+    allowed_companies = models.ManyToManyField('crm.Company', blank=True, verbose_name="Engedélyezett cégek")
+    allowed_contacts = models.ManyToManyField('crm.Contact', blank=True, related_name='allowed_products', verbose_name="Engedélyezett kapcsolattartók")
     net_unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Nettó egység ár")
     net_total_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Nettó ár")
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Valuta")

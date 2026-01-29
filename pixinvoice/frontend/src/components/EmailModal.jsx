@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
 import { contactAPI } from '../services/api';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 export default function EmailModal({
   isOpen,
   onClose,
   onSend,
   defaultFrom,
+  defaultReplyTo = '',
   defaultTo = [],
   defaultCc = [],
   defaultBcc = [],
@@ -14,10 +17,9 @@ export default function EmailModal({
   customerId,
   invoiceId,
   attachmentsHint,
-  defaultUseThunderbird = false,
-  defaultThunderbirdPath = '',
 }) {
   const [from, setFrom] = useState(defaultFrom || '');
+  const [replyTo, setReplyTo] = useState(defaultReplyTo || '');
   const [to, setTo] = useState(defaultTo.join(', '));
   const [cc, setCc] = useState(defaultCc.join(', '));
   const [bcc, setBcc] = useState(defaultBcc.join(', '));
@@ -26,20 +28,27 @@ export default function EmailModal({
   const [sending, setSending] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [assignTarget, setAssignTarget] = useState('to');
-  const [useThunderbird, setUseThunderbird] = useState(!!defaultUseThunderbird);
-  const [thunderbirdPath, setThunderbirdPath] = useState(defaultThunderbirdPath || '');
+
+  // New features
+  const [showStatus, setShowStatus] = useState(false);
+  const [statusLog, setStatusLog] = useState([]);
+  const [statusError, setStatusError] = useState(null);
+  const [statusModalOpen, setStatusModalOpen] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setFrom(defaultFrom || '');
+      setReplyTo(defaultReplyTo || '');
       setTo((defaultTo || []).join(', '));
       setCc((defaultCc || []).join(', '));
       setBcc((defaultBcc || []).join(', '));
       setSubject(defaultSubject || '');
       setBody(defaultBody || '');
-  setUseThunderbird(!!defaultUseThunderbird);
-  setThunderbirdPath(defaultThunderbirdPath || '');
       setSending(false);
+      setShowStatus(false);
+      setStatusModalOpen(false);
+      setStatusLog([]);
+      setStatusError(null);
       // Load contacts for customer
       if (customerId) {
         contactAPI.getContacts({ customer_id: customerId, is_active: true })
@@ -54,24 +63,44 @@ export default function EmailModal({
   if (!isOpen) return null;
 
   const handleSend = async () => {
+    if (showStatus) {
+       setStatusModalOpen(true);
+       setStatusLog(['Csatlakozás a kiszolgálóhoz...', 'Levél küldése folyamatban...']);
+       setStatusError(null);
+    }
     setSending(true);
     try {
       await onSend({
         from,
+        reply_to: replyTo,
         to: to.split(',').map((s) => s.trim()).filter(Boolean),
         cc: cc.split(',').map((s) => s.trim()).filter(Boolean),
         bcc: bcc.split(',').map((s) => s.trim()).filter(Boolean),
         subject,
         body,
-        use_thunderbird: useThunderbird,
-        thunderbird_path: thunderbirdPath,
       });
-      onClose();
+      if (showStatus) {
+        setStatusLog(prev => [...prev, 'Sikeres küldés!']);
+        setTimeout(() => {
+           setStatusModalOpen(false);
+           onClose();
+        }, 1500); 
+      } else {
+        onClose();
+      }
     } catch (e) {
       console.error(e);
-      alert('Hiba az e-mail küldésekor.');
+      if (showStatus) {
+         // Extract error message
+         const msg = e?.response?.data?.error || e.message || 'Ismeretlen hiba';
+         setStatusError(`Nem sikerült csatlakozni az smtp szerverhez (${msg})`);
+      } else {
+         alert('Hiba az e-mail küldésekor.');
+      }
     } finally {
-      setSending(false);
+      if (!showStatus || statusError) {
+         setSending(false);
+      }
     }
   };
 
@@ -108,6 +137,9 @@ export default function EmailModal({
           <label style={styles.label}>Feladó</label>
           <input style={styles.input} value={from} onChange={(e) => setFrom(e.target.value)} placeholder="from@example.com" />
 
+          <label style={styles.label}>Válaszcím (Reply-to)</label>
+          <input style={styles.input} value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="reply@example.com" />
+
           <label style={styles.label}>Címzettek (To)</label>
           <input style={styles.input} value={to} onChange={(e) => setTo(e.target.value)} placeholder="a@b.hu, c@d.hu" />
 
@@ -121,21 +153,15 @@ export default function EmailModal({
           <input style={styles.input} value={subject} onChange={(e) => setSubject(e.target.value)} />
 
           <label style={styles.label}>Üzenet</label>
-          <textarea style={styles.textarea} value={body} onChange={(e) => setBody(e.target.value)} rows={10} />
-          <div style={{ gridColumn: '1 / span 2', display: 'flex', alignItems: 'center', gap: 12 }}>
-            <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <input type="checkbox" checked={useThunderbird} onChange={(e)=>setUseThunderbird(e.target.checked)} />
-              Thunderbird használata
-            </label>
-            <input
-              type="text"
-              placeholder="/usr/bin/thunderbird"
-              value={thunderbirdPath}
-              onChange={(e)=>setThunderbirdPath(e.target.value)}
-              style={{ flex: 1, padding: 8, border: '1px solid #ccc', borderRadius: 6 }}
-              disabled={!useThunderbird}
-            />
+          <div style={{ gridColumn: '1 / span 2', marginBottom: 20 }}>
+             <ReactQuill 
+                theme="snow" 
+                value={body} 
+                onChange={setBody} 
+                style={{ height: 250, background: '#fff' }}
+             />
           </div>
+          
           {Array.isArray(contacts) && contacts.length > 0 && (
             <div style={styles.contactsContainer}>
               <div style={styles.contactsHeader}>
@@ -168,12 +194,39 @@ export default function EmailModal({
           )}
         </div>
         <div style={styles.footer}>
-          <button onClick={onClose} disabled={sending}>Mégse</button>
-          <button onClick={handleSend} disabled={sending} style={{ marginLeft: 8 }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
+             <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} title="Részletes státusz megjelenítése küldés közben">
+                <input type="checkbox" checked={showStatus} onChange={(e)=>setShowStatus(e.target.checked)} style={{ marginRight: 8 }} />
+                Küldési státusz mutatása
+             </label>
+          </div>
+          <button onClick={onClose} disabled={sending} style={{...styles.btnBase, ...styles.btnSecondary}}>Mégse</button>
+          <button onClick={handleSend} disabled={sending} style={{...styles.btnBase, ...styles.btnPrimary}}>
             {sending ? 'Küldés...' : 'Küldés'}
           </button>
         </div>
       </div>
+      
+      {statusModalOpen && (
+        <div style={styles.statusOverlay}>
+           <div style={styles.statusBox}>
+              <h4 style={{marginTop:0, marginBottom: 12, borderBottom: '1px solid #eee', paddingBottom: 8}}>Küldés folyamata</h4>
+              <ul style={{listStyle:'none', padding:0, margin: 0}} className="status-log">
+                 {statusLog.map((l,i) => <li key={i} style={{marginBottom: 4}}>✓ {l}</li>)}
+              </ul>
+              {statusError && (
+                 <div style={{color:'#d32f2f', marginTop:12, padding: 10, background:'#ffebee', borderRadius:4, border: '1px solid #ffcdd2', fontSize: 13}}>
+                    <strong>Hiba!</strong> {statusError}
+                 </div>
+              )}
+              {statusError && (
+                 <div style={{marginTop:16, textAlign:'right'}}>
+                    <button onClick={() => setStatusModalOpen(false)} style={{...styles.btnBase, ...styles.btnSecondary, background: '#fff', border: '1px solid #ccc'}}>Bezárás</button>
+                 </div>
+              )}
+           </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -256,5 +309,41 @@ const styles = {
     borderRadius: 16,
     color: '#0d6efd',
     cursor: 'pointer',
+  },
+  btnBase: {
+    padding: '8px 16px',
+    borderRadius: 6,
+    fontWeight: 500,
+    cursor: 'pointer',
+    border: 'none',
+    fontSize: '14px',
+  },
+  btnSecondary: {
+    background: '#f1f2f6',
+    color: '#2c3e50',
+  },
+  btnPrimary: {
+    background: '#3498db',
+    color: '#fff',
+    marginLeft: 12,
+  },
+  statusOverlay: {
+    position: 'absolute',
+    inset: 0,
+    background: 'rgba(255,255,255,0.9)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 10,
+    borderRadius: 8,
+  },
+  statusBox: {
+    background: '#fff',
+    border: '1px solid #ddd',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    padding: 24,
+    borderRadius: 8,
+    width: '320px',
+    maxWidth: '90%',
   },
 };

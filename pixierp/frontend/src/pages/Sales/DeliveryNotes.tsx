@@ -595,7 +595,20 @@ const DeliveryNotes: React.FC = () => {
       <Modal
         title="Új szállítólevél készítése"
         open={isModalOpen}
-        onCancel={() => setIsModalOpen(false)}
+        onCancel={() => {
+            const isDirty = selectedEntityId !== null || deliveryNoteNotes !== '' || availableItems.some(i => i.to_deliver > 0);
+            if (isDirty) {
+                 Modal.confirm({
+                    title: 'Biztosan bezárja?',
+                    content: 'A nem mentett változtatások elvesznek.',
+                    okText: 'Igen',
+                    cancelText: 'Nem',
+                    onOk: () => setIsModalOpen(false)
+                });
+            } else {
+                setIsModalOpen(false);
+            }
+        }}
         onOk={handleSave}
         confirmLoading={creating}
         width={1000}

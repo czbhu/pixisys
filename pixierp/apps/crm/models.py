@@ -36,6 +36,8 @@ class Company(models.Model):
     ]
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='CASH', verbose_name="Fizetési mód")
     
+    external_id = models.CharField(max_length=100, unique=True, null=True, blank=True, verbose_name="Külső azonosító (PixInvoice UUID)")
+
     # Adószám mezők - egyik sem kötelező
     # Validators removed from model to allow conditional validation in Serializer/Form
     tax_number = models.CharField(

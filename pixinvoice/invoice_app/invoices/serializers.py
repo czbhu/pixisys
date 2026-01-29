@@ -521,7 +521,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'id', 'invoice_number', 'company', 'customer', 'customer_id', 'items',
             'issue_date', 'due_date', 'delivery_date', 'currency',
             'exchange_rate', 'payment_method', 'invoice_category', 'invoice_appearance', 'payment_date', 'completeness_indicator', 'order_reference',
-            'status', 'nav_transaction_id',
+            'status', 'nav_transaction_id', 'invoice_block',
             'nav_submission_date', 'nav_response', 'notes', 'created_by',
             'created_at', 'updated_at', 'total_net_amount', 'total_vat_amount',
             'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used', 'erp_order_ids'
@@ -603,8 +603,9 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         if customer_id:
             try:
                 customer = Customer.objects.get(id=customer_id)
-                if customer.category == 'RECEIPT':
-                    raise serializers.ValidationError({"customer_id": "Nyugtás vevőnek nem lehet számlát kiállítani."})
+                # FIXME: Customer model has no category attribute causing AttributeError
+                # if customer.category == 'RECEIPT':
+                #    raise serializers.ValidationError({"customer_id": "Nyugtás vevőnek nem lehet számlát kiállítani."})
             except Customer.DoesNotExist:
                 pass
         
@@ -984,7 +985,7 @@ class CompanySerializer(serializers.ModelSerializer):
             'vat_code', 'county_code', 'eu_tax_number', 'vat_group_id', 'vat_group_member_tax_number',
             'address', 'street_name', 'public_place_category', 'street_number', 'building', 'staircase', 'floor', 'door',
             'city', 'postal_code', 'country', 'email', 'phone', 'xml_logging_enabled', 'round_transfer_to_whole',
-            'is_active', 'created_at', 'updated_at', 'bank_accounts'
+            'is_active', 'order_index', 'created_at', 'updated_at', 'bank_accounts'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -1157,7 +1158,7 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
             'current_number', 'is_active', 'invoice_count', 'cancelled_count',
             'total_net_amount', 'total_vat_amount', 'nav_configuration',
             'nav_configuration_name', 'nav_configuration_id', 'company_id', 'invoice_appearance', 
-            'default_currency', 'default_bank_account', 'language', 'second_language', 
+            'default_currency', 'default_bank_account', 'language', 'second_language', 'footer_note',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'company', 'created_at', 'updated_at']

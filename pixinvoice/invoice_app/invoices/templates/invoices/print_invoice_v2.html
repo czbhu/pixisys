@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ invoice.invoice_number }}</title>
+    <style>
+        /* BASE RESET */
+        @page {
+            size: A4;
+            margin: 10mm 10mm 15mm 10mm;
+        }
+        
+        * {
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+            color: #000;
+            margin: 0;
+            padding: 0;
+            background: #fff;
+            font-size: 12px;
+        }
+
+        /* Screen vs print visibility */
+        .print-only {
+          display: block; 
+        }
+
+        /* Forces for WeasyPrint */
+        table { page-break-inside: auto !important; }
+        thead { display: table-header-group !important; }
+        tfoot { display: table-footer-group !important; }
+        tr { page-break-inside: avoid !important; page-break-after: auto !important; }
+        
+        .print-invoice .inv-main-table {
+            page-break-inside: auto !important;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        
+        .print-invoice .inv-header-first-page {
+            page-break-after: avoid !important;
+        }
+        
+        .print-invoice {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+            color: #000;
+            width: 100%;
+        }
+
+        .print-invoice .inv-container {
+            width: 100%;
+            margin: 0 auto;
+            padding: 0;
+            background: #fff;
+        }
+
+        .print-invoice .inv-header {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 6mm;
+            align-items: start;
+            margin-bottom: 6mm;
+        }
+
+        .print-invoice .inv-seller {
+            max-width: 100%;
+            font-size: 9pt;
+            line-height: 1.25;
+        }
+        
+        .print-invoice .inv-seller-name {
+            font-weight: 700;
+            font-size: 11pt;
+            margin-bottom: 2mm;
+        }
+
+        .print-invoice .inv-meta-row {
+            display: flex;
+            justify-content: space-between;
+            gap: 4mm;
+            font-size: 9.5pt;
+            margin-bottom: 6mm;
+            border-top: 1px solid #eee;
+            padding-top: 4mm;
+        }
+        
+        .print-invoice .inv-meta-row > div {
+            flex: 1;
+        }
+
+        .print-invoice .inv-col-left {
+            max-width: 100mm;
+        }
+
+        .print-invoice .inv-col-right {
+            max-width: 100mm;
+        }
+        .print-invoice .muted { color: #555; font-size: 9pt; }
+
+        .print-invoice .inv-title {
+            font-size: 16pt;
+            font-weight: 700;
+            margin-bottom: 2mm;
+        }
+
+        .print-invoice .inv-number {
+            font-weight: 600;
+            margin-bottom: 2mm;
+            font-size: 11pt;
+            white-space: nowrap; /* Prevent wrapping */
+        }
+        
+        .print-invoice .inv-block-title {
+            font-weight: 700;
+            margin-bottom: 2mm;
+            font-size: 0.9em;
+            color: #666;
+        }
+
+        .print-invoice .inv-buyer-name {
+            font-weight: 600;
+        }
+
+        .print-invoice .inv-items {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 8.5pt;
+            table-layout: fixed; /* Ensures column widths are respected */
+            margin-top: 4mm;
+        }
+
+        .print-invoice .inv-items tr { page-break-inside: avoid; }
+
+        .print-invoice .inv-items th,
+        .print-invoice .inv-items td {
+            border: 1px solid #ccc;
+            padding: 1mm 2px; /* Reduced padding */
+            vertical-align: middle;
+        }
+
+        .print-invoice .inv-items th { 
+            font-size: 6pt; 
+            font-weight: 700; 
+            vertical-align: bottom;
+            padding-bottom: 2mm;
+            line-height: 1.1;
+            white-space: normal; 
+            overflow-wrap: break-word;
+        }
+
+        /* Column width adjustments */
+        /* Sum should be 100% or less. 
+           Old: 25, 8, 8, 11, 11, 13, 11, 13 = 100
+           New: 24, 8, 8, 12, 11, 13, 11, 13 = 100
+        */
+        .print-invoice .col-desc { width: 24%; word-break: break-word; }
+        .print-invoice .col-qty { width: 8%; }
+        .print-invoice .col-unit { width: 8%; }
+        .print-invoice .col-unitnet { width: 12%; } /* Increased */
+        .print-invoice .col-vatrate { width: 11%; } 
+        .print-invoice .col-net { width: 13%; } 
+        .print-invoice .col-vat { width: 11%; } 
+        .print-invoice .col-gross { width: 13%; }
+
+        .secondary-label {
+            margin-left: 3px;
+            font-size: 0.8em;
+            color: #666;
+            font-weight: normal;
+        }
+
+        .print-invoice table.vat-summary-table {
+            margin-top: 2mm;
+            width: 100%;
+            border-collapse: collapse;
+            table-layout: auto;
+        }
+        .print-invoice table.vat-summary-table th,
+        .print-invoice table.vat-summary-table td {
+            padding: 1px 4px;
+            font-size: 8.5pt;
+            line-height: 1.25;
+            border: 1px solid #ccc;
+        }
+        
+        .print-invoice table.vat-summary-table th {
+            font-weight: 700;
+        }
+        
+        /* Ensure right alignment for numbers in summary */
+        .print-invoice table.vat-summary-table .num,
+        .print-invoice table.vat-summary-table th.num,
+        .print-invoice table.vat-summary-table td.num {
+            text-align: right !important;
+        }
+        
+        .print-invoice table.vat-summary-table .cen {
+            text-align: center !important;
+        }
+
+        .print-invoice .inv-notes {
+            margin-top: 3mm;
+            font-size: 7.5pt;
+            line-height: 1.3;
+        }
+
+        .print-invoice .inv-items td.num {
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .print-invoice .inv-items th.num {
+            text-align: right;
+        }
+
+        .print-invoice .inv-items td.cen,
+        .print-invoice .inv-items th.cen {
+            text-align: center;
+        }
+
+        .print-invoice .inv-summary-wrap {
+            margin-top: 4mm;
+            page-break-inside: avoid;
+        }
+
+        .print-invoice .inv-footer {
+            margin-top: 5mm;
+            font-size: 7.5pt;
+        }
+        
+        .print-invoice .inv-highlight {
+            display: block;
+            margin-top: 4mm;
+        }
+        .print-invoice .inv-amount .value {
+            font-weight: 800;
+            font-size: 16pt;
+        }
+        .print-invoice .date-pill {
+            border: 1px solid #000;
+            padding: 1px 6px;
+            border-radius: 12px;
+        }
+        .print-invoice .inv-fineprint {
+            color: #555;
+            margin-top: 2mm;
+            font-size: 8pt;
+        }
+    </style>
+</head>
+<body>
+    <div class="print-invoice print-only">
+        <table class="inv-main-table">
+            <thead>
+                <tr style="border-bottom: 2px solid #000;">
+                    <td colspan="2" style="border: none; padding: 2mm;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tbody>
+                                <tr>
+                                    <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top;">
+                                        <strong>{% if invoice.company %}{{ invoice.company.name }}{% else %}—{% endif %}</strong><br/>
+                                        {% if invoice.company %}
+                                            {% if invoice.company.full_tax_number %}
+                                                {{ invoice.company.full_tax_number }}
+                                            {% elif invoice.company.tax_number %}
+                                                {{ invoice.company.tax_number }}{% if invoice.company.vat_code %}-{{ invoice.company.vat_code }}{% endif %}{% if invoice.company.county_code %}-{{ invoice.company.county_code }}{% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td style="width: 30%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: center;">
+                                        <strong style="font-size: 11pt;">{{ invoice.invoice_number }}</strong><br/>
+                                        Kelt: {{ invoice.issue_date|date:"Y-m-d" }}
+                                    </td>
+                                    <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: right;">
+                                        <strong style="font-size: 7pt;">{% if invoice.customer %}{{ invoice.customer.name }}{% else %}—{% endif %}</strong><br/>
+                                        Fizetendő: <strong>{{ invoice.total_gross_amount|floatformat:2 }} {{ invoice.currency }}</strong>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="2" style="border: none; padding: 0;">
+                        <div class="inv-header-wrapper inv-header-first-page">
+                            <div class="inv-header">
+                                <!-- SELLER -->
+                                <div class="inv-col-left">
+                                    <div class="inv-seller">
+                                        <div class="inv-block-title">
+                                            Eladó{% if bilingual %} <span class="secondary-label">/ Seller</span>{% endif %}:
+                                        </div>
+                                        <div class="inv-seller-name">{{ invoice.company.name|default:"—" }}</div>
+                                        {% if invoice.company.full_tax_number %}
+                                            <div>Adószám: {{ invoice.company.full_tax_number }}</div>
+                                        {% elif invoice.company.tax_number %}
+                                            <div>Adószám: {{ invoice.company.tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.company.eu_tax_number %}
+                                            <div>EU adószám: {{ invoice.company.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.company.postal_code or invoice.company.city %}
+                                            <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}</div>
+                                        {% endif %}
+                                        {% if invoice.company.street_name %}
+                                            <div>{{ invoice.company.street_name }} {{ invoice.company.street_number }}</div>
+                                        {% endif %}
+                                        
+                                        {% if invoice.company.email or invoice.company.phone %}
+                                            <div style="margin-top: 1mm;">
+                                                {% if invoice.company.email %}<div>E-mail: {{ invoice.company.email }}</div>{% endif %}
+                                                {% if invoice.company.phone %}<div>Telefon: {{ invoice.company.phone }}</div>{% endif %}
+                                            </div>
+                                        {% endif %}
+                                        
+                                        {% if invoice.company.bank_accounts.all %}
+                                            <div style="margin-top: 2mm;">
+                                                <div style="font-weight: 600;">Bankszámlák{% if bilingual %} <span class="secondary-label">/ Bank Accounts</span>{% endif %}</div>
+                                                {% for acc in invoice.company.bank_accounts.all %}
+                                                    {% if acc.currency == invoice.currency %}
+                                                    <div>
+                                                        {% if acc.account_number %}{{ acc.currency }}: {{ acc.account_number }} {% endif %}
+                                                        {% if acc.iban %}IBAN: {{ acc.iban }} {% endif %}
+                                                        {% if acc.bank_name %}({{ acc.bank_name }}){% endif %}
+                                                    </div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                                
+                                <!-- BUYER -->
+                                <div class="inv-col-right">
+                                    <div class="inv-title">
+                                        Számla{% if bilingual %} <span class="secondary-label">/ Invoice</span>{% endif %}
+                                    </div>
+                                    <div class="inv-number">
+                                        Számlaszám{% if bilingual %} <span class="secondary-label">/ Invoice No.</span>{% endif %}: {{ invoice.invoice_number }}
+                                    </div>
+                                    {% if invoice.order_reference %}
+                                        <div class="inv-number" style="margin-top: 1mm; font-size: 9pt; font-weight: normal; white-space: normal;">
+                                            Hivatkozási szám{% if bilingual %} <span class="secondary-label">/ Ref No.</span>{% endif %}: {{ invoice.order_reference }}
+                                        </div>
+                                    {% endif %}
+                                    
+                                    <div class="inv-buyer-sm" style="margin-top: 4mm;">
+                                        <div class="inv-block-title">
+                                            Vevő{% if bilingual %} <span class="secondary-label">/ Buyer</span>{% endif %}
+                                        </div>
+                                        <div class="inv-buyer-name" style="font-size: 7pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ invoice.customer.name|default:"—" }}</div>
+                                        {% if invoice.customer.full_tax_number %}
+                                            <div>Adószám: {{ invoice.customer.full_tax_number }}</div>
+                                        {% elif invoice.customer.tax_number %}
+                                            <div>Adószám: {{ invoice.customer.tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.customer.eu_tax_number %}
+                                            <div>EU adószám: {{ invoice.customer.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.customer.postal_code or invoice.customer.city %}
+                                            <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}</div>
+                                        {% endif %}
+                                        {% if invoice.customer.address %}
+                                            <div>{{ invoice.customer.address }}</div>
+                                        {% else %}
+                                            <div>
+                                                {{ invoice.customer.street_name }} 
+                                                {{ invoice.customer.street_number }} 
+                                                {{ invoice.customer.building }}
+                                            </div>
+                                        {% endif %}
+                                        {% if invoice.customer.country %}
+                                            <div style="margin-top: 1mm;">{{ invoice.customer.country }}</div>
+                                        {% endif %}
+                                    </div>
+                                    
+                                    <div class="inv-highlight">
+                                        <div class="inv-amount">
+                                            <span class="label">Fizetendő{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %}:</span>
+                                            <span class="value">{{ invoice.total_gross_amount|floatformat:2 }} {{ invoice.currency }}</span>
+                                        </div>
+                                        {% if invoice.payment_method == 'transfer' and invoice.due_date %}
+                                            <div class="inv-deadline">
+                                                <span class="muted">Fizetési határidő{% if bilingual %} <span class="secondary-label">/ Due Date</span>{% endif %}</span>
+                                                <span class="date-pill" style="font-weight:600; margin-left:3mm;">{{ invoice.due_date|date:"Y-m-d" }}</span>
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- META -->
+                            <div class="inv-meta-row" style="margin-top: 0; padding-top: 4mm;">
+                                <div>
+                                    <div class="muted">Kelt{% if bilingual %} <span class="secondary-label">/ Date</span>{% endif %}</div>
+                                    <div>{{ invoice.issue_date|date:"Y-m-d" }}</div>
+                                </div>
+                                <div>
+                                    <div class="muted">Teljesítés{% if bilingual %} <span class="secondary-label">/ Delivery</span>{% endif %}</div>
+                                    <div>{{ invoice.delivery_date|default:invoice.issue_date|date:"Y-m-d" }}</div>
+                                </div>
+                                <div>
+                                    <div class="muted">Pénznem{% if bilingual %} <span class="secondary-label">/ Currency</span>{% endif %}</div>
+                                    <div>{{ invoice.currency }}</div>
+                                </div>
+                                {% if bilingual and invoice.exchange_rate > 1 %}
+                                <div>
+                                    <div class="muted">Árfolyam / Rate</div>
+                                    <div>{{ invoice.exchange_rate|floatformat:4 }} HUF/{{ invoice.currency }}</div>
+                                </div>
+                                {% endif %}
+                                <div>
+                                    <div class="muted">Fizetési mód{% if bilingual %} <span class="secondary-label">/ Payment Method</span>{% endif %}</div>
+                                    <div>
+                                        {% if invoice.payment_method == 'transfer' %}Átutalás{% if bilingual %} / Transfer{% endif %}
+                                        {% elif invoice.payment_method == 'cash' %}Készpénz{% if bilingual %} / Cash{% endif %}
+                                        {% else %}{{ invoice.payment_method }}{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- ITEMS -->
+                <tr>
+                    <td colspan="2" style="border: none; padding: 0;">
+                        <table class="inv-items">
+                            <thead>
+                                <tr>
+                                    <th class="col-desc">Megnevezés{% if bilingual %} <span class="secondary-label">/ Description</span>{% endif %}</th>
+                                    <th class="cen col-qty">Menny.{% if bilingual %} <span class="secondary-label">/ Qty.</span>{% endif %}</th>
+                                    <th class="cen col-unit">Egység{% if bilingual %} <span class="secondary-label">/ Unit</span>{% endif %}</th>
+                                    <th class="num col-unitnet">
+                                        Egységár{% if bilingual %} <span class="secondary-label">/ Unit Price</span>{% endif %}<br class="print-only">
+                                        <span class="muted" style="font-weight: normal; font-size: 0.8em;">(Nettó){% if bilingual %} <span class="secondary-label">/ (Net)</span>{% endif %}</span>
+                                    </th>
+                                    <th class="cen col-vatrate">ÁFA{% if bilingual %} <span class="secondary-label">/ VAT</span>{% endif %}</th>
+                                    <th class="num col-net">Nettó{% if bilingual %} <span class="secondary-label">/ Net</span>{% endif %}</th>
+                                    <th class="num col-vat">ÁFA értéke{% if bilingual %} <span class="secondary-label">/ VAT Amount</span>{% endif %}</th>
+                                    <th class="num col-gross">Bruttó{% if bilingual %} <span class="secondary-label">/ Gross</span>{% endif %}</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in invoice.items.all %}
+                                <tr>
+                                    <td class="col-desc">{{ item.description }}</td>
+                                    <td class="cen col-qty">{{ item.quantity|floatformat:-2 }}</td>
+                                    <td class="cen col-unit">{{ item.unit_of_measure|default:"db" }}</td>
+                                    <td class="num col-unitnet">{{ item.unit_price|floatformat:2 }}</td>
+                                    <td class="cen col-vatrate">
+                                        {% if item.vat_type and item.vat_type.category != 'PERCENT' %}
+                                            <span style="font-size: 8pt;">{{ item.vat_type.name }}</span>
+                                        {% else %}
+                                            {% if item.vat_rate|add:0 == item.vat_rate %}{{ item.vat_rate|floatformat:0 }}%{% else %}{{ item.vat_rate }}%{% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td class="num col-net">{{ item.net_amount|floatformat:2 }}</td>
+                                    <td class="num col-vat">{{ item.vat_amount|floatformat:2 }}</td>
+                                    <td class="num col-gross">{{ item.gross_amount|floatformat:2 }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        <!-- SUMMARY -->
+                        <div class="inv-summary-wrap">
+                            <table class="vat-summary-table">
+                                <colgroup>
+                                  <col style="width: 20%" />
+                                  <col style="width: 26%" />
+                                  <col style="width: 27%" />
+                                  <col style="width: 27%" />
+                                </colgroup>
+                                <thead>
+                                  <tr>
+                                    <th class="cen">ÁFA{% if bilingual %} <span class="secondary-label">/ VAT</span>{% endif %}</th>
+                                    <th class="num">Nettó összeg{% if bilingual %} <span class="secondary-label">/ Net Amount</span>{% endif %}</th>
+                                    <th class="num">ÁFA összeg{% if bilingual %} <span class="secondary-label">/ VAT Amount</span>{% endif %}</th>
+                                    <th class="num">Bruttó összeg{% if bilingual %} <span class="secondary-label">/ Gross Amount</span>{% endif %}</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {% for row in vat_summary %}
+                                  <tr>
+                                    <td class="cen vat-desc-col">
+                                        {{ row.label }}
+                                    </td>
+                                    <td class="num">{{ row.net|floatformat:2 }}</td>
+                                    <td class="num">{{ row.vat|floatformat:2 }}</td>
+                                    <td class="num">{{ row.gross|floatformat:2 }}</td>
+                                  </tr>
+                                  {% endfor %}
+                                  <tr>
+                                    <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} ({{ invoice.currency }})</th>
+                                    <th class="num">{{ invoice.total_net_amount|floatformat:2 }}</th>
+                                    <th class="num">{{ invoice.total_vat_amount|floatformat:2 }}</th>
+                                    <th class="num inv-gross-total">{{ invoice.total_gross_amount|floatformat:2 }}</th>
+                                  </tr>
+                                  
+                                  {% if huf_totals %}
+                                  <tr style="border-top: 2px solid #000;">
+                                    <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} (HUF)</th>
+                                    <th class="num">{{ huf_totals.net|floatformat:2 }}</th>
+                                    <th class="num">{{ huf_totals.vat|floatformat:2 }}</th>
+                                    <th class="num inv-gross-total">{{ huf_totals.gross|floatformat:2 }} HUF</th>
+                                  </tr>
+                                  {% endif %}
+                                </tbody>
+                            </table>
+                        
+                            {% if invoice.notes %}
+                            <div class="inv-notes">
+                                <div class="inv-block-title">Megjegyzés</div>
+                                <div>{{ invoice.notes }}</div>
+                            </div>
+                            {% endif %}
+    
+                            <!-- FOOTNOTE FIX -->
+                            {% if invoice.invoice_block and invoice.invoice_block.footer_note %}
+                            <div class="inv-notes" style="margin-top:2mm; border-top:1px solid #ccc; padding-top:1mm;">
+                                <div>{{ invoice.invoice_block.footer_note|linebreaksbr }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- FOOTER -->
+                        <div class="inv-footer">
+                            <div style="margin-bottom: 2mm;">
+                                {% if invoice.payment_method == 'transfer' %}
+                                    Kérjük az összeget átutalással rendezni a fenti bankszámlára.{% if bilingual %} <span class="secondary-label">Please transfer the amount to the bank account above.</span>{% endif %}
+                                {% else %}
+                                    Köszönjük a fizetést.{% if bilingual %} <span class="secondary-label">Thank you for your payment.</span>{% endif %}
+                                {% endif %}
+                            </div>
+
+                            <div class="inv-fineprint">Ez a számla elektronikus úton készült és aláírás nélkül is érvényes.{% if bilingual %} <span class="secondary-label">This invoice was created electronically and is valid without signature.</span>{% endif %}</div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

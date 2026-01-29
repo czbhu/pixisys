@@ -534,17 +534,25 @@ class NAVService:
         customerInfo = ET.SubElement(invoiceHead, '{%s}customerInfo' % NS_DATA)
         ET.SubElement(customerInfo, '{%s}customerVatStatus' % NS_DATA).text = getattr(invoice.customer, 'vat_status', 'DOMESTIC')
         customerVatData = ET.SubElement(customerInfo, '{%s}customerVatData' % NS_DATA)
-        customerTaxNumber = ET.SubElement(customerVatData, '{%s}customerTaxNumber' % NS_DATA)
-        # NAV elvárás: ÁFA csoportos vevő esetén a csoport AZONOSÍTÓ (csoport adószám) szerepeljen,
-        # ne az egyes csoporttag adószáma. Ha van vat_group_id, azt használjuk; egyébként a normál adószámot.
-        try:
-            cust = invoice.customer
-            taxpayer_id_src = (getattr(cust, 'vat_group_id', None) or '').strip() or (getattr(cust, 'tax_number', None) or '').strip()
-        except Exception:
-            taxpayer_id_src = (invoice.customer.tax_number or '')
-        ET.SubElement(customerTaxNumber, '{%s}taxpayerId' % NS_BASE).text = taxpayer_id_src[:8]
-        ET.SubElement(customerTaxNumber, '{%s}vatCode' % NS_BASE).text = getattr(invoice.customer, 'vat_code', None) or '2'
-        ET.SubElement(customerTaxNumber, '{%s}countyCode' % NS_BASE).text = getattr(invoice.customer, 'county_code', None) or '02'
+        
+        # Adószám meghatározása (belföldi, EU-s vagy harmadik országbeli)
+        cust = invoice.customer
+        is_hungarian = getattr(cust, 'is_hungarian_taxpayer', True)
+        if is_hungarian:
+            customerTaxNumber = ET.SubElement(customerVatData, '{%s}customerTaxNumber' % NS_DATA)
+            try:
+                taxpayer_id_src = (getattr(cust, 'vat_group_id', None) or '').strip() or (getattr(cust, 'tax_number', None) or '').strip()
+            except Exception:
+                taxpayer_id_src = (invoice.customer.tax_number or '')
+            ET.SubElement(customerTaxNumber, '{%s}taxpayerId' % NS_BASE).text = taxpayer_id_src[:8]
+            ET.SubElement(customerTaxNumber, '{%s}vatCode' % NS_BASE).text = getattr(invoice.customer, 'vat_code', None) or '2'
+            ET.SubElement(customerTaxNumber, '{%s}countyCode' % NS_BASE).text = getattr(invoice.customer, 'county_code', None) or '02'
+        elif getattr(cust, 'eu_tax_number', None):
+             ET.SubElement(customerVatData, '{%s}communityVatNumber' % NS_DATA).text = cust.eu_tax_number
+        else:
+             # Harmadik ország
+             tax_id_val = (getattr(cust, 'tax_number', None) or 'UNKNOWN')
+             ET.SubElement(customerVatData, '{%s}thirdStateTaxId' % NS_DATA).text = tax_id_val
 
         ET.SubElement(customerInfo, '{%s}customerName' % NS_DATA).text = invoice.customer.name
         custAddr = ET.SubElement(customerInfo, '{%s}customerAddress' % NS_DATA)
@@ -626,6 +634,8 @@ class NAVService:
         total_vat = Decimal('0')
         rate_buckets = {}
         line_no = 1
+        huf_rate = Decimal(str(invoice.exchange_rate or '1'))
+        
         # Feltöltésben minden számla normál szerkezetű
         is_simplified = False
         for item in invoice.items.all():
@@ -699,21 +709,18 @@ class NAVService:
                 lineAmountsNormal = ET.SubElement(line, '{%s}lineAmountsNormal' % NS_DATA)
                 netData = ET.SubElement(lineAmountsNormal, '{%s}lineNetAmountData' % NS_DATA)
                 ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = q2(net)
-                if invoice.currency == 'HUF':
-                    ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net)
+                ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net * huf_rate)
 
                 vatRate = ET.SubElement(lineAmountsNormal, '{%s}lineVatRate' % NS_DATA)
                 ET.SubElement(vatRate, '{%s}vatPercentage' % NS_DATA).text = q4(vat_pct)
 
                 vatData = ET.SubElement(lineAmountsNormal, '{%s}lineVatData' % NS_DATA)
                 ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = q2(vat_amount)
-                if invoice.currency == 'HUF':
-                    ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount)
+                ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount * huf_rate)
 
                 grossData = ET.SubElement(lineAmountsNormal, '{%s}lineGrossAmountData' % NS_DATA)
                 ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = q2(gross)
-                if invoice.currency == 'HUF':
-                    ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(gross)
+                ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(gross * huf_rate)
 
         # Add advance deduction lines for FINAL invoices based on allocations
         try:
@@ -767,18 +774,18 @@ class NAVService:
                         lineAmountsNormal = ET.SubElement(line, '{%s}lineAmountsNormal' % NS_DATA)
                         netData = ET.SubElement(lineAmountsNormal, '{%s}lineNetAmountData' % NS_DATA)
                         ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = q2(net)
-                        if invoice.currency == 'HUF':
-                            ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net)
+                        ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net * huf_rate)
+                        
                         vatRate = ET.SubElement(lineAmountsNormal, '{%s}lineVatRate' % NS_DATA)
                         ET.SubElement(vatRate, '{%s}vatPercentage' % NS_DATA).text = q4(vat_pct)
+                        
                         vatData = ET.SubElement(lineAmountsNormal, '{%s}lineVatData' % NS_DATA)
                         ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = q2(vat_amount)
-                        if invoice.currency == 'HUF':
-                            ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount)
+                        ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount * huf_rate)
+                        
                         grossData = ET.SubElement(lineAmountsNormal, '{%s}lineGrossAmountData' % NS_DATA)
                         ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = q2(portion_gross)
-                        if invoice.currency == 'HUF':
-                            ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(portion_gross)
+                        ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(portion_gross * huf_rate)
         except Exception:
             pass
 
@@ -791,8 +798,7 @@ class NAVService:
                 vr = ET.SubElement(s, '{%s}vatRate' % NS_DATA)
                 ET.SubElement(vr, '{%s}vatPercentage' % NS_DATA).text = rate_key
                 ET.SubElement(s, '{%s}vatContentGrossAmount' % NS_DATA).text = q2(vals['gross'])
-                if invoice.currency == 'HUF':
-                    ET.SubElement(s, '{%s}vatContentGrossAmountHUF' % NS_DATA).text = q2(vals['gross'])
+                ET.SubElement(s, '{%s}vatContentGrossAmountHUF' % NS_DATA).text = q2(vals['gross'] * huf_rate)
         else:
             summaryNormal = ET.SubElement(invoiceSummary, '{%s}summaryNormal' % NS_DATA)
 
@@ -804,31 +810,25 @@ class NAVService:
 
                 netData = ET.SubElement(s, '{%s}vatRateNetData' % NS_DATA)
                 ET.SubElement(netData, '{%s}vatRateNetAmount' % NS_DATA).text = q2(vals['net'])
-                if invoice.currency == 'HUF':
-                    ET.SubElement(netData, '{%s}vatRateNetAmountHUF' % NS_DATA).text = q2(vals['net'])
+                ET.SubElement(netData, '{%s}vatRateNetAmountHUF' % NS_DATA).text = q2(vals['net'] * huf_rate)
 
                 vatData = ET.SubElement(s, '{%s}vatRateVatData' % NS_DATA)
                 ET.SubElement(vatData, '{%s}vatRateVatAmount' % NS_DATA).text = q2(vals['vat'])
-                if invoice.currency == 'HUF':
-                    ET.SubElement(vatData, '{%s}vatRateVatAmountHUF' % NS_DATA).text = q2(vals['vat'])
+                ET.SubElement(vatData, '{%s}vatRateVatAmountHUF' % NS_DATA).text = q2(vals['vat'] * huf_rate)
 
                 grossData = ET.SubElement(s, '{%s}vatRateGrossData' % NS_DATA)
                 ET.SubElement(grossData, '{%s}vatRateGrossAmount' % NS_DATA).text = q2(vals['gross'])
-                if invoice.currency == 'HUF':
-                    ET.SubElement(grossData, '{%s}vatRateGrossAmountHUF' % NS_DATA).text = q2(vals['gross'])
+                ET.SubElement(grossData, '{%s}vatRateGrossAmountHUF' % NS_DATA).text = q2(vals['gross'] * huf_rate)
 
             ET.SubElement(summaryNormal, '{%s}invoiceNetAmount' % NS_DATA).text = q2(total_net)
-            if invoice.currency == 'HUF':
-                ET.SubElement(summaryNormal, '{%s}invoiceNetAmountHUF' % NS_DATA).text = q2(total_net)
+            ET.SubElement(summaryNormal, '{%s}invoiceNetAmountHUF' % NS_DATA).text = q2(total_net * huf_rate)
             ET.SubElement(summaryNormal, '{%s}invoiceVatAmount' % NS_DATA).text = q2(total_vat)
-            if invoice.currency == 'HUF':
-                ET.SubElement(summaryNormal, '{%s}invoiceVatAmountHUF' % NS_DATA).text = q2(total_vat)
+            ET.SubElement(summaryNormal, '{%s}invoiceVatAmountHUF' % NS_DATA).text = q2(total_vat * huf_rate)
 
         summaryGross = ET.SubElement(invoiceSummary, '{%s}summaryGrossData' % NS_DATA)
         total_gross = total_net + total_vat
         ET.SubElement(summaryGross, '{%s}invoiceGrossAmount' % NS_DATA).text = q2(total_gross)
-        if invoice.currency == 'HUF':
-            ET.SubElement(summaryGross, '{%s}invoiceGrossAmountHUF' % NS_DATA).text = q2(total_gross)
+        ET.SubElement(summaryGross, '{%s}invoiceGrossAmountHUF' % NS_DATA).text = q2(total_gross * huf_rate)
 
         return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')
 

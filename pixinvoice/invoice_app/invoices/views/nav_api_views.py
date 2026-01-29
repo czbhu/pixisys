@@ -14,6 +14,9 @@ import xml.etree.ElementTree as ET
 
 from invoices.nav_api_config import NavApiConfig
 from invoices.nav_api_reporter import NavApiReporter
+from invoices.mnb_api import MNBApiClient
+from django.core.cache import cache
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -283,23 +286,61 @@ def lookup_taxpayer(request):
 @csrf_exempt
 @require_http_methods(["GET"])
 def get_exchange_rate(request):
-    """Return HUF exchange rate for given currency code using public API if available.
-    Query params: currency (e.g., EUR). Falls back to 1.0.
+    """
+    Return HUF exchange rate for given currency code using MNB API.
+    Supports optional 'date' parameter (YYYY-MM-DD). If missing, uses today.
     """
     code = (request.GET.get('currency') or '').upper().strip()
     if not code or code == 'HUF':
         return JsonResponse({'currency': code or 'HUF', 'rate': 1.0})
-    rate = None
+
+    date_param = request.GET.get('date', '').strip()
+    today_str = datetime.now().strftime('%Y-%m-%d')
+    target_date = date_param if date_param else today_str
+    
+    # Cache key specific for date
+    rate_key = f"mnb_rate_{code}_{target_date}"
+    cached_rate = cache.get(rate_key)
+    
+    if cached_rate is not None:
+        return JsonResponse({'currency': code, 'rate': float(cached_rate), 'date': target_date, 'source': 'cache'})
+        
     try:
-        resp = requests.get(f'https://api.napiarfolyam.hu/?valuta={code}', timeout=5)
-        if resp.ok:
-            data = resp.json()
-            r = data.get('kozep_arfolyam') or data.get('arfolyam')
-            if r:
-                rate = float(str(r).replace(',', '.'))
-    except Exception as ex:
-        logger.warning(f"Exchange rate fetch failed for {code}: {ex}")
+        client = MNBApiClient()
         rate = None
-    if rate is None:
-        return JsonResponse({'currency': code, 'rate': 1.0, 'note': 'Fallback rate. Live fetch failed.'})
-    return JsonResponse({'currency': code, 'rate': rate})
+        
+        if date_param and date_param != today_str:
+            # Historical lookup for specific date
+            logger.info(f"Fetching historical MNB rate for {code} on {target_date}...")
+            rate = client.get_exchange_rate_for_date(code, target_date)
+        else:
+            # Today's rates - try bulk fetch optimization first if not already done
+            cache_key_fetched = f"mnb_rates_fetched_{today_str}"
+            if not cache.get(cache_key_fetched):
+                logger.info(f"Fetching daily MNB exchange rates for {today_str}...")
+                rates = client.get_current_exchange_rates()
+                count = 0
+                for curr, data in rates.items():
+                    rk = f"mnb_rate_{curr}_{today_str}"
+                    cache.set(rk, float(data['rate']), timeout=86400)
+                    if curr == code:
+                        rate = float(data['rate'])
+                    count += 1
+                if count > 0:
+                    cache.set(cache_key_fetched, True, timeout=86400)
+            
+            # If still no rate (maybe bulk fetch missed it or failed), try specific fetch
+            if rate is None:
+                # Try specific fetch for today
+                rate = client.get_exchange_rate_for_date(code, target_date)
+
+        if rate is not None:
+            cache.set(rate_key, rate, timeout=86400 * 2) # Cache for 2 days
+            return JsonResponse({'currency': code, 'rate': rate, 'date': target_date, 'source': 'mnb'})
+        else:
+            return JsonResponse({'error': 'Exchange rate not found'}, status=404)
+
+    except Exception as e:
+        logger.error(f"Failed to fetch MNB rate for {code} on {target_date}: {e}")
+        return JsonResponse({'error': str(e)}, status=500)
+

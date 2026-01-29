@@ -50,6 +50,10 @@ export interface ManufacturingProduct {
     currency_info?: Currency;
     status: string;
     status_display: string;
+    allowed_companies?: (number | string)[];
+    allowed_companies_data?: { id: number | string; name: string }[];
+    allowed_contacts?: (number | string)[];
+    allowed_contacts_data?: { id: number | string; name: string }[];
     contact_name?: string;
     contact_company_name?: string;
     deadline: string;

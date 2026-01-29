@@ -22,8 +22,14 @@ api.interceptors.request.use(
     (config) => {
         const token = localStorage.getItem('access_token');
         if (token) {
-            config.headers.Authorization = `Bearer ${token}`;
+            config.headers.Authorization = `Bearer ${token}`; // Use Bearer prefix
         }
+        
+        // DEBUG: Log allowed_companies going out
+        if (config.data && config.data.allowed_companies && Array.isArray(config.data.allowed_companies)) {
+             console.log('[API Request Interceptor] Sending allowed_companies:', config.data.allowed_companies);
+        }
+
         return config;
     },
     (error) => {

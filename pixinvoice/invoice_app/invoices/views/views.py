@@ -432,7 +432,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         )
         search = self.request.query_params.get('search', None)
         payment_method_filter = (self.request.query_params.get('payment_method') or '').strip().lower()
+        invoice_block = self.request.query_params.get('invoice_block', None)
         
+        if invoice_block:
+            queryset = queryset.filter(invoice_block_id=invoice_block)
         if status_filter:
             queryset = queryset.filter(status=status_filter)
         if customer_filter:
@@ -801,6 +804,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return Response(InvoiceSerializer(serializer.instance).data, status=status.HTTP_201_CREATED, headers=headers)
     @action(detail=True, methods=['post'])
     def send_email(self, request, pk=None):
+        import sys, datetime
+        def log(msg):
+            ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[DEBUG {ts}] {msg}")
+            sys.stdout.flush()
+        
+        log(f"send_email called for pk={pk}") 
         """Send invoice PDF via email. Expects JSON: { to: [..], cc: [..], subject, body }.
         SMTP settings are read from environment variables for now:
           SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD, SMTP_USE_TLS (1/0), SMTP_FROM
@@ -815,12 +825,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             HTML = None
 
         inv = self.get_object()
+        print(f"DEBUG: Invoice fetched: {inv.invoice_number}")
         data = request.data or {}
         to = data.get('to') or []
         cc = data.get('cc') or []
         bcc = data.get('bcc') or []
+        reply_to = data.get('reply_to') or None
         subject = data.get('subject') or f"Számla {inv.invoice_number}"
         body = data.get('body')
+        body_from_request = bool(body)
         if not body:
             try:
                 company = inv.company
@@ -861,13 +874,63 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not to:
             return Response({'error': 'Nincs címzett megadva'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Re-fetch inv to ensure we have all data for the V2 template
+        inv = Invoice.objects.select_related(
+            'company', 'customer', 'invoice_block'
+        ).prefetch_related(
+            'items', 'items__vat_type', 'company__bank_accounts'
+        ).get(pk=inv.pk)
+
+        # Calculate VAT summary for the print view (SAME AS PDF VIEW)
+        from collections import defaultdict
+        vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
+        
+        for item in inv.items.all():
+             r = item.vat_rate
+             vt = item.vat_type
+             if vt and vt.category != 'PERCENT':
+                 eff_rate = vt.percentage if vt.percentage is not None else r
+                 if eff_rate % 1 == 0:
+                     label = f"{int(eff_rate)}%"
+                 else:
+                     label = f"{eff_rate}%"
+                 key = (r, vt.code) 
+             else:
+                 if r % 1 == 0:
+                     l_str = f"{int(r)}%"
+                 else:
+                     l_str = f"{r}%"
+                 key = (r, 'PERCENT')
+                 label = l_str
+
+             vat_map[key]['rate'] = r
+             vat_map[key]['label'] = label
+             vat_map[key]['net'] += item.net_amount
+             vat_map[key]['vat'] += item.vat_amount
+             vat_map[key]['gross'] += item.gross_amount
+             
+        vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
+        
+        huf_totals = None
+        if (inv.currency or '').upper() != 'HUF':
+             ex = inv.exchange_rate or 1
+             huf_totals = {
+                 'net': inv.total_net_amount * ex,
+                 'vat': inv.total_vat_amount * ex,
+                 'gross': inv.total_gross_amount * ex
+             }
+
         pdf_buf = io.BytesIO()
+        log("Starting PDF generation...")
         if HTML:
             ctx = {
-                'invoice': inv,
+                'invoice': inv, 
                 'bilingual': (inv.currency or '').upper() != 'HUF',
+                'block': inv.invoice_block,
+                'vat_summary': vat_summary,
+                'huf_totals': huf_totals
             }
-            html = render_to_string('invoices/print_invoice.html', ctx)
+            html = render_to_string('invoices/print_invoice_v2.html', ctx)
             HTML(string=html).write_pdf(target=pdf_buf)
         else:
             from reportlab.pdfgen import canvas
@@ -882,6 +945,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             c.drawString(40, h-100, f"Összeg (bruttó): {float(inv.total_gross_amount):,.2f} {inv.currency}")
             c.showPage()
             c.save()
+        log("PDF generation finished.")
 
         pdf_buf.seek(0)
 
@@ -894,11 +958,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if (inv.currency or '').upper() != 'HUF' and ces:
             def fill(t):
                 return (t or '').replace('{invoice_number}', inv.invoice_number or '').replace('{customer_name}', getattr(inv.customer, 'name', '')).replace('{company_name}', getattr(inv.company, 'name', ''))
+        # Bilingual extension (Single Invoice)
+        is_fx = (inv.currency or '').upper() != 'HUF'
+        if is_fx and ces:
             en_subj = fill(getattr(ces, 'subject_template_en', None)) or f"Invoice {inv.invoice_number}"
             if subject and en_subj and en_subj not in subject:
-                subject = f"{subject} / {en_subj}"
-            if body and (getattr(ces, 'body_template_en', None)):
-                body = body + "\n\n---\n\n" + fill(ces.body_template_en)
+                subject = f"{en_subj} / {subject}"
+            if not body_from_request and getattr(ces, 'body_template_en', None):
+                 # Auto-generated body: Prepend English
+                 body = fill(ces.body_template_en) + "<br><br><hr><br><br>" + body
         msg['Subject'] = subject
 
         # ces already resolved above
@@ -942,6 +1010,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             msg['Cc'] = ', '.join(cc)
         if bcc:
             msg['Bcc'] = ', '.join(bcc)
+        if reply_to:
+            msg['Reply-To'] = reply_to
         # Append default sender signature if provided in settings and not already present
         if ces:
             sig_lines = []
@@ -950,34 +1020,71 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             if getattr(ces, 'default_sender_phone', None):
                 sig_lines.append(str(ces.default_sender_phone))
             if sig_lines and (body or '').find('--') == -1:
-                body = (body or '') + "\n--\n" + "\n".join(sig_lines)
-        msg.set_content(body)
+                body = (body or '') + "<br><br>--<br>" + "<br>".join(sig_lines)
+        
+        # Determine if body is HTML (simple check)
+        is_html = (body and ('<' in body and '>' in body))
+        if is_html:
+            msg.set_content("HTML-only e-mail") # Fallback
+            msg.add_alternative(body, subtype='html')
+        else:
+            msg.set_content(body)
 
-        filename = f"{inv.invoice_number or 'szamla'}.pdf"
+        cust_name = getattr(inv.customer, 'name', '') or ''
+        cust_prefix = cust_name[:5] or 'Client'
+        filename = f"{cust_prefix}_{inv.invoice_number or 'szamla'}.pdf"
         msg.add_attachment(pdf_buf.read(), maintype='application', subtype='pdf', filename=filename)
 
-        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST')
-        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or 587)
-        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER')
-        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD')
-        use_tls = bool(ces.smtp_use_tls) if ces and ces.smtp_use_tls is not None else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+        # SMTP settings resolution: Company Settings -> Env SMTP_* -> Env EMAIL_*
+        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
+        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
+        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+        
+        # TLS: Company Settings -> Env SMTP_USE_TLS -> Default True
+        if ces and ces.smtp_use_tls is not None:
+             use_tls = bool(ces.smtp_use_tls)
+        else:
+             use_tls = (os.environ.get('SMTP_USE_TLS', '1') == '1') or (os.environ.get('EMAIL_USE_TLS', '1') == '1')
+
+        log(f"SMTP Configuration: Host={host}, Port={port}, User={user}, TLS={use_tls}")
         if not host or not user or not pwd:
+            log("Missing SMTP settings")
             return Response({'error': 'SMTP beállítások hiányoznak (HOST/USER/PASSWORD)'}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
-            if use_tls:
+            log("Connecting to SMTP server...")
+            if port == 465:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context) as server:
+                    log("Logging in (SSL)...")
+                    server.login(user, pwd)
+                    log("Sending message...")
+                    server.send_message(msg)
+            elif use_tls:
                 context = ssl.create_default_context()
                 with smtplib.SMTP(host, port) as server:
+                    # server.set_debuglevel(1)
+                    log("Executing STARTTLS...")
                     server.starttls(context=context)
+                    log("Logging in...")
                     server.login(user, pwd)
+                    log("Sending message...")
                     server.send_message(msg)
             else:
                 with smtplib.SMTP(host, port) as server:
+                    log("Logging in (no TLS)...")
                     server.login(user, pwd)
+                    log("Sending message...")
                     server.send_message(msg)
+            log("SMTP send clean success.")
         except Exception as e:
+            log(f"SMTP Error: {e}")
+            import traceback
+            traceback.print_exc()
             return Response({'error': f'E-mail küldési hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+        log("Checking IMAP...")
         try:
             imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
             imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or user
@@ -985,6 +1092,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             imap_port = int((ces.imap_port if ces and getattr(ces, 'imap_port', None) else None) or os.environ.get('IMAP_PORT') or 993)
             sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
             if imap_host and imap_user and imap_pwd:
+                log(f"Connecting to IMAP {imap_host}")
                 raw = msg.as_bytes()
                 # Connect with SSL or STARTTLS fallbacks
                 try:
@@ -1102,12 +1210,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         for v in variants:
                             if _try_create_and_append(M, v):
                                 break
-                except Exception:
-                    pass
+                except Exception as e:
+                    log(f"IMAP save/append error: {e}")
                 finally:
                     M.logout()
-        except Exception:
-            pass
+        except Exception as e:
+            log(f"IMAP save error (general): {e}")
 
         return Response({'success': True})
 
@@ -1118,15 +1226,103 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         from django.template.loader import render_to_string
         try:
             from weasyprint import HTML
-        except Exception:
+        except Exception as e:
+            print(f"WeasyPrint import error: {e}")
             HTML = None
-        inv = self.get_object()
+        
+        # Fetch invoice with all related data
+        inv = Invoice.objects.select_related(
+            'company', 'customer', 'invoice_block'
+        ).prefetch_related(
+            'items', 'items__vat_type', 'company__bank_accounts'
+        ).get(pk=pk)
+
+        # Calculate VAT summary for the print view
+        from collections import defaultdict
+        # Key: (rate_value, label_string)
+        vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
+        
+        for item in inv.items.all():
+             r = item.vat_rate
+             vt = item.vat_type
+             
+             # Determine grouping key and display label
+             if vt and vt.category != 'PERCENT':
+                 # Special VAT types (AAM, TAM, etc.) get their own row by code
+                 # For the summary table, user wants the VALUE (percentage) or Name if no percentage?
+                 # Actually user said: "Az Áfa-nál ne az Áfa neve legyen, hanem az értéke."
+                 # This implies for special VAT types, we should show "0%" or whatever the value is, not "AAM".
+                 # But usually AAM means 0% effectively but legally distinct.
+                 # If the request means "Use the percentage numbers always", then for AAM/TAM it is usually 0.
+                 # However, if we group by (rate, label), we might split them incorrectly if we change label.
+                 # Let's adjust: display logic in template? No, the user wants the VAT COLUMN in SUMMARY to show VALUE.
+                 
+                 # Current logic: label = vt.code (e.g. "AAM")
+                 # New logic requested: "Az Áfa-nál ne az Áfa neve legyen, hanem az értéke."
+                 # This likely means "0%" for AAM.
+                 
+                 # If percentage is set on VATType, use it. Else default to rate.
+                 eff_rate = vt.percentage if vt.percentage is not None else r
+                 if eff_rate % 1 == 0:
+                     label = f"{int(eff_rate)}%"
+                 else:
+                     label = f"{eff_rate}%"
+                 
+                 # We still group by code to keep accounting separate?
+                 # Or do we group by rate now? If "AAM" (0%) and "TAM" (0%) are both 0%, should they merge?
+                 # Usually they shouldn't merge in accounting, but if the printout just says "0%", it looks weird if there are two "0%" rows.
+                 # The user request is visual: "show value".
+                 # Let's keep separate grouping but change the display label.
+                 key = (r, vt.code) # Keep unique key to avoid merging unlike types
+             else:
+                 # Standard percentage
+                 # We group strictly by rate, label is just formatted rate
+                 if r % 1 == 0:
+                     l_str = f"{int(r)}%"
+                 else:
+                     l_str = f"{r}%"
+                 key = (r, 'PERCENT')
+                 label = l_str
+
+             vat_map[key]['rate'] = r
+             vat_map[key]['label'] = label
+             vat_map[key]['net'] += item.net_amount
+             vat_map[key]['vat'] += item.vat_amount
+             vat_map[key]['gross'] += item.gross_amount
+             
+        vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
+        
+        # Calculate HUF totals if needed
+        huf_totals = None
+        if (inv.currency or '').upper() != 'HUF':
+             ex = inv.exchange_rate or 1
+             huf_totals = {
+                 'net': inv.total_net_amount * ex,
+                 'vat': inv.total_vat_amount * ex,
+                 'gross': inv.total_gross_amount * ex
+             }
+
         pdf_buf = io.BytesIO()
         if HTML:
-            ctx = { 'invoice': inv, 'bilingual': (inv.currency or '').upper() != 'HUF' }
-            html = render_to_string('invoices/print_invoice.html', ctx)
-            HTML(string=html).write_pdf(target=pdf_buf)
-        else:
+            try:
+                ctx = { 
+                    'invoice': inv, 
+                    'bilingual': (inv.currency or '').upper() != 'HUF',
+                    'block': inv.invoice_block,
+                    'vat_summary': vat_summary,
+                    'huf_totals': huf_totals
+                }
+                html = render_to_string('invoices/print_invoice_v2.html', ctx)
+                HTML(string=html).write_pdf(target=pdf_buf)
+            except Exception as e:
+                print(f"WeasyPrint PDF generation error: {e}")
+                import traceback
+                traceback.print_exc()
+                # Fallback to reportlab
+                HTML = None
+                pdf_buf = io.BytesIO()
+        
+        if not HTML or pdf_buf.tell() == 0:
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import A4
             c = canvas.Canvas(pdf_buf, pagesize=A4)
@@ -1140,7 +1336,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             c.showPage(); c.save()
         pdf_buf.seek(0)
         resp = HttpResponse(pdf_buf.read(), content_type='application/pdf')
-        resp['Content-Disposition'] = f'inline; filename="{inv.invoice_number or "szamla"}.pdf"'
+        
+        cust_name = getattr(inv.customer, 'name', '') or ''
+        cust_prefix = cust_name[:5] or 'Client'
+        filename = f"{cust_prefix}_{inv.invoice_number or 'szamla'}.pdf"
+        resp['Content-Disposition'] = f'inline; filename="{filename}"'
         return resp
 
     @action(detail=True, methods=['post'])
@@ -1172,7 +1372,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         pdf_buf = io.BytesIO()
         if HTML:
-            html = render_to_string('invoices/print_invoice.html', {
+            html = render_to_string('invoices/print_invoice_v2.html', {
                 'invoice': inv,
                 'bilingual': (inv.currency or '').upper() != 'HUF',
             })
@@ -1309,6 +1509,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         # Subject/body
         subject = (data.get('subject') or '').strip()
         body = data.get('body')
+        body_from_request = bool(body)
 
         def fill(tpl, inv=None):
             inv = inv or invoices[0]
@@ -1362,9 +1563,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if any_fx and ces:
             en_subj = fill(getattr(ces, 'subject_template_en', None)) or f"Invoice {invoices[0].invoice_number}"
             if en_subj and en_subj not in subject:
-                subject = f"{subject} / {en_subj}"
-            if getattr(ces, 'body_template_en', None):
-                body = body + "\n\n---\n\n" + fill(ces.body_template_en)
+                subject = f"{en_subj} / {subject}"
+            if not body_from_request and getattr(ces, 'body_template_en', None):
+                # If body was auto-generated, prepend English.
+                # If body came from request (e.g. user edited it), assume it is already bilingual
+                body = fill(ces.body_template_en) + "<br><br><hr><br><br>" + body
 
         # Thunderbird compose mode for bulk
         use_th = bool(data.get('use_thunderbird')) or bool(getattr(ces, 'use_thunderbird', False))
@@ -1885,16 +2088,35 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
             # Determine fetch window: use explicit date range if provided, otherwise incremental by insDate from last refresh
             fetch_by_insdate = sync.last_refreshed_at is not None and has_any
+            
+            # If explicit date range provided, use it (by invoiceIssueDate)
             if date_from and date_to:
-                # Always prefer the requested explicit window (even if we already have some data in it)
                 fetch_by_insdate = False
+                
             if fetch_by_insdate:
-                df = sync.last_refreshed_at.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
+                # Automatic/Delta sync: use insDate (arrival date)
+                # Overlap: look back 5 days from the last fetch to catch delayed items
+                from datetime import timedelta
+                start_time = sync.last_refreshed_at - timedelta(days=5)
+                
+                df = start_time.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
                 dt = timezone.now().astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
                 src_from, src_to = df, dt
+                
+                logger.info(f"Auto-sync incoming invoices (insDate): {src_from} -> {src_to} (with 5 days overlap)")
             else:
                 if date_from and date_to:
-                    src_from, src_to = date_from, date_to
+                    # Manual sync incoming invoices (issueDate)
+                    # Apply 5-day overlap (lookback) as requested, to verify slightly older invoices
+                    try:
+                        from datetime import datetime
+                        d_start = datetime.strptime(date_from, '%Y-%m-%d').date() - timedelta(days=5)
+                        src_from = d_start.strftime('%Y-%m-%d')
+                    except Exception:
+                        src_from = date_from
+                    
+                    src_to = date_to
+                    logger.info(f"Manual sync incoming invoices (issueDate): {src_from} -> {src_to} (with 5 days overlap)")
                 else:
                     # Default backfill: last 90 days by invoiceIssueDate
                     from datetime import timedelta
@@ -3702,19 +3924,47 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
                     for raw in boxes:
                         s = raw.decode(errors='ignore') if isinstance(raw, (bytes, bytearray)) else str(raw)
                         import re as _re
-                        # Flags
-                        m_flags = _re.search(r"\(([^)]*)\)", s)
-                        flags_txt = m_flags.group(1) if m_flags else ''
-                        # Delimiter may appear after flags in quotes
-                        m_quoted = _re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', s)
+                        
+                        # Robust parsing of: (Flags) Delimiter Name
+                        flags_txt = ''
                         delim = None
-                        name = None
-                        if len(m_quoted) >= 2:
-                            delim, name = m_quoted[-2], m_quoted[-1]
-                        elif len(m_quoted) == 1:
-                            name = m_quoted[0]
+                        name = ''
+                        
+                        # 1. Flags
+                        # Pattern: starts with (...) or just ...
+                        m_flags = _re.search(r"^\(([^)]*)\)", s)
+                        rest = s
+                        if m_flags:
+                            flags_txt = m_flags.group(1)
+                            rest = s[m_flags.end():].strip()
+                        
+                        # 2. Delimiter (Quoted or NIL)
+                        # We expect the delimiter to be the next token
+                        if rest.startswith('NIL'):
+                            delim = None
+                            rest = rest[3:].strip()
+                        elif rest.startswith('"'):
+                            # Match quoted string at start
+                            m_q = _re.match(r'^"([^"\\]*(?:\\.[^"\\]*)*)"', rest)
+                            if m_q:
+                                delim = m_q.group(1)
+                                rest = rest[m_q.end():].strip()
+                        
+                        # 3. Name (Quoted or Literal)
+                        if rest.startswith('"'):
+                            m_n = _re.match(r'^"([^"\\]*(?:\\.[^"\\]*)*)"', rest)
+                            if m_n:
+                                name = m_n.group(1)
+                                # If there's garbage after the name quote, ignore it? Usually nothing follows.
+                            else:
+                                # Start with quote but didn't match regex? Take as is or strip quotes manually
+                                name = rest.strip('"')
                         else:
-                            name = (s.split()[-1] if s.split() else '')
+                            # Not quoted -> take the rest effectively
+                            # But if the rest is empty?
+                            # Sometimes literals {N} are used, but typically not in M.list() output from Python imaplib
+                            name = rest.strip()
+
                         # Decode modified UTF-7
                         try:
                             from imaplib import IMAP4

@@ -1,12 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge } from 'antd';
-import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined } from '@ant-design/icons';
+import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge, MenuProps } from 'antd';
+import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { TimerModal } from '../WorkLog/TimerModal';
 import QRScannerModal from '../QRScannerModal';
 import AttendanceQRModal from '../AttendanceQRModal';
 import api from '../../services/api';
+import dayjs from 'dayjs';
+import duration from 'dayjs/plugin/duration';
+
+dayjs.extend(duration);
 
 const { Header: AntHeader } = Layout;
 
@@ -24,23 +28,250 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
     // Attendance state
     const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
     const [personalQrModalOpen, setPersonalQrModalOpen] = useState(false);
-    const [attendanceStatus, setAttendanceStatus] = useState<{is_clocked_in: boolean, check_in: string | null, check_out: string | null} | null>(null);
+    const [attendanceStatus, setAttendanceStatus] = useState<{
+        is_clocked_in: boolean, 
+        check_in: string | null, 
+        check_out: string | null, 
+        daily_worked_seconds?: number,
+        inactivity_timeout?: number
+    } | null>(null);
 
-    // Load attendance status on mobile
+    // Inactivity Tracking State
+    const [currentTime, setCurrentTime] = useState(dayjs());
+    const [lastActivityTime, setLastActivityTime] = useState(dayjs()); // EFFECTIVE last activity (max of local and server)
+    const localLastActivityTime = React.useRef(dayjs()); // Local inputs timestamp
+    const lastSyncedTime = React.useRef(dayjs()); // Last time we told server about activity
+    const [inactivityWarningOpen, setInactivityWarningOpen] = useState(false);
+
+    // Request notification permission
     useEffect(() => {
-        if (isMobile) {
-            checkAttendanceStatus();
+        if ("Notification" in window) {
+            if (Notification.permission !== "granted" && Notification.permission !== "denied") {
+                Notification.requestPermission();
+            }
         }
-    }, [isMobile]);
+    }, []);
+
+    const sendNativeNotification = async (title: string, body: string, strategy: 'auto' | 'sw' | 'api' = 'auto') => {
+        if (!("Notification" in window)) return 'unsupported';
+        
+        if (Notification.permission === "granted") {
+            try {
+                // 1. Try Service Worker (Preferred for "Push" style persistence)
+                if ((strategy === 'auto' || strategy === 'sw') && 'serviceWorker' in navigator) {
+                    const registration = await navigator.serviceWorker.getRegistration();
+                    if (registration && registration.active) {
+                        await registration.showNotification(title, {
+                            body: body,
+                            icon: '/logo192.png',
+                            badge: '/logo192.png',
+                            vibrate: [200, 100, 200],
+                            requireInteraction: true,
+                            tag: 'pixierp-activity-msg', // Fixed tag to update existing
+                            data: { url: window.location.href }
+                        });
+                        // Auto-close service worker notification after 5 seconds
+                        setTimeout(async () => {
+                             try {
+                                 const notifications = await registration.getNotifications({ tag: 'pixierp-activity-msg' });
+                                 notifications.forEach(n => n.close());
+                             } catch(e) { console.error("Auto-close error", e); }
+                        }, 5000);
+                        return 'sw';
+                    }
+                }
+
+                // 2. Fallback to classic API
+                const notif = new Notification(title, {
+                    body: body,
+                    icon: window.location.origin + '/logo192.png', 
+                    requireInteraction: true,
+                    silent: false,
+                    tag: 'pixierp-activity-msg'
+                });
+                notif.onclick = () => {
+                    window.focus();
+                    notif.close();
+                };
+                // Auto-close classic notification after 5 seconds
+                setTimeout(() => notif.close(), 5000);
+                return 'api';
+            } catch (e) {
+                console.error("Native notification error:", e);
+                return 'error';
+            }
+        }
+        return 'permission-denied';
+    };
+
+    // --- ACTIVITY TRACKING LOGIC ---
+    useEffect(() => {
+        // Only run listeners if checks are enabled (user is logged in context)
+        // But specifically, user asked: "only measure activity if checked in via kiosk"
+        // So we check attendanceStatus.check_in
+        
+        const updateActivity = () => {
+             // Update LOCAL reference
+             localLastActivityTime.current = dayjs();
+             
+             // Optimistically update display to feel responsive
+             if (localLastActivityTime.current.isAfter(lastActivityTime)) {
+                 setLastActivityTime(localLastActivityTime.current);
+             }
+        };
+
+        if (attendanceStatus?.check_in) {
+            window.addEventListener('keydown', updateActivity);
+            window.addEventListener('click', updateActivity);
+            window.addEventListener('scroll', updateActivity);
+            window.addEventListener('touchmove', updateActivity);
+            window.addEventListener('touchstart', updateActivity);
+        }
+        
+        return () => {
+             window.removeEventListener('keydown', updateActivity);
+             window.removeEventListener('click', updateActivity);
+             window.removeEventListener('scroll', updateActivity);
+             window.removeEventListener('touchmove', updateActivity);
+             window.removeEventListener('touchstart', updateActivity);
+        };
+    }, [attendanceStatus?.check_in, lastActivityTime]);
+
+    // --- UI TIMER (1s tick for clock) ---
+    useEffect(() => {
+        const timer = setInterval(() => setCurrentTime(dayjs()), 1000);
+        return () => clearInterval(timer);
+    }, []);
+
+    // --- SYNC & CHECK LOOP (Frequency: 10s for responsive sync) ---
+    useEffect(() => {
+        const timer = setInterval(async () => {
+            const now = dayjs();
+            
+            // 1. POLL STATUS (Always check server status to keep devices in sync)
+            let serverData = null;
+            try {
+                // Add timestamp to prevent caching
+                const { data } = await api.get(`/hr/attendances/status/?t=${new Date().getTime()}`);
+                serverData = data;
+                setAttendanceStatus(data); 
+            } catch(e) { console.error("Poll failed", e); }
+
+            // 2. Only proceed with Heartbeat/Activity logic if checked in
+            if (!serverData?.check_in || serverData?.check_out) return;
+            
+            // 3. SYNC HEARTBEAT (If checked in)
+            // If we have new local activity since last sync
+            if (localLastActivityTime.current.diff(lastSyncedTime.current, 'second') > 30) {
+                 try {
+                     await api.post('/hr/attendances/update_heartbeat/');
+                     lastSyncedTime.current = dayjs(); // Reset sync timer
+                 } catch (e) {
+                     console.error("Heartbeat failed", e);
+                 }
+            }
+
+            // 4. Merge Activity Times
+            let effectiveTime = localLastActivityTime.current;
+            if (serverData?.last_activity) {
+                 const serverTime = dayjs(serverData.last_activity);
+                 if (serverTime.isValid() && serverTime.isAfter(effectiveTime)) {
+                     effectiveTime = serverTime;
+                 }
+            }
+            setLastActivityTime(effectiveTime);
+
+            // 5. CHECK TIMEOUT LOGIC
+            const diffMinutes = now.diff(effectiveTime, 'minute'); 
+            const timeoutMinutes = serverData?.inactivity_timeout !== undefined ? serverData.inactivity_timeout : 60;
+            
+            // If timeout is 0, disable checks
+            if (timeoutMinutes > 0) {
+                 if (diffMinutes >= timeoutMinutes && !inactivityWarningOpen) {
+                      setInactivityWarningOpen(true);
+                      
+                      // Try native notification
+                      sendNativeNotification(
+                          "Inaktivitás Figyelmeztetés", 
+                          `Már ${timeoutMinutes} perce nem mutattál aktivitást! Itt vagy még?`
+                      );
+                 }
+                  
+                 if (diffMinutes < timeoutMinutes && inactivityWarningOpen) {
+                      setInactivityWarningOpen(false);
+                 }
+                 
+                 if (diffMinutes >= (timeoutMinutes + 2)) {
+                      handleInactiveLogout();
+                 }
+            } else {
+                 if (inactivityWarningOpen) setInactivityWarningOpen(false);
+            }
+            
+        }, 10000); // 10s sync
+
+        return () => clearInterval(timer);
+    }, [inactivityWarningOpen]); // Reduced dependencies to avoid reset loops
+
+    const handleInactiveLogout = async () => {
+        try {
+            // Close modal to prevent multiple triggers
+            setInactivityWarningOpen(false);
+            
+            // Attempt to record checkout at the time of last activity
+            await api.post('/hr/attendances/inactive_checkout/', {
+                last_activity: lastActivityTime.toISOString()
+            });
+            
+            message.info('Inaktivitás miatt a rendszer kiléptette a jelenléti rendszerből.');
+            // Refresh status to show "Logged Out" state
+            checkAttendanceStatus();
+        } catch (error) {
+            console.error("Inactive logout failed", error);
+        }
+    };
+    
+    // Load attendance status
+    useEffect(() => {
+        checkAttendanceStatus();
+        // Refresh every minute to ensure sync? Or rely on websocket/events? 
+        // For simple elapsed time, data.check_in is enough.
+    }, []);
 
     const checkAttendanceStatus = async () => {
         try {
-            const { data } = await api.get('/hr/attendances/status/');
+            // Add timestamp to prevent caching
+            const { data } = await api.get(`/hr/attendances/status/?t=${new Date().getTime()}`);
+            console.log("Updated Attendance Status:", data);
             setAttendanceStatus(data);
         } catch (error) {
             console.error("Attendance check failed", error);
         }
     };
+    
+    // Listen for WebSocket Kiosk/Attendance messages to auto-refresh status
+    // When "success" (check-in/out) message arrives -> refreshHeader
+    useEffect(() => {
+        // We can reuse the notificationWS service if backend sends "kiosk.message" as "notification" 
+        // OR we need to subscribe to attendance_kiosk group? 
+        // Actually, the current user receives notification if targeted.
+        // Let's assume we can trigger refresh on Window Focus too as backup.
+        
+        const onFocus = () => checkAttendanceStatus();
+        window.addEventListener('focus', onFocus);
+        
+        // Listen for global attendance update event (from App.tsx WebSocket)
+        const onAttendanceUpdate = () => {
+             console.log("Global attendance update event received -> Refreshing Header Status");
+             checkAttendanceStatus();
+        };
+        window.addEventListener('attendance-updated', onAttendanceUpdate);
+        
+        return () => {
+            window.removeEventListener('focus', onFocus);
+            window.removeEventListener('attendance-updated', onAttendanceUpdate);
+        };
+    }, []);
 
     const handleInitiateAttendance = async () => {
         // Open the Personal QR Code Modal
@@ -74,7 +305,54 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
         }
     };
 
-    const userMenuItems = [
+
+    const userMenuItems: MenuProps['items'] = [
+        {
+            key: 'login-info',
+            label: (
+                <div style={{ cursor: 'default', color: '#666' }} onClick={(e) => e.stopPropagation()}>
+                    <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
+                         <FieldTimeOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                         <span>
+                             Belépve: <span style={{ fontWeight: 'bold' }}>
+                                 {(attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid())
+                                    ? dayjs.duration(currentTime.diff(dayjs(attendanceStatus.check_in))).format('HH:mm:ss') 
+                                    : 'Inaktív'}
+                             </span>
+                             {attendanceStatus?.daily_worked_seconds ? (
+                                <>
+                                    <span style={{ margin: '0 8px' }}>|</span>
+                                    <span>
+                                        Mai nap: <span style={{ fontWeight: 'bold' }}>
+                                        {(() => {
+                                            const currentSessionSeconds = (attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid()) 
+                                                ? currentTime.diff(dayjs(attendanceStatus.check_in), 'second') 
+                                                : 0;
+                                            const totalSeconds = (attendanceStatus.daily_worked_seconds || 0) + currentSessionSeconds;
+                                            // Handle potential case where check-in is future or skew causing negative?
+                                            const finalSeconds = totalSeconds > 0 ? totalSeconds : 0;
+                                            return dayjs.duration(finalSeconds, 'seconds').format('HH:mm:ss');
+                                        })()}
+                                        </span>
+                                    </span>
+                                </>
+                             ) : null}
+                         </span>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center' }}>
+                         <RestOutlined style={{ marginRight: 8, color: '#faad14' }} />
+                         <span>
+                             Inaktív: <span style={{ fontWeight: 'bold' }}>
+                                 {dayjs.duration(currentTime.diff(lastActivityTime)).format('HH:mm:ss')}
+                             </span>
+                         </span>
+                    </div>
+                </div>
+            ),
+        },
+        {
+            type: 'divider',
+        },
         {
             key: 'logout',
             icon: <LogoutOutlined />,
@@ -83,7 +361,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
         },
     ];
 
-    const handleUserMenuClick = ({ key }: { key: string }) => {
+    const handleUserMenuClick: MenuProps['onClick'] = ({ key }) => {
         if (key === 'logout') {
             logout();
         }
@@ -108,6 +386,41 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
             lineHeight: isMobile ? '48px' : '48px'
         }}>
              <TimerModal />
+             <Modal
+                title="Inaktivitás figyelmeztetés"
+                open={inactivityWarningOpen}
+                footer={[
+                    <Button 
+                        key="stay" 
+                        type="primary" 
+                        size="large"
+                        onClick={() => {
+                            const now = dayjs();
+                            setLastActivityTime(now);
+                            localLastActivityTime.current = now;
+                            setInactivityWarningOpen(false);
+                            // Force immediate heartbeat to server
+                            api.post('/hr/attendances/update_heartbeat/').catch(console.error);
+                        }}
+                        style={{ width: '100%' }}
+                    >
+                        Igen, itt vagyok
+                    </Button>
+                ]}
+                closable={false}
+                maskClosable={false}
+                centered
+                zIndex={9999}
+             >
+                <div style={{ textAlign: 'center', padding: '20px 0' }}>
+                    <div style={{ fontSize: 48, color: '#faad14', marginBottom: 16 }}>
+                        <ClockCircleOutlined />
+                    </div>
+                    <p style={{ fontSize: 18, fontWeight: 'bold' }}>Már {attendanceStatus?.inactivity_timeout || 60} perce nem mutattál aktivitást!</p>
+                    <p>Itt vagy még?</p>
+                </div>
+             </Modal>
+
              <QRScannerModal open={qrModalOpen} onClose={() => setQrModalOpen(false)} isMobile={isMobile} />
              <QRScannerModal 
                 open={attendanceModalOpen} 
@@ -205,7 +518,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                         <Avatar
                             size={isMobile ? "small" : "default"}
                             icon={<UserOutlined />}
-                            style={{ backgroundColor: '#1890ff' }}
+                            style={{ backgroundColor: attendanceStatus?.is_clocked_in ? '#52c41a' : '#1890ff' }}
                         />
                     </Button>
                 </Dropdown>

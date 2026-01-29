@@ -76,6 +76,17 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     ordering_fields = ['date', 'name', 'deadline', 'created_at']
     ordering = ['-created_at']
     
+    def update(self, request, *args, **kwargs):
+        # DEBUG: Log incoming request data
+        import datetime
+        with open("/tmp/debug_view_update.log", "a") as f:
+             f.write(f"\n{datetime.datetime.now()} - ManufacturingProductViewSet.update\n")
+             f.write(f"Request data allowed_companies: {request.data.get('allowed_companies')}\n")
+             f.write(f"Request data customer_ids: {request.data.get('customer_ids')}\n")
+             f.write(f"Request keys: {list(request.data.keys())}\n")
+             
+        return super().update(request, *args, **kwargs)
+
     @action(detail=False, methods=['get'])
     def by_status(self, request):
         """Állapot szerinti szűrés"""

@@ -67,32 +67,7 @@ def _ensure_company_id(client):
     return None
 
 
-def _sync_to_local_db(data):
-    """
-    Syncs the company data from PixInvoice response to the local Company table.
-    Ensures that the 'is_supplier' flag is consistent for ERP modules.
-    """
-    try:
-        cid = data.get('id') or data.get('customer_id')
-        if not cid:
-            return
-
-        is_supplier = data.get('is_supplier', False)
-        
-        # If it's a supplier, or already exists locally, we sync it.
-        if is_supplier or Company.objects.filter(id=cid).exists():
-            Company.objects.update_or_create(
-                id=cid,
-                defaults={
-                    'name': data.get('name') or data.get('customer_name') or 'Névtelen',
-                    'is_supplier': is_supplier,
-                    'is_customer': data.get('is_customer', True),
-                    'tax_number': data.get('tax_number'),
-                    # We can map more fields if needed
-                }
-            )
-    except Exception as e:
-        print(f"Error syncing company {data.get('id')} to local DB: {e}")
+from .utils import sync_company_to_local_db as _sync_to_local_db
 
 
 class CompanyViewSet(viewsets.ViewSet):

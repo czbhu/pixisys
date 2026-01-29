@@ -123,10 +123,68 @@ const Services: React.FC = () => {
     fetchSuppliers();
     fetchDepartments();
     
-    if (searchParams.get('create') === 'true') {
-      handleCreate();
+    const create = searchParams.get('create') === 'true';
+    const copyFrom = searchParams.get('copy_from');
+    const editId = searchParams.get('edit');
+
+    if (create) {
+        if (copyFrom) {
+            setLoading(true);
+            api.get(`/manufacturing/services/${copyFrom}/`).then(res => {
+                const data = res.data.results ? res.data.results[0] : res.data; // Handle potential list response if by ID? No, ID detail view usually returns object.
+                // Depending on API, detail view might be /services/ID/
+                // Let's assume standard detail endpoint exists.
+                if (data) {
+                    const { id, created_at, created_by_name, ...rest } = data;
+                    setEditingService(null);
+                    form.setFieldsValue(rest);
+                    setModalVisible(true);
+                }
+            }).catch(err => {
+                // If direct ID detail fails, try filtering by ID
+                if (err.response && err.response.status === 404) {
+                     // try list filter
+                     api.get(`/manufacturing/services/?id=${copyFrom}`).then(r => {
+                          const item = r.data.results ? r.data.results[0] : (r.data[0]);
+                          if (item) {
+                               const { id, created_at, created_by_name, ...rest } = item;
+                               setEditingService(null);
+                               form.setFieldsValue(rest);
+                               setModalVisible(true);
+                          }
+                     }).catch(e => console.error(e));
+                }
+                console.error(err);
+            }).finally(() => setLoading(false));
+         } else {
+            handleCreate();
+         }
+    } else if (editId) {
+        setLoading(true);
+        api.get(`/manufacturing/services/${editId}/`).then(res => {
+            const data = res.data.results ? res.data.results[0] : res.data;
+            if (data) {
+                handleEdit(data);
+                // Also trigger edit mode on UI
+                setEditingService(data);
+                form.setFieldsValue(data);
+                setModalVisible(true);
+                // Cost items are fetched by effect when editingService set? No, verify handleEdit logic.
+            }
+        }).catch(err => {
+             // Fallback
+             api.get(`/manufacturing/services/?id=${editId}`).then(r => {
+                  const item = r.data.results ? r.data.results[0] : (r.data[0]);
+                  if (item) {
+                       handleEdit(item);
+                       setEditingService(item);
+                       form.setFieldsValue(item);
+                       setModalVisible(true);
+                  }
+             }).catch(() => message.error('Hiba a szolgáltatás betöltésekor'));
+        }).finally(() => setLoading(false));
     }
-  }, []);
+  }, [searchParams]);
 
   const fetchServices = async () => {
     setLoading(true);

@@ -3,53 +3,90 @@
 <head>
   <meta charset="utf-8" />
   <style>
+    @page {
+      size: A4;
+      margin: 1.5cm;
+      margin-bottom: 2.5cm;
+      @bottom-center {
+        content: element(footer);
+      }
+    }
     body { font-family: DejaVu Sans, Arial, Helvetica, sans-serif; font-size: 12px; }
-    .header { display:flex; justify-content: space-between; margin-bottom: 16px; }
-    .title { font-weight: bold; font-size: 18px; }
+    .footer {
+      position: running(footer);
+      width: 100%;
+      text-align: center;
+      font-size: 10px;
+      color: #666;
+      border-top: 1px solid #ddd;
+      padding-top: 8px;
+    }
+    .footer-content:after {
+      content: " " counter(page) " / " counter(pages);
+    }
+    .header { display:flex; justify-content: space-between; margin-bottom: 16px; align-items: flex-start; }
+    .title { font-weight: bold; font-size: 22px; margin-bottom: 4px; }
+    .subtitle { font-size: 14px; margin-bottom: 8px; color: #333; }
     table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     th, td { border: 1px solid #ddd; padding: 6px; vertical-align: top; word-wrap: break-word; overflow-wrap: anywhere; }
     th { background: #f0f0f0; text-align: left; }
-    .col-desc { width: 46%; }
+    .layout-cell { border: none !important; background: transparent !important; padding: 0 0 12px 0 !important; }
+    .col-desc { width: 44%; }
     .col-qty { width: 10%; text-align: right; }
-    .col-net { width: 14%; text-align: right; }
-    .col-vat { width: 14%; text-align: right; }
+    .col-net { width: 15%; text-align: right; }
+    .col-vat { width: 15%; text-align: right; }
     .col-gross { width: 16%; text-align: right; }
-  .truncate { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; line-clamp: 4; }
+    .truncate { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; line-clamp: 4; }
+    thead { display: table-header-group; }
+    tr { page-break-inside: avoid; }
+    .label { font-weight: bold; color: #555; }
   </style>
 </head>
 <body>
-  <div class="header">
-    <div>
-      <div class="title">Számla / Invoice</div>
-      <div>{{ invoice.invoice_number }}</div>
-      {% if bilingual %}<div style="margin-top:4px; color:#666;">This document is bilingual for convenience.</div>{% endif %}
-    </div>
-    <div>
-      <div><strong>Kibocsátás:</strong> {{ invoice.issue_date }}</div>
-      <div><strong>Teljesítés:</strong> {{ invoice.delivery_date }}</div>
-      <div><strong>Esedékesség:</strong> {{ invoice.due_date }}</div>
-    </div>
-  </div>
-
-  <div style="display:flex; gap: 20px; margin-bottom: 12px;">
-    <div style="flex:1;">
-      <div><strong>Eladó / Seller</strong></div>
-      <div>{{ invoice.company.name }}</div>
-      <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}, {{ invoice.company.street_name }} {{ invoice.company.street_number }}</div>
-      <div>Adószám: {{ invoice.company.tax_number }}</div>
-      {% if invoice.company.eu_tax_number %}<div>EU VAT: {{ invoice.company.eu_tax_number }}</div>{% endif %}
-    </div>
-    <div style="flex:1;">
-      <div><strong>Vevő / Buyer</strong></div>
-      <div>{{ invoice.customer.name }}</div>
-      <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}, {{ invoice.customer.street_name }} {{ invoice.customer.street_number }}</div>
-      <div>Adószám: {{ invoice.customer.tax_number }}</div>
-      {% if invoice.customer.eu_tax_number %}<div>EU VAT: {{ invoice.customer.eu_tax_number }}</div>{% endif %}
-    </div>
+  <div class="footer">
+      {{ invoice.company.name }} - {{ invoice.invoice_number }} | <span class="footer-content">Page</span>
   </div>
 
   <table>
     <thead>
+      <tr>
+        <th colspan="5" class="layout-cell">
+          <div class="header">
+            <div style="flex: 1;">
+              <div class="title">Számla <span style="font-weight:normal; color:#888; font-size:18px;">/ Invoice</span></div>
+              <div class="subtitle"><strong>Számlaszám</strong> / Invoice Number: <strong>{{ invoice.invoice_number }}</strong></div>
+              {% if invoice.order_reference %}
+              <div class="subtitle"><strong>Hivatkozási szám</strong> / Reference Number: {{ invoice.order_reference }}</div>
+              {% endif %}
+              {% if bilingual %}<div style="margin-top:4px; color:#666; font-size:10px;">This document is bilingual for convenience.</div>{% endif %}
+            </div>
+            <div style="text-align: right; min-width: 200px;">
+              <div style="margin-bottom:4px;"><span class="label">Kibocsátás / Issue Date:</span> {{ invoice.issue_date }}</div>
+              <div style="margin-bottom:4px;"><span class="label">Teljesítés / Delivery Date:</span> {{ invoice.delivery_date }}</div>
+              <div style="margin-bottom:4px;"><span class="label">Esedékesség / Due Date:</span> {{ invoice.due_date }}</div>
+            </div>
+          </div>
+
+          <div style="display:flex; gap: 20px; margin-bottom: 6px;">
+            <div style="flex:1;">
+              <div class="label" style="margin-bottom:4px; border-bottom:1px solid #eee; padding-bottom:2px;">Eladó / Seller</div>
+              <div style="font-weight:bold; font-size:13px; margin-bottom:2px;">{{ invoice.company.name }}</div>
+              <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}</div>
+              <div>{{ invoice.company.street_name }} {{ invoice.company.street_number }}</div>
+              <div style="margin-top:4px;"><strong>Adószám:</strong> {{ invoice.company.tax_number }}</div>
+              {% if invoice.company.eu_tax_number %}<div style="margin-top:2px;"><strong>EU VAT:</strong> {{ invoice.company.eu_tax_number }}</div>{% endif %}
+            </div>
+            <div style="flex:1;">
+              <div class="label" style="margin-bottom:4px; border-bottom:1px solid #eee; padding-bottom:2px;">Vevő / Buyer</div>
+              <div style="font-weight:bold; font-size:13px; margin-bottom:2px;">{{ invoice.customer.name }}</div>
+              <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}</div>
+              <div>{{ invoice.customer.street_name }} {{ invoice.customer.street_number }}</div>
+              {% if invoice.customer.tax_number %}<div style="margin-top:4px;"><strong>Adószám:</strong> {{ invoice.customer.tax_number }}</div>{% endif %}
+              {% if invoice.customer.eu_tax_number %}<div style="margin-top:2px;"><strong>EU VAT:</strong> {{ invoice.customer.eu_tax_number }}</div>{% endif %}
+            </div>
+          </div>
+        </th>
+      </tr>
       <tr>
         <th class="col-desc">Tétel / Item</th>
         <th class="col-qty">Menny. / Qty</th>

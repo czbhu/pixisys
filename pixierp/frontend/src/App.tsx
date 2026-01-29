@@ -68,6 +68,11 @@ function AppContent() {
       notificationWS.connect();
       
       const unsubscribe = notificationWS.onNotification((msg) => {
+        // Handle attendance refresh specifically
+        if (msg.link === '/personal/attendance' || msg.title === 'Jelenlét frissítés') {
+            window.dispatchEvent(new Event('attendance-updated'));
+        }
+
         notification.open({
           message: msg.title,
           description: msg.message,

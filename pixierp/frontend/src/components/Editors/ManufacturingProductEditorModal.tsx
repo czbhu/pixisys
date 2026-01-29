@@ -40,6 +40,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
   const [customers, setCustomers] = useState<any[]>([]);
+  const [contacts, setContacts] = useState<any[]>([]);
   const [costItems, setCostItems] = useState<CostItem[]>([]);
   // Store displayed totals
   const [displayedTotals, setDisplayedTotals] = useState({
@@ -75,9 +76,26 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       if (editingProduct) {
           setIsFixedQuantity(editingProduct.is_fixed_quantity || false);
           // Fill form from editingProduct
+          
+          let selectedIds: string[] = [];
+          
+          if (editingProduct.allowed_companies_data) {
+              selectedIds.push(...editingProduct.allowed_companies_data.map((c: any) => `company_${c.id}`));
+          }
+          
+          if (editingProduct.allowed_contacts_data) {
+              selectedIds.push(...editingProduct.allowed_contacts_data.map((c: any) => `contact_${c.id}`));
+          }
+          
+          // Fallback if data fields are missing but legacy fields exist (unlikely with current serializer)
+          if (selectedIds.length === 0 && editingProduct.allowed_companies && Array.isArray(editingProduct.allowed_companies)) {
+               selectedIds.push(...editingProduct.allowed_companies.map((id: any) => `company_${id}`));
+          }
+          
           form.setFieldsValue({
               ...editingProduct,
-              customer_id: editingProduct.contact || editingProduct.customer || (customer ? customer.id : undefined),
+              customer_ids: selectedIds,
+              customer_id: undefined, // Deprecated
               project_id: editingProduct.project, // check field name in MP
               product_class_id: editingProduct.product_class, // check field name
           });
@@ -100,7 +118,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
             quantity: 1,
             quantity_unit: 'db',
             dimension_unit: 'mm',
-            customer_id: customer ? customer.id : 'all',
+            customer_ids: customer ? [`company_${customer.id}`] : [],
         });
       }
     }
@@ -108,10 +126,11 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
 
   const loadData = async () => {
     try {
-      const [pcs, projs, custs, matsRes, servsRes, suppsRes, prodsRes, deptsRes] = await Promise.all([
+      const [pcs, projs, custs, contactsRes, matsRes, servsRes, suppsRes, prodsRes, deptsRes] = await Promise.all([
         manufacturingService.getProductClasses(),
         manufacturingService.getOpenProjects(),
         crmService.getCompanies(),
+        crmService.getContacts(),
         api.get('/warehouse/materials/?filter_type=all&page_size=1000'), 
         salesService.getServices(),
         api.get('/crm/companies/?is_supplier=true&page_size=1000'),
@@ -140,6 +159,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       setProductClasses(pcs);
       setProjects(projs);
       setCustomers(((custs as any).results || custs));
+      setContacts((contactsRes.results || contactsRes));
       setMaterials(mList);
       setServices(sList);
       setSuppliers(suppList);
@@ -260,19 +280,17 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
 
   const generateCode = () => {
     const name = form.getFieldValue('name') || '';
-    const custId = form.getFieldValue('customer_id');
+    const custIds = form.getFieldValue('customer_ids');
 
     // Név-Ügyfél(első 5 karakter)-001(növekvő sorszám)
-    // Ha nincs ügyfél ("all" vagy "private" vagy üres), akkor csak Név-001? 
-    // Prompt: "legyen egy general gomb mellette, és akkor a névből general egy cikkszámot. Ha ügyfél ki van választva, akkor az ügyfél első 5 karakterét is tegye hozzá és utána 001, 002, 003..."
     
     // Alap: Név normalizálva
     let base = (name.substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!base) base = 'GEN';
 
     let custPart = '';
-    if (custId && custId !== 'all' && custId !== 'private') {
-      const c = customers.find(x => x.id === custId);
+    if (custIds && custIds.length > 0) {
+      const c = customers.find(x => x.id === custIds[0]);
       if (c && c.name) {
         custPart = c.name.substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '');
       }
@@ -525,6 +543,37 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
 
       setSubmitting(true);
       
+      let rawIds = form.getFieldValue('customer_ids');
+      if (!Array.isArray(rawIds)) {
+          if (rawIds) rawIds = [rawIds];
+          else rawIds = [];
+      }
+      
+      const allowedCompaniesPayload: any[] = [];
+      const allowedContactsPayload: any[] = [];
+      
+      rawIds.forEach((idVar: any) => {
+          let strVal = String(idVar);
+          // Handle potential labelInValue objects
+          if (typeof idVar === 'object' && idVar !== null && 'value' in idVar) {
+              strVal = String(idVar.value);
+          }
+          
+          if (strVal.startsWith('company_')) {
+              allowedCompaniesPayload.push(strVal.replace('company_', ''));
+          } else if (strVal.startsWith('contact_')) {
+              allowedContactsPayload.push(strVal.replace('contact_', ''));
+          } else {
+              // Legacy/Fallback
+              allowedCompaniesPayload.push(strVal);
+          }
+      });
+
+      // Force alert debugging
+      console.log('Final payload allowed_companies:', allowedCompaniesPayload);
+      console.log('Final payload allowed_contacts:', allowedContactsPayload);
+      console.log('Raw IDs:', rawIds);
+      
       const payload = {
         ...v,
         net_total_price: Number(calculatedTotalSelling.toFixed(2)),
@@ -545,8 +594,10 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
             department: c.department_id || null,
             is_internal: c.is_internal || false
         })),
-        customer_id: v.customer_id === 'all' ? null : v.customer_id,
-        is_private_person: v.customer_id === 'private',
+        allowed_companies: allowedCompaniesPayload,
+        allowed_contacts: allowedContactsPayload,
+        contact: null, // Deprecated in favor of allowed_companies
+        is_private_person: false, // Deprecated logic for now
         // Default mappings
         date: dayjs().format('YYYY-MM-DD'),
         deadline: dayjs().add(14, 'day').format('YYYY-MM-DD'),
@@ -577,13 +628,21 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   };
 
   const customerOptions = useMemo(() => {
-    const list = [
-        { label: 'Mindegyik', value: 'all' },
-        ...(customers || []).map(c => ({ label: c.name, value: c.id })),
-        { label: 'Magánszemély', value: 'private' }
-    ];
-    return list;
-  }, [customers]);
+    const compOpts = (customers || [])
+        .filter((c: any) => c && c.id)
+        .map((c: any) => ({ label: c.name, value: `company_${c.id}` }));
+    
+    // Check if contact has company
+    const contactOpts = (contacts || [])
+        .filter((c: any) => c && c.id)
+        .map((c: any) => {
+            const extra = c.company_name ? ` (${c.company_name})` : ' (Magánszemély)';
+            const name = c.full_name || c.name || `${c.last_name || ''} ${c.first_name || ''}`.trim() || 'Névtelen';
+            return { label: `👤 ${name}${extra}`, value: `contact_${c.id}` };
+        });
+        
+    return [...compOpts, ...contactOpts];
+  }, [customers, contacts]);
 
   const costColumns = [
     { title: 'Megnevezés', key: 'name', width: 250, render: (_: any, r: CostItem) => {
@@ -766,11 +825,14 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                         </Form.Item>
                         <Button style={{ marginTop: 30 }} onClick={generateCode}>Generál</Button>
                      </div>
-                     <Form.Item label="Ügyfél" name="customer_id" initialValue="all">
+                     <Form.Item label="Ügyfél" name="customer_ids">
                         <Select 
+                            mode="multiple"
                             showSearch 
+                            placeholder="Válasszon ügyfeleket (üres = mindenki)"
                             optionFilterProp="label"
                             options={customerOptions}
+                            onChange={(val) => console.log('Customer Select Change:', val)}
                         />
                      </Form.Item>
                      <Row gutter={16}>

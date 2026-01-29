@@ -13,6 +13,7 @@ class Department(models.Model):
     description = models.TextField(blank=True, null=True)
     managers = models.ManyToManyField(User, blank=True, related_name='managed_departments')
     budget = models.DecimalField(max_digits=12, decimal_places=2, default=0)
+    inactivity_timeout = models.IntegerField(default=60, verbose_name='Inaktivitási időkorlát (perc)')
     
     # Szerepkörök az osztályhoz rendelve
     # Az osztály tagjai automatikusan megkapják ezeket a szerepköröket
@@ -203,6 +204,7 @@ class Attendance(BaseModel):
     date = models.DateField()
     check_in = models.TimeField()
     check_out = models.TimeField(null=True, blank=True)
+    last_activity = models.DateTimeField(null=True, blank=True)
     break_duration = models.DurationField(default=timedelta(0))  # in minutes
     overtime_hours = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     notes = models.TextField(blank=True, null=True)

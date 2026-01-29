@@ -737,7 +737,7 @@ const RFQs: React.FC = () => {
             <div><strong>Tárgy:</strong> {sendPreview.subject}</div>
             <div style={{ marginTop: 8 }}>
               {sendPreview.is_html ? (
-                <div dangerouslySetInnerHTML={{ __html: sendPreview.body }} />
+                <div dangerouslySetInnerHTML={{ __html: (sendPreview.body || '').replace(/<a /gi, '<a target="_blank" ') }} />
               ) : (
                 <pre style={{ whiteSpace: 'pre-wrap' }}>{sendPreview.body}</pre>
               )}

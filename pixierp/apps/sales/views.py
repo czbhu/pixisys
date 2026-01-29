@@ -1489,6 +1489,57 @@ def public_order_view(request, token: str):
             'postal_code': getattr(qr.customer, 'postal_code', ''),
             'country': getattr(qr.customer, 'country', 'Magyarország'),
         }
+    else:
+        # Ha nincs cég, nézzük a kapcsolatokat (pl. Magánszemély)
+        contact = qr.contacts.first()
+        if contact:
+            try:
+                from apps.finance.views import PixinvoiceClient
+                client = PixinvoiceClient()
+                
+                # Resolve tenant_id (logic from crm/views.py)
+                tenant_id = getattr(client, 'company_id', None)
+                if not tenant_id:
+                    try:
+                        comps = client.list_companies()
+                        if comps:
+                             active = next((c for c in comps if c.get('is_active') is True), None)
+                             tenant_id = (active or comps[0]).get('id') or (active or comps[0]).get('company_id')
+                    except: pass
+                
+                if tenant_id:
+                    # Prefer external_id if present
+                    remote_id = contact.external_id or contact.id
+                    remote_contact = client.get_contact(remote_id, company_id=tenant_id)
+                    if remote_contact:
+                         address = remote_contact.get('address') or ''
+                         # Ha üres a cím, de megvannak a részletek (magyar cím)
+                         if not address and remote_contact.get('postal_code'):
+                             st = remote_contact.get('street_name') or ''
+                             plc = remote_contact.get('public_place_category') or remote_contact.get('street_type') or ''
+                             hn = remote_contact.get('house_number') or remote_contact.get('street_number') or ''
+                             address = f"{st} {plc} {hn}".strip()
+                         
+                         customer_data = {
+                            'name': remote_contact.get('name') or f"{remote_contact.get('last_name')} {remote_contact.get('first_name')}".strip(),
+                            'tax_number': '', 
+                            'address': address,
+                            'city': remote_contact.get('city') or '',
+                            'postal_code': remote_contact.get('postal_code') or '',
+                            'country': remote_contact.get('country') or 'Magyarország',
+                         }
+            except Exception as e:
+                print(f"Error fetching private contact data: {e}")
+                
+            if not customer_data:
+                customer_data = {
+                    'name': contact.name,
+                    'tax_number': '',
+                    'address': '',
+                    'city': '', 
+                    'postal_code': '',
+                    'country': 'Magyarország',
+                }
     
     # Szállító adatok (alapértelmezett cég az Alap adatok beállításokból)
     from apps.core.models import Company
@@ -2300,22 +2351,26 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def item_work_sheet(self, request, pk=None):
-        """Generate a worksheet for a specific QuoteRequestItem (via order)"""
+        """Generate a split worksheet for a specific QuoteRequestItem (via order)"""
         import uuid
         from django.http import HttpResponse
-        from reportlab.lib.pagesizes import A4
-        from reportlab.pdfgen import canvas
-        from reportlab.lib.units import cm
-        from io import BytesIO
-        import qrcode
-        from reportlab.lib.utils import ImageReader
+        try:
+            from io import BytesIO
+            import qrcode
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import cm
+            from reportlab.lib.utils import ImageReader
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+        except ImportError:
+            return Response({'error': 'ReportLab not installed'}, status=500)
         
         order = self.get_object()
         item_id = request.query_params.get('item_id')
         if not item_id:
             return Response({'error': 'item_id required'}, status=400)
             
-        # Verify item belongs to this order's RFQ
         try:
             item = QuoteRequestItem.objects.get(id=item_id, quote_request=order.quote_request)
         except QuoteRequestItem.DoesNotExist:
@@ -2325,20 +2380,65 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         p = canvas.Canvas(buffer, pagesize=A4)
         width, height = A4
         
-        # Font setup (Hungarian support)
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
+        # Font setup
         try:
             pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
-            font_name = 'DejaVu'
+            pdfmetrics.registerFont(TTFont('DejaVu-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+            font_normal = 'DejaVu'
+            font_bold = 'DejaVu-Bold'
         except:
-            font_name = 'Helvetica'
+            font_normal = 'Helvetica'
+            font_bold = 'Helvetica-Bold'
 
-        # Generate QR Code (stub URL)
-        base_url = "https://erp.pixisys.eu"
-        target_url = f"{base_url}/sales/rfqs/{order.quote_request.id}?item={item.id}"
+        # Helper: Get Item Info
+        item_name = ""
+        item_code = "-"
+        internal_desc = ""
+        product_desc = ""
         
-        qr = qrcode.QRCode(version=1, box_size=10, border=4)
+        if item.product: 
+            item_name = item.product.name
+            if hasattr(item.product, 'code'): item_code = item.product.code
+            elif hasattr(item.product, 'article_number'): item_code = item.product.article_number
+            if hasattr(item.product, 'internal_description'): internal_desc = item.product.internal_description
+            if hasattr(item.product, 'description'): product_desc = item.product.description
+        elif item.material: 
+            item_name = item.material.name
+            if hasattr(item.material, 'code'): item_code = item.material.code
+            if hasattr(item.material, 'description'): product_desc = item.material.description
+        elif item.manufacturing_product: 
+            item_name = item.manufacturing_product.name
+            if hasattr(item.manufacturing_product, 'code'): item_code = item.manufacturing_product.code
+            if hasattr(item.manufacturing_product, 'internal_description'): internal_desc = item.manufacturing_product.internal_description
+            if hasattr(item.manufacturing_product, 'description'): product_desc = item.manufacturing_product.description
+        elif item.service: 
+            item_name = item.service.name
+            if hasattr(item.service, 'code'): item_code = item.service.code
+            if hasattr(item.service, 'internal_description'): internal_desc = item.service.internal_description
+            if hasattr(item.service, 'description'): product_desc = item.service.description
+
+        # Helper: Get Customer Info
+        customer_name = "-"
+        if order.quote_request.company: customer_name = order.quote_request.company.name
+        elif order.quote_request.customer: customer_name = order.quote_request.customer.name
+        
+        contact_name = ""
+        try:
+            contact = order.quote_request.contacts.first()
+            if contact: contact_name = contact.name
+        except: pass
+        
+        project_name = "-"
+        if order.quote_request.project: project_name = order.quote_request.project.name
+        
+        deadline = "-"
+        if order.quote_request.deadline:
+             deadline = order.quote_request.deadline.strftime('%Y.%m.%d')
+
+        # Generate QR Code
+        base_url = "https://erp.pixisys.eu"
+        target_url = f"{base_url}/sales/customer-orders/{order.id}" # Link to Order or Item? User said generic QR.
+        qr = qrcode.QRCode(version=1, box_size=10, border=2)
         qr.add_data(target_url)
         qr.make(fit=True)
         img = qr.make_image(fill_color="black", back_color="white")
@@ -2347,56 +2447,147 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         qr_io.seek(0)
         qr_image = ImageReader(qr_io)
         
-        def draw_page():
-            y = height - 2*cm
-            # Header
-            p.setFont(font_name, 14)
-            p.drawString(2*cm, y, f"MUNKALAP - {order.order_number}")
-            p.setFont(font_name, 10)
-            p.drawRightString(width-2*cm, y, f"Dátum: {timezone.now().strftime('%Y-%m-%d')}")
-            y -= 1.5*cm
+        def draw_section(start_y, is_bottom=False):
+            y = start_y
+            import textwrap
             
-            # QR Code
-            p.drawImage(qr_image, width-5*cm, height-5*cm, width=3*cm, height=3*cm)
+            # Header Row
+            p.setFont(font_bold, 12) # Reduced from 14
+            p.drawString(2*cm, y, f"Megrendelésszám: {order.order_number}")
             
-            # Item Details
-            p.setFont(font_name, 12)
-            p.drawString(2*cm, y, f"TÉTEL: {item.quote_request.request_number} / {item.id}")
-            y -= 0.8*cm
+            # QR Code (Top Right)
+            p.drawImage(qr_image, width-5*cm, y-1.5*cm, width=3*cm, height=3*cm)
+            y -= 1.0*cm # Reduced spacing
             
-            ref_name = ""
-            if item.product: ref_name = item.product.name
-            elif item.material: ref_name = item.material.name
-            elif item.manufacturing_product: ref_name = item.manufacturing_product.name
-            elif item.service: ref_name = item.service.name
+            p.setFont(font_normal, 10) # Reduced from 12
             
-            p.setFont(font_name, 11)
-            p.drawString(2*cm, y, f"Megnevezés: {ref_name}")
-            y -= 0.6*cm
+            # Additional Field for Bottom: Deadline
+            if is_bottom:
+                p.drawString(2*cm, y, f"Határidő: {deadline}")
+                y -= 0.5*cm # Reduced spacing
             
-            p.drawString(2*cm, y, f"Mennyiség: {float(item.quantity)} {item.unit}")
-            y -= 0.6*cm
+            # Customer - Wrapped to 2 lines, smaller font, wider area
+            p.setFont(font_bold, 10) # Reduced from 12
+            p.drawString(2*cm, y, f"Megrendelő:")
             
-            if item.description:
-                p.drawString(2*cm, y, f"Leírás: {item.description}")
-                y -= 0.6*cm
+            cust_str = f"{customer_name} - {contact_name}"
             
-            # Additional Context
-            y -= 1*cm
-            p.line(2*cm, y, width-2*cm, y)
+            font_size_cust = 9 # Reduced from 10
+            p.setFont(font_normal, font_size_cust)
+            
+            text_object = p.beginText(5.5*cm, y)
+            text_object.setFont(font_normal, font_size_cust)
+            
+            # Reduce width to ensure no overlap with QR
+            # Available width: (width - 5cm (QR start)) - 5.5cm (start x) = width - 10.5cm
+            # width is 21cm, so ~10.5cm available. 
+            # A bit safer margin:
+            cust_lines = textwrap.wrap(cust_str, width=55) 
+            
+            for line in cust_lines[:3]: 
+                 text_object.textLine(line)
+            p.drawText(text_object)
+            
+            # Reduced spacing
+            y -= (len(cust_lines[:3]) * 0.4 * cm) + 0.3*cm 
+            
+            # Project
+            if project_name and project_name != "-":
+                p.setFont(font_bold, 10)
+                p.drawString(2*cm, y, f"Projekt:")
+                p.setFont(font_normal, 10)
+                p.drawString(5.5*cm, y, f"{project_name}")
+                y -= 0.5*cm
+
+            # Product
+            p.setFont(font_bold, 10)
+            p.drawString(2*cm, y, f"Termék:")
+            p.setFont(font_normal, 10)
+            p.drawString(5.5*cm, y, f"{item_code} - {item_name}")
             y -= 0.5*cm
             
-            p.drawString(2*cm, y, f"Ügyfél: {order.quote_request.company.name if order.quote_request.company else (order.quote_request.customer.name if order.quote_request.customer else '-')}")
-            y -= 0.6*cm
-            p.drawString(2*cm, y, f"Projekt: {order.quote_request.project.name if order.quote_request.project else '-'}")
+            # Quantity
+            p.setFont(font_bold, 10)
+            p.drawString(2*cm, y, f"Mennyiség:")
+            p.setFont(font_normal, 10)
+            qty_str = f"{float(item.quantity):g}"
+            if item.unit:
+                qty_str += f" {item.unit}"
+            p.drawString(5.5*cm, y, qty_str)
+            y -= 0.5*cm
             
-            p.showPage()
-            
-        draw_page()
+            # 1. Product Description (Leírás)
+            if product_desc:
+                p.setFont(font_bold, 10)
+                p.drawString(2*cm, y, f"Leírás:")
+                y -= 0.3*cm
+                p.setFont(font_normal, 9)
+                text_object = p.beginText(2*cm, y)
+                text_object.setFont(font_normal, 9)
+                text_object.setLeading(10) # tighter lines
+                lines_pd = textwrap.wrap(product_desc, width=95) 
+                for line in lines_pd[:3]: 
+                    text_object.textLine(line)
+                p.drawText(text_object)
+                y -= (len(lines_pd[:3]) * 0.4 * cm) + 0.3*cm
+
+            # 2. Internal Description (Belső leírás)
+            if is_bottom and internal_desc:
+                p.setFont(font_bold, 10)
+                p.drawString(2*cm, y, f"Belső leírás:")
+                y -= 0.3*cm
+                p.setFont(font_normal, 9)
+                text_object = p.beginText(2*cm, y)
+                text_object.setFont(font_normal, 9)
+                text_object.setLeading(10)
+                lines_id = textwrap.wrap(internal_desc, width=95) 
+                for line in lines_id[:3]: 
+                    text_object.textLine(line)
+                p.drawText(text_object)
+                y -= (len(lines_id[:3]) * 0.4 * cm) + 0.3*cm
+
+            # 3. Note (Megjegyzés)
+            desc_text = item.description or "-"
+            if desc_text and desc_text != "-": 
+                 p.setFont(font_bold, 10)
+                 p.drawString(2*cm, y, f"Megjegyzés:")
+                 y -= 0.3*cm
+                 p.setFont(font_normal, 9)
+                 
+                 text_object = p.beginText(2*cm, y)
+                 text_object.setFont(font_normal, 9)
+                 text_object.setLeading(10)
+                 lines = textwrap.wrap(desc_text, width=95) 
+                 for line in lines[:5]: 
+                     text_object.textLine(line)
+                 p.drawText(text_object)
+                 
+                 y -= (len(lines[:5]) * 0.4 * cm) + 0.3*cm
+
+        # Draw Top Section (Top 1/3 ~ 9.9cm)
+        # Height A4 = 29.7cm
+        # Split line around 10cm from top? 
+        # User said: "Upper part occupies top 1/3" -> Lower part occupies bottom 2/3.
+        # Implies split line is at H - (H/3).
+        
+        split_y = height * (2/3) # 2/3 from bottom = 1/3 from top
+        
+        draw_section(height - 2*cm, is_bottom=False)
+        
+        # Separator Line
+        p.setDash(6, 3)
+        p.line(1*cm, split_y, width-1*cm, split_y)
+        p.setDash([], 0)
+        
+        # Draw Bottom Section
+        # Start slightly below split line
+        draw_section(split_y - 2*cm, is_bottom=True)
+        
+        p.showPage()
         p.save()
         buffer.seek(0)
         
-        response = HttpResponse(buffer, content_type='application/pdf')
+        return HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{item.id}.pdf"'
         return response
 

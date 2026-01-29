@@ -5,6 +5,8 @@ from .models import (
     ManufacturingCostItem
 )
 from apps.crm.models import Contact, Company as CRMCompany
+from apps.crm.utils import sync_company_to_local_db
+from apps.finance.views import PixinvoiceClient
 from apps.hr.models import Department, Employee
 from apps.core.models import Currency
 from apps.warehouse.models import Material
@@ -69,23 +71,192 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
     currency_info = serializers.SerializerMethodField()
     cost_items = ManufacturingCostItemSerializer(many=True, required=False)
     
+    # We accept a list of IDs (which might be external UUIDs or internal Integers)
+    allowed_companies = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        write_only=True
+    )
+    
+    allowed_contacts = serializers.ListField(
+        child=serializers.CharField(),
+        required=False,
+        write_only=True
+    )
+    
+    allowed_companies_data = serializers.SerializerMethodField(read_only=True)
+    allowed_contacts_data = serializers.SerializerMethodField(read_only=True)
+
     class Meta:
         model = ManufacturingProduct
         fields = '__all__'
 
+    def get_allowed_companies_data(self, obj):
+        # Return existing allowed companies for frontend (using external_id if available)
+        return [{"id": c.external_id or c.id, "name": c.name} for c in obj.allowed_companies.all()]
+
+    def get_allowed_contacts_data(self, obj):
+        # Return existing allowed contacts for frontend
+        return [{"id": c.external_id or c.id, "name": c.name} for c in obj.allowed_contacts.all()]
+
+    def _resolve_companies(self, company_ids):
+        """
+        Resolves a list of company IDs (integers or UUIDs) to local Company instances.
+        If a UUID is provided, looks up by external_id.
+        """
+        import datetime
+        if not company_ids:
+            return []
+            
+        resolved_companies = []
+        with open("/tmp/debug_serializer.log", "a") as f:
+            f.write(f"{datetime.datetime.now()} - Resolving companies: {company_ids}\n")
+            
+        for cid in company_ids:
+            # 1. Try as Integer ID (Local ID)
+            if isinstance(cid, int) or (isinstance(cid, str) and cid.isdigit()):
+                try:
+                    c = CRMCompany.objects.get(id=int(cid))
+                    resolved_companies.append(c)
+                    continue
+                except CRMCompany.DoesNotExist:
+                    pass
+            
+            # 2. Try as External ID (UUID)
+            # Check if it is a valid UUID string
+            c = CRMCompany.objects.filter(external_id=str(cid)).first()
+            if c:
+                # Stub check: if name is placeholders, try to heal
+                if c.name.startswith("External Client") or c.name == 'Névtelen':
+                     try:
+                         client = PixinvoiceClient()
+                         data = client.get_customer(str(cid))
+                         if data:
+                             synced = sync_company_to_local_db(data)
+                             if synced:
+                                 c = synced
+                     except Exception:
+                         pass
+                resolved_companies.append(c)
+                continue
+                
+            # 3. Not found locally?
+            # Attempt fetch from PixInvoice
+            try:
+                 client = PixinvoiceClient()
+                 data = client.get_customer(str(cid))
+                 if data:
+                     new_company = sync_company_to_local_db(data)
+                     if new_company:
+                         resolved_companies.append(new_company)
+                         continue
+            except Exception:
+                 pass
+
+            # User instruction: "Just save the identifiers".
+            # We treat the ERP local database as a cache/proxy. If the ID is valid (UUID-like) but missing,
+            # we create a stub record. The details will be synced later or are irrelevant for the relation storage.
+            
+            try:
+                # Basic validation: ensure it looks somewhat like a legitimate ID (not empty)
+                if cid and len(str(cid)) > 1:
+                     new_company = CRMCompany.objects.create(
+                         external_id=str(cid),
+                         name=f"External Client {str(cid)[:8]}", # Placeholder name
+                         is_customer=True
+                     )
+                     resolved_companies.append(new_company)
+                     with open("/tmp/debug_serializer.log", "a") as f:
+                        f.write(f"Created stub company for external_id: {cid}\n")
+            except Exception as e:
+                with open("/tmp/debug_serializer.log", "a") as f:
+                     f.write(f"Error creating stub for {cid}: {e}\n")
+            
+        with open("/tmp/debug_serializer.log", "a") as f:
+            f.write(f"Resolved count: {len(resolved_companies)}\n")
+            
+        return resolved_companies
+
+    def _resolve_contacts(self, contact_ids):
+        resolved_contacts = []
+        for cid in contact_ids:
+            # 1. Try as Integer ID
+            if isinstance(cid, int) or (isinstance(cid, str) and cid.isdigit()):
+                try:
+                    c = Contact.objects.get(id=int(cid))
+                    resolved_contacts.append(c)
+                    continue
+                except Contact.DoesNotExist:
+                    pass
+            
+            # 2. Try as External ID (UUID)
+            c = Contact.objects.filter(external_id=str(cid)).first()
+            if c:
+                resolved_contacts.append(c)
+                continue
+            
+            # 3. Not found locally? Try sync from PixInvoice?
+            # For now, we skip auto-sync for contacts here unless we want to implement `sync_contact_to_local_db`.
+            # There is no `sync_contact_to_local_db` yet.
+            # However, if the frontend supplies UUIDs from `crm/contacts` API, they might be in PixInvoice but not local.
+            # Implementing stub creation or fetch would be robust.
+            
+            try:
+                # Basic stub creation if looks like UUID
+                if cid and len(str(cid)) > 10:
+                     new_contact = Contact.objects.create(
+                         external_id=str(cid),
+                         name=f"External Contact {str(cid)[:8]}",
+                         last_name="External",
+                         first_name=str(cid)[:8]
+                     )
+                     resolved_contacts.append(new_contact)
+            except Exception:
+                pass
+        return resolved_contacts
+
     def create(self, validated_data):
         cost_items_data = validated_data.pop('cost_items', [])
+        allowed_companies_ids = validated_data.pop('allowed_companies', [])
+        allowed_contacts_ids = validated_data.pop('allowed_contacts', [])
+        
         product = ManufacturingProduct.objects.create(**validated_data)
+        
+        if allowed_companies_ids:
+            companies = self._resolve_companies(allowed_companies_ids)
+            product.allowed_companies.set(companies)
+            
+        if allowed_contacts_ids:
+            contacts = self._resolve_contacts(allowed_contacts_ids)
+            product.allowed_contacts.set(contacts)
+
         for item_data in cost_items_data:
             ManufacturingCostItem.objects.create(product=product, **item_data)
         return product
 
     def update(self, instance, validated_data):
         cost_items_data = validated_data.pop('cost_items', None)
+        allowed_companies_ids = validated_data.pop('allowed_companies', None)
+        allowed_contacts_ids = validated_data.pop('allowed_contacts', None)
+        
+        # DEBUG LOGGING TO FILE
+        import datetime
+        with open("/tmp/debug_serializer.log", "a") as f:
+            f.write(f"{datetime.datetime.now()} - Method: update\n")
+            f.write(f"allowed_companies_ids: {allowed_companies_ids}\n")
+
         # Update standard fields
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
+        if allowed_companies_ids is not None:
+             companies = self._resolve_companies(allowed_companies_ids)
+             instance.allowed_companies.set(companies)
+             
+        if allowed_contacts_ids is not None:
+             contacts = self._resolve_contacts(allowed_contacts_ids)
+             instance.allowed_contacts.set(contacts)
 
         if cost_items_data is not None:
              # Full replacement strategy

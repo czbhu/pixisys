@@ -478,6 +478,125 @@ class EmailServerConfigViewSet(viewsets.ModelViewSet):
     serializer_class = EmailServerConfigSerializer
     permission_classes = [IsAuthenticated]
 
+    @action(detail=False, methods=['post'])
+    def detect_imap_sent(self, request):
+        """IMAP mappák listázása és Sent mappa detektálás"""
+        try:
+            import imaplib, ssl, re
+            
+            # Adatok a kérésből
+            imap_host = request.data.get('imap_host')
+            imap_port = int(request.data.get('imap_port') or 993)
+            imap_user = request.data.get('imap_username')
+            imap_password = request.data.get('imap_password')
+            
+            if not imap_host or not imap_user:
+                return Response({'success': False, 'error': 'Hiányzó IMAP adatok'}, status=400)
+            
+            # Kapcsolódás
+            try:
+                M = imaplib.IMAP4_SSL(imap_host, imap_port, ssl_context=ssl.create_default_context())
+            except Exception:
+                # SSL 465 fallback, or plain/STARTTLS?
+                try:
+                    M = imaplib.IMAP4(imap_host, 143)
+                    M.starttls(ssl_context=ssl.create_default_context())
+                except Exception:
+                    M = imaplib.IMAP4(imap_host)
+            
+            M.login(imap_user, imap_password)
+            
+            mailboxes = []
+            seen = set()
+
+            def add_box(name, flags):
+                key = (name or '').strip()
+                if not key or key in seen:
+                    return
+                # Skip placeholders and non-selectable
+                if key in ('.', 'NIL'):
+                    return
+                if 'Noselect' in (flags or '') or '\\Noselect' in (flags or ''):
+                    return
+                seen.add(key)
+                mailboxes.append({'name': name, 'flags': flags, 'label': name})
+
+            typ, boxes = M.list()
+            if typ == 'OK' and boxes:
+                for raw in boxes:
+                    s = raw.decode(errors='ignore') if isinstance(raw, (bytes, bytearray)) else str(raw)
+                    
+                    # Robust parsing of: (Flags) Delimiter Name
+                    flags_txt = ''
+                    delim = None
+                    name = ''
+                    
+                    # 1. Flags
+                    m_flags = re.search(r"^\(([^)]*)\)", s)
+                    rest = s
+                    if m_flags:
+                        flags_txt = m_flags.group(1)
+                        rest = s[m_flags.end():].strip()
+                    
+                    # 2. Delimiter (Quoted or NIL)
+                    if rest.startswith('NIL'):
+                        delim = None
+                        rest = rest[3:].strip()
+                    elif rest.startswith('"'):
+                        m_q = re.match(r'^"([^"\\]*(?:\\.[^"\\]*)*)"', rest)
+                        if m_q:
+                            delim = m_q.group(1)
+                            rest = rest[m_q.end():].strip()
+                    
+                    # 3. Name (Quoted or Literal or Plain)
+                    if rest.startswith('"'):
+                        m_n = re.match(r'^"([^"\\]*(?:\\.[^"\\]*)*)"', rest)
+                        if m_n:
+                            name = m_n.group(1)
+                        else:
+                            name = rest.strip('"')
+                    else:
+                        name = rest.strip()
+                    
+                    # Decode modified UTF-7
+                    try:
+                        from imaplib import IMAP4
+                        name = IMAP4._decode_utf7(name)
+                        # Fix double decoding if needed or leave as is
+                        if isinstance(name, bytes):
+                             name = name.decode('utf-8', errors='ignore')
+                    except Exception:
+                        pass
+                    
+                    add_box(name, flags_txt)
+
+            M.logout()
+            
+            # Simple heuristic
+            suggested = None
+            for boxes in mailboxes:
+                if '\\Sent' in boxes['flags']:
+                    suggested = boxes['name']
+                    break
+            
+            if not suggested:
+                 # fallback to names
+                 common_names = ['Sent', 'Sent Items', 'Elküldött', 'Elküldött elemek', 'Küldöttek']
+                 lower_map = {m['name'].lower(): m['name'] for m in mailboxes}
+                 for cn in common_names:
+                     if cn.lower() in lower_map:
+                         suggested = lower_map[cn.lower()]
+                         break
+
+            return Response({
+                'success': True, 
+                'mailboxes': mailboxes, 
+                'suggested': suggested
+            })
+
+        except Exception as e:
+            return Response({'success': False, 'error': str(e)}, status=500)
+
     @action(detail=True, methods=['post'])
     def send_test_email(self, request, pk=None):
         """Teszt email küldése a beállított szerverrel"""
@@ -590,6 +709,46 @@ class EmailServerConfigViewSet(viewsets.ModelViewSet):
             connection.close()
             log_messages.append("✓ SMTP kapcsolat lezárva")
             
+            # IMAP Mentés (ha be van állítva)
+            if email_server.imap_host and email_server.imap_username:
+                try:
+                    import imaplib, ssl
+                    from django.utils import timezone
+                    
+                    log_messages.append(f"Mentés IMAP szerverre ({email_server.imap_host})...")
+                    
+                    # Csatlakozás
+                    try:
+                        M = imaplib.IMAP4_SSL(email_server.imap_host, email_server.imap_port, ssl_context=ssl.create_default_context())
+                    except Exception:
+                        try:
+                            M = imaplib.IMAP4(email_server.imap_host, 143)
+                            M.starttls(ssl_context=ssl.create_default_context())
+                        except Exception:
+                            M = imaplib.IMAP4(email_server.imap_host)
+                            
+                    M.login(email_server.imap_username, email_server.imap_password)
+                    
+                    # Sent mappa
+                    sent_folder = email_server.imap_sent_folder or 'Sent'
+                    
+                    # Append
+                    # msg.message() gives the underlying SafeMIMEText/Multipart, as_bytes() gets the raw content
+                    raw_bytes = msg.message().as_bytes()
+                    now = imaplib.Time2Internaldate(timezone.now().timestamp())
+                    
+                    # Try append
+                    typ, _ = M.append(sent_folder, '\\Seen', now, raw_bytes)
+                    if typ != 'OK':
+                         log_messages.append(f"⚠ IMAP append nem OK: {typ}")
+                    else:
+                         log_messages.append(f"✓ Levél mentve a '{sent_folder}' mappába")
+
+                    M.logout()
+                    
+                except Exception as ex:
+                    log_messages.append(f"⚠ IMAP mentés sikertelen: {str(ex)}")
+
             return Response({
                 'success': True,
                 'message': f'Teszt email sikeresen elküldve a {recipient} címre',
