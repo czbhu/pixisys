@@ -39,23 +39,30 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   // Calculate selected menu key based on current path
   const getSelectedKey = () => {
     const path = location.pathname;
+
+    // Special mappings
+    if (path.startsWith('/manufacturing/calculator/')) {
+      return '/manufacturing/calculators';
+    }
+
     // Check for exact match first
     const allMenuKeys = [
       '/dashboard',
-      '/personal/invitations', '/personal/orders',
-      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/payroll', '/hr/leaves', '/hr/analytics',
-      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects',
-      '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services',
+      '/personal', '/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings',
+      '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/approvals',
+      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics',
+      '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
+      '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
-      '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities',
+      '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities', '/crm/campaigns',
       '/orders/orders', '/orders/returns',
       '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
       '/pos/transactions', '/pos/products', '/pos/inventory',
       '/pos/sales', '/pos/customers', '/pos/reports',
       '/orders/shipments', '/orders/suppliers',
-      '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports',
-      '/settings/access-control', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/backup'
+      '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports', '/warehouse/suppliers',
+      '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/backup', '/settings/zones'
     ];
     
     // Find the longest matching prefix
@@ -107,7 +114,27 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
 
   const handleOpenChange = (keys: string[]) => {
     if (collapsed) return;
-    setOpenKeys(keys);
+    
+    const rootSubmenuKeys = [
+      '/personal', 
+      '/hr', 
+      '/sales', 
+      '/manufacturing', 
+      '/finance', 
+      '/crm', 
+      '/orders', 
+      '/warehouse', 
+      '/pos', 
+      '/settings'
+    ];
+    
+    const latestOpenKey = keys.find(key => openKeys.indexOf(key) === -1);
+    
+    if (latestOpenKey && rootSubmenuKeys.indexOf(latestOpenKey) === -1) {
+      setOpenKeys(keys);
+    } else {
+      setOpenKeys(latestOpenKey ? [latestOpenKey] : []);
+    }
   };
   
   // Helper to get count for a specific path key
@@ -154,6 +181,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/personal/attendance',
           label: 'Jelenléti ív',
+        },
+        {
+          key: '/personal/approvals',
+          label: 'Jóváhagyások',
         },
       ],
     },
@@ -258,6 +289,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/manufacturing/services',
           label: 'Szolgáltatások',
+        },
+        {
+          key: '/manufacturing/service-groups',
+          label: 'Szolgáltatás csoportok',
         },
         {
           key: '/manufacturing/calculators',
@@ -437,12 +472,101 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/email-server', label: 'E-mail szerver' },
         { key: '/settings/email-templates', label: 'E-mail sablonok' },
         { key: '/settings/signatures', label: 'Aláírások' },
+        { key: '/settings/zones', label: 'Zónák' },
         { key: '/settings/integrations', label: 'Integrációk' },
         { key: '/settings/pixinvoice', label: 'PIXINVOICE' },
         { key: '/settings/backup', label: 'Backup' },
       ],
     },
   ];
+
+
+
+  // Resource mapping for permission check
+  const RESOURCE_MAP: Record<string, string> = {
+    // HR
+    '/hr/employees': 'hr.employees',
+    '/hr/departments': 'hr.departments',
+    '/hr/positions': 'hr.positions',
+    '/hr/attendance': 'hr.attendance',
+    '/hr/work-logs': 'hr.attendance',
+    '/hr/payroll': 'hr.payroll',
+    '/hr/leaves': 'hr.leave_requests',
+    '/hr/analytics': 'hr.employees',
+
+    // Sales
+    '/sales/rfqs': 'sales.rfqs',
+    '/sales/customer-orders': 'orders.customer_orders',
+    '/sales/delivery-notes': 'sales.orders', 
+    '/sales/invoicing': 'finance.invoices',
+    '/sales/invitations': 'sales.rfqs',
+    '/sales/projects': 'manufacturing.projects',
+    '/sales/forecasts': 'sales.opportunities',
+    
+    // Manufacturing
+    '/manufacturing/products': 'manufacturing.products',
+    '/manufacturing/ordered-products': 'manufacturing.products',
+    '/manufacturing/product-classes': 'manufacturing.products',
+    '/manufacturing/services': 'manufacturing.products',
+    '/manufacturing/calculators': 'manufacturing.products',
+    '/manufacturing/boms': 'manufacturing.materials',
+    '/manufacturing/inventory': 'warehouse.inventory',
+    '/manufacturing/work-orders': 'manufacturing.work_sheets',
+    '/manufacturing/quality': 'manufacturing.products',
+
+    // Finance
+    '/finance/invoices': 'finance.invoices',
+    '/finance/payments': 'finance.payments',
+    '/finance/budgets': 'finance.expenses',
+    '/finance/reports': 'finance.invoices',
+    '/finance/accounts': 'finance.invoices',
+    'pixinvoice-sso': 'finance.invoices',
+
+    // CRM
+    '/crm/companies': 'crm.companies',
+    '/crm/contacts': 'crm.contacts',
+    '/crm/activities': 'crm.activities',
+    '/crm/campaigns': 'crm.activities',
+    '/crm/deals': 'sales.opportunities',
+
+    // Orders
+    '/orders/orders': 'orders.customer_orders',
+    '/orders/shipments': 'orders.customer_orders',
+    '/orders/returns': 'orders.customer_orders',
+    '/orders/suppliers': 'crm.companies',
+
+    // Warehouse
+    '/warehouse/materials': 'warehouse.materials',
+    '/warehouse/material-groups': 'warehouse.materials',
+    '/warehouse/inventory': 'warehouse.inventory',
+    '/warehouse/receipts': 'warehouse.movements',
+    '/warehouse/supplier-invoices': 'finance.expenses',
+    '/warehouse/scraps': 'warehouse.inventory',
+    '/warehouse/warehouses': 'warehouse.inventory',
+    '/warehouse/suppliers': 'crm.companies',
+    '/warehouse/reports': 'warehouse.inventory',
+
+    // POS
+    '/pos/sales': 'pos',
+    '/pos/products': 'pos',
+    '/pos/customers': 'pos',
+    '/pos/reports': 'pos',
+    '/pos/transactions': 'pos', 
+    '/pos/inventory': 'pos',
+
+    // Settings
+    '/settings/access-control': 'settings',
+    '/settings/attendance-kiosk': 'settings',
+    '/settings/companies': 'settings',
+    '/settings/currencies': 'settings',
+    '/settings/roles': 'settings',
+    '/settings/email-server': 'settings',
+    '/settings/email-templates': 'settings',
+    '/settings/signatures': 'settings',
+    '/settings/integrations': 'settings',
+    '/settings/pixinvoice': 'settings',
+    '/settings/backup': 'settings',
+  };
 
   const mapKeyToModule = (key: string) => {
     if (key === '/dashboard') return 'dashboard';
@@ -452,28 +576,58 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     return module || 'dashboard';
   };
 
-  const hasModuleAccess = (moduleKey: string) => {
-    if (moduleKey === 'dashboard' || moduleKey === 'personal') return true;
+  const hasAccess = (itemKey: string) => {
+    // 1. Always allow Dashboard and Personal
+    if (['/dashboard', '/personal'].some(k => itemKey.startsWith(k))) {
+        return true;
+    }
 
     const perms = Array.isArray(user?.permissions) ? user.permissions : [];
     if (!perms.length) return false;
 
-    return perms.some((p: any) => {
-      if (!p?.allowed) return false;
-      if (p?.module !== moduleKey) return false;
-      // Any allowed action makes the module visible (including create/edit/delete/export)
-      return true;
-    });
+    // 2. Check Resource Map first
+    const resource = RESOURCE_MAP[itemKey];
+    if (resource) {
+        // If it's a 'settings' or 'pos' simplified string, check module
+        if (!resource.includes('.')) {
+             return perms.some((p: any) => p.module === resource && p.allowed);
+        }
+        // Exact resource match
+        return perms.some((p: any) => p.resource === resource && p.allowed);
+    }
+
+    // 3. Fallback to Module Check
+    const moduleKey = mapKeyToModule(itemKey);
+    return perms.some((p: any) => p.module === moduleKey && p.allowed);
   };
 
   const filterMenuItems = (items: any[]): any[] => {
     return items
       .map((item) => {
-        const moduleKey = mapKeyToModule(item.key);
+        // Recursively filter children
         const filteredChildren = item.children ? filterMenuItems(item.children) : undefined;
-        const hasChildren = filteredChildren && filteredChildren.length > 0;
-        const visible = hasModuleAccess(moduleKey) || hasChildren;
+        
+        // Determine visibility
+        // A section is visible if:
+        // 1. It has visible children OR
+        // 2. The user has direct permission for it (leaf node)
+        
+        let visible = false;
+
+        if (filteredChildren && filteredChildren.length > 0) {
+            visible = true;
+        } else if (!item.children) {
+             // Leaf node, check permissions
+             visible = hasAccess(item.key);
+        } else {
+             // Parent node with no children -> check if it has direct access AND no children were filtered out (empty folder?)
+             // Actually if it has children property but they are all filtered out, we hide the parent
+             // UNLESS the parent itself matches a resource? (Usually parents are just containers in this sidebar)
+             visible = false;
+        }
+
         if (!visible) return null;
+
         return {
           ...item,
           children: filteredChildren,

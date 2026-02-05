@@ -17,7 +17,7 @@ class NavInvoiceService:
     
     def __init__(self):
         self.config = self._get_active_config()
-        self.mock_mode = True  # Teszt mód DEMO adatokkal
+        self.mock_mode = False  # Éles üzemmód (False)
     
     def _get_active_config(self) -> Optional[PixinvoiceConfig]:
         """Aktív PixiInvoice konfiguráció lekérése"""
@@ -114,8 +114,12 @@ class NavInvoiceService:
             data = response.json()
             
             # Pixinvoice returns pagination wrapper or list
-            results = data.get('results', data) if isinstance(data, dict) else data
-            return results
+            if isinstance(data, dict):
+                if 'results' in data:
+                    return data['results']
+                elif 'items' in data:
+                    return data['items']
+            return data
             
         except requests.exceptions.RequestException as e:
             logger.error(f"NAV számla keresési hiba: {e}")
@@ -193,7 +197,8 @@ class NavInvoiceService:
                 headers=self._get_headers(),
                 params={
                     'company_id': self.config.company_id,
-                    'invoice_number': invoice_number
+                    'invoice_number': invoice_number,
+                    'supplier_tax_number': supplier_tax_number
                 },
                 timeout=30
             )
@@ -232,16 +237,48 @@ class NavInvoiceService:
                 return el.text if el is not None else None
 
             # Extract basic info if not in meta
-            invoice_lines = find_all_recursive(root, 'Line')
+            # NAV 3.0 uses camelCase tags
+            invoice_lines = find_all_recursive(root, 'line')
+            if not invoice_lines:
+                # Fallback to PascalCase (older versions)
+                invoice_lines = find_all_recursive(root, 'Line')
             
             for line in invoice_lines:
-                desc = find_text(line, 'LineDescription')
-                qty = float(find_text(line, 'Quantity') or 0)
-                unit_price = float(find_text(line, 'UnitPrice') or 0)
-                line_amount = float(find_text(line, 'LineNetAmount') or 0)
-                unit = find_text(line, 'UnitOfMeasure')
-                product_code = find_text(line, 'ProductCode') # Sometimes specific tags
+                desc = find_text(line, 'lineDescription') or find_text(line, 'LineDescription')
+                qty = float(find_text(line, 'quantity') or find_text(line, 'Quantity') or 0)
+                unit_price = float(find_text(line, 'unitPrice') or find_text(line, 'UnitPrice') or 0)
+                line_amount = float(find_text(line, 'lineNetAmount') or find_text(line, 'LineNetAmount') or 0)
+                unit = find_text(line, 'unitOfMeasure') or find_text(line, 'UnitOfMeasure')
                 
+                # Product Codes logic
+                # NAV 3.0: line -> productCodes -> productCode -> [productCodeCategory, productCodeValue]
+                # We want to prefer 'OWN' category.
+                
+                p_codes_nodes = find_all_recursive(line, 'productCode') 
+                if not p_codes_nodes:
+                    p_codes_nodes = find_all_recursive(line, 'ProductCode')
+
+                product_code = ''
+                fallback_code = ''
+
+                for p_node in p_codes_nodes:
+                    cat = find_text(p_node, 'productCodeCategory') or find_text(p_node, 'ProductCodeCategory')
+                    val = find_text(p_node, 'productCodeValue') or find_text(p_node, 'ProductCodeValue')
+                    
+                    if val:
+                        if cat and cat.upper() == 'OWN':
+                            product_code = val
+                            break
+                        if not fallback_code:
+                            fallback_code = val
+                
+                if not product_code:
+                    product_code = fallback_code
+                
+                # Legacy / Flat fallback
+                if not product_code:
+                     product_code = find_text(line, 'productCode') or find_text(line, 'ProductCode')
+
                 items.append({
                     'product_name': desc,
                     'product_code': product_code or '',
@@ -251,15 +288,33 @@ class NavInvoiceService:
                     'unit': unit or 'db'
                 })
                 
+            # Find Supplier Info safely
+            supplier_node = next((e for e in root.iter() if e.tag.endswith('supplierInfo') or e.tag.endswith('SupplierInfo')), None)
+            if supplier_node:
+                supp_tax = find_text(supplier_node, 'taxpayerId') or find_text(supplier_node, 'TaxpayerId') 
+                supp_name = find_text(supplier_node, 'supplierName') or find_text(supplier_node, 'SupplierName')
+            else:
+                supp_tax = None
+                supp_name = None
+
+            # Invoice Amounts from Summary
+            summary_node = next((e for e in root.iter() if e.tag.endswith('invoiceSummary') or e.tag.endswith('InvoiceSummary')), None)
+            net_amount = 0
+            if summary_node:
+                net_amount = float(find_text(summary_node, 'invoiceNetAmount') or find_text(summary_node, 'InvoiceNetAmount') or 0)
+
             return {
                 'invoiceNumber': meta_data.get('invoice_number'),
-                'invoiceIssueDate': meta_data.get('invoice_issue_date') or find_text(root, 'InvoiceIssueDate'),
+                'invoiceIssueDate': meta_data.get('invoice_issue_date') or find_text(root, 'invoiceIssueDate') or find_text(root, 'InvoiceIssueDate'),
+                'invoiceDeliveryDate': find_text(root, 'invoiceDeliveryDate') or find_text(root, 'InvoiceDeliveryDate'), # Fulfillment
+                'invoiceCurrency': find_text(root, 'currencyCode') or find_text(root, 'CurrencyCode') or 'HUF',
+                'invoiceNetAmount': net_amount,
                 'supplierInfo': {
-                    'taxNumber': meta_data.get('supplier_tax_number') or find_text(root, 'SupplierTaxNumber'),
-                    'taxNumberName': find_text(root, 'SupplierName') # This might be deep
+                    'taxNumber': meta_data.get('supplier_tax_number') or supp_tax,
+                    'taxNumberName': supp_name
                 },
                 'items': items,
-                'invoice_xml': xml_text  # Keep raw just in case
+                'invoice_xml': xml_text
             }
             
         except ET.ParseError as e:
@@ -363,7 +418,7 @@ class NavInvoiceService:
             invoice_data = {
                 'invoice_number': nav_invoice.get('invoiceNumber'),
                 'invoice_date': nav_invoice.get('invoiceIssueDate'),
-                'due_date': nav_invoice.get('paymentDate'),
+                'fulfillment_date': nav_invoice.get('invoiceDeliveryDate'),
                 'payment_method': self._map_payment_method(nav_invoice.get('paymentMethod')),
                 'currency': nav_invoice.get('invoiceCurrency', 'HUF'),
                 'total_amount': self._parse_amount(nav_invoice.get('invoiceNetAmount', 0)),
@@ -377,18 +432,23 @@ class NavInvoiceService:
             
             # Tételek feldolgozása
             items = []
-            nav_lines = nav_invoice.get('invoiceLines', [])
             
-            for line in nav_lines:
-                item = {
-                    'product_name': line.get('lineDescription', ''),
-                    'product_code': line.get('productCode', ''),
-                    'quantity': self._parse_amount(line.get('quantity', 0)),
-                    'unit_price': self._parse_amount(line.get('unitPrice', 0)),
-                    'total_price': self._parse_amount(line.get('lineNetAmount', 0)),
-                    'unit': line.get('unitOfMeasure', ''),
-                }
-                items.append(item)
+            if 'items' in nav_invoice and nav_invoice['items']:
+                 # Ha már feldolgozott tételek vannak (pl. XML-ből)
+                 items = nav_invoice['items']
+            else:
+                nav_lines = nav_invoice.get('invoiceLines', [])
+                
+                for line in nav_lines:
+                    item = {
+                        'product_name': line.get('lineDescription', ''),
+                        'product_code': line.get('productCode', ''),
+                        'quantity': self._parse_amount(line.get('quantity', 0)),
+                        'unit_price': self._parse_amount(line.get('unitPrice', 0)),
+                        'total_price': self._parse_amount(line.get('lineNetAmount', 0)),
+                        'unit': line.get('unitOfMeasure', ''),
+                    }
+                    items.append(item)
             
             invoice_data['items'] = items
             

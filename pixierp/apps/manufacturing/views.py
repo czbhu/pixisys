@@ -2,16 +2,17 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
+from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from apps.core.permissions import OwnDataFilterMixin
 from .models import (
-    ProductClass, Project, ManufacturingProduct, Service, 
+    ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
 )
 from .serializers import (
     ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer, 
-    CurrencySerializer, ServiceSerializer, CalculatorTemplateSerializer, 
+    CurrencySerializer, ServiceSerializer, ServiceGroupSerializer, CalculatorTemplateSerializer, 
     CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer
 )
 from apps.crm.models import Contact
@@ -19,6 +20,12 @@ from apps.hr.models import Employee
 from apps.core.models import Currency
 from django.core.management import call_command
 from io import StringIO
+
+
+class LargeResultsSetPagination(PageNumberPagination):
+    page_size = 1000
+    page_size_query_param = 'page_size'
+    max_page_size = 10000
 
 
 class ProductClassViewSet(viewsets.ModelViewSet):
@@ -170,6 +177,19 @@ class CurrencyViewSet(viewsets.ModelViewSet):
             return Response({
                 'error': f'Hiba történt az MNB valuták lekérése során: {str(e)}'
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class ServiceGroupViewSet(viewsets.ModelViewSet):
+    queryset = ServiceGroup.objects.all()
+    serializer_class = ServiceGroupSerializer
+    pagination_class = LargeResultsSetPagination
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ['is_active']
+    search_fields = ['name', 'description']
+    ordering_fields = ['name', 'created_at']
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
 
 class ServiceViewSet(viewsets.ModelViewSet):
     """Szolgáltatás viewset"""

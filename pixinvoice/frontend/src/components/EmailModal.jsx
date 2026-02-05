@@ -17,6 +17,7 @@ export default function EmailModal({
   customerId,
   invoiceId,
   attachmentsHint,
+  attachments = [],
 }) {
   const [from, setFrom] = useState(defaultFrom || '');
   const [replyTo, setReplyTo] = useState(defaultReplyTo || '');
@@ -122,15 +123,46 @@ export default function EmailModal({
       <div style={styles.modal}>
         <div style={styles.header}>
           <h3 style={{ margin: 0 }}>E-mail küldése</h3>
-          {invoiceId && (
+          {attachments && attachments.length > 0 ? (
             <div style={{ gridColumn: '1 / span 2', marginTop: 6 }}>
-              Csatolmány: <a href={`/api/invoices/${invoiceId}/pdf/`} target="_blank" rel="noreferrer">Számla PDF megnyitása</a>
+              <div style={{ marginBottom: 4, fontWeight: 500 }}>Csatolmányok:</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+                {attachments.map(inv => (
+                  <a
+                    key={inv.id}
+                    href={`/api/invoices/${inv.id}/pdf/`}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      textDecoration: 'none',
+                      color: '#3498db',
+                      background: '#f8f9fa',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      border: '1px solid #dee2e6',
+                      fontSize: '0.9em',
+                      display: 'inline-flex',
+                      alignItems: 'center'
+                    }}
+                  >
+                    📄 {inv.invoice_number}.pdf
+                  </a>
+                ))}
+              </div>
             </div>
-          )}
-          {!invoiceId && attachmentsHint && (
-            <div style={{ gridColumn: '1 / span 2', marginTop: 6, color: '#6c757d' }}>
-              {attachmentsHint}
-            </div>
+          ) : (
+            <>
+              {invoiceId && (
+                <div style={{ gridColumn: '1 / span 2', marginTop: 6 }}>
+                  Csatolmány: <a href={`/api/invoices/${invoiceId}/pdf/`} target="_blank" rel="noreferrer">Számla PDF megnyitása</a>
+                </div>
+              )}
+              {!invoiceId && attachmentsHint && (
+                <div style={{ gridColumn: '1 / span 2', marginTop: 6, color: '#6c757d' }}>
+                  {attachmentsHint}
+                </div>
+              )}
+            </>
           )}
         </div>
         <div style={styles.content}>

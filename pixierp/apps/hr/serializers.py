@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db.models import Max
+from django.core.cache import cache
 from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials, AttendanceKioskConfig
 
 User = get_user_model()
@@ -38,6 +39,7 @@ class EmployeeSerializer(serializers.ModelSerializer):
     user_email = serializers.EmailField(source='user.email', required=False, allow_blank=True)
     user_username = serializers.CharField(source='user.username', required=False, allow_blank=True)
     last_activity = serializers.SerializerMethodField()
+    is_online = serializers.SerializerMethodField()
     
     full_name = serializers.SerializerMethodField()
     department_names = serializers.SerializerMethodField()
@@ -124,6 +126,27 @@ class EmployeeSerializer(serializers.ModelSerializer):
     def get_last_activity(self, obj):
         """Utolsó belépés a rendszerbe (User last_login)."""
         return obj.user.last_login
+
+    def get_is_online(self, obj):
+        """Ellenőrzi, hogy a felhasználó aktív-e:
+           1. VAGY cache alapján aktív (weboldal használat)
+           2. VAGY be van csekkolva a jelenléti íven (Attendance) és nincs kicsekkolva
+        """
+        # 1. Weboldal aktivitás check
+        is_web_active = cache.get(f'seen_user_{obj.user.id}') is not None
+        if is_web_active:
+            return True
+            
+        # 2. Jelenléti ív check (ma be van csekkolva és nincs kicsekkolva)
+        from django.utils import timezone
+        today = timezone.now().date()
+        is_clocked_in = Attendance.objects.filter(
+            employee=obj, 
+            date=today, 
+            check_out__isnull=True
+        ).exists()
+        
+        return is_clocked_in
     
     def create(self, validated_data):
         user_data = validated_data.pop('user', {})
@@ -139,13 +162,21 @@ class EmployeeSerializer(serializers.ModelSerializer):
         # Automatikus alkalmazott ID generálása
         employee_id = Employee.generate_employee_id()
         
+        # Determine initial active status
+        is_active = validated_data.get('is_active', True)
+
         user = User.objects.create_user(
             username=username,
             email=user_data.get('email', ''),
             first_name=first_name,
             last_name=last_name,
-            password=user_data.get('password', 'defaultpassword123')
+            password=user_data.get('password', 'defaultpassword123'),
         )
+        # Ensure user.is_active matches employee.is_active
+        if user.is_active != is_active:
+            user.is_active = is_active
+            user.save()
+
         employee = Employee.objects.create(
             user=user, 
             employee_id=employee_id,
@@ -179,6 +210,14 @@ class EmployeeSerializer(serializers.ModelSerializer):
                 setattr(user, attr, value)
             user.save()
         
+        # Sync User.is_active if Employee.is_active is changed
+        if 'is_active' in validated_data:
+            user = instance.user
+            if user.is_active != validated_data['is_active']:
+                user.is_active = validated_data['is_active']
+                user.save()
+                logger.info(f"Updated User {user.username} is_active to {user.is_active}")
+
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()

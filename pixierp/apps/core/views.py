@@ -1401,3 +1401,33 @@ class UserRoleViewSet(viewsets.ModelViewSet):
     
     def perform_create(self, serializer):
         serializer.save(assigned_by=self.request.user)
+
+from .models import Zone
+from .serializers import ZoneSerializer
+
+class ZoneViewSet(viewsets.ModelViewSet):
+    queryset = Zone.objects.all()
+    serializer_class = ZoneSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    @action(detail=False, methods=['get'])
+    def next_number(self, request):
+        """Generate next zone number"""
+        import re
+        last_zone = Zone.objects.order_by('-id').first() # Or order by zone_number logic
+        
+        # Simple auto-increment logic based on numeric ending
+        next_num = 1
+        prefix = "Z"
+        
+        if last_zone and last_zone.zone_number:
+            # Try to extract number
+            match = re.search(r'(\d+)$', last_zone.zone_number)
+            if match:
+                num_part = match.group(1)
+                prefix = last_zone.zone_number[:match.start()]
+                next_num = int(num_part) + 1
+                
+        return Response({'next_number': f"{prefix}{next_num:03d}"})
+

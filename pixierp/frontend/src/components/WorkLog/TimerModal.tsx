@@ -4,22 +4,77 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { salesService } from '../../services/salesService';
 
 export const TimerModal: React.FC = () => {
-    const { activeLog, elapsedSeconds, stopTimer, startTimer, modalOpen, setModalOpen, preselectedOrderId } = useTimeTracker();
+    const { 
+        activeLog, elapsedSeconds, stopTimer, startTimer, modalOpen, setModalOpen, 
+        preselectedOrderId, preselectedItemId 
+    } = useTimeTracker();
     const [orders, setOrders] = useState<any[]>([]);
     const [items, setItems] = useState<any[]>([]);
     const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
+    const [workflowOptions, setWorkflowOptions] = useState<string[]>([]);
     const [form] = Form.useForm();
+
+    useEffect(() => {
+        loadWorkflowOptions();
+    }, []);
+
+    const loadWorkflowOptions = async () => {
+        try {
+            const opts = await salesService.getFrequentWorkflows();
+            if (opts && opts.length > 0) {
+                setWorkflowOptions(opts);
+            } else {
+                 setWorkflowOptions(['Szerkesztés', 'Nyomtatás', 'Vágás', 'Csomagolás', 'Szállítás']);
+            }
+        } catch (e) {
+             setWorkflowOptions(['Szerkesztés', 'Nyomtatás', 'Vágás', 'Csomagolás', 'Szállítás']);
+        }
+    };
 
     useEffect(() => {
         if (modalOpen) {
             loadOrders();
-            if (!activeLog && preselectedOrderId) {
-                form.setFieldsValue({ order_id: preselectedOrderId });
-                setSelectedOrderId(preselectedOrderId);
-                loadItems(preselectedOrderId);
+            if (!activeLog) {
+                if (preselectedOrderId) {
+                    // Always try to load the specific order regardless of the list
+                     salesService.getCustomerOrder(preselectedOrderId).then(order => {
+                         // Update orders list to include this one if missing (to ensure label display)
+                         setOrders(prev => {
+                             if (!prev.find(o => o.id === order.id)) {
+                                 return [...prev, order];
+                             }
+                             return prev;
+                         });
+                         
+                         form.setFieldsValue({ order_id: preselectedOrderId });
+                         setSelectedOrderId(preselectedOrderId);
+                     });
+
+                    loadItems(preselectedOrderId).then((loadedItems) => {
+                        // If we have preselectedItemId and items loaded, set it
+                        if (preselectedItemId && loadedItems) {
+                             form.setFieldsValue({ item_id: preselectedItemId });
+                             const item = loadedItems.find((i: any) => i.id === preselectedItemId);
+                             if (item) {
+                                 // Use suggested workflow if available
+                                 const wfName = item.suggested_workflow || ''; 
+                                 // User requested: Do NOT use generic description. 
+                                 // If suggested_workflow is empty, leave it empty.
+                                 if (wfName) form.setFieldValue('workflow_name', wfName);
+                             }
+                        }
+                    });
+                } else {
+                    // Reset fields if opened without preselection
+                    form.resetFields();
+                    setSelectedOrderId(null);
+                    setItems([]);
+                }
+            } else {
+                // If activeLog, populate it (already handled in another useEffect, but safe to keep clean state logic)
             }
         }
-    }, [modalOpen, preselectedOrderId]);
+    }, [modalOpen, preselectedOrderId, preselectedItemId, activeLog]);
 
     useEffect(() => {
         if (activeLog) {
@@ -28,19 +83,30 @@ export const TimerModal: React.FC = () => {
                 item_id: activeLog.item,
                 workflow_name: activeLog.workflow_name
             });
+            // Ensure order is in list for label
+            salesService.getCustomerOrder(activeLog.customer_order).then(order => {
+                setOrders(prev => {
+                     if (!prev.find(o => o.id === order.id)) {
+                         return [...prev, order];
+                     }
+                     return prev;
+                });
+            });
+
             setSelectedOrderId(activeLog.customer_order);
             // Load items for valid display
             if (activeLog.customer_order) loadItems(activeLog.customer_order);
-        } else {
-             // Reset if closed/stopped?
-             // Maybe keep last values?
         }
     }, [activeLog, form]);
 
     const loadOrders = async () => {
         try {
             // Should list "My Orders" - user invites etc.
-            const res = await salesService.getCustomerOrders({ my_orders: 'true' });
+            // Filter by status: new, confirmed, in_production
+            const res = await salesService.getCustomerOrders({ 
+                my_orders: 'true',
+                status: 'new,confirmed,in_production'
+            });
             // Also include current order if active log exists and it's not in the list (rare but possible)
             const list = res.results ?? res;
             setOrders(list);
@@ -50,8 +116,12 @@ export const TimerModal: React.FC = () => {
     const loadItems = async (orderId: number) => {
         try {
             const order = await salesService.getCustomerOrder(orderId);
-            setItems(order.items || []);
-        } catch (e) {}
+            const loadedItems = order.items || [];
+            setItems(loadedItems);
+            return loadedItems;
+        } catch (e) {
+            return [];
+        }
     };
 
     const handleStart = async () => {
@@ -85,13 +155,14 @@ export const TimerModal: React.FC = () => {
                         disabled={!!activeLog}
                         showSearch
                         optionFilterProp="label"
+                        optionLabelProp="label"
                         onChange={(val) => {
                             setSelectedOrderId(val);
                             loadItems(val);
                             form.setFieldsValue({ item_id: null, workflow_name: '' });
                         }}
                         options={orders.map(o => ({
-                            label: `${o.order_number} - ${o.quote_request?.customer?.name || o.customer_name || 'ismeretlen'}`,
+                            label: `${o.order_number} - ${o.customer_name || o.quote_request?.customer?.name || 'ismeretlen'}`,
                             value: o.id
                         }))}
                     />
@@ -100,11 +171,32 @@ export const TimerModal: React.FC = () => {
                     <Select
                          disabled={!!activeLog}
                          allowClear
-                         options={items.map(i => ({ label: i.description, value: i.id }))}
+                         options={(() => {
+                            // Filter out service items if there are legitimate manufacturing/product items to track time on.
+                            // Only show services if they are the only things in the order (or explicitly needed).
+                            const hasManufacturing = items.some(i => i.item_type === 'manufacturing' || i.item_type === 'product');
+                            const displayItems = hasManufacturing 
+                                ? items.filter(i => i.item_type !== 'service') 
+                                : items;
+
+                            return displayItems.map(i => {
+                                 const name = i.product_name || 
+                                              i.manufacturing_product_name || 
+                                              i.material_name || 
+                                              i.service_name || 
+                                              '-';
+                                 return { label: name, value: i.id };
+                             });
+                         })()}
                          onChange={(val) => {
+                             // Use Form.setFieldsValue only for side effects, rely on Form.Item binding for the value itself
                              const item = items.find(i => i.id === val);
                              if (item && !form.getFieldValue('workflow_name')) {
-                                 form.setFieldValue('workflow_name', item.description);
+                                 // Prefer suggested_workflow (from backend costs)
+                                 // Fallback: Do NOT use item.description as generic placeholder per user request.
+                                 if (item.suggested_workflow) {
+                                     form.setFieldValue('workflow_name', item.suggested_workflow);
+                                 }
                              }
                          }}
                     />
@@ -112,13 +204,7 @@ export const TimerModal: React.FC = () => {
                 <Form.Item name="workflow_name" label="Munkafolyamat">
                     <AutoComplete
                         disabled={!!activeLog}
-                        options={[
-                             { value: 'Szerkesztés' },
-                             { value: 'Nyomtatás' },
-                             { value: 'Vágás' },
-                             { value: 'Csomagolás' },
-                             { value: 'Szállítás' }
-                        ]}
+                        options={workflowOptions.map(w => ({ value: w }))}
                         filterOption={(inputValue, option) =>
                             option!.value.toUpperCase().indexOf(inputValue.toUpperCase()) !== -1
                         }

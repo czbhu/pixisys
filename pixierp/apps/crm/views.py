@@ -91,10 +91,17 @@ class CompanyViewSet(viewsets.ViewSet):
                  # Filter strictly based on the source data
                  items = [i for i in items if i.get('is_supplier') is True]
                  
-                 # Sync these suppliers to local DB to ensure ForeignKeys work in ERP
-                 # This effectively makes the local DB a "cache" that is refreshed on read
+                 # Sync these suppliers to local DB and swap ID to local ID
+                 synced_items = []
                  for item in items:
-                     _sync_to_local_db(item)
+                     local_comp = _sync_to_local_db(item)
+                     if local_comp:
+                         # Use local ID for the frontend to be compatible with ERP ForeignKeys
+                         item['external_id'] = item['id']  # Save PixInvoice UUID
+                         item['id'] = local_comp.id        # Swap to local Integer ID
+                         synced_items.append(item)
+                 
+                 items = synced_items
 
             return Response(items)
         except Exception as e:

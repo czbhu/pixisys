@@ -11,6 +11,8 @@ from datetime import datetime, date, timedelta, time as dt_time
 from django.db.models import Min, Max, Q
 from calendar import monthrange
 from collections import defaultdict
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 import logging
 
 logger = logging.getLogger(__name__)
@@ -144,7 +146,8 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
 
 
 from rest_framework.permissions import IsAuthenticated
-
+from rest_framework.decorators import action
+from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()
     serializer_class = AttendanceSerializer
@@ -265,110 +268,60 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if not checkout_time:
              return Response({'error': 'Invalid date format'}, status=400)
              
-        if timezone.is_naive(checkout_time):
-             checkout_time = timezone.make_aware(checkout_time)
-             
-        # Find Active Log
+        # Find active session
         active_log = AccessLog.objects.filter(
             employee=employee,
             check_out_time__isnull=True
         ).order_by('-check_in_time').first()
 
         if active_log:
-            # Ensure checkout time is not before check-in
+            # If provided time is earlier than check_in, clamp to check_in
             if checkout_time < active_log.check_in_time:
-                 # If last activity was somehow before checkin (impossible), fallback to now
-                 checkout_time = timezone.now()
+                 logger.warning(f"Inactive checkout for {user}: checkout time {checkout_time} < check in time {active_log.check_in_time}")
+                 checkout_time = active_log.check_in_time + timedelta(seconds=1)
 
+            # Close Log
             active_log.check_out_time = checkout_time
-            
-            # AccessLog note
-            note_msg = "Inaktívitás miatt kilépve"
-            if active_log.notes:
-                if note_msg not in active_log.notes:
-                    active_log.notes += f"\n{note_msg}"
-            else:
-                active_log.notes = note_msg
-                
             active_log.save()
             
-            # Update Attendance
-            log_date = timezone.localtime(active_log.check_in_time).date()
-            local_checkout_time = timezone.localtime(checkout_time).time()
+            # Update Attendance Record
+            today = timezone.localdate()
+            att_today = Attendance.objects.filter(employee=employee, date=today).first()
+            if att_today:
+                att_today.check_out = timezone.localtime(checkout_time).time()
+                att_today.save()
             
-            attendance = Attendance.objects.filter(employee=employee, date=log_date).first()
-            if attendance:
-                 attendance.check_out = local_checkout_time
-                 
-                 # Attendance note
-                 if attendance.notes:
-                     if note_msg not in attendance.notes:
-                         attendance.notes += f"\n{note_msg}"
-                 else:
-                     attendance.notes = note_msg
-                     
-                 attendance.save()
-                
-            return Response({'message': 'Inactive checkout successful'})
-            
-        return Response({'message': 'No active session found'})
+            return Response({'message': 'Inactive session closed', 'timestamp': checkout_time.isoformat()})
+        else:
+            return Response({'message': 'No active session found', 'timestamp': checkout_time.isoformat()})
 
     @action(detail=False, methods=['post'])
-    def initiate(self, request):
+    def trigger_kiosk_qr(self, request):
         """
-        User initiates check-in/out from phone.
-        Triggers Kiosk to show a QR code.
+        Trigger Kiosk to show a QR code for 'check_in' or 'check_out'.
+        Used by the Attendance Dashboard on request.
         """
-        user = request.user
-        from channels.layers import get_channel_layer
-        from asgiref.sync import async_to_sync
+        mode = request.data.get('mode', 'check_in') # 'check_in' or 'check_out'
+        
+        # We need to know WHICH kiosk to trigger.
+        # But this request comes from the user's browser (dashboard)?
+        # If dashboard, we don't know the kiosk.
+        # However, the user flow is usually: Phone Scans Kiosk QR (Static or Dynamic).
+        # OR: Kiosk shows QR -> Phone Scans it.
+        
+        # If this endpoint is "Phone requests Kiosk to display QR", we need Kiosk ID.
+        # If user is at a Kiosk, maybe they select "I want to Check In" on Phone?
+        
+        from django.core.signing import TimestampSigner
         import uuid
-        import time
-
-        # Determine if Check In or Check Out
-        today = date.today()
-        try:
-            employee = user.employee_profile
-        except Employee.DoesNotExist:
-             return Response({'error': 'Employee profile not found'}, status=404)
-
-        attendance = Attendance.objects.filter(employee=employee, date=today).first()
-        mode = "check_in"
-        if attendance and attendance.check_in and not attendance.check_out:
-            mode = "check_out"
+        signer = TimestampSigner()
         
-        # Generate a secure token for the QR
-        # This token should ideally be stored in Redis/Cache with 10s TTL to verify later
-        # specific to this user interaction
-        # Format: "uid:timestamp:nonce"
-        timestamp = int(time.time())
-        token = f"{user.id}:{timestamp}:{uuid.uuid4().hex[:8]}"
+        # Token format: KIOSK_ACTION:user_id:mode:nonce
+        token = signer.sign(f"KIOSK_ACTION:{request.user.id}:{mode}:{uuid.uuid4().hex}")
         
-        # In a real app, save this token to cache to verify 
-        # But here we will sign it or just rely on backend-kiosk trust for display
-        # The QR content is what gets scanned back.
-        
-        # Get timeout from config
-        config = AttendanceKioskConfig.objects.first()
-        timeout = config.qr_validity_seconds if config else 10
-
-        channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            "attendance_kiosk",
-            {
-                "type": "kiosk.message",
-                "message": {
-                    "type": "show_qr",
-                    "qr_data": token, 
-                    "user_id": user.id,
-                    "user_name": f"{user.last_name} {user.first_name}",
-                    "mode": mode,
-                    "timeout": timeout
-                }
-            }
-        )
-        
-        return Response({'message': 'Kiosk QR triggered', 'token': token, 'mode': mode})
+        # Broadcast to Kiosks? Or return to Phone to show to Kiosk?
+        # Assuming "Phone shows QR to Kiosk":
+        return Response({'token': token, 'mode': mode, 'validity': 60})
 
 
     @action(detail=False, methods=['get'])
@@ -376,14 +329,22 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """
         Generate a signed token for the user's mobile QR code.
         Validity: 10 seconds.
+        Supports 'kiosk_id' to bind the token to a specific kiosk context.
         """
         user = request.user
+        kiosk_id = request.query_params.get('kiosk_id')
         from django.core.signing import TimestampSigner
+        import uuid
         
         signer = TimestampSigner()
-        # Data to sign: user_id:random_nonce
-        import uuid
-        data = f"{user.id}:{uuid.uuid4().hex[:8]}"
+        
+        if kiosk_id:
+            # Authorized Kiosk Token format: USER_ACCESS:user_id:kiosk_id:nonce
+            data = f"USER_ACCESS:{user.id}:{kiosk_id}:{uuid.uuid4().hex[:8]}"
+        else:
+            # Generic User Token: user_id:nonce
+            data = f"{user.id}:{uuid.uuid4().hex[:8]}"
+            
         signed_token = signer.sign(data)
         
         return Response({'token': signed_token, 'validity': 10})
@@ -395,79 +356,61 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         Public endpoint for Hardware ESP8266 Scanner.
         Expects: { "token": "...", "device_id": "..." }
         """
-        # Since this is public/hardware, we might not have request.user authentication
-        # We rely on the signed token itself.
-        
         token = request.data.get('token')
         device_id = request.data.get('device_id')
         
-        if not token:
-            return Response({'error': 'Token missing'}, status=400)
+        if not token or not device_id:
+            return Response({'error': 'Missing parameters'}, status=400)
             
+        # Verify Device
+        from .models import KioskDevice
+        device = KioskDevice.objects.filter(device_id=device_id, status='approved').first()
+        if not device:
+            return Response({'error': 'Invalid device'}, status=403)
+            
+        # Verify Token
         from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
-        from django.contrib.auth import get_user_model
-        
         signer = TimestampSigner()
         try:
-            # Validate max_age=15 (10s validity + 5s latency buffer)
-            original_value = signer.unsign(token, max_age=15)
-            # original_value is "user_id:nonce"
-            user_id = original_value.split(':')[0]
-            
-            User = get_user_model()
-            user = User.objects.get(pk=user_id)
-            
-            # --- Attendance Logic (Same as scan) ---
-            today = date.today()
-            now = datetime.now()
-            
-            try:
-                employee = user.employee_profile
-            except Employee.DoesNotExist:
-                 return Response({'error': 'Employee profile not found'}, status=404)
-    
-            attendance, created = Attendance.objects.get_or_create(
-                employee=employee, 
-                date=today,
-                defaults={
-                    'check_in': now.time(),
-                    'break_duration': timedelta(0),
-                    'overtime_hours': 0
-                }
-            )
-            
-            action_type = "check_in"
-            if created:
-                logger.info(f"[DEVICE] Check-in: {user.username} via {device_id}")
-            else:
-                if not attendance.check_out:
-                    attendance.check_out = now.time()
-                    attendance.save()
-                    action_type = "check_out"
-                    logger.info(f"[DEVICE] Check-out: {user.username} via {device_id}")
-                else:
-                     logger.info(f"[DEVICE] Duplicate scan: {user.username}")
-                     return Response({'message': 'Already checked out'}, status=200)
-            
-            # Optional: Push notification to user via WebSocket?
-            message_str = f"Sikeres { 'belépés' if action_type == 'check_in' else 'kilépés' }: {now.strftime('%H:%M:%S')}"
-            
-            send_notification(
-                user=user,
-                title="Jelenlét frissítés",
-                message=message_str,
-                link="/personal/attendance",
-                type="success"
-            )
-
-            return Response({'status': 'success', 'action': action_type}, status=200)
-
-        except SignatureExpired:
-            return Response({'error': 'Token expired'}, status=400)
-        except BadSignature:
-            return Response({'error': 'Invalid token signature'}, status=400)
+             # Max age 60s for scan
+             val = signer.unsign(token, max_age=60)
+             
+             user_id = None
+             # Try parsing USER_ACCESS:user_id:...
+             if val.startswith("USER_ACCESS:"):
+                 parts = val.split(":")
+                 if len(parts) >= 2:
+                     user_id = parts[1]
+             # Try parsing straight user_id:nonce
+             elif ":" in val:
+                 parts = val.split(":")
+                 if parts[0].isdigit():
+                     user_id = parts[0]
+                     
+             if not user_id:
+                 return Response({'error': 'Invalid token format'}, status=400)
+                 
+             from django.contrib.auth.models import User
+             user = User.objects.get(pk=user_id)
+             
+             # Perform Attendance Action
+             # We reuse _perform_attendance_action BUT we need to adapt it because
+             # it expects 'request.user' usually.
+             
+             # We can't call 'self.scan(request)' because request is anonymous here.
+             # We simulate authenticated state or extract logic.
+             
+             now = timezone.now()
+             local_now = timezone.localtime(now)
+             today = local_now.date()
+             
+             # Call logic directly
+             response = self._perform_attendance_action(user, local_now, now, today, qr_source="DEVICE")
+             return response
+             
+        except (BadSignature, SignatureExpired):
+            return Response({'error': 'Invalid token'}, status=400)
         except Exception as e:
-            logger.error(f"[DEVICE] Scan error: {e}")
             return Response({'error': str(e)}, status=500)
 
     @action(detail=False, methods=['post'])
@@ -475,13 +418,17 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         qr_code = request.data.get('qr_code')
         user = request.user
         
-        # Timezone aware Current Time
+        # DEBUG LOGGING
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"SCAN REQUEST: User={user}, Code={qr_code}")
+        
         now = timezone.now()
         local_now = timezone.localtime(now)
         today = local_now.date() 
 
-        # Check if it is a Kiosk QR
-        if qr_code and "KIOSK_QR" in qr_code:
+        # --- 1. Identify Kiosk (User scans Kiosk ID) ---
+        if qr_code:
             from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
             signer = TimestampSigner()
             try:
@@ -489,24 +436,191 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 config = AttendanceKioskConfig.objects.first()
                 if config:
                     base_validity = config.qr_validity_seconds
-                
                 max_age = base_validity + 20 
+
+                original_value = signer.unsign(qr_code, max_age=max_age)
+
+                # Kiosk Identity Scan -> TRIGGER IDENTITY CHALLENGE (WS)
+                if original_value.startswith("KIOSK_ID:"):
+                    parts = original_value.split(':', 1)
+                    if len(parts) >= 2 and parts[0] == "KIOSK_ID":
+                        return self._initiate_kiosk_challenge(request, parts[1])
+
+                # --- 2. Check-In/Out Action (Kiosk scans User Token) OR User scans Challenge Token ---
                 
-                signer.unsign(qr_code, max_age=max_age)
-            except (BadSignature, SignatureExpired) as e:
-                import logging
-                logger = logging.getLogger(__name__)
-                logger.warning(f"Scan failed for user {user}: {e} Code: {qr_code[:10]}...")
-                return Response({'message': f'Érvénytelen vagy lejárt Kioszk QR kód: {str(e)}'}, status=400)
-        else:
+                # CASE A: CHALLENGE RESPONSE (User scans Kiosk Challenge Token)
+                # Format: CHALLENGE:user_id:kiosk_id:nonce
+                if original_value.startswith("CHALLENGE:"):
+                     return self._process_challenge_response(request, original_value)
+
+                # CASE B: USER_ACCESS (Old flow - Kiosk scans user) -> Still support?
+                if original_value.startswith("USER_ACCESS:"):
+                    return self._perform_attendance_action(user, local_now, now, today, qr_source="KIOSK_SCAN")
+                    
+                if "KIOSK_QR" in qr_code:
+                     pass 
+
+            except (SignatureExpired, BadSignature):
+                 # Fallback: Allow static or expired KIOSK_ID qr codes (e.g. stickers)
+                if str(qr_code).startswith("KIOSK_ID:"):
+                    parts = str(qr_code).split(':')
+                    if len(parts) >= 2:
+                        return self._initiate_kiosk_challenge(request, parts[1])
+                
+                return Response({'error': 'Érvénytelen vagy lejárt QR kód.'}, status=400)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                return Response({'error': 'Hiba a feldolgozás során.'}, status=400)
+
+        return Response({'message': 'Érvénytelen vagy ismeretlen QR kód.'}, status=400)
+
+    def _initiate_kiosk_challenge(self, request, device_id):
+        """
+        Step 1: User scans Kiosk. 
+        Backend tells Kiosk via WS to show a specific Challenge QR code for THIS user.
+        """
+        user = request.user
+        from .models import KioskDevice
+        try:
+            device = KioskDevice.objects.get(device_id=device_id)
+        except KioskDevice.DoesNotExist:
+            return Response({'error': 'Ismeretlen kioszk eszköz.'}, status=404)
+            
+        if device.status != 'approved':
+             return Response({'error': 'Ez a kioszk nincs engedélyezve.'}, status=403)
+             
+        # Generate Challenge Token
+        # It must include User ID and Kiosk ID to bind them.
+        import uuid
+        from django.core.signing import TimestampSigner
+        signer = TimestampSigner()
+        
+        # Challenge Token: Signed(CHALLENGE:user_id:kiosk_id:nonce)
+        # Validity: Short (e.g. 30s) because user is standing right there.
+        challenge_payload = f"CHALLENGE:{user.id}:{device.device_id}:{uuid.uuid4().hex[:8]}"
+        challenge_token = signer.sign(challenge_payload)
+        
+        # Send to Kiosk via WebSocket
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        # Group name is usually 'attendance_{device_id}' based on consumer logic? 
+        # Checking consumer... Assumed 'attendance_{device_id}' or similar.
+        # Based on KioskPage.tsx: wsUrl = `/ws/attendance/${deviceId}/`
+        # Consumers usually group by URL param. Let's assume group name is `attendance_{device_id}`.
+        
+        async_to_sync(channel_layer.group_send)(
+            f"attendance_kiosk_{device.device_id}",
+            {
+                "type": "kiosk.message",
+                "message": {
+                    "type": "show_qr",
+                    "qr_data": challenge_token,
+                    "user_name": f"{user.last_name} {user.first_name}",
+                    "mode": "challenge"
+                }
+            }
+        )
+        
+        # --- RESET OTHER KIOSKS & STOP ROTATION ---
+        # 1. Stop Rotation Loop on User's Controller
+        async_to_sync(channel_layer.group_send)(
+            f"qr_controller_{user.id}",
+            {
+                "type": "controller_message",
+                "message": { "type": "stop_rotation" }
+            }
+        )
+
+        # 2. Reset other kiosks
+        try:
+            from apps.core.models import Zone
+            
+            # Logic to find allowed kiosks (Replicates consumer logic)
+            allowed_ids = []
+            
+            # 1. Employee-based logic (Priority)
+            if hasattr(user, 'employee_profile'):
+                employee_p = user.employee_profile
+                departments = employee_p.departments.all()
+                if departments:
+                    zones = Zone.objects.filter(departments__in=departments)
+                    # Exclude current kiosk
+                    kiosks = KioskDevice.objects.filter(zones__in=zones, status='approved').exclude(device_id=device.device_id).distinct()
+                    allowed_ids = [k.device_id for k in kiosks]
+            
+            # 2. Admin fallback (Only if no employee restrictions found above)
+            elif user.is_staff or user.is_superuser:
+                # Admin controls all active kiosks
+                allowed_ids = list(KioskDevice.objects.filter(status='approved').exclude(device_id=device.device_id).values_list('device_id', flat=True))
+
+            
+            if allowed_ids:
+                for other_id in allowed_ids:
+                    async_to_sync(channel_layer.group_send)(
+                        f"attendance_kiosk_{other_id}",
+                        {
+                            "type": "kiosk_message",
+                            "message": { "type": "stop_qr" }
+                        }
+                    )
+        except Exception as e:
+            logger.error(f"Error in Identify Reset: {e}")
+
+        return Response({
+            'message': 'Kioszk azonosítva. Kérlek olvasd be a kioszk képernyőjén megjelenő QR kódot!',
+            'action': 'kiosk_challenge_sent'
+        })
+
+    def _process_challenge_response(self, request, signed_token):
+        """
+        Step 2: User scans the Challenge QR displayed on Kiosk.
+        Backend validates it matches the user and performs check-in.
+        """
+        user = request.user
+        # Token is already unsigned by caller (scan method), but wait... 
+        # scan method only unsigns 'original_value'.  It passes 'original_value' here. 
+        # Correct.
+        
+        parts = signed_token.split(':')
+        # Structure: CHALLENGE:user_id:kiosk_id:nonce
+        if len(parts) < 4:
+            return Response({'error': 'Hibás token formátum'}, status=400)
+            
+        token_user_id = parts[1]
+        token_kiosk_id = parts[2]
+        
+        if str(token_user_id) != str(user.id):
+             return Response({'error': 'Ez a kód nem neked szól!'}, status=403)
+             
+        # Perform Attendance Action
+        now = timezone.now()
+        local_now = timezone.localtime(now)
+        today = local_now.date()
+        
+        # We can fetch kiosk name for logging
+        from .models import KioskDevice
+        kiosk_name = "Kiosk"
+        try:
+            kiosk = KioskDevice.objects.get(device_id=token_kiosk_id)
+            kiosk_name = kiosk.name
+        except:
             pass
             
+        return self._perform_attendance_action(user, local_now, now, today, qr_source=f"CHALLENGE:{kiosk_name}", kiosk_id=token_kiosk_id)
+
+
+    def _perform_attendance_action(self, user, local_now, now, today, qr_source=None, kiosk_id=None):
+        import logging
+        logger = logging.getLogger(__name__)
+        
         try:
             employee = user.employee_profile
         except Employee.DoesNotExist:
-             return Response({'message': 'Nem található dolgozói profil ehhez a felhasználóhoz'}, status=404)
+             return Response({'error': 'Nem található dolgozói profil ehhez a felhasználóhoz'}, status=404)
 
-        # Get/Create Attendance for TODAY
         attendance_today, created = Attendance.objects.get_or_create(
             employee=employee, 
             date=today,
@@ -514,14 +628,21 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 'check_in': local_now.time(),
                 'break_duration': timedelta(0),
                 'overtime_hours': 0,
-                'last_activity': now # Initialize last_activity on check-in
+                'last_activity': now
             }
         )
         if created:
             attendance_today.last_activity = now
             attendance_today.save()
+        else:
+            if attendance_today.last_activity:
+                delta = now - attendance_today.last_activity
+                # Skip debounce for CHALLENGE flow (quick sequential scans are expected)
+                is_challenge = qr_source and qr_source.startswith("CHALLENGE:")
+                if delta.total_seconds() < 10 and qr_source != "FORCED" and not is_challenge:
+                    logger.info(f"Scan ignored for {user} (debounce: {delta.total_seconds()}s)")
+                    return Response({'message': 'Túl gyors beolvasás, kérlek várj!'})
         
-        # Find Active Log (Any open log from past)
         active_log = AccessLog.objects.filter(
             employee=employee,
             check_out_time__isnull=True
@@ -531,21 +652,16 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         action_type = ""
         
         if active_log:
-            # CHECK OUT logic (or Split)
             active_start_local = timezone.localtime(active_log.check_in_time)
             
             if active_start_local.date() < today:
-                # SPANNING MIDNIGHT -> SPLIT
-                
-                # Close OLD Log at boundary (Next Day 00:00 which is effectively End Of Old Day)
                 boundary_date = active_start_local.date() + timedelta(days=1)
-                boundary_naive = datetime.combine(boundary_date, datetime.min.time()) # 00:00
+                boundary_naive = datetime.combine(boundary_date, datetime.min.time())
                 boundary_aware = timezone.make_aware(boundary_naive, timezone.get_current_timezone())
                 
                 active_log.check_out_time = boundary_aware
                 active_log.save()
                 
-                # Update Old Attendance Check Out (to 23:59:59)
                 try:
                     att_old = Attendance.objects.get(employee=employee, date=active_start_local.date())
                     att_old.check_out = dt_time(23, 59, 59)
@@ -553,7 +669,6 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 except Attendance.DoesNotExist:
                     pass
 
-                # Create NEW Log for Today (00:00 -> Now) because we are closing the session now
                 AccessLog.objects.create(
                     employee=employee,
                     check_in_time=boundary_aware,
@@ -562,26 +677,25 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     duration_hours=0
                 )
                 
-                # Update Today's Attendance
                 attendance_today.check_in = dt_time(0, 0, 0)
                 attendance_today.check_out = local_now.time()
+                attendance_today.last_activity = now
                 attendance_today.save()
                 
                 message_str = f"Sikeres kilépés (Éjfél átlépve): {local_now.strftime('%H:%M:%S')}"
                 action_type = "check_out"
             else:
-                # SAME DAY CHECK OUT
                 active_log.check_out_time = now
                 active_log.save()
                 
                 attendance_today.check_out = local_now.time()
+                attendance_today.last_activity = now
                 attendance_today.save()
                 
                 message_str = f"Sikeres kilépés: {local_now.strftime('%H:%M:%S')}"
                 action_type = "check_out"
                 
         else:
-            # CHECK IN (Starting new)
             AccessLog.objects.create(
                 employee=employee,
                 check_in_time=now,
@@ -590,31 +704,84 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             )
             
             attendance_today.check_out = None
-            attendance_today.last_activity = now # Reset/Update last acitivity on check-in
+            attendance_today.last_activity = now
             attendance_today.save()
             
             message_str = f"Sikeres belépés: {local_now.strftime('%H:%M:%S')}"
             action_type = "check_in"
 
-        # Notify Kiosk of success
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
         
         channel_layer = get_channel_layer()
-        async_to_sync(channel_layer.group_send)(
-            "attendance_kiosk",
-            {
-                "type": "kiosk.message",
-                "message": {
-                    "type": "success",
-                    "user_name": f"{user.last_name} {user.first_name}",
-                    "timestamp": local_now.strftime('%Y-%m-%d %H:%M:%S'),
-                    "action": action_type
+        
+        # Send success message to the specific kiosk if kiosk_id provided
+        if kiosk_id:
+            # 1. Send Success to the identified Kiosk
+            async_to_sync(channel_layer.group_send)(
+                f"attendance_kiosk_{kiosk_id}",
+                {
+                    "type": "kiosk_message",
+                    "message": {
+                        "type": "success",
+                        "user_name": f"{user.last_name} {user.first_name}",
+                        "timestamp": local_now.strftime('%Y-%m-%d %H:%M:%S'),
+                        "action": action_type
+                    }
                 }
-            }
-        )
+            )
 
-        # Notify User (for Web UI refresh)
+            # 2. Sync Reset: Send stop_qr to ALL OTHER kiosks accessible to this user
+            try:
+                from .models import KioskDevice
+                from apps.core.models import Zone
+                
+                # Logic to find allowed kiosks (Replicates consumer logic)
+                allowed_ids = []
+                
+                # 1. Employee based logic
+                if hasattr(user, 'employee_profile'):
+                    employee_p = user.employee_profile
+                    departments = employee_p.departments.all()
+                    if departments:
+                        zones = Zone.objects.filter(departments__in=departments)
+                        # Exclude current kiosk
+                        kiosks = KioskDevice.objects.filter(zones__in=zones, status='approved').exclude(device_id=kiosk_id).distinct()
+                        allowed_ids = [k.device_id for k in kiosks]
+
+                # 2. Admin fallback
+                elif user.is_staff or user.is_superuser:
+                    # Admin controls all active kiosks
+                    allowed_ids = list(KioskDevice.objects.filter(status='approved').exclude(device_id=kiosk_id).values_list('device_id', flat=True))
+                
+                if allowed_ids:
+                    # logger.info(f"Sync Reset: Stopping kiosks {allowed_ids}")
+                    for other_id in allowed_ids:
+                        async_to_sync(channel_layer.group_send)(
+                            f"attendance_kiosk_{other_id}",
+                            {
+                                "type": "kiosk_message",
+                                "message": { "type": "stop_qr" }
+                            }
+                        )
+            except Exception as e:
+                logger.error(f"Error in Sync Reset: {e}")
+
+        else:
+            # Fallback: broadcast to all kiosks (legacy)
+            async_to_sync(channel_layer.group_send)(
+                "attendance_kiosk",
+                {
+                    "type": "kiosk.message",
+                    "message": {
+                        "type": "success",
+                        "user_name": f"{user.last_name} {user.first_name}",
+                        "timestamp": local_now.strftime('%Y-%m-%d %H:%M:%S'),
+                        "action": action_type
+                    }
+                }
+            )
+
         send_notification(
             user=user,
             title="Jelenlét frissítés",
@@ -633,6 +800,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     @action(detail=False, methods=['post'])
     def update_heartbeat(self, request):
         """Update last_activity timestamp for the current open attendance"""
+
         user = request.user
         try:
             employee = user.employee_profile
@@ -650,126 +818,6 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             
         return Response({'status': 'no_active_attendance'})
         
-    @action(detail=False, methods=['get'])
-    def status(self, request):
-        """Get current attendance status and inactivity info"""
-        user = request.user
-        try:
-            employee = user.employee_profile
-        except Employee.DoesNotExist:
-            return Response({'check_in': None})
-            
-        today = timezone.localdate()
-        attendance = Attendance.objects.filter(employee=employee, date=today).first()
-        
-        # Calculate daily worked seconds (including previous closed logs for today)
-        daily_logs = AccessLog.objects.filter(
-            employee=employee,
-            check_in_time__date=today,
-            check_out_time__isnull=False
-        )
-        worked_seconds = sum([(log.check_out_time - log.check_in_time).total_seconds() for log in daily_logs])
-        
-        # Get Max Inactivity Timeout from user's departments (min: 60 minutes default)
-        timeout_minutes = 60
-        timeout_values = []
-        
-        # Check direct departments
-        for dept in employee.departments.all():
-             if dept.inactivity_timeout:
-                 timeout_values.append(dept.inactivity_timeout)
-                 
-        # Check position's department
-        if employee.position and employee.position.department:
-             if employee.position.department.inactivity_timeout:
-                 timeout_values.append(employee.position.department.inactivity_timeout)
-        
-        if timeout_values:
-            timeout_minutes = max(timeout_values)
-        
-        result = {
-            'check_in': None,
-            'daily_worked_seconds': worked_seconds,
-            'inactivity_timeout': timeout_minutes,
-            'last_activity': None
-        }
-        
-        if attendance and not attendance.check_out:
-            # Active session
-            active_log = AccessLog.objects.filter(
-                employee=employee, 
-                check_out_time__isnull=True
-            ).last()
-            
-            if active_log:
-                result['check_in'] = active_log.check_in_time
-            elif attendance.check_in:
-                 # Fallback if no access log but attendance exists (shouldn't happen logic wise but safe)
-                 # Combine Date + Time
-                 local_dt = datetime.combine(attendance.date, attendance.check_in)
-                 result['check_in'] = timezone.make_aware(local_dt)
-            
-            if attendance.last_activity:
-                result['last_activity'] = attendance.last_activity
-        
-        return Response(result)
-
-    @action(detail=False, methods=['post'])
-    def inactive_checkout(self, request):
-        """Force checkout due to inactivity"""
-        user = request.user
-        last_activity_str = request.data.get('last_activity')
-        
-        try:
-            employee = user.employee_profile
-        except Employee.DoesNotExist:
-             return Response(status=404)
-             
-        today = timezone.localdate()
-        now = timezone.now()
-        
-        # Use provided last activity or current time if missing
-        checkout_time = now
-        if last_activity_str:
-            try:
-                from dateutil.parser import parse
-                checkout_time = parse(last_activity_str)
-                # Ensure timezone aware
-                if timezone.is_naive(checkout_time):
-                    checkout_time = timezone.make_aware(checkout_time)
-            except:
-                pass
-        
-        # If we have a stored last_activity in Attendance that is more recent/accurate?
-        # Actually user wants "last active counts", so if frontend claims X, trusting it is risky?
-        # Better: use the max of stored and reported? 
-        # Or simplistic: If Attendance has last_activity, use that.
-        
-        attendance = Attendance.objects.filter(employee=employee, date=today, check_out__isnull=True).first()
-        if not attendance:
-            return Response({'message': 'Already checked out'})
-            
-        if attendance.last_activity:
-             # Prefer server side stored activity if available
-             checkout_time = attendance.last_activity
-        
-        # Perform Checkout logic similar to scan
-        active_log = AccessLog.objects.filter(
-            employee=employee,
-            check_out_time__isnull=True
-        ).last()
-        
-        if active_log:
-            active_log.check_out_time = checkout_time
-            active_log.location = "Auto/Inactivity"
-            active_log.save()
-            
-        attendance.check_out = timezone.localtime(checkout_time).time()
-        attendance.save()
-        
-        return Response({'status': 'checked_out', 'time': checkout_time})
-
-
 class LeaveRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all()
     serializer_class = LeaveRequestSerializer
@@ -1286,3 +1334,31 @@ class KioskDeviceViewSet(viewsets.ModelViewSet):
         device.status = 'blocked'
         device.save()
         return Response(KioskDeviceSerializer(device).data)
+
+    @action(detail=True, methods=['post'])
+    def identify(self, request, pk=None):
+        if not request.user.is_authenticated:
+            return Response(status=401)
+        device = self.get_object()
+        
+        mode = request.data.get('mode', 'start') # start | stop
+        
+        channel_layer = get_channel_layer()
+        # Ensure we broadcast to both specific device group and generic group (if listener is legacy)
+        # But we only really care about the specific one now.
+        groups = [f"attendance_kiosk_{device.device_id}", "attendance_kiosk"]
+        
+        for group in groups:
+           async_to_sync(channel_layer.group_send)(
+               group,
+               {
+                   'type': 'kiosk_message',
+                   'message': {
+                       'type': 'identify',
+                       'mode': mode,
+                       'device_id': device.device_id,
+                       'name': device.name
+                   }
+               }
+           )
+        return Response({'status': f'identified_{mode}'})

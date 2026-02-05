@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Transfer } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useMemo } from 'react';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Row, Col, Card, List, Checkbox } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -18,6 +18,93 @@ interface Service {
   code: string;
 }
 
+// Separate component for Resource Selection
+const ResourceSelectionModal: React.FC<{
+  open: boolean;
+  title: string;
+  allResources: any[];
+  initialSelectedIds: number[];
+  onOk: (ids: number[]) => void;
+  onCancel: () => void;
+}> = ({ open, title, allResources, initialSelectedIds, onOk, onCancel }) => {
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [searchText, setSearchText] = useState('');
+
+  useEffect(() => {
+    if (open) {
+      setSelectedIds(initialSelectedIds);
+      setSearchText('');
+    }
+  }, [open, initialSelectedIds]);
+
+  const filteredResources = useMemo(() => {
+    if (!searchText) return allResources;
+    const lower = searchText.toLowerCase();
+    return allResources.filter(r => 
+      r.name.toLowerCase().includes(lower) || 
+      (r.code && r.code.toLowerCase().includes(lower))
+    );
+  }, [allResources, searchText]);
+
+  const selectedResources = useMemo(() => {
+    return allResources.filter(r => selectedIds.includes(r.id));
+  }, [allResources, selectedIds]);
+
+  const handleRemove = (id: number) => {
+    setSelectedIds(prev => prev.filter(x => x !== id));
+  };
+
+  const columns = [
+    { title: 'Név', dataIndex: 'name', key: 'name' },
+    { title: 'Kód', dataIndex: 'code', key: 'code' },
+  ];
+
+  return (
+    <Modal
+      open={open}
+      title={title}
+      onOk={() => onOk(selectedIds)}
+      onCancel={onCancel}
+      width={800}
+      bodyStyle={{ height: '600px', display: 'flex', flexDirection: 'column' }}
+    >
+      <div style={{ marginBottom: 16 }}>
+        <strong>Kiválasztva ({selectedIds.length}):</strong>
+        <div style={{ marginTop: 8, maxHeight: 100, overflowY: 'auto', border: '1px solid #f0f0f0', padding: 8 }}>
+           {selectedResources.length === 0 ? <span style={{ color: '#999' }}>Nincs kiválasztott elem</span> : (
+             <Space wrap>
+               {selectedResources.map(r => (
+                 <Tag closable onClose={() => handleRemove(r.id)} key={r.id}>{r.name}</Tag>
+               ))}
+             </Space>
+           )}
+        </div>
+      </div>
+
+      <Input 
+        prefix={<SearchOutlined />} 
+        placeholder="Keresés..." 
+        style={{ marginBottom: 16 }}
+        value={searchText}
+        onChange={e => setSearchText(e.target.value)}
+      />
+
+      <Table
+        dataSource={filteredResources}
+        columns={columns}
+        rowKey="id"
+        size="small"
+        pagination={{ pageSize: 50 }}
+        scroll={{ y: 300 }}
+        rowSelection={{
+          selectedRowKeys: selectedIds,
+          onChange: (newSelectedKeys) => setSelectedIds(newSelectedKeys as number[]),
+        }}
+      />
+    </Modal>
+  );
+};
+
 interface CalculatorTemplate {
   id: number;
   name: string;
@@ -31,7 +118,22 @@ interface CalculatorTemplate {
   allowed_services_details: any[];
   input_fields: any[];
   created_by_name: string;
+  category?: string;
+  calculator_type?: string; // 'generic', 'sheet_print', 'roll_print'
 }
+
+const CALCULATOR_CATEGORIES = [
+  { label: 'Íves/Táblás nyomtatás', value: 'sheet_print', color: 'blue' },
+  { label: 'Tekercses nyomtatás', value: 'roll_print', color: 'green' },
+  { label: 'Világító tábla', value: 'lightbox', color: 'orange' },
+  { label: 'Egyéb', value: 'other', color: 'default' }
+];
+
+const CALCULATOR_TYPES = [
+  { label: 'Általános', value: 'generic' },
+  { label: 'Íves/Táblás optimalizálás', value: 'sheet_print' },
+  { label: 'Tekercses kalkuláció', value: 'roll_print' }
+];
 
 const CalculatorTemplates: React.FC = () => {
   const [templates, setTemplates] = useState<CalculatorTemplate[]>([]);
@@ -44,6 +146,11 @@ const CalculatorTemplates: React.FC = () => {
 
   const [selectedMaterials, setSelectedMaterials] = useState<number[]>([]);
   const [selectedServices, setSelectedServices] = useState<number[]>([]);
+
+  const [resourceModal, setResourceModal] = useState<{
+    open: boolean;
+    type: 'material' | 'service';
+  }>({ open: false, type: 'material' });
 
   useEffect(() => {
     fetchTemplates();
@@ -97,6 +204,8 @@ const CalculatorTemplates: React.FC = () => {
     setEditingTemplate(record);
     form.setFieldsValue({
       ...record,
+      category: record.category || 'Egyéb',
+      calculator_type: record.calculator_type || 'generic',
       allowed_materials: record.allowed_materials || [],
       allowed_services: record.allowed_services || [],
     });
@@ -146,6 +255,26 @@ const CalculatorTemplates: React.FC = () => {
       dataIndex: 'name',
       key: 'name',
       sorter: (a: CalculatorTemplate, b: CalculatorTemplate) => a.name.localeCompare(b.name),
+    },
+    {
+      title: 'Kategória',
+      dataIndex: 'category',
+      key: 'category',
+      width: 150,
+      render: (category: string) => {
+        const cat = CALCULATOR_CATEGORIES.find(c => c.value === category);
+        return cat ? <Tag color={cat.color}>{cat.label}</Tag> : category;
+      }
+    },
+    {
+      title: 'Típus',
+      dataIndex: 'calculator_type',
+      key: 'calculator_type',
+      width: 150,
+      render: (type: string) => {
+        const t = CALCULATOR_TYPES.find(c => c.value === type);
+        return t ? t.label : type;
+      }
     },
     {
       title: 'Kód',
@@ -268,6 +397,23 @@ const CalculatorTemplates: React.FC = () => {
             <Input placeholder="pl. MOLINO_PRINT" />
           </Form.Item>
 
+          <Row gutter={16}>
+             <Col span={12}>
+                <Form.Item name="category" label="Kategória" initialValue="other">
+                    <Select>
+                        {CALCULATOR_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
+                    </Select>
+                </Form.Item>
+             </Col>
+             <Col span={12}>
+                <Form.Item name="calculator_type" label="Működési logika" initialValue="generic">
+                     <Select>
+                        {CALCULATOR_TYPES.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
+                     </Select>
+                </Form.Item>
+             </Col>
+          </Row>
+
           <Form.Item name="description" label="Leírás">
             <TextArea rows={3} />
           </Form.Item>
@@ -287,25 +433,45 @@ const CalculatorTemplates: React.FC = () => {
           </Form.Item>
 
           <Form.Item label="Engedélyezett alapanyagok">
-            <Transfer
-              dataSource={materials.map(m => ({ key: m.id, title: `${m.name} (${m.code})` }))}
-              titles={['Elérhető', 'Kiválasztott']}
-              targetKeys={selectedMaterials.map(String)}
-              onChange={(targetKeys) => setSelectedMaterials(targetKeys.map(Number))}
-              render={item => item.title}
-              listStyle={{ width: 400, height: 300 }}
-            />
+             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                 <Button icon={<PlusOutlined />} onClick={() => setResourceModal({ open: true, type: 'material' })}>
+                     Kezelés
+                 </Button>
+                 <div style={{ flex: 1, border: '1px solid #d9d9d9', borderRadius: 6, padding: 8, minHeight: 32 }}>
+                    {selectedMaterials.length === 0 && <span style={{ color: '#bfbfbf' }}>Nincs kiválasztott alapanyag</span>}
+                    <Space wrap>
+                        {selectedMaterials.map(id => {
+                            const m = materials.find(x => x.id === id);
+                            return m ? (
+                                <Tag key={id} closable onClose={() => setSelectedMaterials(prev => prev.filter(x => x !== id))}>
+                                    {m.name}
+                                </Tag>
+                            ) : null;
+                        })}
+                    </Space>
+                 </div>
+             </div>
           </Form.Item>
 
           <Form.Item label="Engedélyezett szolgáltatások">
-            <Transfer
-              dataSource={services.map(s => ({ key: s.id, title: `${s.name} (${s.code})` }))}
-              titles={['Elérhető', 'Kiválasztott']}
-              targetKeys={selectedServices.map(String)}
-              onChange={(targetKeys) => setSelectedServices(targetKeys.map(Number))}
-              render={item => item.title}
-              listStyle={{ width: 400, height: 300 }}
-            />
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+                 <Button icon={<PlusOutlined />} onClick={() => setResourceModal({ open: true, type: 'service' })}>
+                     Kezelés
+                 </Button>
+                 <div style={{ flex: 1, border: '1px solid #d9d9d9', borderRadius: 6, padding: 8, minHeight: 32 }}>
+                    {selectedServices.length === 0 && <span style={{ color: '#bfbfbf' }}>Nincs kiválasztott szolgáltatás</span>}
+                    <Space wrap>
+                        {selectedServices.map(id => {
+                            const s = services.find(x => x.id === id);
+                            return s ? (
+                                <Tag key={id} closable onClose={() => setSelectedServices(prev => prev.filter(x => x !== id))}>
+                                    {s.name}
+                                </Tag>
+                            ) : null;
+                        })}
+                    </Space>
+                 </div>
+             </div>
           </Form.Item>
 
           <Form.Item name="is_active" label="Státusz">
@@ -316,6 +482,19 @@ const CalculatorTemplates: React.FC = () => {
           </Form.Item>
         </Form>
       </Modal>
+
+      <ResourceSelectionModal
+        open={resourceModal.open}
+        title={resourceModal.type === 'material' ? 'Alapanyagok kiválasztása' : 'Szolgáltatások kiválasztása'}
+        allResources={resourceModal.type === 'material' ? materials : services}
+        initialSelectedIds={resourceModal.type === 'material' ? selectedMaterials : selectedServices}
+        onCancel={() => setResourceModal({ ...resourceModal, open: false })}
+        onOk={(ids) => {
+            if (resourceModal.type === 'material') setSelectedMaterials(ids);
+            else setSelectedServices(ids);
+            setResourceModal({ ...resourceModal, open: false });
+        }}
+      />
     </div>
   );
 };

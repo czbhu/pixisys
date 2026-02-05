@@ -1336,6 +1336,9 @@ const CustomerForm = () => {
         if (data.address) {
            setValue('address', data.address);
         }
+        if (data.zip_code) setValue('postal_code', data.zip_code);
+        if (data.city) setValue('city', data.city);
+
         if (data.countryCode) {
             const mappedCountry = COUNTRY_CODE_MAP[data.countryCode];
             if (mappedCountry) {

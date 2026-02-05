@@ -218,6 +218,7 @@ const CurrenciesPage: React.FC = () => {
       }
     >
       <Table 
+        size="small"
         rowKey="id" 
         dataSource={list} 
         columns={columns} 

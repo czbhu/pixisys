@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 
@@ -411,35 +411,10 @@ const Materials: React.FC = () => {
   }, [filterType, searchText]);
 
   // Update informational price when default supplier changes
-  useEffect(() => {
-    const updateInformationalPrice = async () => {
-      if (editingMaterial) {
-        const defaultSupplierId = form.getFieldValue('default_supplier');
-        if (defaultSupplierId) {
-          try {
-            const response = await api.get(`/warehouse/material-cost-items/?material_id=${editingMaterial.id}&supplier_id=${defaultSupplierId}`);
-            const items = Array.isArray(response.data) ? response.data : (response.data.results || []);
-            
-            if (items.length > 0) {
-              const totalCost = items.reduce((sum: number, item: CostItem) => sum + Number(item.unit_price || 0), 0);
-              const totalSelling = items.reduce((sum: number, item: CostItem) => sum + Number(item.selling_price || 0), 0);
-              const avgMarkup = totalCost > 0 ? ((totalSelling - totalCost) / totalCost * 100) : 0;
-              
-              form.setFieldsValue({
-                unit_cost_price: totalCost,
-                markup_percentage: avgMarkup,
-                unit_selling_price: totalSelling
-              });
-            }
-          } catch (error) {
-            console.error('Hiba az ár betöltésekor:', error);
-          }
-        }
-      }
-    };
-    
-    updateInformationalPrice();
-  }, [editingMaterial, form]);
+  // Disabled to strictly follow manual transfer workflow like Services
+  /* 
+  useEffect(() => { ... } 
+  */
 
   const fetchMaterials = async () => {
     setLoading(true);
@@ -454,6 +429,9 @@ const Materials: React.FC = () => {
       if (searchText) {
         params.append('search', searchText);
       }
+      
+      // Load all materials for client-side pagination
+      params.append('page_size', '10000');
       
       const queryString = params.toString();
       if (queryString) {
@@ -475,13 +453,18 @@ const Materials: React.FC = () => {
     try {
       const response = await api.get('/crm/companies/?is_supplier=true');
       const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
-      // Sort alphabetically by name
-      const sorted = data.sort((a: Supplier, b: Supplier) => a.name.localeCompare(b.name, 'hu'));
+      // Safely sort alphabetically by name
+      const sorted = data.sort((a: Supplier, b: Supplier) => {
+          const nameA = a.name || '';
+          const nameB = b.name || '';
+          return nameA.localeCompare(nameB, 'hu');
+      });
       setSuppliers(sorted);
       // Initialize filtered list with all suppliers
-      setFilteredSuppliersForAdd(sorted.map((s: Supplier) => ({ value: s.name, label: s.name })));
+      setFilteredSuppliersForAdd(sorted.map((s: Supplier) => ({ value: s.id?.toString(), label: s.name })));
     } catch (error) {
       console.error('Hiba a beszállítók betöltésekor:', error);
+      message.error('Nem sikerült betölteni a beszállítókat');
     }
   };
 
@@ -569,11 +552,27 @@ const Materials: React.FC = () => {
 
   const fetchAddedSuppliers = async (materialId: number) => {
     try {
-      const response = await api.get(`/warehouse/material-cost-items/?material_id=${materialId}`);
-      const allCostItems = Array.isArray(response.data) ? response.data : (response.data.results || []);
+      const [costResponse, suppliersResponse] = await Promise.all([
+        api.get(`/warehouse/material-cost-items/?material_id=${materialId}`),
+        api.get(`/warehouse/material-suppliers/?material=${materialId}`),
+      ]);
+
+      const allCostItems = Array.isArray(costResponse.data) ? costResponse.data : (costResponse.data.results || []);
+      const linkedSuppliers = Array.isArray(suppliersResponse.data) ? suppliersResponse.data : (suppliersResponse.data.results || []);
       
-      // Get unique suppliers from cost items
+      // Get unique suppliers from cost items and linked suppliers
       const uniqueSuppliers: Map<string, Supplier & { is_internal?: boolean }> = new Map();
+
+      // Add explicitly linked suppliers first
+      linkedSuppliers.forEach((ms: any) => {
+        if (ms.supplier && ms.supplier_name) {
+          uniqueSuppliers.set(`supplier_${ms.supplier}`, { 
+            id: ms.supplier, 
+            name: ms.supplier_name,
+            is_internal: false 
+          });
+        }
+      });
       
       // Check for internal production
       const hasInternal = allCostItems.some((item: CostItem) => item.is_internal);
@@ -581,7 +580,7 @@ const Materials: React.FC = () => {
         uniqueSuppliers.set('internal', { id: -1, name: 'Belső gyártás', is_internal: true });
       }
       
-      // Add external suppliers
+      // Add external suppliers from cost items (backup)
       allCostItems.forEach((item: CostItem) => {
         if (item.supplier && item.supplier_name && !uniqueSuppliers.has(`supplier_${item.supplier}`)) {
           uniqueSuppliers.set(`supplier_${item.supplier}`, { 
@@ -615,7 +614,13 @@ const Materials: React.FC = () => {
     setEditingMaterial(material);
     setIsInternalProduction(material.is_internal_production);
     setSelectedMaterialFormat(material.material_format || 'piece');
-    form.setFieldsValue(material);
+    
+    // Transform data for form: if internal, set default_supplier_selection to 'internal'
+    const formData = {
+        ...material,
+        default_supplier_selection: material.is_internal_production ? 'internal' : material.default_supplier
+    };
+    form.setFieldsValue(formData);
     
     // Load added suppliers
     fetchAddedSuppliers(material.id);
@@ -650,13 +655,75 @@ const Materials: React.FC = () => {
     }
   };
 
+  const generateCode = () => {
+    const name = form.getFieldValue('name');
+    if (!name) {
+      message.warning('Előbb add meg az alapanyag nevét!');
+      return;
+    }
+
+    let base = name.substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = 'MAT';
+    
+    // Existing codes
+    const codes = new Set(materials.map(s => s.code));
+    
+    let i = 1;
+    let suffix = '001';
+    let candidate = `${base}-${suffix}`;
+    
+    // Safety break loop
+    let loops = 0;
+    while (codes.has(candidate)) {
+        i++;
+        suffix = i.toString().padStart(3, '0');
+        candidate = `${base}-${suffix}`;
+        loops++;
+        if (loops > 200) { // Should be enough
+            message.error('Nem sikerült egyedi cikkszámot generálni (túl sok próbálkozás)');
+            return;
+        }
+    }
+    
+    form.setFieldsValue({ code: candidate });
+  };
+
   const handleSubmit = async (values: any) => {
     try {
-      // Ha csak egy beszállító van a hozzáadottak között, akkor az legyen az alapértelmezett
-      const externalSuppliers = addedSuppliers.filter(s => !s.is_internal);
-      if (externalSuppliers.length === 1 && !values.default_supplier) {
-        values.default_supplier = externalSuppliers[0].id;
+      // Map 'default_supplier_selection' to backend fields
+      const selection = values.default_supplier_selection;
+      
+      if (selection === 'internal') {
+          values.is_internal_production = true;
+          values.default_supplier = null;
+      } else if (selection) {
+          values.is_internal_production = false;
+          values.default_supplier = Number(selection);
+          values.internal_production_department = null;
+      } else {
+        // Validation should prevent this, but just in case
+        values.is_internal_production = false;
+        values.default_supplier = null;
       }
+
+      // Cleanup aux field
+      delete values.default_supplier_selection;
+
+      // Clean up empty strings for optional numeric fields to prevent 400 errors
+      const numericFields = [
+          'width', 'length', 'height', 'density', 'roll_width', 
+          'area_weight', 'specific_weight', 'weight', 'volume_liter',
+          'internal_production_cost', 'internal_fixed_cost',
+          'internal_price_per_unit', 'internal_price_per_perimeter',
+          'internal_price_per_area', 'internal_price_per_weight', 
+          'internal_price_per_time'
+      ];
+      
+      numericFields.forEach(field => {
+          if (values[field] === '') {
+              values[field] = null;
+          }
+      });
       
       // Ha nincs beállítva, alapértelmezés szerint mindkét checkbox be van pipálva
       if (values.is_material === undefined) values.is_material = true;
@@ -671,6 +738,25 @@ const Materials: React.FC = () => {
         const res = await api.post('/warehouse/materials/', values);
         savedMaterial = res.data;
         message.success('Alapanyag/Termék létrehozva');
+        
+        // Save added suppliers immediately for new material
+        if (savedMaterial && addedSuppliers.length > 0) {
+             for (const supplier of addedSuppliers) {
+                 if (!supplier.is_internal) {
+                     try {
+                        await api.post('/warehouse/material-suppliers/', {
+                            material: savedMaterial.id,
+                            supplier: supplier.id,
+                            unit_price: 0,
+                            currency: 'HUF',
+                            is_active: true,
+                        });
+                     } catch (err) {
+                         console.error('Failed to link supplier:', supplier, err);
+                     }
+                 }
+             }
+        }
       }
       setModalVisible(false);
       fetchMaterials();
@@ -689,8 +775,29 @@ const Materials: React.FC = () => {
         });
       }
     } catch (error: any) {
-      message.error(error.response?.data?.detail || 'Hiba a mentés során');
-      console.error(error);
+      console.error('Full save error:', error);
+      const data = error.response?.data;
+      
+      if (data) {
+          if (data.default_supplier) {
+              message.warning('Kérlek válassz alapértelmezett beszállítót a megfelelő listából!');
+          } else if (data.code) {
+               message.error(`A kód hibás: ${Array.isArray(data.code) ? data.code.join(', ') : data.code}`);
+          } else {
+              // Detailed error display
+              const errorMessages = Object.entries(data)
+                .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : val}`)
+                .join('\n');
+                
+              Modal.error({
+                  title: 'Hiba a mentés során',
+                  content: <pre style={{ maxHeight: '300px', overflow: 'auto' }}>{errorMessages}</pre>,
+                  width: 600
+              });
+          }
+      } else {
+        message.error('Hiba a mentés során (ismeretlen hiba)');
+      }
     }
   };
 
@@ -698,11 +805,39 @@ const Materials: React.FC = () => {
     try {
       const values = await form.validateFields();
       
-      // Ha csak egy beszállító van a hozzáadottak között, akkor az legyen az alapértelmezett
-      const externalSuppliers = addedSuppliers.filter(s => !s.is_internal);
-      if (externalSuppliers.length === 1 && !values.default_supplier) {
-        values.default_supplier = externalSuppliers[0].id;
+      // Map 'default_supplier_selection' to backend fields
+      const selection = values.default_supplier_selection;
+      
+      if (selection === 'internal') {
+          values.is_internal_production = true;
+          values.default_supplier = null;
+      } else if (selection) {
+          values.is_internal_production = false;
+          values.default_supplier = Number(selection);
+          values.internal_production_department = null;
+      } else {
+        values.is_internal_production = false;
+        values.default_supplier = null;
       }
+      
+      // Cleanup aux field
+      delete values.default_supplier_selection;
+
+      // Clean up empty strings for optional numeric fields to prevent 400 errors
+      const numericFields = [
+          'width', 'length', 'height', 'density', 'roll_width', 
+          'area_weight', 'specific_weight', 'weight', 'volume_liter',
+          'internal_production_cost', 'internal_fixed_cost',
+          'internal_price_per_unit', 'internal_price_per_perimeter',
+          'internal_price_per_area', 'internal_price_per_weight', 
+          'internal_price_per_time'
+      ];
+      
+      numericFields.forEach(field => {
+          if (values[field] === '') {
+              values[field] = null;
+          }
+      });
       
       // Ha nincs beállítva, alapértelmezés szerint mindkét checkbox be van pipálva
       if (values.is_material === undefined) values.is_material = true;
@@ -712,22 +847,72 @@ const Materials: React.FC = () => {
         const response = await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
         message.success('Alapanyag/Termék mentve');
         // Frissítjük az editingMaterial-t az új adatokkal
-        setEditingMaterial(response.data);
+        const newData = response.data;
+        formDataForEdit(newData);
       } else {
         const response = await api.post('/warehouse/materials/', values);
         message.success('Alapanyag/Termék létrehozva');
+        const newData = response.data;
+        
+        // Save added suppliers immediately for new material
+        if (newData && addedSuppliers.length > 0) {
+             for (const supplier of addedSuppliers) {
+                 if (!supplier.is_internal) {
+                     try {
+                        await api.post('/warehouse/material-suppliers/', {
+                            material: newData.id,
+                            supplier: supplier.id,
+                            unit_price: 0,
+                            currency: 'HUF',
+                            is_active: true,
+                        });
+                     } catch (err) {
+                         console.error('Failed to link supplier:', supplier, err);
+                     }
+                 }
+             }
+        }
+        
         // Átváltunk szerkesztési módba
-        setEditingMaterial(response.data);
-        form.setFieldsValue(response.data);
-        fetchAddedSuppliers(response.data.id);
-        fetchStocks(response.data.id);
-        fetchReceipts(response.data.id);
+        formDataForEdit(newData);
+        fetchAddedSuppliers(newData.id);
+        fetchStocks(newData.id);
+        fetchReceipts(newData.id);
       }
       fetchMaterials();
     } catch (error: any) {
-      message.error(error.response?.data?.detail || 'Hiba a mentés során');
-      console.error(error);
+      console.error('Full save error:', error);
+      const data = error.response?.data;
+      
+      if (data) {
+          if (data.default_supplier) {
+              message.warning('Kérlek válassz alapértelmezett beszállítót a megfelelő listából!');
+          } else if (data.code) {
+               message.error(`A kód hibás: ${Array.isArray(data.code) ? data.code.join(', ') : data.code}`);
+          } else {
+              const errorMessages = Object.entries(data)
+                .map(([key, val]) => `${key}: ${Array.isArray(val) ? val.join(', ') : val}`)
+                .join('\n');
+                
+              Modal.error({
+                  title: 'Hiba a mentés során',
+                  content: <pre style={{ maxHeight: '300px', overflow: 'auto' }}>{errorMessages}</pre>,
+                  width: 600
+              });
+          }
+      } else {
+        message.error('Hiba a mentés során (ismeretlen hiba)');
+      }
     }
+  };
+  
+  // Helper to init form data after save/load
+  const formDataForEdit = (data: any) => {
+     setEditingMaterial(data);
+     form.setFieldsValue({
+        ...data,
+        default_supplier_selection: data.is_internal_production ? 'internal' : data.default_supplier
+     });
   };
 
   const handleSupplierSearch = (searchText: string) => {
@@ -766,8 +951,8 @@ const Materials: React.FC = () => {
     setFilteredSuppliersForAdd(filtered);
   };
 
-  const handleAddSupplier = async (supplierName: string) => {
-    const supplier = suppliers.find(s => s.name === supplierName);
+  const handleAddSupplier = async (supplierId: number) => {
+    const supplier = suppliers.find(s => s.id === supplierId);
     if (!supplier) {
       message.warning('Beszállító nem található');
       return;
@@ -791,11 +976,14 @@ const Materials: React.FC = () => {
         });
         message.success(`${supplier.name} hozzáadva és mentve`);
       } catch (error: any) {
-        if (error.response?.status === 400 && error.response?.data?.non_field_errors) {
-          // Already exists
+        const data = error.response?.data;
+        // Check for standard unique_together errors (non_field_errors) OR specific field error on 'supplier' indicating duplication
+        if (error.response?.status === 400 && (data?.non_field_errors || data?.supplier)) {
+          // Already exists - ensure it's in the list and suppress error
           message.info(`${supplier.name} már hozzá van adva`);
         } else {
           message.error('Hiba a beszállító mentésekor');
+          console.error('API Error Response:', data);
           console.error(error);
           return;
         }
@@ -930,6 +1118,20 @@ const Materials: React.FC = () => {
     if (total === 0) return 0;
     const totalSelling = getTotalSelling();
     return ((totalSelling - total) / total * 100).toFixed(2);
+  };
+
+  const handleTransferPrices = () => {
+    const cost = getTotalCost();
+    const selling = getTotalSelling();
+    const markup = cost > 0 ? ((selling - cost) / cost * 100) : 0;
+    
+    form.setFieldsValue({
+      unit_cost_price: Number(cost.toFixed(2)),
+      unit_selling_price: Number(selling.toFixed(2)),
+      markup_percentage: Number(markup.toFixed(2))
+    });
+    
+    message.success('Árak átvezetve az alapadatokhoz');
   };
 
   // Stock management handlers
@@ -1083,43 +1285,62 @@ const Materials: React.FC = () => {
     }
   };
 
+  const handleDuplicate = async (record: Material) => {
+    setLoading(true);
+    try {
+        const res = await api.get(`/warehouse/materials/${record.id}/`);
+        const data = res.data;
+        const { id, created_at, created_by_name, ...rest } = data;
+        
+        setEditingMaterial(null);
+        form.setFieldsValue(rest);
+        // Opcionális: jelezni a másolatot a kódban vagy névben
+        // form.setFieldValue('code', `${rest.code || ''}-COPY`);
+        setModalVisible(true);
+    } catch (err) {
+        console.error(err);
+        message.error('Hiba a másoláskor');
+    } finally {
+        setLoading(false);
+    }
+  };
+
   const columns = [
     {
       title: 'Anyag',
       key: 'main_details',
       render: (record: Material) => (
          <div style={{ lineHeight: '1.2' }}>
-            <div style={{ fontWeight: 600 }}>{record.code}</div>
-            <div>{record.name}</div>
+            <div style={{ fontWeight: 500 }}>{record.name}</div>
+            <div style={{ fontSize: '11px', color: '#888' }}>{record.code}</div>
          </div>
       ),
     },
     {
       title: 'Típus',
       key: 'type',
-      width: 200,
-      responsive: ['md'] as any,
+      width: 90,
       render: (record: Material) => (
-        <Space>
-          {record.is_material && <Tag color="blue">Alapanyag</Tag>}
-          {record.is_product && <Tag color="green">Termék</Tag>}
-        </Space>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          {record.is_material && <Tag color="blue" style={{ margin: 0, fontSize: '11px', textAlign: 'center' }}>Alapanyag</Tag>}
+          {record.is_product && <Tag color="green" style={{ margin: 0, fontSize: '11px', textAlign: 'center' }}>Termék</Tag>}
+        </div>
       ),
     },
     {
       title: 'Kategória',
       dataIndex: 'material_group_name',
       key: 'material_group_name',
-      width: 250,
+      width: 150,
       responsive: ['lg'] as any,
       render: (groupName: string | undefined) => 
-        groupName ? <Tag color="purple">{groupName}</Tag> : '-',
+        groupName ? <Tag color="purple" style={{ margin: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupName}</Tag> : '-',
     },
     {
       title: 'Formátum',
       dataIndex: 'material_format',
       key: 'material_format',
-      width: 150,
+      width: 110,
       responsive: ['xl'] as any,
       render: (format: string) => {
         const formatMap: Record<string, string> = {
@@ -1130,28 +1351,39 @@ const Materials: React.FC = () => {
           'weight': 'Súly alapú',
           'liter': 'Liter alapú',
         };
-        return formatMap[format] || format;
+        return <span style={{ fontSize: '13px' }}>{formatMap[format] || format}</span>;
       },
     },
     {
-      title: 'Mértékegység',
+      title: 'Egységár',
+      key: 'unit_selling_price',
+      width: 120,
+      align: 'right' as const,
+      render: (record: Material) => (
+         <div style={{ whiteSpace: 'nowrap' }}>
+           {record.unit_selling_price ? `${Number(record.unit_selling_price).toLocaleString()} Ft` : '-'}
+         </div>
+      ),
+    },
+    {
+      title: 'Egység',
       dataIndex: 'unit_display',
       key: 'unit_display',
-      width: 120,
+      width: 80,
       responsive: ['sm'] as any,
     },
     {
       title: 'Beszállító',
       key: 'source',
-      width: 150,
+      width: 130,
       responsive: ['lg'] as any,
       render: (_: any, record: Material) => {
         return record.is_internal_production && record.internal_production_department_name ? (
-          <Tag color="green">{record.internal_production_department_name}</Tag>
+          <Tag color="green" style={{ margin: 0, maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.internal_production_department_name}</Tag>
         ) : record.default_supplier_name ? (
-          <Tag color="blue">{record.default_supplier_name}</Tag>
+          <Tag color="blue" style={{ margin: 0, maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.default_supplier_name}</Tag>
         ) : (
-          <Tag color="default">Nincs</Tag>
+          <span style={{ color: '#ccc' }}>-</span>
         );
       },
     },
@@ -1159,10 +1391,10 @@ const Materials: React.FC = () => {
       title: 'Státusz',
       dataIndex: 'is_active',
       key: 'is_active',
-      width: 100,
+      width: 80,
       responsive: ['sm'] as any,
       render: (is_active: boolean) => (
-        <Tag color={is_active ? 'green' : 'red'}>
+        <Tag color={is_active ? 'green' : 'red'} style={{ margin: 0 }}>
           {is_active ? 'Aktív' : 'Inaktív'}
         </Tag>
       ),
@@ -1170,11 +1402,17 @@ const Materials: React.FC = () => {
     {
       title: 'Műveletek',
       key: 'actions',
-      width: 120,
+      width: 140,
       render: (_: any, record: Material) => (
-        <Space wrap>
+        <Space wrap size={1}>
+           <Button
+            type="text"
+            icon={<CopyOutlined />}
+            title="Új az adatok alapján"
+            onClick={() => handleDuplicate(record)}
+          />
           <Button
-            type="link"
+            type="text"
             icon={<EditOutlined />}
             onClick={() => handleEdit(record)}
           />
@@ -1184,7 +1422,7 @@ const Materials: React.FC = () => {
             okText="Igen"
             cancelText="Nem"
           >
-            <Button type="link" danger icon={<DeleteOutlined />} />
+            <Button type="text" danger icon={<DeleteOutlined />} />
           </Popconfirm>
         </Space>
       ),
@@ -1277,11 +1515,18 @@ const Materials: React.FC = () => {
       </div>
 
       <Table
+        size="small"
         columns={columns}
         dataSource={materials}
         loading={loading}
         rowKey="id"
         scroll={{ x: 'max-content' }}
+        pagination={{
+          pageSize: 20,
+          showSizeChanger: true,
+          pageSizeOptions: ['10', '20', '50', '100', '200'],
+          showTotal: (total, range) => `${range[0]}-${range[1]} / ${total}`,
+        }}
       />
 
       <Modal
@@ -1327,12 +1572,21 @@ const Materials: React.FC = () => {
                 <Input />
               </Form.Item>
 
-              <Form.Item
-                name="code"
-                label="Kód"
-                rules={[{ required: true, message: 'Kötelező mező' }]}
-              >
-                <Input />
+              <Form.Item label="Cikkszám" required>
+                 <Space>
+                    <Form.Item 
+                       name="code" 
+                       noStyle 
+                       rules={[{ required: true, message: 'Kötelező mező' }]}
+                    >
+                      <Input />
+                    </Form.Item>
+                    <Button 
+                      icon={<ThunderboltOutlined />} 
+                      onClick={generateCode}
+                      title="Cikkszám generálás"
+                    />
+                 </Space>
               </Form.Item>
 
               <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
@@ -1605,23 +1859,27 @@ const Materials: React.FC = () => {
                 <InputNumber style={{ width: '100%' }} />
               </Form.Item>
 
-              <div style={{ 
-                marginTop: 16, 
-                marginBottom: 16, 
-                padding: '12px 16px', 
-                background: '#f5f5f5', 
-                borderRadius: 4,
-                border: '1px solid #d9d9d9'
-              }}>
-                <strong>1 egységre vonatkozó tájékoztató ár:</strong>
-                <div style={{ marginTop: 8, fontSize: '13px' }}>
-                  Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
-                  {' | '}
-                  Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
-                  {' | '}
-                  Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
-                </div>
-              </div>
+              <Form.Item shouldUpdate noStyle>
+                {() => (
+                  <div style={{ 
+                    marginTop: 16, 
+                    marginBottom: 16, 
+                    padding: '12px 16px', 
+                    background: '#f5f5f5', 
+                    borderRadius: 4,
+                    border: '1px solid #d9d9d9'
+                  }}>
+                    <strong>1 egységre vonatkozó tájékoztató ár:</strong>
+                    <div style={{ marginTop: 8, fontSize: '13px' }}>
+                      Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
+                      {' | '}
+                      Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
+                      {' | '}
+                      Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
+                    </div>
+                  </div>
+                )}
+              </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden>
                 <InputNumber />
@@ -1637,90 +1895,123 @@ const Materials: React.FC = () => {
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók</h4>
               
-              {editingMaterial && (
-                <>
-                  <div style={{ marginBottom: 16 }}>
-                    <Space>
-                      <AutoComplete
-                        style={{ width: 300 }}
-                        value={supplierSearchValue}
-                        options={filteredSuppliersForAdd}
-                        onSearch={handleSupplierSearchForAdd}
-                        onSelect={handleAddSupplier}
-                        onFocus={() => handleSupplierSearchForAdd('')}
-                        placeholder="Keress beszállítót hozzáadáshoz..."
-                      />
-                      <Button 
-                        icon={<PlusOutlined />}
-                        onClick={() => {
-                          if (!addedSuppliers.some(s => s.is_internal)) {
-                            setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
-                            message.success('Belső gyártás hozzáadva');
-                          } else {
-                            message.warning('Belső gyártás már hozzá van adva');
-                          }
-                        }}
-                      >
-                        Belső gyártás hozzáadása
-                      </Button>
-                    </Space>
-                  </div>
-                  
-                  <Table
-                    size="small"
-                    dataSource={addedSuppliers}
-                    rowKey={(record) => record.is_internal ? 'internal' : String(record.id)}
-                    pagination={false}
-                    style={{ marginBottom: 16 }}
-                    columns={[
-                      {
-                        title: 'Beszállító neve',
-                        dataIndex: 'name',
-                        key: 'name',
-                        render: (text: string, record: Supplier & { is_internal?: boolean }) => (
-                          <Tag color={record.is_internal ? 'green' : 'blue'}>{text}</Tag>
-                        ),
-                      },
-                      {
-                        title: 'Műveletek',
-                        key: 'actions',
-                        width: 100,
-                        render: (_: any, record: Supplier & { is_internal?: boolean }) => (
-                          <Popconfirm
-                            title="Biztosan törli? Az összes költségelem is törlődik!"
-                            onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
-                            okText="Igen"
-                            cancelText="Nem"
-                          >
-                            <Button type="link" danger icon={<DeleteOutlined />} />
-                          </Popconfirm>
-                        ),
-                      },
-                    ]}
-                  />
-                </>
-              )}
+              <div style={{ marginBottom: 16 }}>
+                <Space>
+                <Select 
+                    style={{ width: 300 }} 
+                    placeholder="Beszállító hozzáadása..." 
+                    value={undefined}
+                    showSearch
+                    onChange={(val: number) => {
+                        // Pass ID directly
+                        if (!addedSuppliers.find(s => s.id === val && !s.is_internal)) {
+                            handleAddSupplier(val);
+                        } else {
+                            message.warning('Ez a beszállító már hozzá van adva');
+                        }
+                    }}
+                    filterOption={(input, option) => {
+                        const children = option?.children as unknown as string;
+                        return children ? children.toLowerCase().includes(input.toLowerCase()) : false;
+                    }}
+                >
+                    {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>)}
+                    </Select>
+
+                    <Button 
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                        if (!addedSuppliers.some(s => s.is_internal)) {
+                        setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
+                        message.success('Belső gyártás hozzáadva');
+                        // Auto-select if it's the first one? handled by user
+                        } else {
+                        message.warning('Belső gyártás már hozzá van adva');
+                        }
+                    }}
+                    >
+                    Belső gyártás hozzáadása
+                    </Button>
+                </Space>
+                </div>
+                
+                <Table
+                size="small"
+                dataSource={addedSuppliers}
+                rowKey={(record) => record.is_internal ? 'internal' : String(record.id)}
+                pagination={false}
+                locale={{ emptyText: 'Nincs hozzáadott beszállító' }}
+                style={{ marginBottom: 16 }}
+                columns={[
+                    {
+                    title: 'Név',
+                    dataIndex: 'name',
+                    key: 'name',
+                    },
+                    {
+                    title: 'Típus',
+                    render: (record: Supplier & { is_internal?: boolean }) => (
+                        record.is_internal ? <Tag color="blue">Belső</Tag> : <Tag color="green">Külső</Tag>
+                    ),
+                    },
+                    {
+                        title: '1 egységre jutó ár',
+                        render: (_: any, record: Supplier & { is_internal?: boolean }) => {
+                            return '-';
+                        },
+                    },
+                    {
+                    title: 'Művelet',
+                    key: 'actions',
+                    width: 100,
+                    render: (_: any, record: Supplier & { is_internal?: boolean }) => (
+                        <Popconfirm
+                        title="Biztosan törli? Az összes költségelem is törlődik!"
+                        onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
+                        okText="Igen"
+                        cancelText="Nem"
+                        >
+                        <Button type="link" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                    ),
+                    },
+                ]}
+                />
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Alapértelmezett forrás</h4>
-
+              {/* Fields to be removed from payload but kept for compatibility logic if needed (or just removed) */}
+              
               <Form.Item 
-                name="is_internal_production" 
-                label="Forrás típusa"
+                name="default_supplier_selection"
+                label="Alapértelmezett forrás"
+                rules={[{ required: true, message: 'Kérlek válassz alapértelmezett forrást!' }]}
+                style={{ marginBottom: 16 }}
               >
-                <Select 
-                  onChange={(value) => setIsInternalProduction(value)}
-                  placeholder="Válassz forrást"
-                >
-                  <Option value={true}>Belső gyártás</Option>
-                  <Option value={false}>Külső beszállító</Option>
-                </Select>
+                  <Select 
+                    placeholder="Válassz a hozzáadott források közül" 
+                    allowClear
+                    onChange={(val) => {
+                        // Keep local state in sync just for UI if needed elsewhere
+                        setIsInternalProduction(val === 'internal');
+                    }}
+                  >
+                    {addedSuppliers.map(supplier => (
+                        <Option 
+                            key={supplier.is_internal ? 'internal' : supplier.id} 
+                            value={supplier.is_internal ? 'internal' : supplier.id}
+                        >
+                            {supplier.name}
+                        </Option>
+                    ))}
+                  </Select>
               </Form.Item>
 
-              {isInternalProduction ? (
+              {isInternalProduction && (
                 <Form.Item
                   name="internal_production_department"
                   label="Gyártó osztály"
                   rules={[{ required: true, message: 'Válassz osztályt' }]}
+                  style={{ marginTop: 16 }}
                 >
                   <Select placeholder="Válassz osztályt" allowClear>
                     {departments.map(dept => (
@@ -1728,23 +2019,9 @@ const Materials: React.FC = () => {
                     ))}
                   </Select>
                 </Form.Item>
-              ) : (
-                <Form.Item 
-                  name="default_supplier" 
-                  label="Alapértelmezett beszállító"
-                  rules={[{ required: false }]}
-                >
-                  <Select placeholder="Válassz a hozzáadott beszállítók közül" allowClear>
-                    {addedSuppliers
-                      .filter(s => !s.is_internal)
-                      .map(supplier => (
-                        <Option key={supplier.id} value={supplier.id}>{supplier.name}</Option>
-                      ))}
-                  </Select>
-                </Form.Item>
               )}
 
-              <Form.Item name="is_active" label="Státusz" valuePropName="checked">
+              <Form.Item name="is_active" label="Státusz">
                 <Select>
                   <Option value={true}>Aktív</Option>
                   <Option value={false}>Inaktív</Option>
@@ -1791,17 +2068,23 @@ const Materials: React.FC = () => {
                 </div>
                 
                 {selectedSourceForCost && (
-                  <div style={{ padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
-                    <strong>1 egységre vonatkozó összesítés:</strong> 
-                    {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
-                    {' | '}Haszon: {getAverageMarkup()}%
-                    {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
+                    <div style={{ flex: 1 }}>
+                      <strong>1 egységre vonatkozó összesítés:</strong> 
+                      {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
+                      {' | '}Haszon: {getAverageMarkup()}%
+                      {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
+                    </div>
+                    <Button onClick={handleTransferPrices}>
+                      Árak átvétele az alapadatokhoz
+                    </Button>
                   </div>
                 )}
               </Space>
             </div>
 
             <Table
+              size="small"
               columns={costItemColumns}
               dataSource={costItems}
               rowKey="id"
@@ -1824,6 +2107,7 @@ const Materials: React.FC = () => {
               </div>
 
               <Table
+                size="small"
                 columns={[
                   {
                     title: 'Raktár',
@@ -1975,6 +2259,7 @@ const Materials: React.FC = () => {
               </div>
 
               <Table
+                size="small"
                 columns={[
                   {
                     title: 'Dátum',

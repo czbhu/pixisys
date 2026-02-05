@@ -32,6 +32,9 @@ const KioskPage: React.FC = () => {
     const [requestMode, setRequestMode] = useState<'check_in' | 'check_out' | null>(null);
     const [successDuration, setSuccessDuration] = useState<number>(3); // seconds
 
+    // Identify Mode
+    const [identifyData, setIdentifyData] = useState<{device_id: string, name?: string} | null>(null);
+
     // Idle
     const [isIdle, setIsIdle] = useState(false);
     const idleTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -80,23 +83,8 @@ const KioskPage: React.FC = () => {
         }, 5000); 
         pollingRef.current = poll;
 
-        // Cleanup on close
-        const handleUnload = () => {
-            const url = '/api/v1/hr/kiosk-devices/unregister/';
-            
-            // Build absolute URL for sendBeacon
-            const fullUrl = window.location.origin + url;
-            
-            const formData = new FormData();
-            formData.append('device_id', deviceId);
-            
-            navigator.sendBeacon(fullUrl, formData);
-        };
-        window.addEventListener('beforeunload', handleUnload);
-
         return () => { 
             if (pollingRef.current) clearInterval(pollingRef.current); 
-            window.removeEventListener('beforeunload', handleUnload);
         };
     }, [deviceId]);
 
@@ -112,28 +100,74 @@ const KioskPage: React.FC = () => {
         }
     };
 
+
+    // Idle Cycle State - REMOVED for new logic
+    // const [idleCycle, setIdleCycle] = useState<'QR' | 'LOGO'>('QR');
+    // const [cycleVisible, setCycleVisible] = useState(true);
+
+    // Pending QR Data for queuing
+    const [pendingQrData, setPendingQrData] = useState<{qr_data: string, user_name?: string, mode?: any} | null>(null);
+
+    // Breathing Animation Style
+    const breathingStyle = `
+        @keyframes breathe {
+            0% { opacity: 0.8; transform: scale(0.98); }
+            50% { opacity: 1; transform: scale(1.02); }
+            100% { opacity: 0.8; transform: scale(0.98); }
+        }
+    `;
+
+    useEffect(() => {
+        // Inject styles
+        const style = document.createElement('style');
+        style.type = 'text/css';
+        style.appendChild(document.createTextNode(breathingStyle));
+        document.head.appendChild(style);
+        return () => {
+            document.head.removeChild(style);
+        };
+    }, []);
+
+
+    /* REMOVED OLD CYCLE LOGIC
+    useEffect(() => {
+        // Only run cycle if approved and in IDLE state (or isIdle is true)
+        const isIdleState = (deviceStatus === 'approved') && ((isIdle || status === 'IDLE'));
+        if (!isIdleState) return;
+        // ...
+    }, [idleCycle, cycleVisible, successDuration, isIdle, status, deviceStatus]);
+    */
+
+    /* REMOVED IDLE TIMER LOGIC - Kiosk is always "Idle" (Logo) unless triggered
     useEffect(() => {
         if (deviceStatus === 'approved') {
             window.addEventListener('mousemove', resetIdleTimer);
-            window.addEventListener('click', resetIdleTimer);
-            window.addEventListener('touchstart', resetIdleTimer);
-            window.addEventListener('keydown', resetIdleTimer);
-            resetIdleTimer();
+            // ...
         }
-        return () => {
-            window.removeEventListener('mousemove', resetIdleTimer);
-            window.removeEventListener('click', resetIdleTimer);
-            window.removeEventListener('touchstart', resetIdleTimer);
-            window.removeEventListener('keydown', resetIdleTimer);
-            if (idleTimerRef.current) clearTimeout(idleTimerRef.current);
-        };
     }, [deviceStatus, isIdle]);
+    */
+    
+    // Instead of resetIdleTimer, we just have simple state management via WS
+    
+    // Process Queue when becoming IDLE
+    useEffect(() => {
+        if (status === 'IDLE' && pendingQrData) {
+            setQrData(pendingQrData.qr_data);
+            if (pendingQrData.user_name) setRequestUser(pendingQrData.user_name);
+            if (pendingQrData.mode) setRequestMode(pendingQrData.mode);
+            setStatus('SHOW_QR');
+            setPendingQrData(null);
+        }
+    }, [status, pendingQrData]);
 
-    // WS Connection needs access to current successDuration
-    // Since useEffect has valid deps, we can just use a ref for duration to avoid re-connecting WS on duration change
-    // or just assume config is loaded once.
-    // However, if we put successDuration in dependency array, socket reconnects. That's fine but maybe optimal to use ref.
+
+    // State Refs for WebSocket access
+    const statusRef = useRef(status);
+    const identifyDataRef = useRef(identifyData);
     const successDurationRef = useRef(successDuration);
+
+    useEffect(() => { statusRef.current = status; }, [status]);
+    useEffect(() => { identifyDataRef.current = identifyData; }, [identifyData]);
     useEffect(() => { successDurationRef.current = successDuration; }, [successDuration]);
 
     useEffect(() => {
@@ -142,13 +176,25 @@ const KioskPage: React.FC = () => {
         // Fetch config
         api.get('/hr/attendance-kiosk-config/current/')
            .then(res => {
-               if (res.data.kiosk_logo) setLogoUrl(res.data.kiosk_logo);
+               if (res.data.kiosk_logo) {
+                   let url = res.data.kiosk_logo;
+                   // Fix for development URLs showing up in production
+                   if (url && (url.includes('127.0.0.1') || url.includes('localhost'))) {
+                       try {
+                           const urlObj = new URL(url);
+                           url = window.location.origin + urlObj.pathname;
+                       } catch (e) {
+                           // Keep original if parsing fails
+                       }
+                   }
+                   setLogoUrl(url);
+               }
                if (res.data.qr_validity_seconds) setSuccessDuration(res.data.qr_validity_seconds);
            })
            .catch(err => console.error("Failed to load kiosk config", err));
            
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsUrl = `${wsProtocol}//${window.location.host}/ws/attendance/`;
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws/attendance/${deviceId}/`;
         let socket: WebSocket;
 
         const connect = () => {
@@ -163,19 +209,37 @@ const KioskPage: React.FC = () => {
             socket.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
-                    // Wake up on message
-                    resetIdleTimer(); 
                     
                     if (data.type === 'show_qr') {
-                        setQrData(data.qr_data);
-                        if (data.user_name) setRequestUser(data.user_name);
-                        if (data.mode) setRequestMode(data.mode);
-                        setStatus('SHOW_QR');
+                        // Check if busy using REFS
+                        // Busy if: SUCCESS is showing, or IDENTIFY is showing
+                        // Note: If status is SHOW_QR, we can overwrite it (it's just a new QR)
+                        const currentStatus = statusRef.current;
+                        const currentIdentify = identifyDataRef.current;
+                        
+                        const isBusy = (currentStatus === 'SUCCESS') || (currentIdentify !== null);
+                        
+                        if (isBusy) {
+                            // Queue it
+                            setPendingQrData({
+                                qr_data: data.qr_data,
+                                user_name: data.user_name,
+                                mode: data.mode
+                            });
+                        } else {
+                            // Show immediately
+                            setQrData(data.qr_data);
+                            if (data.user_name) setRequestUser(data.user_name);
+                            if (data.mode) setRequestMode(data.mode);
+                            setStatus('SHOW_QR');
+                        }
                     } else if (data.type === 'stop_qr') {
-                        setStatus('IDLE');
-                        setRequestUser(null);
-                        setRequestMode(null);
-                        setSuccessData(null);
+                        if (statusRef.current === 'SHOW_QR') {
+                           setStatus('IDLE');
+                           setRequestUser(null);
+                           setRequestMode(null);
+                        }
+                        setPendingQrData(null);
                     } else if (data.type === 'success') {
                         setSuccessData({
                             name: data.user_name,
@@ -184,10 +248,26 @@ const KioskPage: React.FC = () => {
                         });
                         setStatus('SUCCESS');
                         setRequestUser(null);
+                        
+                        const visibleDuration = successDurationRef.current * 1000;
                         setTimeout(() => {
+                            // Instead of forcing IDLE, we just set status to IDLE.
+                            // The useEffect hook monitoring 'status' will pick up pending queue if any.
                             setStatus('IDLE');
                             setSuccessData(null);
-                        }, successDurationRef.current * 1000);
+                        }, Math.max(1000, visibleDuration));
+                    } else if (data.type === 'identify') {
+                         if (data.device_id === deviceId) {
+                             const mode = data.mode || 'start';
+                             if (mode === 'start') {
+                                setIdentifyData({
+                                    device_id: data.device_id,
+                                    name: data.name
+                                });
+                             } else {
+                                setIdentifyData(null);
+                             }
+                         }
                     }
                 } catch (e) { console.error(e); }
             };
@@ -199,7 +279,9 @@ const KioskPage: React.FC = () => {
         };
         connect();
         return () => { if (socket) socket.close(); };
-    }, [deviceStatus]);
+    }, [deviceStatus, deviceId]); // Only reconnect if device auth changes
+
+
 
     if (loading) return <div style={{padding: 50, textAlign: 'center'}}>Betöltés...</div>;
 
@@ -218,13 +300,6 @@ const KioskPage: React.FC = () => {
 
     const isBlocked = deviceStatus === 'blocked';
     
-    // Pulse animation logic
-    // Cycle: successDuration visible, then fade out (2s), stay black (1s), fade in (2s)
-    const fadeOutTime = 2;
-    const blackTime = 1;
-    const fadeInTime = 2;
-    const pulseDuration = successDuration + fadeOutTime + blackTime + fadeInTime; 
-    const animationName = 'kiosk-pulse';
 
     // Status Dot / Info
     const isConnected = wsStatus === 'WS kapcsolat van';
@@ -232,39 +307,49 @@ const KioskPage: React.FC = () => {
     // Approved UI (and blocked UI fallback with blinking dot)
     return (
         <div style={{ width: '100vw', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', backgroundColor: '#000', position: 'relative', overflow: 'hidden' }}>
-            <style>{`
-                @keyframes blinker {
-                    50% { opacity: 0; }
-                }
-                @keyframes kiosk-pulse {
-                    0% { opacity: 1; }
-                    ${(successDuration / pulseDuration) * 100}% { opacity: 1; }
-                    ${((successDuration + fadeOutTime) / pulseDuration) * 100}% { opacity: 0; }
-                    ${((successDuration + fadeOutTime + blackTime) / pulseDuration) * 100}% { opacity: 0; }
-                    100% { opacity: 1; }
-                }
-            `}</style>
-            
             {/* IDLE/Blocked Screen */}
             {(isIdle || status === 'IDLE' || isBlocked) && (
                 <div style={{
                     position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', 
                     backgroundColor: 'black', zIndex: 1, display: 'flex', flexDirection: 'column', 
                     justifyContent: 'center', alignItems: 'center',
-                    animation: (isIdle || status === 'IDLE') && !isBlocked ? `${animationName} ${pulseDuration}s infinite ease-in-out` : 'none'
                 }} onClick={() => !isBlocked && resetIdleTimer()}>
                     
-                    {logoUrl ? (
-                         <img src={logoUrl} alt="Logo" style={{ maxHeight: 450, maxWidth: '80%', marginBottom: 10 }} />
+                    {isBlocked ? (
+                        <>
+                             {logoUrl ? (
+                                <img src={logoUrl} alt="Logo" style={{ maxHeight: 450, maxWidth: '80%', marginBottom: 10 }} />
+                             ) : (
+                                <h1 style={{ color: 'white', fontSize: 100, marginBottom: 10, fontWeight: 'bold' }}>PixiSys</h1>
+                             )}
+                             <h2 style={{ color: '#aaa', fontSize: 24, fontWeight: 'normal', fontFamily: 'Roboto, sans-serif', textTransform: 'uppercase' }}>
+                                 <span style={{ color: '#52c41a' }}>ID: {deviceId}</span>
+                             </h2>
+                        </>
                     ) : (
-                         <h1 style={{ color: 'white', fontSize: 100, marginBottom: 10, fontWeight: 'bold' }}>PixiSys</h1>
+                        // Idle State with Breathing Logo (Always visible if no active content)
+                        <div style={{ 
+                            display: 'flex', 
+                            flexDirection: 'column', 
+                            alignItems: 'center', 
+                        }}>
+                             {logoUrl ? (
+                                 <img 
+                                    src={logoUrl} 
+                                    alt="Logo" 
+                                    style={{ 
+                                        maxHeight: '80vh', 
+                                        maxWidth: '90vw', 
+                                        objectFit: 'contain',
+                                        animation: 'breathe 4s infinite ease-in-out'
+                                    }} 
+                                    onError={() => setLogoUrl(null)}
+                                 />
+                             ) : (
+                                 <h1 style={{ color: 'white', fontSize: 150, fontWeight: 'bold', animation: 'breathe 4s infinite ease-in-out' }}>PixiSys</h1>
+                             )}
+                        </div>
                     )}
-                    
-                    <h2 style={{ color: '#aaa', fontSize: 24, fontWeight: 'normal', fontFamily: 'Roboto, sans-serif', textTransform: 'uppercase' }}>
-                         {isBlocked ? (
-                             <span style={{ color: '#52c41a' }}>ID: {deviceId}</span>
-                         ) : 'Regisztráció'}
-                    </h2>
                     
                     {/* Status Dot - Only if disconnected */}
                     {!isConnected && !isBlocked && (
@@ -283,23 +368,34 @@ const KioskPage: React.FC = () => {
             )}
             
             {/* Active Content (QR or Success) - Only visible if active and not blocked */}
-            {!isBlocked && !isIdle && status !== 'IDLE' && (
+            {!isBlocked && !isIdle && (status !== 'IDLE' || identifyData) && (
                 <div style={{ 
-                    width: 400, height: 300, 
+                    width: 600, height: 400, 
                     border: '1px solid #333', borderRadius: 8, 
                     display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', 
                     backgroundColor: '#fff', boxShadow: '0 4px 12px rgba(255,255,255,0.1)', 
                     padding: 24, textAlign: 'center', position: 'relative', zIndex: 2
                 }}>
+                    {identifyData ? (
+                        <div style={{animation: 'fadeIn 0.5s'}}>
+                            <Title level={2}>Kiosk Azonosítás</Title>
+                            <div style={{fontSize: 20, marginBottom: 20}}>Ez az eszköz az alábbi adatokkal van regisztrálva:</div>
+                            <div style={{background: '#f0f2f5', padding: 20, borderRadius: 8}}>
+                                <div><strong>Név:</strong> {identifyData.name || '-'}</div>
+                                <div style={{fontSize: 24, margin: '10px 0', color: '#1890ff', fontWeight: 'bold'}}>{identifyData.device_id}</div>
+                            </div>
+                        </div>
+                    ) : (
+                    <>
                     {status === 'SHOW_QR' && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
                              {requestUser && (
-                                 <div style={{ marginBottom: 10, fontWeight: 'bold', fontSize: 16 }}>
-                                    {requestMode === 'check_in' ? 'Belépés: ' : requestMode === 'check_out' ? 'Kilépés: ' : ''}{requestUser}
+                                 <div style={{ marginBottom: 24, fontWeight: 'bold', fontSize: 64, textAlign: 'center', lineHeight: 1.2 }}>
+                                    {requestUser}
                                  </div>
                              )}
                              <div style={{ marginBottom: 16 }}>
-                                <QRCodeSVG value={qrData} size={180} />
+                                <QRCodeSVG value={qrData} size={256} />
                              </div>
                         </div>
                     )}
@@ -307,20 +403,26 @@ const KioskPage: React.FC = () => {
                         <div>
                             <Result
                                 status="success"
-                                title={(() => {
-                                    const name = (successData.name || '').trim() || 'Felhasználó';
-                                    if (successData.action === 'check_in') {
-                                        return `Üdvözöllek ${name}! Jó munkát kívánok!`;
-                                    } else if (successData.action === 'check_out') {
-                                        return `Jó pihenést, ${name}!`;
-                                    }
-                                    return name;
-                                })()}
-                                subTitle={`${successData.timestamp}`}
-                                icon={<CheckCircleOutlined style={{ fontSize: 48, color: '#52c41a' }} />}
+                                title={
+                                    <span style={{ fontSize: 48, fontWeight: 'bold' }}>
+                                    {(() => {
+                                        const name = (successData.name || '').trim() || 'Felhasználó';
+                                        if (successData.action === 'check_in') {
+                                            return `Üdvözöllek ${name}!`;
+                                        } else if (successData.action === 'check_out') {
+                                            return `Jó pihenést ${name}!`;
+                                        }
+                                        return name;
+                                    })()}
+                                    </span>
+                                }
+                                subTitle={null}
+                                icon={<CheckCircleOutlined style={{ fontSize: 100, color: '#52c41a' }} />}
                                 style={{ padding: 0 }}
                             />
                         </div>
+                    )}
+                    </>
                     )}
                 </div>
             )}

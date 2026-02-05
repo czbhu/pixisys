@@ -349,6 +349,7 @@ const Invoicing: React.FC = () => {
           columns={columns}
           rowKey="id"
           loading={loading}
+          size="small"
           pagination={{ pageSize: 20 }}
           onRow={(record, index) => ({
             onClick: (event) => handleRowClick(record, index!, event),

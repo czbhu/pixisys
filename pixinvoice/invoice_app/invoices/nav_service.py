@@ -1,6 +1,7 @@
 import requests
 import logging
 import os
+import re  # Added for string sanitization
 import xml.etree.ElementTree as ET
 from xml.dom import minidom
 import hashlib
@@ -557,10 +558,31 @@ class NAVService:
         ET.SubElement(customerInfo, '{%s}customerName' % NS_DATA).text = invoice.customer.name
         custAddr = ET.SubElement(customerInfo, '{%s}customerAddress' % NS_DATA)
         custDet = ET.SubElement(custAddr, '{%s}detailedAddress' % NS_BASE)
-        ET.SubElement(custDet, '{%s}countryCode' % NS_BASE).text = 'HU'
-        ET.SubElement(custDet, '{%s}postalCode' % NS_BASE).text = invoice.customer.postal_code
-        ET.SubElement(custDet, '{%s}city' % NS_BASE).text = invoice.customer.city
-        ET.SubElement(custDet, '{%s}streetName' % NS_BASE).text = (invoice.customer.street_name or invoice.customer.address or '')
+        
+        # Determine country code
+        country_code = 'HU'
+        if invoice.customer.country:
+            c_upper = invoice.customer.country.upper()
+            if c_upper in ['MAGYARORSZÁG', 'HUNGARY', 'HU']:
+                country_code = 'HU'
+            elif c_upper in ['FRANCIAORSZÁG', 'FRANCE', 'FR']:
+                country_code = 'FR'
+            elif c_upper in ['NÉMETORSZÁG', 'GERMANY', 'DE']:
+                country_code = 'DE'
+            elif c_upper in ['AUSZTRIA', 'AUSTRIA', 'AT']:
+                country_code = 'AT'
+            elif len(c_upper) == 2:
+                country_code = c_upper
+
+        ET.SubElement(custDet, '{%s}countryCode' % NS_BASE).text = country_code
+        ET.SubElement(custDet, '{%s}postalCode' % NS_BASE).text = invoice.customer.postal_code or '0000'
+        ET.SubElement(custDet, '{%s}city' % NS_BASE).text = invoice.customer.city or 'Unknown'
+        
+        street_val = (invoice.customer.street_name or invoice.customer.address or '').strip()
+        # Sanitize street value (remove newlines, collapse spaces)
+        street_val = re.sub(r'\s+', ' ', street_val)
+        ET.SubElement(custDet, '{%s}streetName' % NS_BASE).text = street_val if street_val else 'Unknown Street'
+        
         ET.SubElement(custDet, '{%s}publicPlaceCategory' % NS_BASE).text = (invoice.customer.public_place_category or 'utca')
         ET.SubElement(custDet, '{%s}number' % NS_BASE).text = (invoice.customer.street_number or '1')
 

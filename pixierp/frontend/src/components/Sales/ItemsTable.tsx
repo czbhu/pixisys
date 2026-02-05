@@ -250,15 +250,50 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       key: 'item_info', 
       render: (r: any) => {
         const depth = depthMap.get(r.id) || 0;
+        // Fix display logic for code and name, falling back correctly
+        const code = r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || (r.item_type === 'manufacturing' ? 'EGYEDI' : '-');
+        const name = r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.description || 'Névtelen';
+        
         return (
             <div style={{ paddingLeft: depth * 24, transition: 'padding 0.3s' }}>
-            <div style={{ fontWeight: 600 }}>{r.material_code || r.product_code || r.service_code || '-'}</div>
-            <div>{r.material_name || r.product_name || r.manufacturing_product_name || r.service_name}</div>
+            <div style={{ fontWeight: 600 }}>{code}</div>
+            <div>{name}</div>
             </div>
         );
       }
     },
-    { title: 'Leírás', dataIndex: 'description', key: 'description', responsive: ['md'] },
+    { 
+        title: 'Leírás', 
+        dataIndex: 'description', 
+        key: 'description', 
+        responsive: ['md'],
+        render: (text: string, record: any) => {
+            const finalDescription = text || record.product_description || record.manufacturing_product_description || '';
+            const isLong = finalDescription.length > 100 || (finalDescription.match(/\n/g) || []).length > 3;
+
+            const content = (
+              <div 
+                style={{
+                  display: '-webkit-box',
+                  WebkitLineClamp: 4,
+                  WebkitBoxOrient: 'vertical',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  maxHeight: '6em', // approx 4 lines
+                  whiteSpace: 'pre-wrap'
+                }}
+              >
+                  {finalDescription}
+              </div>
+            );
+
+            return isLong ? (
+              <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{finalDescription}</span>} overlayStyle={{ maxWidth: 500 }}>
+                  {content}
+              </Tooltip>
+            ) : content;
+        }
+    },
     { 
       title: 'Menny.', 
       key: 'quantity', 

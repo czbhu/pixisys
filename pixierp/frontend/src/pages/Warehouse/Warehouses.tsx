@@ -403,6 +403,7 @@ const Warehouses: React.FC = () => {
                 }
             >
                 <Table
+                    size="small"
                     columns={columns}
                     dataSource={warehouses}
                     rowKey="id"
@@ -695,6 +696,7 @@ const Warehouses: React.FC = () => {
                 width={800}
             >
                 <Table
+                    size="small"
                     dataSource={inventoryList}
                     loading={inventoryLoading}
                     rowKey="id"

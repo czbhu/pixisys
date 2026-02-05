@@ -4,7 +4,8 @@ from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
-    CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog
+    CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog,
+    ApprovalRequest
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer, ServiceSerializer as ManufacturingServiceSerializer
@@ -56,9 +57,12 @@ class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
 class QuoteRequestItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_code = serializers.CharField(source='product.code', read_only=True)
+    product_description = serializers.CharField(source='product.description', read_only=True)
     material_name = serializers.CharField(source='material.name', read_only=True)
     material_code = serializers.CharField(source='material.code', read_only=True)
     manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
+    manufacturing_product_code = serializers.CharField(source='manufacturing_product.code', read_only=True)
+    manufacturing_product_description = serializers.CharField(source='manufacturing_product.description', read_only=True)
     service_name = serializers.CharField(source='service.name', read_only=True)
     service_code = serializers.CharField(source='service.code', read_only=True)
     net_unit_price = serializers.DecimalField(max_digits=12, decimal_places=2)
@@ -244,6 +248,8 @@ class QuoteLogSerializer(serializers.ModelSerializer):
 class QuoteItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source='product.name', read_only=True)
     product_unit = serializers.CharField(source='product.unit', read_only=True)
+    product_code = serializers.CharField(source='product.code', read_only=True, default='')
+    product_description = serializers.CharField(source='product.description', read_only=True, default='')
     
     class Meta:
         model = QuoteItem
@@ -316,11 +322,33 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     gross_total = serializers.SerializerMethodField()
     discounted_gross_total = serializers.SerializerMethodField()
     
+    suggested_workflow = serializers.SerializerMethodField()
+    
     class Meta:
         model = CustomerOrderItem
         fields = '__all__'
         read_only_fields = ['id']
     
+    def get_suggested_workflow(self, obj):
+        try:
+            # Check for related QuoteRequest costs
+            # Logic: First cost where unit != 'db'
+            # Access quote_request via customer_order
+            if obj.customer_order and obj.customer_order.quote_request:
+                costs = obj.customer_order.quote_request.costs.all()
+                # Prioritize non-piece units
+                non_piece_cost = costs.exclude(unit='db').first()
+                if non_piece_cost:
+                    return non_piece_cost.name
+                
+                # Fallback to first cost if any exists
+                first_cost = costs.first()
+                if first_cost:
+                    return first_cost.name
+        except Exception:
+            pass
+        return None
+
     def get_net_total(self, obj):
         """Calculate net total: quantity * net_unit_price"""
         return float(obj.quantity * obj.net_unit_price)
@@ -406,6 +434,8 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     contact_names = serializers.SerializerMethodField()
     contact_email = serializers.SerializerMethodField()
     deadline = serializers.SerializerMethodField()
+    pending_approval = serializers.SerializerMethodField()
+    last_rejection = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomerOrder
@@ -417,9 +447,28 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             'confirmed_at', 'production_started_at', 'ready_at',
             'delivery_started_at', 'delivered_at',
             'notes', 'created_by', 'created_at', 'updated_at', 'items',
-            'invoice_number'
+            'invoice_number', 'pending_approval', 'last_rejection'
         ]
     
+    def get_pending_approval(self, obj):
+        # Return pending request info if any
+        # Accessing reverse relation 'approval_requests'
+        req = obj.approval_requests.filter(status='pending').first()
+        if req:
+            return {
+                'id': req.id,
+                'requested_status': req.requested_status,
+                'previous_status': req.previous_status,
+                'requester': req.requester.get_full_name() or req.requester.username
+            }
+        return None
+
+    def get_last_rejection(self, obj):
+        req = obj.approval_requests.order_by('-created_at').first()
+        if req and req.status == 'rejected':
+            return {'note': req.rejection_details, 'date': req.updated_at}
+        return None
+
     def get_total_amount(self, obj):
         """Calculate total amount from items (Bruttó)"""
         total = 0
@@ -740,3 +789,19 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
 
 
 
+
+class ApprovalRequestSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='requester.username', read_only=True)
+    full_name = serializers.SerializerMethodField()
+    order_number = serializers.CharField(source='customer_order.order_number', read_only=True)
+    description = serializers.CharField(source='customer_order.quote_request.title', read_only=True)
+    internal_description = serializers.CharField(source='customer_order.quote_request.internal_description', read_only=True)
+    
+    class Meta:
+        model = ApprovalRequest
+        fields = '__all__'
+        
+    def get_full_name(self, obj):
+        if obj.requester:
+            return f"{obj.requester.last_name} {obj.requester.first_name}"
+        return ""

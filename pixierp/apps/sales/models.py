@@ -704,3 +704,31 @@ class DeliveryNoteItem(models.Model):
     def net_total(self):
         return self.quantity * self.net_unit_price
 
+
+class ApprovalRequest(models.Model):
+    """Jóváhagyási kérelem (pl. státuszváltáshoz)"""
+    STATUS_CHOICES = [
+        ('pending', 'Jóváhagyásra vár'),
+        ('approved', 'Jóváhagyva'),
+        ('rejected', 'Visszaküldve'),
+    ]
+    
+    customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, null=True, blank=True, related_name='approval_requests', verbose_name="Megrendelés")
+    
+    previous_status = models.CharField(max_length=50, verbose_name="Előző státusz")
+    requested_status = models.CharField(max_length=50, verbose_name="Kért státusz")
+    
+    requester = models.ForeignKey(User, on_delete=models.CASCADE, related_name='initiated_approvals', verbose_name="Kérelmező")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Kérelem státusza")
+    rejection_details = models.TextField(blank=True, verbose_name="Visszaküldés oka")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Jóváhagyási kérelem"
+        verbose_name_plural = "Jóváhagyási kérelmek"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.requester} - {self.customer_order} ({self.requested_status})"

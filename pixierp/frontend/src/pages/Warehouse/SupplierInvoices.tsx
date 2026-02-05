@@ -47,6 +47,9 @@ interface Company {
   id: number;
   name: string;
   tax_number?: string;
+  full_tax_number?: string;
+  is_supplier?: boolean;
+  is_customer?: boolean;
 }
 
 interface Material {
@@ -132,6 +135,16 @@ interface InvoiceItem {
   notes?: string;
 }
 
+interface NavInvoiceItem {
+  product_name: string;
+  product_code: string;
+  quantity: number;
+  unit_price: number;
+  total_price: number;
+  unit: string;
+  match_material_id?: number;
+}
+
 
 
 const SupplierInvoices: React.FC = () => {
@@ -141,7 +154,13 @@ const SupplierInvoices: React.FC = () => {
   const [editingInvoice, setEditingInvoice] = useState<SupplierInvoice | null>(null);
   const [form] = Form.useForm();
   
+  // NAV Items State
+  const [navItems, setNavItems] = useState<NavInvoiceItem[]>([]);
+  const [processedNavIndices, setProcessedNavIndices] = useState<number[]>([]);
+  const [processingNavIndex, setProcessingNavIndex] = useState<number | null>(null);
+
   // Dropdown adatok
+
   const [suppliers, setSuppliers] = useState<Company[]>([]);
   const [materials, setMaterials] = useState<Material[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -236,12 +255,15 @@ const SupplierInvoices: React.FC = () => {
   const showCreateModal = () => {
     setEditingInvoice(null);
     setItems([]);
+    setNavItems([]);
+    setProcessedNavIndices([]);
     form.resetFields();
     form.setFieldsValue({
       currency: 'HUF',
       payment_method: 'transfer',
       status: 'draft',
       invoice_date: dayjs(),
+      receipt_date: dayjs(), // Default to today
     });
     setIsModalVisible(true);
   };
@@ -274,13 +296,13 @@ const SupplierInvoices: React.FC = () => {
   const showEditModal = (invoice: SupplierInvoice) => {
     setEditingInvoice(invoice);
     setItems(invoice.items || []);
+    setNavItems([]); // Editing existing invoice usually doesn't have NAV backlog, unless we store it. For now, clear.
+    setProcessedNavIndices([]);
     form.setFieldsValue({
       ...invoice,
       invoice_date: invoice.invoice_date ? dayjs(invoice.invoice_date) : null,
       fulfillment_date: invoice.fulfillment_date ? dayjs(invoice.fulfillment_date) : null,
       receipt_date: invoice.receipt_date ? dayjs(invoice.receipt_date) : null,
-      due_date: invoice.due_date ? dayjs(invoice.due_date) : null,
-      payment_date: invoice.payment_date ? dayjs(invoice.payment_date) : null,
     });
     setIsModalVisible(true);
   };
@@ -294,8 +316,6 @@ const SupplierInvoices: React.FC = () => {
         invoice_date: values.invoice_date?.format('YYYY-MM-DD'),
         fulfillment_date: values.fulfillment_date?.format('YYYY-MM-DD'),
         receipt_date: values.receipt_date?.format('YYYY-MM-DD'),
-        due_date: values.due_date?.format('YYYY-MM-DD'),
-        payment_date: values.payment_date?.format('YYYY-MM-DD'),
       };
 
       if (editingInvoice) {
@@ -476,24 +496,59 @@ const SupplierInvoices: React.FC = () => {
       if (response.data.success) {
         const invoiceData = response.data.invoice_data;
         
-        // Beszállító keresése adószám alapján
-        const supplier = suppliers.find(
-          s => s.tax_number === invoiceData.supplier_tax_number
-        );
+        // Beszállító kezelése (backend már visszaküldi az ID-t ha létezik/létrehozta)
+        let supplierId = invoiceData.supplier;
+
+        // Ha van visszakapott ID, de nincs a kliens oldali listában, frissítsük a listát
+        if (supplierId && !suppliers.find(s => s.id === supplierId)) {
+          console.log(`Új beszállító észlelve (${invoiceData.supplier_name}), lista frissítése...`);
+          // Gyorstöltés: adjuk hozzá a listához ideiglenesen, hogy ne kelljen várni a reloadra
+          const newSupplier: Company = {
+            id: supplierId,
+            name: invoiceData.supplier_name,
+            tax_number: invoiceData.supplier_tax_number || '',
+            is_supplier: true,
+            is_customer: false,
+            // ... egyéb kötelező mezők, ha vannak
+          };
+          setSuppliers(prev => [...prev, newSupplier]);
+          
+          // Háttérben reload teljes adatcsomagért
+          loadSuppliers();
+        }
+
+        // Ha a backend nem küldött ID-t (régi viselkedés fallback), próbáljuk keresni
+        if (!supplierId) {
+             // Intelligens keresés: első 8 számjegy alapján
+             const cleanTax = (t: string | undefined) => (t || '').replace(/[^0-9]/g, '').substring(0, 8);
+             const targetTax = cleanTax(invoiceData.supplier_tax_number);
+
+             const found = suppliers.find(s => {
+                const sTax = cleanTax(s.tax_number);
+                const sFullTax = cleanTax(s.full_tax_number);
+                return (sTax && sTax === targetTax) || (sFullTax && sFullTax === targetTax);
+             });
+             
+             if (found) {
+                 supplierId = found.id;
+             }
+        }
         
-        if (!supplier) {
-          message.warning(
-            `Beszállító (${invoiceData.supplier_name}) nem található az adatbázisban. Először vedd fel a beszállítót!`
-          );
-          return;
+        if (!supplierId) {
+           // Ez elvileg már nem fordulhat elő a backend javítás után, de hagyjuk meg fallbacknek
+           message.warning(
+            `Beszállító (${invoiceData.supplier_name}) nem található. A rendszer megpróbálja létrehozni mentéskor.`
+           );
+           // Nem return-ölünk, engedjük kitölteni az űrlapot
         }
         
         // Form kitöltése
         form.setFieldsValue({
           invoice_number: invoiceData.invoice_number,
-          supplier: supplier.id,
+          supplier: supplierId,
           invoice_date: invoiceData.invoice_date ? dayjs(invoiceData.invoice_date) : dayjs(),
-          due_date: invoiceData.due_date ? dayjs(invoiceData.due_date) : null,
+          fulfillment_date: invoiceData.fulfillment_date ? dayjs(invoiceData.fulfillment_date) : null,
+          receipt_date: dayjs(), // Default to today
           payment_method: invoiceData.payment_method || 'transfer',
           currency: invoiceData.currency || 'HUF',
           total_amount: invoiceData.total_amount,
@@ -503,6 +558,12 @@ const SupplierInvoices: React.FC = () => {
         
         // Tételek betöltése (ezeket manuálisan kell hozzárendelni az anyagokhoz)
         setItems([]);
+
+        // NAV Tételek beállítása
+        if (invoiceData.items && Array.isArray(invoiceData.items)) {
+           setNavItems(invoiceData.items);
+           setProcessedNavIndices([]);
+        }
         
         setIsNavSearchVisible(false);
         setIsModalVisible(true);
@@ -577,6 +638,69 @@ const SupplierInvoices: React.FC = () => {
     }
   };
 
+  const handleReceiveNavItem = (navItem: NavInvoiceItem, index: number) => {
+      setProcessingNavIndex(index);
+      setEditingItem(null); 
+      setPriceWarning(null);
+
+      let match: Material | undefined;
+
+      // 0. Use Backend Suggested Match
+      if (navItem.match_material_id) {
+          match = materials.find(m => m.id === navItem.match_material_id);
+      }
+
+      // 1. Try to find material (if not already matched)
+      // Fuzzy match logic: Code or Name
+      if (!match) {
+        match = materials.find(m => {
+            const matName = (m.name || '').toLowerCase();
+            const navName = (navItem.product_name || '').toLowerCase();
+            const matCode = (m.material_code || '').toLowerCase();
+            const navCode = (navItem.product_code || '').toLowerCase();
+
+            // Strict Code Match
+            if (matCode && navCode && matCode === navCode) return true;
+             
+            // Strict Name Match
+            if (matName && navName && matName === navName) return true;
+
+            return false;
+        });
+      }
+
+      // If strict match fails, try containment
+      if (!match) {
+          match = materials.find(m => {
+             const navName = (navItem.product_name || '').toLowerCase();
+             const matName = (m.name || '').toLowerCase();
+             
+             if (!navName || !matName) return false;
+
+             return navName.includes(matName) || matName.includes(navName);
+          });
+      }
+
+      if (match) {
+          setSelectedMaterial(match);
+          message.success(`Anyag beazonosítva: ${match.name}`);
+      } else {
+          setSelectedMaterial(null);
+          message.info('Nem sikerült automatikusan beazonosítani az anyagot. Kérlek válaszd ki manuálisan.');
+      }
+
+      itemForm.resetFields();
+      itemForm.setFieldsValue({
+          material: match?.id,
+          quantity: navItem.quantity,
+          unit_price: navItem.unit_price,
+          unit: navItem.unit || (match?.unit || 'db'), // Use NAV unit if available, else Mat unit
+          // TODO: parse dimensions from name if possible?
+      });
+
+      setIsItemModalVisible(true);
+  };
+
   const handleItemSubmit = async () => {
     try {
       const values = await itemForm.validateFields();
@@ -591,8 +715,27 @@ const SupplierInvoices: React.FC = () => {
       const material = materials.find(m => m.id === values.material);
       const warehouse = warehouses.find(w => w.id === values.warehouse);
       
-      if (material) newItem.material_name = material.name;
+      if (material) {
+        newItem.material_name = material.name;
+        newItem.material_code = material.material_code; 
+      }
       if (warehouse) newItem.warehouse_name = warehouse.name;
+
+      // Learn Match Logic
+      if (processingNavIndex !== null && material) {
+           const navItem = navItems[processingNavIndex];
+           const supplierId = form.getFieldValue('supplier');
+           
+           if (supplierId && navItem.product_code) {
+               api.post('/warehouse/materials/learn-match/', {
+                   supplier_id: supplierId,
+                   material_id: material.id,
+                   supplier_code: navItem.product_code
+               }).then(() => {
+                   console.log("Match learned");
+               }).catch(err => console.error("Failed to learn match", err));
+           }
+      }
 
       if (editingItem && editingItem.id !== undefined) {
         const newItems = [...items];
@@ -600,6 +743,11 @@ const SupplierInvoices: React.FC = () => {
         setItems(newItems);
       } else {
         setItems([...items, newItem]);
+        // If we were processing a NAV item, mark it
+        if (processingNavIndex !== null) {
+            setProcessedNavIndices(prev => [...prev, processingNavIndex]);
+            setProcessingNavIndex(null);
+        }
       }
 
       // Teljes összeg frissítése
@@ -611,6 +759,11 @@ const SupplierInvoices: React.FC = () => {
     } catch (error) {
       console.error('Validation error:', error);
     }
+  };
+
+  const cancelItemModal = () => {
+      setIsItemModalVisible(false);
+      setProcessingNavIndex(null); // Reset if cancelled
   };
 
   const handleDeleteItem = (index: number) => {
@@ -654,13 +807,6 @@ const SupplierInvoices: React.FC = () => {
       key: 'invoice_date',
       width: 120,
       render: (date: string) => dayjs(date).format('YYYY.MM.DD'),
-    },
-    {
-      title: 'Esedékesség',
-      dataIndex: 'due_date',
-      key: 'due_date',
-      width: 120,
-      render: (date: string) => date ? dayjs(date).format('YYYY.MM.DD') : '-',
     },
     {
       title: 'Összeg',
@@ -755,6 +901,12 @@ const SupplierInvoices: React.FC = () => {
 
   const itemColumns: ColumnsType<InvoiceItem> = [
     {
+      title: 'Cikkszám',
+      dataIndex: 'material_code',
+      key: 'material_code',
+      width: 120,
+    },
+    {
       title: 'Anyag',
       dataIndex: 'material_name',
       key: 'material_name',
@@ -841,6 +993,7 @@ const SupplierInvoices: React.FC = () => {
       </div>
 
       <Table
+        size="small"
         columns={columns}
         dataSource={invoices}
         rowKey="id"
@@ -904,17 +1057,7 @@ const SupplierInvoices: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item name="due_date" label="Esedékesség">
-                <DatePicker style={{ width: '100%' }} format="YYYY.MM.DD" />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
               <Form.Item name="receipt_date" label="Bevételezés dátuma">
-                <DatePicker style={{ width: '100%' }} format="YYYY.MM.DD" />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item name="payment_date" label="Fizetés dátuma">
                 <DatePicker style={{ width: '100%' }} format="YYYY.MM.DD" />
               </Form.Item>
             </Col>
@@ -1039,6 +1182,50 @@ const SupplierInvoices: React.FC = () => {
 
           <Divider>Tételek</Divider>
           
+          {navItems.length > 0 && (
+             <div style={{ marginBottom: 24 }}>
+                <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 8 }}>
+                  Importált számla tételek (NAV)
+                </Typography.Text>
+                <Table
+                  dataSource={navItems}
+                  rowKey={(record, index) => `nav-item-${index}`}
+                  pagination={false}
+                  size="small"
+                  rowClassName={(_, index) => processedNavIndices.includes(index) ? 'processed-nav-row' : ''}
+                  columns={[
+                      { title: 'Cikkszám', dataIndex: 'product_code', width: 120 },
+                      { title: 'Név', dataIndex: 'product_name' },
+                      { title: 'Mennyiség', dataIndex: 'quantity', width: 100 },
+                      { title: 'Egység', dataIndex: 'unit', width: 80 },
+                      { title: 'Nettó egységár', dataIndex: 'unit_price', render: (val) => val?.toLocaleString() },
+                      { title: 'Nettó ár', dataIndex: 'total_price', render: (val) => val?.toLocaleString() },
+                      { 
+                          title: 'Műveletek', 
+                          key: 'actions',
+                          render: (_, record, index) => (processedNavIndices.includes(index) ? (
+                              <Tag color="success" icon={<CheckOutlined />}>Bevételezve</Tag>
+                          ) : (
+                              <Button 
+                                type="primary" 
+                                size="small" 
+                                onClick={() => handleReceiveNavItem(record, index)}
+                              >
+                                  Bevételez
+                              </Button>
+                          ))
+                      }
+                  ]}
+                />
+                <style>{`
+                    .processed-nav-row {
+                        background-color: #f6ffed;
+                    }
+                `}</style>
+                <Divider />
+             </div>
+          )}
+
           <Button
             type="dashed"
             icon={<PlusOutlined />}
@@ -1046,7 +1233,7 @@ const SupplierInvoices: React.FC = () => {
             style={{ marginBottom: 16 }}
             block
           >
-            Tétel hozzáadása
+            Manuális Tétel hozzáadása
           </Button>
 
           <Table
@@ -1064,7 +1251,7 @@ const SupplierInvoices: React.FC = () => {
         title={editingItem ? 'Tétel szerkesztése' : 'Új tétel'}
         open={isItemModalVisible}
         onOk={handleItemSubmit}
-        onCancel={() => setIsItemModalVisible(false)}
+        onCancel={cancelItemModal}
         okText="Hozzáad"
         cancelText="Mégse"
       >

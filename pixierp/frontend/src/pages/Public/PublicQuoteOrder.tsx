@@ -27,6 +27,8 @@ interface QuoteItem {
   material_code?: string;
   service_name?: string;
   manufacturing_product_name?: string;
+  manufacturing_product_code?: string;
+  product_description?: string;
 }
 
 interface QuoteData {
@@ -148,7 +150,7 @@ const PublicQuoteOrder: React.FC = () => {
   };
 
   const getItemCode = (item: QuoteItem) => {
-    return item.product_code || item.material_code || '';
+    return item.product_code || item.material_code || item.manufacturing_product_code || item.item_type === 'manufacturing' ? 'EGYEDI' : '';
   };
 
   if (loading) {
@@ -224,11 +226,15 @@ const PublicQuoteOrder: React.FC = () => {
       dataIndex: 'name', 
       key: 'name',
       render: (_: any, record: QuoteItem) => (
-        <div>
-          <div style={{ fontWeight: 500 }}>{getItemName(record)}</div>
-          {record.description && <Text type="secondary" style={{ fontSize: 12 }}>{record.description}</Text>}
-        </div>
+        <div style={{ fontWeight: 500 }}>{getItemName(record)}</div>
       )
+    },
+    {
+      title: 'Leírás',
+      dataIndex: 'description',
+      key: 'description',
+      width: 300,
+      render: (_: string, record: QuoteItem) => <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{record.description || record.product_description}</Text>
     },
     { 
       title: 'Mennyiség', 

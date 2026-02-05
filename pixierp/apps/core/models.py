@@ -311,6 +311,7 @@ class Role(models.Model):
     name = models.CharField(max_length=100, unique=True, verbose_name="Szerepkör neve")
     description = models.TextField(blank=True, verbose_name="Leírás")
     is_system = models.BooleanField(default=False, verbose_name="Rendszer szerepkör")
+    can_approve_orders = models.BooleanField(default=False, verbose_name="Jóváhagyó")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -441,3 +442,20 @@ class UserRole(models.Model):
 
     def __str__(self):
         return f"{self.user.username} - {self.role.name}"
+class Zone(models.Model):
+    """Munkazóna definíció"""
+    name = models.CharField(max_length=100, verbose_name="Zóna neve")
+    zone_number = models.CharField(max_length=50, unique=True, verbose_name="Zóna szám")
+    note = models.TextField(blank=True, default='', verbose_name="Megjegyzés")
+    departments = models.ManyToManyField('hr.Department', blank=True, related_name="zones", verbose_name="Osztályok")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = "Zóna"
+        verbose_name_plural = "Zónák"
+        ordering = ['zone_number']
+        db_table = 'zones'
+
+    def __str__(self):
+        return f"{self.zone_number} - {self.name}"

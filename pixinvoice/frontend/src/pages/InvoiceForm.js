@@ -25,6 +25,15 @@ import VAT_RATES from '../utils/vatRates';
 import { vatTypesAPI } from '../services/api';
 import api, { utilsAPI } from '../services/api';
 
+const PAYMENT_METHOD_LABELS = {
+  transfer: 'Átutalás',
+  cash: 'Készpénz',
+  card: 'Bankkártya',
+  voucher: 'Utalvány',
+  cod: 'Utánvét',
+  other: 'Egyéb'
+};
+
 const FormContainer = styled.div`
   background: white;
   border-radius: 8px;
@@ -504,6 +513,7 @@ const TRANSLATIONS = {
         'Bruttó összeg': 'Gross Amount',
         'Kedvezmény': 'Discount',
         'Összesen': 'Total',
+        'Kerekítés': 'Rounding',
         'Fizetendő': 'Total Payable',
         'Visszatérítendő': 'Refundable',
         'Lábjegyzék': 'Footer Note',
@@ -1434,15 +1444,28 @@ const InvoiceForm = () => {
 
   // (moved) invoice -> form population happens in guarded effect above
 
+  const round = (num) => Math.round((Math.abs(Number(num)) + Number.EPSILON) * 100) / 100 * (num < 0 ? -1 : 1);
+
   const calculateItemTotals = (item) => {
-    const netAmount = item.quantity * item.unit_price;
-    const vatAmount = netAmount * (item.vat_rate / 100);
-    const grossAmount = netAmount + vatAmount;
+    // Robust parsing handling commas
+    const parse = (n) => {
+       if (typeof n === 'number') return n;
+       if (!n) return 0;
+       return parseFloat(n.toString().replace(',', '.')) || 0;
+    };
+
+    const quantity = parse(item.quantity);
+    const unitPrice = parse(item.unit_price);
+    const vatRate = parse(item.vat_rate);
+    
+    const netAmount = round(quantity * unitPrice);
+    const vatAmount = round(netAmount * (vatRate / 100));
+    const grossAmount = round(netAmount + vatAmount);
     return { netAmount, vatAmount, grossAmount };
   };
 
   const calculateTotals = () => {
-    return watchedItems.reduce(
+    const rawTotals = watchedItems.reduce(
       (totals, item) => {
         const { netAmount, vatAmount, grossAmount } = calculateItemTotals(item);
         return {
@@ -1453,6 +1476,11 @@ const InvoiceForm = () => {
       },
       { netTotal: 0, vatTotal: 0, grossTotal: 0 }
     );
+    return {
+      netTotal: round(rawTotals.netTotal),
+      vatTotal: round(rawTotals.vatTotal),
+      grossTotal: round(rawTotals.grossTotal),
+    };
   };
 
   const vatBreakdown = () => {
@@ -1478,12 +1506,19 @@ const InvoiceForm = () => {
     const rows = Array.from(map.entries()).map(([rate, v]) => ({
       rate: Number(rate),
       names: Array.from(v.names),
-      net: v.net,
-      vat: v.vat,
-      gross: v.gross,
+      net: round(v.net),
+      vat: round(v.vat),
+      gross: round(v.gross),
     })).sort((a,b)=>a.rate-b.rate);
-    const totals = rows.reduce((t,r)=>({ net:t.net+r.net, vat:t.vat+r.vat, gross:t.gross+r.gross }), {net:0,vat:0,gross:0});
-    return { rows, totals };
+    const rawTotals = rows.reduce((t,r)=>({ net:t.net+r.net, vat:t.vat+r.vat, gross:t.gross+r.gross }), {net:0,vat:0,gross:0});
+    return { 
+      rows, 
+      totals: {
+        net: round(rawTotals.net),
+        vat: round(rawTotals.vat),
+        gross: round(rawTotals.gross)
+      } 
+    };
   };
 
   // Open advances (for FINAL invoices)
@@ -1673,9 +1708,9 @@ const InvoiceForm = () => {
 
   const onSubmit = (data) => {
     const round2 = (n) => {
-      const x = parseFloat((n ?? '0').toString().replace(',', '.'));
+      let x = parseFloat((n ?? '0').toString().replace(',', '.'));
       if (!isFinite(x)) return 0;
-      return Math.round(x * 100) / 100;
+      return Math.round((Math.abs(x) + Number.EPSILON) * 100) / 100 * (x < 0 ? -1 : 1);
     };
     const items = data.items.map(item => ({
       description: item.description,
@@ -2100,9 +2135,22 @@ const InvoiceForm = () => {
   const exchangeRateValue = watch('exchange_rate') || invoice?.exchange_rate || snapshot?.exchange_rate || 1;
   const paymentMethod = watch('payment_method') || invoice?.payment_method || snapshot?.payment_method || 'transfer';
   const notesVal = watch('notes') || invoice?.notes || '';
-  const isRefund = totals.grossTotal < 0;
+  
+  // Rounding for HUF Cash payments
+  let roundingDiff = 0;
+  let payableAmount = totals.grossTotal;
+  
+  if (currency === 'HUF' && (paymentMethod === 'cash' || paymentMethod === 'cod')) {
+    // Round to integer first to avoid float errors on .99999
+    // Math.round is good for nearest integer for normal numbers.
+    const rounded = Math.round(Math.round(payableAmount) / 5) * 5;
+    roundingDiff = rounded - payableAmount;
+    payableAmount = rounded;
+  }
+
+  const isRefund = payableAmount < 0;
   const payLabel = isRefund ? 'Visszatérítendő' : 'Fizetendő';
-  const payAmountAbs = Math.abs(totals.grossTotal);
+  const payAmountAbs = Math.abs(payableAmount);
 
   // Helpers: full tax number formatting
   const formatFullTax = (entity) => {
@@ -3164,12 +3212,11 @@ const InvoiceForm = () => {
                             <span className="label"><BilingualLabel label={payLabel} translationMap={translations} show={bilingual} /></span>
                             <span className="value">{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
                           </div>
-                          {paymentMethod === 'transfer' && (
-                            <div className="inv-deadline">
-                              <span className="muted"><BilingualLabel label="Fizetési határidő" translationMap={translations} show={bilingual} /></span>
-                              <span className="date-pill">{dueDateStr || '—'}</span>
-                            </div>
-                          )}
+                          
+                          <div className="inv-deadline">
+                            <span className="muted"><BilingualLabel label="Fizetési határidő" translationMap={translations} show={bilingual} /></span>
+                            <span className="date-pill">{dueDateStr || '—'}</span>
+                          </div>
                         </div>
                     </div>
                   </div>
@@ -3196,7 +3243,7 @@ const InvoiceForm = () => {
                       )}
                       <div>
                         <div className="muted"><BilingualLabel label="Fizetési mód" translationMap={translations} show={bilingual} /></div>
-                        <div>{paymentMethod === 'transfer' ? <BilingualLabel label="Átutalás" translationMap={translations} show={bilingual} /> : (paymentMethod === 'cash' ? <BilingualLabel label="Készpénz" translationMap={translations} show={bilingual} /> : paymentMethod)}</div>
+                        <div><BilingualLabel label={PAYMENT_METHOD_LABELS[paymentMethod] || paymentMethod} translationMap={translations} show={bilingual} /></div>
                       </div>
                   </div>
                   </div>
@@ -3232,12 +3279,11 @@ const InvoiceForm = () => {
                 // Prefer historical metadata or direct item value
                 const unit = (itemMeta[idx]?.uom || it?.unit_of_measure || it?.unit || 'db');
                 const unitPrice = Number(it?.unit_price || 0) || 0;
-                const vatRate = Number(it?.vat_rate || 0) || 0;
-                const net = qty * unitPrice;
-                const vat = net * (vatRate/100);
-                const gross = net + vat;
                 
-                let vatLabel = `${vatRate.toLocaleString('hu-HU')}%`;
+                // Use the shared calculation logic to ensure consistent rounding
+                const { netAmount, vatAmount, grossAmount } = calculateItemTotals(it);
+                
+                let vatLabel = `${Number(it?.vat_rate || 0).toLocaleString('hu-HU')}%`;
                 // Prefer historical VAT name
                 if (itemMeta[idx]?.vat_name) {
                    vatLabel = itemMeta[idx].vat_name;
@@ -3263,11 +3309,11 @@ const InvoiceForm = () => {
                     <td className="col-desc">{it?.description || ''}</td>
                     <td className="cen col-qty">{qty.toLocaleString('hu-HU')}</td>
                     <td className="cen col-unit">{unit}</td>
-                    <td className="num col-unitnet">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-unitnet">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                     <td className={vatClass}>{vatLabel}</td>
-                    <td className="num col-net">{net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num col-vat">{vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                    <td className="num col-gross">{gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                    <td className="num col-net">{netAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="num col-vat">{vatAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="num col-gross">{grossAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                   </tr>
                 );
               })}
@@ -3303,11 +3349,19 @@ const InvoiceForm = () => {
                               <td className="num">{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
                             </tr>
                           ))}
+                          {Math.abs(roundingDiff) > 0.001 && (
+                            <tr>
+                              <td className="cen"><BilingualLabel label="Kerekítés" translationMap={translations} show={bilingual} /></td>
+                              <td className="num"></td>
+                              <td className="num"></td>
+                              <td className="num">{roundingDiff.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          )}
                           <tr>
                             <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} separator="/" /> ({currency})</th>
                             <th className="num">{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
                             <th className="num">{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                            <th className="num inv-gross-total">{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                            <th className="num inv-gross-total">{payableAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
                           </tr>
                           
                           {/* Dual Language Native Currency Summary */}
@@ -3345,7 +3399,7 @@ const InvoiceForm = () => {
                     })()}
             
                     <div className="inv-words" style={{ marginTop: '4mm' }}>
-                      {amountToWordsHU(totals.grossTotal, currency)}
+                      {amountToWordsHU(payableAmount, currency)}
                     </div>
             
                     {notesVal && (

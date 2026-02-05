@@ -14,6 +14,9 @@ router.register(r'roles', views.RoleViewSet, basename='role')
 router.register(r'permissions', views.PermissionViewSet, basename='permission')
 router.register(r'user-roles', views.UserRoleViewSet, basename='user-role')
 router.register(r'notifications', views.NotificationViewSet, basename='notification')
+router.register(r'email-templates', views.EmailTemplateViewSet, basename='email-template')
+router.register(r'signature-templates', views.SignatureTemplateViewSet, basename='signature-template')
+router.register(r'zones', views.ZoneViewSet, basename='zone')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

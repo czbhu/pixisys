@@ -158,8 +158,8 @@ const Departments: React.FC = () => {
             description: department.description || '',
             managers: department.managers || [],
             roles: department.roles || [],
-            budget: department.budget || 0,
-            inactivity_timeout: department.inactivity_timeout || 60
+            budget: department.budget !== undefined ? department.budget : 0,
+            inactivity_timeout: department.inactivity_timeout !== undefined ? department.inactivity_timeout : 60
         });
         setIsModalVisible(true);
     };

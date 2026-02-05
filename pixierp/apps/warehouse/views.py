@@ -2,6 +2,7 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.pagination import PageNumberPagination
 from django.db.models import Q, Sum
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
@@ -23,6 +24,12 @@ from .serializers import (
     SupplierInvoiceSerializer, InvoiceItemSerializer,
     ScrapRecordSerializer, ScrapItemSerializer
 )
+from apps.crm.models import Company
+
+class LargeResultsSetPagination(PageNumberPagination):
+    page_size = 1000
+    page_size_query_param = 'page_size'
+    max_page_size = 10000
 
 class MaterialTypeViewSet(viewsets.ModelViewSet):
     """Alapanyag típusok kezelése"""
@@ -34,6 +41,7 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
     """Alapanyag gyűjtők kezelése"""
     queryset = MaterialGroup.objects.all()
     serializer_class = MaterialGroupSerializer
+    pagination_class = LargeResultsSetPagination
     
     def get_queryset(self):
         queryset = MaterialGroup.objects.all()
@@ -54,10 +62,13 @@ class MaterialGroupViewSet(viewsets.ModelViewSet):
         serializer.save(created_by=self.request.user)
 
 
+
+
 class MaterialViewSet(viewsets.ModelViewSet):
     """Alapanyagok/Termékek kezelése"""
     queryset = Material.objects.all()
     serializer_class = MaterialSerializer
+    pagination_class = LargeResultsSetPagination
     
     def get_queryset(self):
         queryset = Material.objects.all()
@@ -123,6 +134,46 @@ class MaterialSupplierViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(supplier_external_id=supplier_ext)
         
         return queryset
+
+    @action(detail=False, methods=['post'])
+    def learn_match(self, request):
+        """
+        Megjegyzi, hogy egy adott beszállító adott termékkódja/neve melyik belső anyaghoz tartozik.
+        """
+        supplier_id = request.data.get('supplier_id')
+        material_id = request.data.get('material_id')
+        supplier_code = request.data.get('supplier_code')
+        # supplier_name is not currently stored in MaterialSupplier, but could be useful if we add field later
+        
+        if not supplier_id or not material_id:
+             return Response({'error': 'Supplier ID and Material ID required'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Check if exists
+            ms = MaterialSupplier.objects.filter(
+                supplier_id=supplier_id,
+                material_id=material_id
+            ).first()
+
+            if ms:
+                # Update existing
+                if supplier_code:
+                    ms.supplier_code = supplier_code
+                ms.save()
+            else:
+                # Create new
+                MaterialSupplier.objects.create(
+                    supplier_id=supplier_id,
+                    material_id=material_id,
+                    supplier_code=supplier_code or '',
+                    unit_price=0 # Default
+                )
+            
+            return Response({'success': True, 'message': 'Pairing remembered'})
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 
 class InventoryViewSet(viewsets.ModelViewSet):
     """Készlet kezelése"""
@@ -675,7 +726,65 @@ class SupplierInvoiceViewSet(viewsets.ModelViewSet):
             
             # Konvertálás ERP formátumra
             erp_data = nav_service.parse_invoice_to_erp_format(nav_invoice)
-            
+
+            # Beszállító keresése vagy létrehozása
+            supp_tax = erp_data.get('supplier_tax_number')
+            supp_name = erp_data.get('supplier_name')
+
+            if supp_tax:
+                # Keresés adószám első 8 számjegye alapján
+                tax_8 = supp_tax[:8] if len(supp_tax) >= 8 else supp_tax
+                supplier = Company.objects.filter(
+                    Q(tax_number__startswith=tax_8) | 
+                    Q(full_tax_number__startswith=tax_8)
+                ).first()
+
+                if not supplier and supp_name:
+                    # Ha nincs, létrehozzuk
+                    supplier = Company.objects.create(
+                        name=supp_name,
+                        tax_number=supp_tax,
+                        full_tax_number=supp_tax,
+                        is_supplier=True,
+                        is_customer=False
+                    )
+                elif supplier and not supplier.is_supplier:
+                    # Ha létezik, de nem beszállítóként, bejelöljük
+                    supplier.is_supplier = True
+                    supplier.save()
+                
+                if supplier:
+                    erp_data['supplier'] = supplier.id
+                    erp_data['supplier_name'] = supplier.name
+
+            # --- PRE-MATCHING LOGIC ---
+            # Attempt to find matching materials for items
+            if erp_data.get('items'):
+                for item in erp_data['items']:
+                    prod_code = item.get('product_code')
+                    supplier_id = erp_data.get('supplier')
+                    
+                    matched_mat = None
+                    
+                    # 1. Look in MaterialSupplier (Remembered bindings)
+                    if supplier_id and prod_code:
+                         ms = MaterialSupplier.objects.filter(
+                             supplier_id=supplier_id,
+                             supplier_code=prod_code
+                         ).select_related('material').first()
+                         if ms:
+                             matched_mat = ms.material
+
+                    # 2. Look for Internal Code == Product Code
+                    if not matched_mat and prod_code:
+                        matched_mat = Material.objects.filter(code=prod_code).first()
+
+                    # 3. Fuzzy Name (skipped here, done in frontend, or could be added)
+
+                    if matched_mat:
+                        item['match_material_id'] = matched_mat.id
+                        item['unit'] = item.get('unit') or matched_mat.unit # prefer nav unit if exists, else mat unit
+
             return Response({
                 'success': True,
                 'invoice_data': erp_data,

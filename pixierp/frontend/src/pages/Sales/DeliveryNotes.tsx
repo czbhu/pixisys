@@ -5,6 +5,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import dayjs from 'dayjs';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 const { Search } = Input;
 
@@ -47,6 +50,16 @@ interface EmailPreview {
     is_html: boolean;
 }
 
+interface EmailTemplate {
+    key: string;
+    name: string;
+}
+
+interface SignatureTemplate {
+    key: string;
+    name: string;
+}
+
 const DeliveryNotes: React.FC = () => {
   const [data, setData] = useState<DeliveryNoteItemRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -68,6 +81,8 @@ const DeliveryNotes: React.FC = () => {
   
   // Email modal state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
+  const [signatureTemplates, setSignatureTemplates] = useState<SignatureTemplate[]>([]);
   const [emailTargetId, setEmailTargetId] = useState<number | null>(null);
   const [emailTargetName, setEmailTargetName] = useState<string>('');
   const [emailTargetNumber, setEmailTargetNumber] = useState<string>('');
@@ -318,13 +333,56 @@ const DeliveryNotes: React.FC = () => {
       setEmailTargetName(target.customer_name || 'Ügyfelünk');
       setEmailTargetNumber(target.delivery_note_number);
       
-      sendForm.resetFields();
-      sendForm.setFieldsValue({
-          template_key: 'delivery_send',
+      // Load templates first
+      Promise.all([
+          api.get('/core/email-templates/'),
+          api.get('/core/signature-templates/'),
+      ]).then(([tplRes, sigRes]) => {
+          setEmailTemplates(tplRes.data.results || tplRes.data);
+          setSignatureTemplates(sigRes.data.results || sigRes.data);
+      }).catch(err => console.error("Could not load templates", err));
+      
+      const initialValues = {
+          template_key: 'szallitolevel',
           signature_key: 'default'
-      });
+      };
+      
+      sendForm.resetFields();
+      sendForm.setFieldsValue(initialValues);
       setEmailPreview(null);
       setEmailModalOpen(true);
+      
+      // Auto-load template content
+      loadTemplateContent(target.id, initialValues);
+  };
+  
+  const loadTemplateContent = (id: number, values: any) => {
+      api.post(`/sales/delivery-notes/${id}/render_email/`, values)
+        .then(response => {
+            const updates: any = {
+                subject: response.data.subject,
+                body: response.data.body
+            };
+            
+            // Auto fill recipient if available and current field is empty
+            const currentTo = sendForm.getFieldValue('to');
+            if (response.data.proposed_recipients && response.data.proposed_recipients.length > 0) {
+                 if (!currentTo) {
+                     updates.to = response.data.proposed_recipients.join(', ');
+                 }
+            }
+            
+            sendForm.setFieldsValue(updates);
+        })
+        .catch(err => {
+            console.error('Failed to load template defaults', err);
+        });
+  };
+
+  const handleTemplateChange = (changedValues: any, allValues: any) => {
+      if (emailTargetId && (changedValues.template_key || changedValues.signature_key)) {
+          loadTemplateContent(emailTargetId, allValues);
+      }
   };
 
   const handleEmailPreview = async () => {
@@ -590,6 +648,7 @@ const DeliveryNotes: React.FC = () => {
         dataSource={data} 
         rowKey="id" 
         loading={loading}
+        size="small"
       />
 
       <Modal
@@ -667,7 +726,12 @@ const DeliveryNotes: React.FC = () => {
         ]}
         width={800}
       >
-           <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'delivery_send', signature_key: 'default' }}>
+           <Form 
+                layout="vertical" 
+                form={sendForm} 
+                initialValues={{ template_key: 'szallitolevel', signature_key: 'default' }}
+                onValuesChange={handleTemplateChange}
+           >
                 <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Adja meg a címzettet!' }]}>
                     <Input placeholder="email1@example.com, email2@example.com" />
                 </Form.Item>
@@ -676,17 +740,27 @@ const DeliveryNotes: React.FC = () => {
                 </Form.Item>
                 <div style={{ display: 'flex', gap: 16 }}>
                     <Form.Item label="Sablon" name="template_key" style={{ flex: 1 }}>
-                        <Input />
+                        <Select showSearch optionFilterProp="children">
+                            {emailTemplates.map(t => (
+                                <Select.Option key={t.key} value={t.key}>{t.name}</Select.Option>
+                            ))}
+                        </Select>
                     </Form.Item>
                     <Form.Item label="Aláírás" name="signature_key" style={{ flex: 1 }}>
-                        <Input />
+                        <Select showSearch optionFilterProp="children">
+                            <Select.Option value="">Nincs</Select.Option>
+                            <Select.Option value="default">User alapértelmezett</Select.Option>
+                            {signatureTemplates.map(t => (
+                                <Select.Option key={t.key} value={t.key}>{t.name}</Select.Option>
+                            ))}
+                        </Select>
                     </Form.Item>
                 </div>
                 <Form.Item label="Tárgy" name="subject">
                     <Input placeholder="E-mail tárgya (üresen hagyva a sablonból jön)" />
                 </Form.Item>
                 <Form.Item label="Törzs" name="body">
-                    <Input.TextArea rows={6} placeholder="E-mail törzse (üresen hagyva a sablonból jön)" />
+                    <ReactQuill theme="snow" style={{ height: 300, marginBottom: 50 }} />
                 </Form.Item>
            </Form>
            

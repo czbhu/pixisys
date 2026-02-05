@@ -38,7 +38,7 @@ const EmailTemplatesPage: React.FC = () => {
 
   return (
     <Card title="E-mail sablonok" extra={<Button onClick={() => { setEditing(null); form.resetFields(); setOpen(true); }}>Új</Button>}>
-  <Table rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
+  <Table size="small" rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
       <Modal title={editing ? 'Sablon szerkesztése' : 'Új sablon'} open={open} onOk={onSave} onCancel={() => setOpen(false)} width={800}>
         <Alert
           message="Rendelkezésre álló változók"

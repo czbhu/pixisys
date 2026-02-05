@@ -18,8 +18,8 @@ import {
 } from 'antd';
 import {
     CalendarOutlined,
-    UserOutlined,
     ClockCircleOutlined,
+
     EditOutlined,
     PlusOutlined,
     DeleteOutlined,
@@ -454,19 +454,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
     };
 
     const columns = [
-        ...(!isPersonal ? [{
-            title: 'Alkalmazott',
-            dataIndex: 'employee_name',
-            key: 'employee_name',
-            fixed: 'left' as const,
-            width: 200,
-            render: (text: string) => (
-                <Space>
-                    <UserOutlined />
-                    <span>{text}</span>
-                </Space>
-            ),
-        }] : []),
+
         {
             title: 'Dátum',
             dataIndex: 'date',
@@ -588,6 +576,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
                 </div>
                 
                 <Table
+                    size="small"
                     dataSource={selectedSegmentsRecord?.segments || []}
                     rowKey="id"
                     pagination={false}
@@ -766,6 +755,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
 
                 {/* Attendance Table */}
                 <Table
+                    size="small"
                     columns={columns}
                     dataSource={attendanceData}
                     loading={loading}

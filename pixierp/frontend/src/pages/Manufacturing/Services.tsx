@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined } from '@ant-design/icons';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -22,6 +22,8 @@ interface Service {
   unit_selling_price: number;
   currency: string;
   category: string;
+  groups: number[];
+  group_names: string[];
   is_active: boolean;
   created_by_name: string;
   created_at: string;
@@ -92,6 +94,10 @@ const Services: React.FC = () => {
   const [addedSuppliers, setAddedSuppliers] = useState<(Supplier & { is_internal?: boolean })[]>([]);
   const [supplierSearchValue, setSupplierSearchValue] = useState<string>('');
   const [filteredSuppliersForAdd, setFilteredSuppliersForAdd] = useState<{ value: string; label: string }[]>([]);
+  const [query, setQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<string>('active');
+  const [serviceGroups, setServiceGroups] = useState<any[]>([]);
+  const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<number | undefined>(undefined);
 
   // Unit options based on calculation type
   const getUnitOptions = (calculationType: string) => {
@@ -122,6 +128,7 @@ const Services: React.FC = () => {
     fetchServices();
     fetchSuppliers();
     fetchDepartments();
+    fetchServiceGroups();
     
     const create = searchParams.get('create') === 'true';
     const copyFrom = searchParams.get('copy_from');
@@ -222,6 +229,44 @@ const Services: React.FC = () => {
     } catch (error) {
       console.error('Hiba az osztályok betöltésekor:', error);
     }
+  };
+
+  const fetchServiceGroups = async () => {
+    try {
+        const response = await api.get('/manufacturing/service-groups/');
+        const data = response.data.results || response.data;
+        setServiceGroups(data);
+    } catch (error) {
+        console.error('Hiba a szolgáltatás csoportok betöltésekor', error);
+    }
+  };
+
+  const buildGroupTree = (items: any[]) => {
+      const itemMap = new Map<number, any>();
+      const roots: any[] = [];
+      const cloned = items.map(item => ({...item, title: item.name, value: item.id, children: []}));
+      
+      cloned.forEach(i => itemMap.set(i.id, i));
+      
+      cloned.forEach(i => {
+          if (i.parent) {
+              const p = itemMap.get(i.parent);
+              if (p) p.children.push(i);
+              else roots.push(i);
+          } else {
+              roots.push(i);
+          }
+      });
+      return roots;
+  };
+
+  const getGroupDescendants = (groupId: number, allGroups: any[]): number[] => {
+      const children = allGroups.filter(g => g.parent === groupId);
+      let ids = [groupId];
+      children.forEach(child => {
+          ids = [...ids, ...getGroupDescendants(child.id, allGroups)];
+      });
+      return ids;
   };
 
   const fetchCostItems = async (serviceId: number, sourceType: 'internal' | number) => {
@@ -364,7 +409,10 @@ const Services: React.FC = () => {
   const handleEdit = (service: Service) => {
     setEditingService(service);
     setIsInternalProduction(service.is_internal_production);
-    form.setFieldsValue(service);
+    form.setFieldsValue({
+        ...service,
+        groups: service.groups || []
+    });
     
     // Load added suppliers
     fetchAddedSuppliers(service);
@@ -390,8 +438,24 @@ const Services: React.FC = () => {
         setSelectedSourceForCost(null);
         setCostItems([]);
     }
-    
     setModalVisible(true);
+  };
+
+  const handleCopy = (service: Service) => {
+      setEditingService(null);
+      setIsInternalProduction(service.is_internal_production);
+      form.setFieldsValue({
+          ...service,
+          id: undefined,
+          code: `${service.code}-COPY`,
+          name: `${service.name} (Másolat)`,
+          groups: service.groups || [],
+          created_at: undefined,
+          created_by_name: undefined,
+      });
+      // Clear specific fields
+      form.setFieldValue('unit_selling_price', service.unit_selling_price);
+      setModalVisible(true);
   };
 
   const handleDelete = async (id: number) => {
@@ -619,11 +683,19 @@ const Services: React.FC = () => {
 
   const handleCostItemSubmit = async (values: any) => {
     try {
+      // Ensure correct types for hidden fields
+      const payload = {
+        ...values,
+        is_internal: values.is_internal === true || values.is_internal === 'true',
+        supplier: values.supplier ? Number(values.supplier) : null,
+        service: Number(values.service),
+      };
+
       if (editingCostItem) {
-        await api.patch(`/manufacturing/service-cost-items/${editingCostItem.id}/`, values);
+        await api.patch(`/manufacturing/service-cost-items/${editingCostItem.id}/`, payload);
         message.success('Költség elem frissítve');
       } else {
-        await api.post('/manufacturing/service-cost-items/', values);
+        await api.post('/manufacturing/service-cost-items/', payload);
         message.success('Költség elem létrehozva');
       }
       setCostItemModalVisible(false);
@@ -681,49 +753,115 @@ const Services: React.FC = () => {
     message.success(`Árak átvezetve az alapadatokhoz (Faktor: ${factor})`);
   };
 
+  const filteredServices = (() => {
+    const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    const q = normalize(query);
+    
+    let result = services;
+
+    if (statusFilter === 'active') {
+        result = result.filter(s => s.is_active);
+    } else if (statusFilter === 'inactive') {
+        result = result.filter(s => !s.is_active);
+    }
+
+    if (selectedCategoryFilter) {
+        const relevantGroupIds = getGroupDescendants(selectedCategoryFilter, serviceGroups);
+        result = result.filter(s => s.groups && s.groups.some(g => relevantGroupIds.includes(g)));
+    }
+
+    if (q) {
+        result = result.filter(service => {
+            const hay = [
+                service.name || '',
+                service.code || '',
+                service.description || '',
+                service.category || '',
+            ].join(' \u0001 ');
+            return normalize(hay).includes(q);
+        });
+    }
+    return result;
+  })();
+
   const columns = [
     {
       title: 'Cikkszám',
       dataIndex: 'code',
       key: 'code',
       width: 100,
+      sorter: (a: Service, b: Service) => (a.code || '').localeCompare(b.code || ''),
     },
     {
       title: 'Szolgáltatás neve',
       dataIndex: 'name',
       key: 'name',
+      width: 250,
+      ellipsis: true,
+      sorter: (a: Service, b: Service) => a.name.localeCompare(b.name),
     },
     {
-      title: 'Kategória',
-      dataIndex: 'category',
-      key: 'category',
+      title: 'Kategóriák',
+      dataIndex: 'group_names',
+      key: 'group_names',
       width: 150,
+      render: (groups: string[]) => (
+        <Space direction="vertical" size={0}>
+            {groups && groups.map(g => <Tag key={g} style={{ margin: 1, fontSize: '10px', lineHeight: '18px' }}>{g}</Tag>)}
+        </Space>
+      )
     },
     {
       title: 'Mértékegység',
       dataIndex: 'unit_display',
       key: 'unit_display',
-      width: 120,
+      width: 100,
+      sorter: (a: Service, b: Service) => (a.unit_display || '').localeCompare(b.unit_display || ''),
     },
     {
       title: 'Gyártás',
       key: 'source',
-      width: 150,
+      width: 160,
       render: (_: any, record: Service) => {
-        return record.is_internal_production && record.internal_production_department_name ? (
-          <Tag color="green">{record.internal_production_department_name}</Tag>
-        ) : record.default_supplier_name ? (
-          <Tag color="blue">{record.default_supplier_name}</Tag>
-        ) : (
-          <Tag color="default">Nincs</Tag>
-        );
+        const wrapStyle: React.CSSProperties = { 
+            whiteSpace: 'normal', 
+            height: 'auto', 
+            display: 'inline-flex', 
+            alignItems: 'center', 
+            textAlign: 'center',
+            lineHeight: '1.2',
+            padding: '1px 4px',
+            fontSize: '11px'
+        };
+
+        if (record.is_internal_production && record.internal_production_department_name) {
+          return (
+            <Tag color="green" style={wrapStyle}>
+                {record.internal_production_department_name}
+            </Tag>
+          );
+        } else if (record.default_supplier_name) {
+            const name = record.default_supplier_name;
+            const isLong = name.length > 25;
+            const display = isLong ? name.substring(0, 25) + '...' : name;
+            return (
+                <Tag color="blue" title={name} style={wrapStyle}>
+                    {display}
+                </Tag>
+            );
+        } else {
+            return (
+                <Tag color="default">Nincs</Tag>
+            );
+        }
       },
     },
     {
       title: 'Státusz',
       dataIndex: 'is_active',
       key: 'is_active',
-      width: 100,
+      width: 80,
+      sorter: (a: Service, b: Service) => (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1),
       render: (is_active: boolean) => (
         <Tag color={is_active ? 'green' : 'red'}>
           {is_active ? 'Aktív' : 'Inaktív'}
@@ -733,15 +871,24 @@ const Services: React.FC = () => {
     {
       title: 'Műveletek',
       key: 'actions',
-      width: 120,
+      width: 140,
       fixed: 'right' as const,
       render: (_: any, record: Service) => (
-        <Space>
-          <Button
-            type="link"
-            icon={<EditOutlined />}
-            onClick={() => handleEdit(record)}
-          />
+        <Space size={0}>
+          <Tooltip title="Szerkesztés">
+            <Button
+                type="link"
+                icon={<EditOutlined />}
+                onClick={() => handleEdit(record)}
+            />
+          </Tooltip>
+          <Tooltip title="Új az adatok alapján">
+             <Button
+                type="link"
+                icon={<CopyOutlined />}
+                onClick={() => handleCopy(record)}
+             />
+          </Tooltip>
           <Popconfirm
             title="Biztosan törli?"
             onConfirm={() => handleDelete(record.id)}
@@ -814,19 +961,61 @@ const Services: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <h2>Szolgáltatások</h2>
         <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
           Új szolgáltatás
         </Button>
       </div>
 
+      <Space style={{ marginBottom: 16 }}>
+        <Input
+            style={{ width: 300 }}
+            placeholder="Keresés (név, cikkszám, leírás, kategória)..."
+            prefix={<SearchOutlined />}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            allowClear
+        />
+        <TreeSelect
+            style={{ width: 250 }}
+            value={selectedCategoryFilter}
+            dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
+            treeData={buildGroupTree(serviceGroups)}
+            placeholder="Minden kategória"
+            treeDefaultExpandAll={false}
+            onChange={setSelectedCategoryFilter}
+            allowClear
+            showSearch
+            filterTreeNode={(inputValue, treeNode) => 
+               (treeNode?.title as string).toLowerCase().includes(inputValue.toLowerCase())
+            }
+        />
+        <Select 
+            value={statusFilter} 
+            onChange={setStatusFilter} 
+            style={{ width: 120 }}
+        >
+            <Option value="all">Mind</Option>
+            <Option value="active">Aktív</Option>
+            <Option value="inactive">Inaktív</Option>
+        </Select>
+      </Space>
+
       <Table
+        size="small"
         columns={columns}
-        dataSource={services}
+        dataSource={filteredServices}
         loading={loading}
         rowKey="id"
         scroll={{ x: 1200 }}
+        pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            pageSizeOptions: ['10', '20', '50', '100'],
+            showQuickJumper: true,
+            showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} szolgáltatás`,
+        }}
       />
 
       <Modal
@@ -894,8 +1083,16 @@ const Services: React.FC = () => {
                 <Input.TextArea rows={3} />
               </Form.Item>
 
-              <Form.Item name="category" label="Kategória">
-                <Input placeholder="pl. Nyomtatás, Utómunka" />
+              <Form.Item name="groups" label="Szolgáltatás csoportok">
+                 <TreeSelect
+                    treeData={buildGroupTree(serviceGroups)}
+                    treeCheckable
+                    showCheckedStrategy={TreeSelect.SHOW_PARENT}
+                    placeholder="Válassz csoportokat"
+                    style={{ width: '100%' }}
+                    allowClear
+                    switcherIcon={({ expanded }: any) => expanded ? <MinusOutlined /> : <PlusOutlined />}
+                 />
               </Form.Item>
 
               <Form.Item name="is_active" label="Aktív" valuePropName="checked">
@@ -1168,6 +1365,7 @@ const Services: React.FC = () => {
             </div>
 
             <Table
+              size="small"
               columns={costItemColumns}
               dataSource={costItems}
               rowKey="id"
@@ -1192,15 +1390,15 @@ const Services: React.FC = () => {
           onFinish={handleCostItemSubmit}
         >
           <Form.Item name="service" hidden>
-            <InputNumber />
+            <Input />
           </Form.Item>
 
           <Form.Item name="supplier" hidden>
-            <InputNumber />
+            <Input />
           </Form.Item>
 
           <Form.Item name="is_internal" hidden>
-            <InputNumber />
+             <Input /> 
           </Form.Item>
 
           <Form.Item

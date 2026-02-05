@@ -219,6 +219,7 @@ const Inventory: React.FC = () => {
                 }
             >
                 <Table
+                    size="small"
                     columns={columns}
                     dataSource={filteredInventory}
                     rowKey="id"

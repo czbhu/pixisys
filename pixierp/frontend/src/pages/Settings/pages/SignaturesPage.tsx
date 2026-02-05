@@ -35,7 +35,7 @@ const SignaturesPage: React.FC = () => {
 
   return (
     <Card title="Aláírások" extra={<Button onClick={() => { setEditing(null); form.resetFields(); setOpen(true); }}>Új</Button>}>
-  <Table rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
+  <Table size="small" rowKey="id" dataSource={Array.isArray(list) ? list : []} columns={columns as any} />
       <Modal title={editing ? 'Aláírás szerkesztése' : 'Új aláírás'} open={open} onOk={onSave} onCancel={() => setOpen(false)} width={800}>
         <Alert
           message="Elérhető változók"

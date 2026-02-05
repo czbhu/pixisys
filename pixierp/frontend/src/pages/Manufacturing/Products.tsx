@@ -27,7 +27,7 @@ import {
     ReloadOutlined,
     SearchOutlined
 } from '@ant-design/icons';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { manufacturingService, ManufacturingProduct, ProductClass, Project, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -56,6 +56,8 @@ const STATUS_COLORS: { [key: string]: string } = {
 
 const Products: React.FC = () => {
     const [searchParams] = useSearchParams();
+    const location = useLocation();
+    const navigate = useNavigate();
     const [products, setProducts] = useState<ManufacturingProduct[]>([]);
     const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
     const [projects, setProjects] = useState<Project[]>([]);
@@ -85,6 +87,38 @@ const Products: React.FC = () => {
         const create = searchParams.get('create') === 'true';
         const copyFrom = searchParams.get('copy_from');
         const editId = searchParams.get('edit');
+        const createFromCalc = searchParams.get('create_from_calc') === 'true';
+        const state = location.state as any;
+
+        if (state && state.createFromCalculator) {
+             // Handle legacy state passing (within same tab) if still used
+            setEditingProduct(state.createFromCalculator);
+            setCreateModalOpen(true);
+            navigate(location.pathname, { replace: true, state: {} });
+            return;
+        }
+
+        if (createFromCalc) {
+            try {
+                const dataStr = localStorage.getItem('create_from_calc_data');
+                if (dataStr) {
+                    const data = JSON.parse(dataStr);
+                     setEditingProduct(data);
+                     setCreateModalOpen(true);
+                     // Clean up URL but maybe keep data in storage until saved/cancelled?
+                     // Or clean up storage now.
+                     localStorage.removeItem('create_from_calc_data');
+                     // Clean URL
+                     // navigate(location.pathname, { replace: true }); // Better not to redirect immediately or we lose context? 
+                     // Users might refresh. If we remove from storage, refresh will fail. Refinement: Clear storage on successful save or cancel.
+                     // But if we remove from URL, refreshing will not trigger this block.
+                     // Let's keep URL param but rely on storage. If storage empty, do nothing.
+                }
+            } catch (e) {
+                console.error(e);
+            }
+            return;
+        }
 
         if (create) {
             if (copyFrom) {

@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import (
     ProductClassViewSet, ProjectViewSet, ManufacturingProductViewSet, 
-    CurrencyViewSet, ServiceViewSet, CalculatorTemplateViewSet, 
+    CurrencyViewSet, ServiceViewSet, ServiceGroupViewSet, CalculatorTemplateViewSet, 
     CalculationViewSet, ServiceSupplierPriceViewSet, ServiceCostItemViewSet
 )
 
@@ -11,6 +11,7 @@ router.register(r'product-classes', ProductClassViewSet)
 router.register(r'projects', ProjectViewSet)
 router.register(r'products', ManufacturingProductViewSet)
 router.register(r'currencies', CurrencyViewSet)
+router.register(r'service-groups', ServiceGroupViewSet)
 router.register(r'services', ServiceViewSet)
 router.register(r'calculator-templates', CalculatorTemplateViewSet)
 router.register(r'calculations', CalculationViewSet)

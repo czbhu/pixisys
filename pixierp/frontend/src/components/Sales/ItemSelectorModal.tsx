@@ -575,8 +575,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           activeKey={activeKey}
           onChange={(k) => {
             setActiveKey(k as ItemType);
-            setSelected(null);
-            form.resetFields();
+            // Don't reset selection/form when switching tabs to preserve data
+            // setSelected(null);
+            // form.resetFields();
           }}
           items={tabItems as any}
         />

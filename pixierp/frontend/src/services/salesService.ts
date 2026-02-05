@@ -359,11 +359,11 @@ export const salesService = {
         return response.data;
     },
 
-    async sendQuoteRequestEmail(id: number, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any }) {
+    async sendQuoteRequestEmail(id: number, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string }) {
         const response = await api.post(`/sales/quote-requests/${id}/send_email/`, data);
         return response.data;
     },
-    async renderQuoteRequestEmail(id: number, data: { template_key?: string; signature_key?: string; context?: any }) {
+    async renderQuoteRequestEmail(id: number, data: { template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string }) {
         const response = await api.post(`/sales/quote-requests/${id}/render_email/`, data);
         return response.data;
     },
@@ -488,6 +488,10 @@ export const salesService = {
     // Work Logs
     async getWorkLogs(params?: any) {
         const response = await api.get('/sales/work-logs/', { params });
+        return response.data;
+    },
+    async getFrequentWorkflows() {
+        const response = await api.get('/sales/work-logs/frequent_workflows/');
         return response.data;
     },
     async getActiveWorkLog() {

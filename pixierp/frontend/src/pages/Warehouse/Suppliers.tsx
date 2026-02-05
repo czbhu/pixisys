@@ -263,6 +263,7 @@ const Suppliers: React.FC = () => {
                 }
             >
                 <Table
+                    size="small"
                     columns={columns}
                     dataSource={filteredSuppliers}
                     rowKey="id"

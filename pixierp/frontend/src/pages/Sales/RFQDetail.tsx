@@ -1,7 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Tag, Divider, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import { salesService } from '../../services/salesService';
+import api from '../../services/api';
 import { manufacturingService } from '../../services/manufacturingService';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
@@ -55,6 +59,9 @@ const RFQDetail: React.FC = () => {
   const [navPreviewSel, setNavPreviewSel] = useState<Record<string, boolean>>({});
   const [navDebug, setNavDebug] = useState<boolean>(false);
   const selectedCompanyId = Form.useWatch('company_id', formBasic);
+  
+  const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
+  const [signatureTemplates, setSignatureTemplates] = useState<any[]>([]);
 
   const contactOptionLabel = (p: any) => {
     const nameParts = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
@@ -385,7 +392,16 @@ const RFQDetail: React.FC = () => {
             message.error(e?.response?.data?.error || 'Nem sikerült ajánlatot készíteni');
           }
         }}>Készíts ajánlatot</Button>
-        <Button onClick={() => setSendOpen(true)}>Kiküldés</Button>
+        <Button onClick={() => {
+            setSendOpen(true);
+            Promise.all([
+                api.get('/core/email-templates/'),
+                api.get('/core/signature-templates/'),
+            ]).then(([tplRes, sigRes]) => {
+                setEmailTemplates(tplRes.data.results || tplRes.data);
+                setSignatureTemplates(sigRes.data.results || sigRes.data);
+            }).catch(err => console.error("Could not load templates", err));
+        }}>Kiküldés</Button>
         <Button onClick={async () => {
           try {
             const res = await salesService.copyQuoteRequest(Number(id));
@@ -940,31 +956,60 @@ const RFQDetail: React.FC = () => {
         } catch {
           message.error('Nem sikerült elküldeni az e-mailt');
         }
-      }} onCancel={() => setSendOpen(false)}>
-        <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }}>
+      }} onCancel={() => setSendOpen(false)} width={900}>
+        <Form 
+            layout="vertical" 
+            form={sendForm} 
+            initialValues={{ template_key: 'rfq_send', signature_key: 'default' }}
+            onValuesChange={async (changedValues, allValues) => {
+                // Debounce or just call it. For now direct.
+                try { 
+                    const p = await salesService.renderQuoteRequestEmail(Number(id), { 
+                        template_key: allValues.template_key, 
+                        signature_key: allValues.signature_key, 
+                        context: allValues.context, 
+                        ...(allValues.subject ? { subject: allValues.subject } : {}), 
+                        ...(allValues.body ? { body: allValues.body } : {}) 
+                    }); 
+                    setPreview(p); 
+                } catch {}
+            }}
+        >
           <Form.Item label="Címzettek" name="to" rules={[{ required: true }]}>
             <Input placeholder="email1@example.com, email2@example.com" />
           </Form.Item>
           <Form.Item label="Másolat" name="cc">
             <Input placeholder="cc@example.com" />
           </Form.Item>
-          <Form.Item label="Sablon kulcs" name="template_key">
-            <Input placeholder="rfq_send" />
-          </Form.Item>
-          <Form.Item label="Aláírás kulcs" name="signature_key">
-            <Input placeholder="default" />
-          </Form.Item>
+          <Row gutter={16}>
+            <Col span={12}>
+                <Form.Item label="Sablon" name="template_key">
+                    <Select showSearch optionFilterProp="children">
+                        {emailTemplates.map(t => (
+                            <Select.Option key={t.key} value={t.key}>{t.name}</Select.Option>
+                        ))}
+                        <Select.Option key="rfq_send" value="rfq_send">Alapértelmezett (rfq_send)</Select.Option>
+                    </Select>
+                </Form.Item>
+            </Col>
+            <Col span={12}>
+                <Form.Item label="Aláírás" name="signature_key">
+                    <Select showSearch optionFilterProp="children">
+                        <Select.Option value="">Nincs</Select.Option>
+                        <Select.Option value="default">User alapértelmezett</Select.Option>
+                        {signatureTemplates.map(t => (
+                            <Select.Option key={t.key} value={t.key}>{t.name}</Select.Option>
+                        ))}
+                    </Select>
+                </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item label="Tárgy" name="subject">
-            <Input placeholder="E-mail tárgya" onChange={async () => {
-              const v = await sendForm.getFieldsValue();
-              try { const p = await salesService.renderQuoteRequestEmail(Number(id), { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) }); setPreview(p); } catch {}
-            }} />
+            <Input placeholder="E-mail tárgya" />
           </Form.Item>
           <Form.Item label="Törzs" name="body">
-            <Input.TextArea rows={8} placeholder="E-mail törzse" onChange={async () => {
-              const v = await sendForm.getFieldsValue();
-              try { const p = await salesService.renderQuoteRequestEmail(Number(id), { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) }); setPreview(p); } catch {}
-            }} />
+             <ReactQuill theme="snow" style={{ height: 300, marginBottom: 50 }} />
           </Form.Item>
           <Button onClick={async () => {
             const v = await sendForm.validateFields();
@@ -974,9 +1019,9 @@ const RFQDetail: React.FC = () => {
             } catch {
               message.error('Előnézet nem elérhető');
             }
-          }}>Előnézet</Button>
+          }}>Előnézet Frissítése</Button>
           {rfq?.public_order_url && (
-            <div style={{ padding: 8, background: '#fafafa', border: '1px solid #eee', borderRadius: 4 }}>
+            <div style={{ padding: 8, background: '#fafafa', border: '1px solid #eee', borderRadius: 4, marginTop: 16 }}>
               Megrendelő link: <a href={rfq.public_order_url} target="_blank" rel="noreferrer">{rfq.public_order_url}</a>
             </div>
           )}

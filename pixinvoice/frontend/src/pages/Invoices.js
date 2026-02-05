@@ -14,9 +14,11 @@ import {
   FileDiff,
   Mail,
   RefreshCw,
-  ArrowUp
+  ArrowUp,
+  Calendar
 } from 'lucide-react';
 import styled from 'styled-components';
+import { Tooltip } from 'antd';
 import { toast } from 'react-toastify';
 import { invoiceAPI, invoiceBlockAPI, emailSettingsAPI } from '../services/api';
 import EmailModal from '../components/EmailModal';
@@ -67,6 +69,34 @@ const FilterSelect = styled.select`
   border-radius: 4px;
   font-size: 14px;
   background: white;
+`;
+
+const DateInput = styled.input`
+  padding: 8px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 13px; // slightly smaller to fit
+  background: white;
+  width: 140px;
+`;
+
+const FilterButton = styled.button`
+  padding: 6px 12px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #555;
+  cursor: pointer;
+  font-size: 13px;
+  &:hover { background: #e9ecef; }
+`;
+
+const FilterGroup = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-left: 1px solid #ddd;
+  padding-left: 12px;
 `;
 
 const ActionButton = styled(Link)`
@@ -235,10 +265,27 @@ const EmptyState = styled.div`
 `;
 
 const Invoices = () => {
+  const getNavErrorMessage = (response) => {
+    if (!response) return null;
+    try {
+      const match = response.match(/<(?:\w+:)?message>\s*(.*?)\s*<\/(?:\w+:)?message>/);
+      if (match && match[1]) return match[1];
+      // Ha nem XML vagy nincs üzenet tag, és rövid, akkor visszaadjuk
+      if (response.length < 100) return response;
+      return "Hiba részleteiért lásd a naplót.";
+    } catch (e) {
+      return "Ismeretlen hiba";
+    }
+  };
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [blockFilter, setBlockFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [issueDateFrom, setIssueDateFrom] = useState('');
+  const [issueDateTo, setIssueDateTo] = useState('');
+  const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
+  const [deliveryDateTo, setDeliveryDateTo] = useState('');
   const [selectedCompanyId, setSelectedCompanyId] = useState(() => {
     try { return localStorage.getItem('selectedCompanyId'); } catch { return null; }
   });
@@ -254,6 +301,42 @@ const Invoices = () => {
   const [stornoModalOpen, setStornoModalOpen] = useState(false);
   const [stornoInvoice, setStornoInvoice] = useState(null);
   const [stornoProcessing, setStornoProcessing] = useState(false);
+  const [dateModalOpen, setDateModalOpen] = useState(false);
+
+  // Helper for quick dates
+  const applyQuickDate = (field, type) => {
+    const today = new Date();
+    const formatDate = (date) => date.toISOString().split('T')[0];
+    
+    let from = '';
+    let to = '';
+    
+    if (type === 'today') {
+      const d = formatDate(today);
+      from = d;
+      to = d;
+    } else if (type === 'week') {
+      const day = today.getDay() || 7; 
+      if (day !== 1) today.setHours(-24 * (day - 1));
+      from = formatDate(today);
+      today.setHours(24 * 6);
+      to = formatDate(today);
+    } else if (type === 'month') {
+      from = formatDate(new Date(today.getFullYear(), today.getMonth(), 1));
+      to = formatDate(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+    } else if (type === 'prev_month') {
+      from = formatDate(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+      to = formatDate(new Date(today.getFullYear(), today.getMonth(), 0));
+    }
+
+    if (field === 'issue') {
+      setIssueDateFrom(from);
+      setIssueDateTo(to);
+    } else {
+      setDeliveryDateFrom(from);
+      setDeliveryDateTo(to);
+    }
+  };
 
   // Keep company selection in sync with sidebar/localStorage
   React.useEffect(() => {
@@ -279,11 +362,22 @@ const Invoices = () => {
   );
 
   const { data: invoices, isLoading, error } = useQuery(
-    ['invoices', { search: searchTerm, status: statusFilter, block: blockFilter, page: currentPage, company_id: selectedCompanyId }],
+    ['invoices', { 
+      search: searchTerm, 
+      status: statusFilter, 
+      block: blockFilter, 
+      page: currentPage, 
+      company_id: selectedCompanyId,
+      issueDateFrom, issueDateTo, deliveryDateFrom, deliveryDateTo
+    }],
     () => invoiceAPI.getInvoices({
       search: searchTerm || undefined,
       status: statusFilter || undefined,
       invoice_block: blockFilter || undefined,
+      issue_date_from: issueDateFrom || undefined,
+      issue_date_to: issueDateTo || undefined,
+      delivery_date_from: deliveryDateFrom || undefined,
+      delivery_date_to: deliveryDateTo || undefined,
       page: currentPage,
       company_id: selectedCompanyId || undefined,
     }),
@@ -422,7 +516,7 @@ const Invoices = () => {
   const companyWebsite = company.website || '';
   const companyAddr = [company.postal_code, company.city, [company.street_name, company.street_number].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const companyTax = company.full_tax_number || company.tax_number || '';
-  const row = `${invoice.invoice_number}\t${invoice.issue_date}\t${(invoice.total_net_amount||0).toLocaleString('hu-HU')} (HUF)\t${(invoice.total_vat_amount||0).toLocaleString('hu-HU')} (HUF)`;
+  const row = `${invoice.invoice_number}\t${invoice.issue_date}\t${(invoice.total_net_amount||0).toLocaleString('hu-HU', {minimumFractionDigits: 0, maximumFractionDigits: 0})} (HUF)\t${(invoice.total_vat_amount||0).toLocaleString('hu-HU', {minimumFractionDigits: 0, maximumFractionDigits: 0})} (HUF)`;
   let body = [
     `Tisztelt ${customer.name || 'Ügyfelünk'}!`,
     '',
@@ -444,7 +538,7 @@ const Invoices = () => {
     companyShort,
     `${companyAddr}`,
     `${companyTax}`,
-  ].join('\n');
+  ].join('<br>');
     let defaultFrom = invoice?.company?.email || '';
     let defaultReplyTo = defaultFrom;
     let defaultUseThunderbird = false;
@@ -469,8 +563,8 @@ const Invoices = () => {
              const lines = invoice.items.map(item => {
                  const n = item.name || '';
                  const q = `${item.quantity || 0} ${item.unit || ''}`;
-                 const net = (item.net_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
-                 const gr = (item.gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+                 const net = (item.net_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+                 const gr = (item.gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
                  return `${n}\t${q}\t${net}\t${gr}`;
              });
              if (lines.length > 0) itemsTable += '\n' + lines.join('\n');
@@ -481,7 +575,7 @@ const Invoices = () => {
             .replace(/{customer_name}/g, invoice.customer?.name || '')
             .replace(/{company_name}/g, invoice.company?.name || '')
             .replace(/{due_date}/g, invoice.due_date || '')
-            .replace(/{total}/g, `${(invoice.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${invoice.currency || ''}`)
+            .replace(/{total}/g, `${(invoice.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${invoice.currency || ''}`)
             .replace(/{invoice_items_table}/g, itemsTable);
 
           if (s.default_subject_template) subject = fill(s.default_subject_template);
@@ -540,13 +634,23 @@ const Invoices = () => {
             .replace('{customer_name}', (inv?.customer?.name) || list[0]?.customer?.name || '')
             .replace('{company_name}', list[0]?.company?.name || '');
           if (s.default_subject_template) subject = fill(s.default_subject_template, list[0]);
-          if (s.default_body_template) body = fill(s.default_body_template, list[0]);
+          // Csak akkor használjuk a sablont, ha EGYETLEN számlát küldünk.
+          // Több számla esetén a generált listát használjuk.
+          if (s.default_body_template && list.length === 1) body = fill(s.default_body_template, list[0]);
           const anyFx = list.some(inv => (inv.currency || '').toUpperCase() !== 'HUF');
           if (anyFx) {
             const enSubj = fill(s.subject_template_en, list[0]) || `Invoice ${list[0]?.invoice_number || ''}`;
-            const enBody = fill(s.body_template_en, list[0]) || `Dear ${list[0]?.customer?.name || 'Customer'},\n\nPlease find attached invoice(s).\n\nBest regards,\n${list[0]?.company?.name || ''}`;
+            // Angol törzs: csak akkor használjuk a sablont, ha 1 db számla van.
+            let enBody = '';
+            if (list.length === 1) {
+                enBody = fill(s.body_template_en, list[0]) || `Dear ${list[0]?.customer?.name || 'Customer'},\n\nPlease find attached invoice(s).\n\nBest regards,\n${list[0]?.company?.name || ''}`;
+            }
+            
             subject = subject ? `${subject} / ${enSubj}` : enSubj;
-            body = body ? `${body}\n\n---\n\n${enBody}` : enBody;
+            
+            if (enBody) {
+                body = body ? `${body}\n\n---\n\n${enBody}` : enBody;
+            }
           }
           if (defaultUseThunderbird) {
             try {
@@ -579,16 +683,16 @@ const Invoices = () => {
     } catch (e) {}
 
     if (!body) {
-      const rows = [
-        'Számla sorszám\tKelt\tNetto(HUF)\tÁfa(HUF)'
-      ];
+      const rows = [];
       list.forEach(inv => {
-        rows.push(`${inv.invoice_number}\t${inv.issue_date}\t${(inv.total_net_amount||0).toLocaleString('hu-HU')} (HUF)\t${(inv.total_vat_amount||0).toLocaleString('hu-HU')} (HUF)`);
+        // Formátum: [Kelt dátum] - [Számlaszám]
+        rows.push(`${inv.issue_date} - ${inv.invoice_number}`);
       });
+      
       const header = [
-        `Tisztelt ${list[0]?.customer?.name || 'Ügyfelünk'}!`,
+        'Tisztelt Ügyfelünk!',
         '',
-        'Mellékelve küldöm az alábbi számlát/számlákat:',
+        'Mellékelve küldöm az alábbi számlákat:',
         '',
       ];
       const footer = [
@@ -597,9 +701,17 @@ const Invoices = () => {
         '',
         'A küldött számla nem E-számla, a befogadónak a kinyomtatott, papír alapú számlát kell könyvelésében rögzítenie, tárolnia.',
         '',
-        'A számlák aláírás és pecsét nélkül is érvényes!'
+        'A számlák aláírás és pecsét nélkül is érvényes!',
+        '--',
+        `Üdvözlettel,`,
+        list[0]?.company?.name || ''
       ];
-      body = [...header, ...rows, ...footer].join('\n');
+
+      // Ha van beállított aláírás (company adatokból), azt is hozzáadhatnánk, 
+      // de a kérés szerint csak a sorszámok formátuma a lényeg. 
+      // A fenti footer egyezik a backend-es generálással.
+      // HTML editorhoz <br> szükséges a sortöréshez
+      body = [...header, ...rows, ...footer].join('<br>');
     }
     if (!subject) {
       subject = list.length === 1 ? `Számla ${list[0].invoice_number}` : `Számlák: ${list.map(i=>i.invoice_number).join(', ')}`;
@@ -714,6 +826,14 @@ const Invoices = () => {
               </option>
             ))}
           </FilterSelect>
+          
+          <FilterButton onClick={() => setDateModalOpen(true)} style={{display:'flex', alignItems:'center', gap:6}}>
+            <Calendar size={14} /> Dátum szűrés
+            {(issueDateFrom || issueDateTo || deliveryDateFrom || deliveryDateTo) && (
+                <span style={{width:8, height:8, borderRadius:'100%', background:'#3498db'}}></span>
+            )}
+          </FilterButton>
+
           <ActionButton to="/invoices/new">
             <Plus size={16} />
             Új számla
@@ -845,9 +965,17 @@ const Invoices = () => {
                   })()}
                 </TableCell>
                 <TableCell>
-                  <StatusBadge status={invoice.status}>
-                    {getStatusLabel(invoice.status)}
-                  </StatusBadge>
+                  {invoice.status === 'nav_rejected' && invoice.nav_response ? (
+                    <Tooltip title={getNavErrorMessage(invoice.nav_response)}>
+                      <StatusBadge status={invoice.status}>
+                        {getStatusLabel(invoice.status)}
+                      </StatusBadge>
+                    </Tooltip>
+                  ) : (
+                    <StatusBadge status={invoice.status}>
+                      {getStatusLabel(invoice.status)}
+                    </StatusBadge>
+                  )}
                   {navStatusLoading[invoice.id] && (
                     <span style={{ marginLeft: 8, fontSize: 12, color: '#7f8c8d' }}>
                       (lekérdezés...)
@@ -1016,8 +1144,10 @@ const Invoices = () => {
         defaultSubject={emailDefaults.defaultSubject}
         defaultBody={emailDefaults.defaultBody}
         customerId={bulkMode ? null : emailInvoice?.customer?.id}
-        invoiceId={bulkMode ? null : emailInvoice?.id}
-        attachmentsHint={bulkMode ? 'A kijelölt számlák PDF-jei csatolva lesznek a levélhez.' : null}
+        attachments={bulkMode 
+          ? (invoices?.results || []).filter(inv => selectedIds.has(inv.id)) 
+          : (emailInvoice ? [emailInvoice] : [])
+        }
         defaultUseThunderbird={emailDefaults.defaultUseThunderbird}
         defaultThunderbirdPath={emailDefaults.defaultThunderbirdPath}
       />
@@ -1128,6 +1258,75 @@ const Invoices = () => {
         </div>
       </Modal>
     )}
+
+      <Modal
+        title="Dátum szűrés"
+        isOpen={dateModalOpen}
+        onClose={() => setDateModalOpen(false)}
+      >
+          <div style={{display:'flex', flexDirection:'column', gap:20, minWidth: 400}}>
+             {/* Issue Date Section */}
+             <div>
+                <h4 style={{marginBottom:10, marginTop:0, color: '#2c3e50', fontSize: '15px'}}>Kelt dátum (Issue)</h4>
+                <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
+                   <FilterButton onClick={() => applyQuickDate('issue', 'today')}>Ma</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('issue', 'week')}>Hét</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('issue', 'month')}>Hónap</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('issue', 'prev_month')}>Előző hó</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('issue', 'clear')} style={{ color:'#e74c3c' }}>Törlés</FilterButton>
+                </div>
+                <div style={{display:'flex', alignItems:'center', gap:8, background: '#f8f9fa', padding: 12, borderRadius: 6, border:'1px solid #eee'}}>
+                   <div style={{flex:1}}>
+                      <small style={{display:'block', marginBottom:4, color:'#777'}}>Mettől</small>
+                      <DateInput type="date" value={issueDateFrom} onChange={(e) => setIssueDateFrom(e.target.value)} style={{width: '100%'}} />
+                   </div>
+                   <span style={{color:'#999', marginTop: 16}}>&mdash;</span>
+                   <div style={{flex:1}}>
+                      <small style={{display:'block', marginBottom:4, color:'#777'}}>Meddig</small>
+                      <DateInput type="date" value={issueDateTo} onChange={(e) => setIssueDateTo(e.target.value)} style={{width: '100%'}} />
+                   </div>
+                </div>
+             </div>
+             
+             <div style={{borderBottom:'1px solid #eee'}}></div>
+
+             {/* Delivery Date Section */}
+             <div>
+                <h4 style={{marginBottom:10, marginTop:0, color: '#2c3e50', fontSize: '15px'}}>Teljesítés dátuma (Delivery)</h4>
+                <div style={{display:'flex', gap:6, flexWrap:'wrap', marginBottom:12}}>
+                   <FilterButton onClick={() => applyQuickDate('delivery', 'today')}>Ma</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('delivery', 'week')}>Hét</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('delivery', 'month')}>Hónap</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('delivery', 'prev_month')}>Előző hó</FilterButton>
+                   <FilterButton onClick={() => applyQuickDate('delivery', 'clear')} style={{ color:'#e74c3c' }}>Törlés</FilterButton>
+                </div>
+                <div style={{display:'flex', alignItems:'center', gap:8, background: '#f8f9fa', padding: 12, borderRadius: 6, border:'1px solid #eee'}}>
+                   <div style={{flex:1}}>
+                      <small style={{display:'block', marginBottom:4, color:'#777'}}>Mettől</small>
+                      <DateInput type="date" value={deliveryDateFrom} onChange={(e) => setDeliveryDateFrom(e.target.value)} style={{width: '100%'}} />
+                   </div>
+                   <span style={{color:'#999', marginTop: 16}}>&mdash;</span>
+                   <div style={{flex:1}}>
+                        <small style={{display:'block', marginBottom:4, color:'#777'}}>Meddig</small>
+                        <DateInput type="date" value={deliveryDateTo} onChange={(e) => setDeliveryDateTo(e.target.value)} style={{width: '100%'}} />
+                   </div>
+                </div>
+             </div>
+             
+             <div style={{display:'flex', justifyContent:'flex-end', marginTop:10, paddingTop: 10, borderTop: '1px solid #eee'}}>
+                 <button onClick={() => setDateModalOpen(false)} style={{
+                    padding: '8px 24px',
+                    backgroundColor: '#3498db',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    fontSize: '14px'
+                }}>Rendben</button>
+             </div>
+          </div>
+      </Modal>
   </>
   );
 };

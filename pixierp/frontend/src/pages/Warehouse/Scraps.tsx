@@ -200,6 +200,7 @@ const Scraps: React.FC = () => {
       </div>
 
       <Table
+        size="small"
         columns={columns}
         dataSource={scraps}
         loading={loading}

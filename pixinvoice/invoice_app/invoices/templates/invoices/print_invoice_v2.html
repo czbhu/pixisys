@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="hu">
+{% load invoice_extras %}
 <head>
     <meta charset="UTF-8">
     <title>{{ invoice.invoice_number }}</title>
@@ -276,7 +277,7 @@
                                     </td>
                                     <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: right;">
                                         <strong style="font-size: 7pt;">{% if invoice.customer %}{{ invoice.customer.name }}{% else %}—{% endif %}</strong><br/>
-                                        Fizetendő: <strong>{{ invoice.total_gross_amount|floatformat:2 }} {{ invoice.currency }}</strong>
+                                        Fizetendő: <strong>{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }} {{ invoice.currency }}</strong>
                                     </td>
                                 </tr>
                             </tbody>
@@ -308,7 +309,11 @@
                                             <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}</div>
                                         {% endif %}
                                         {% if invoice.company.street_name %}
-                                            <div>{{ invoice.company.street_name }} {{ invoice.company.street_number }}</div>
+                                            <div>
+                                                {{ invoice.company.street_name }} 
+                                                {{ invoice.company.public_place_category|default:"" }}
+                                                {{ invoice.company.street_number }}
+                                            </div>
                                         {% endif %}
                                         
                                         {% if invoice.company.email or invoice.company.phone %}
@@ -323,11 +328,14 @@
                                                 <div style="font-weight: 600;">Bankszámlák{% if bilingual %} <span class="secondary-label">/ Bank Accounts</span>{% endif %}</div>
                                                 {% for acc in invoice.company.bank_accounts.all %}
                                                     {% if acc.currency == invoice.currency %}
-                                                    <div>
-                                                        {% if acc.account_number %}{{ acc.currency }}: {{ acc.account_number }} {% endif %}
-                                                        {% if acc.iban %}IBAN: {{ acc.iban }} {% endif %}
-                                                        {% if acc.bank_name %}({{ acc.bank_name }}){% endif %}
-                                                    </div>
+                                                        {# If a default bank account is set on the block, only show that one. Compare IDs properly #}
+                                                        {% if not block.default_bank_account or block.default_bank_account.id == acc.id %}
+                                                            <div>
+                                                                {% if acc.account_number %}{{ acc.currency }}: {{ acc.account_number }} {% endif %}
+                                                                {% if acc.iban %}IBAN: {{ acc.iban }} {% endif %}
+                                                                {% if acc.bank_name %}({{ acc.bank_name }}){% endif %}
+                                                            </div>
+                                                        {% endif %}
                                                     {% endif %}
                                                 {% endfor %}
                                             </div>
@@ -382,14 +390,12 @@
                                     <div class="inv-highlight">
                                         <div class="inv-amount">
                                             <span class="label">Fizetendő{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %}:</span>
-                                            <span class="value">{{ invoice.total_gross_amount|floatformat:2 }} {{ invoice.currency }}</span>
+                                            <span class="value">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }} {{ invoice.currency }}</span>
                                         </div>
-                                        {% if invoice.payment_method == 'transfer' and invoice.due_date %}
-                                            <div class="inv-deadline">
-                                                <span class="muted">Fizetési határidő{% if bilingual %} <span class="secondary-label">/ Due Date</span>{% endif %}</span>
-                                                <span class="date-pill" style="font-weight:600; margin-left:3mm;">{{ invoice.due_date|date:"Y-m-d" }}</span>
-                                            </div>
-                                        {% endif %}
+                                        <div class="inv-deadline">
+                                            <span class="muted">Fizetési határidő{% if bilingual %} <span class="secondary-label">/ Due Date</span>{% endif %}</span>
+                                            <span class="date-pill" style="font-weight:600; margin-left:3mm;">{{ invoice.due_date|date:"Y-m-d" }}</span>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -419,7 +425,10 @@
                                     <div>
                                         {% if invoice.payment_method == 'transfer' %}Átutalás{% if bilingual %} / Transfer{% endif %}
                                         {% elif invoice.payment_method == 'cash' %}Készpénz{% if bilingual %} / Cash{% endif %}
-                                        {% else %}{{ invoice.payment_method }}{% endif %}
+                                        {% elif invoice.payment_method == 'card' %}Bankkártya{% if bilingual %} / Card{% endif %}
+                                        {% elif invoice.payment_method == 'voucher' %}Utalvány{% if bilingual %} / Voucher{% endif %}
+                                        {% elif invoice.payment_method == 'cod' %}Utánvét{% if bilingual %} / COD{% endif %}
+                                        {% else %}{{ invoice.get_payment_method_display|default:invoice.payment_method }}{% endif %}
                                     </div>
                                 </div>
                             </div>
@@ -450,9 +459,9 @@
                                 {% for item in invoice.items.all %}
                                 <tr>
                                     <td class="col-desc">{{ item.description }}</td>
-                                    <td class="cen col-qty">{{ item.quantity|floatformat:-2 }}</td>
+                                    <td class="cen col-qty">{{ item.quantity|invoice_quantity_format }}</td>
                                     <td class="cen col-unit">{{ item.unit_of_measure|default:"db" }}</td>
-                                    <td class="num col-unitnet">{{ item.unit_price|floatformat:2 }}</td>
+                                    <td class="num col-unitnet">{{ item.unit_price|invoice_number_format }}</td>
                                     <td class="cen col-vatrate">
                                         {% if item.vat_type and item.vat_type.category != 'PERCENT' %}
                                             <span style="font-size: 8pt;">{{ item.vat_type.name }}</span>
@@ -460,9 +469,9 @@
                                             {% if item.vat_rate|add:0 == item.vat_rate %}{{ item.vat_rate|floatformat:0 }}%{% else %}{{ item.vat_rate }}%{% endif %}
                                         {% endif %}
                                     </td>
-                                    <td class="num col-net">{{ item.net_amount|floatformat:2 }}</td>
-                                    <td class="num col-vat">{{ item.vat_amount|floatformat:2 }}</td>
-                                    <td class="num col-gross">{{ item.gross_amount|floatformat:2 }}</td>
+                                    <td class="num col-net">{{ item.net_amount|invoice_number_format }}</td>
+                                    <td class="num col-vat">{{ item.vat_amount|invoice_number_format }}</td>
+                                    <td class="num col-gross">{{ item.gross_amount|invoice_number_format }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -491,28 +500,44 @@
                                     <td class="cen vat-desc-col">
                                         {{ row.label }}
                                     </td>
-                                    <td class="num">{{ row.net|floatformat:2 }}</td>
-                                    <td class="num">{{ row.vat|floatformat:2 }}</td>
-                                    <td class="num">{{ row.gross|floatformat:2 }}</td>
+                                    <td class="num">{{ row.net|invoice_number_format }}</td>
+                                    <td class="num">{{ row.vat|invoice_number_format }}</td>
+                                    <td class="num">{{ row.gross|invoice_number_format }}</td>
                                   </tr>
                                   {% endfor %}
+
+                                  {% if rounding_diff and rounding_diff|floatformat:2 != "0.00" %}
+                                  <tr>
+                                    <td class="cen">Kerekítés{% if bilingual %} <span class="secondary-label">/ Rounding</span>{% endif %}</td>
+                                    <td class="num"></td>
+                                    <td class="num"></td>
+                                    <td class="num">{{ rounding_diff|invoice_number_format }}</td>
+                                  </tr>
+                                  {% endif %}
+
                                   <tr>
                                     <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} ({{ invoice.currency }})</th>
-                                    <th class="num">{{ invoice.total_net_amount|floatformat:2 }}</th>
-                                    <th class="num">{{ invoice.total_vat_amount|floatformat:2 }}</th>
-                                    <th class="num inv-gross-total">{{ invoice.total_gross_amount|floatformat:2 }}</th>
+                                    <th class="num">{{ invoice.total_net_amount|invoice_number_format }}</th>
+                                    <th class="num">{{ invoice.total_vat_amount|invoice_number_format }}</th>
+                                    <th class="num inv-gross-total">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }}</th>
                                   </tr>
                                   
                                   {% if huf_totals %}
                                   <tr style="border-top: 2px solid #000;">
                                     <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} (HUF)</th>
-                                    <th class="num">{{ huf_totals.net|floatformat:2 }}</th>
-                                    <th class="num">{{ huf_totals.vat|floatformat:2 }}</th>
-                                    <th class="num inv-gross-total">{{ huf_totals.gross|floatformat:2 }} HUF</th>
+                                    <th class="num">{{ huf_totals.net|invoice_number_format }}</th>
+                                    <th class="num">{{ huf_totals.vat|invoice_number_format }}</th>
+                                    <th class="num inv-gross-total">{{ huf_totals.gross|invoice_number_format }} HUF</th>
                                   </tr>
                                   {% endif %}
                                 </tbody>
                             </table>
+
+                            {% if amount_words %}
+                            <div class="inv-words" style="margin-top: 4mm;">
+                                {{ amount_words }}
+                            </div>
+                            {% endif %}
                         
                             {% if invoice.notes %}
                             <div class="inv-notes">
@@ -534,8 +559,6 @@
                             <div style="margin-bottom: 2mm;">
                                 {% if invoice.payment_method == 'transfer' %}
                                     Kérjük az összeget átutalással rendezni a fenti bankszámlára.{% if bilingual %} <span class="secondary-label">Please transfer the amount to the bank account above.</span>{% endif %}
-                                {% else %}
-                                    Köszönjük a fizetést.{% if bilingual %} <span class="secondary-label">Thank you for your payment.</span>{% endif %}
                                 {% endif %}
                             </div>
 

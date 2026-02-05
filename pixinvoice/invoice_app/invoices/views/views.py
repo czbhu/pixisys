@@ -109,6 +109,32 @@ ROLE_MENU_OPTIONS = [
 logger = logging.getLogger(__name__)
 
 
+def get_fuzzy_search_regex(search_term):
+    """
+    Készít egy regex-et a kereséshez, ami nem tesz különbséget az ékezetes és ékezet nélküli magánhangzók között.
+    Pl. 'a' keresése megtalálja az 'á'-t is, és fordítva.
+    """
+    if not search_term:
+        return None
+    
+    term_lower = search_term.lower()
+    replacements = {
+        'a': '[aá]', 'á': '[aá]',
+        'e': '[eé]', 'é': '[eé]',
+        'i': '[ií]', 'í': '[ií]',
+        'o': '[oóöő]', 'ó': '[oóöő]', 'ö': '[oóöő]', 'ő': '[oóöő]',
+        'u': '[uúüű]', 'ú': '[uúüű]', 'ü': '[uúüű]', 'ű': '[uúüű]',
+    }
+    
+    pattern = []
+    for char in term_lower:
+        if char in replacements:
+            pattern.append(replacements[char])
+        else:
+            pattern.append(re.escape(char))
+    return "".join(pattern)
+
+
 class CurrencyViewSet(viewsets.ModelViewSet):
     queryset = Currency.objects.all()
     serializer_class = CurrencySerializer
@@ -153,9 +179,11 @@ class CustomerViewSet(viewsets.ModelViewSet):
         queryset = Customer.objects.all()
         search = self.request.query_params.get('search', None)
         if search:
+            search_regex = get_fuzzy_search_regex(search)
             queryset = queryset.filter(
-                Q(name__icontains=search) |
+                Q(name__iregex=search_regex) |
                 Q(tax_number__icontains=search) |
+                Q(eu_tax_number__icontains=search) |
                 Q(email__icontains=search)
             )
         type_filter = self.request.query_params.get('type') or self.request.query_params.get('kind')
@@ -226,8 +254,51 @@ class CustomerViewSet(viewsets.ModelViewSet):
         
         # Remove country code if present (2 chars)
         country_code = vat_number[:2].upper()
-        number_part = vat_number[2:]
+        # Some Spanish VATs (and others likely) have an extra letter prefix that needs special handling
+        # OR VIES expects clean number without the country code prefix.
         
+        # User reported ESB80021462 -> VIES says valid but "Corrected VAT Number B80021462"
+        # and "The country ISO code has been removed from the VAT number."
+        # This implies we sent ES B80021462. Wait, no.
+        # If user enters ESB80021462
+        # country_code = ES
+        # number_part = B80021462
+        # Payload: { countryCode: ES, vatNumber: B80021462 }
+        # This SHOULD work if the VAT number is B80021462.
+        
+        # However, sometimes users enter without country code, or just pure numbers.
+        # For ES, NIF can start with letter.
+        
+        # Let's trust the first 2 letters as country code only if they interrupt with ISO codes.
+        # But if the user inputs something that DOESN'T start with country code? 
+        # (frontend label says EU tax number, usually implies full format).
+        
+        number_part = vat_number[2:]
+
+        # Special fallback for Spain (ES) specifically or generally:
+        # If VIES returns "invalid" but we suspect it might be due to prefix handling (like leading 'ES' stripping),
+        # we can retry.
+        # But here, ES is the country code. The remainder is B80021462. This seems correct.
+        
+        # The user says: "VIES website says valid... Original VAT Number ESB80021462 ... Corrected VAT Number B80021462 ... The country ISO code has been removed from the VAT number."
+        # This message on VIES usually appears when you type the full number including prefix into the "VAT Number" field on their web form select the country separately.
+        
+        # Wait, if I send {countryCode: "ES", vatNumber: "B80021462"} -> It should be valid immediately.
+        # If I send {countryCode: "ES", vatNumber: "ESB80021462"} -> VIES API might fail or strip it?
+        
+        # If the user typed "ESB80021462", 
+        # country_code = "ES"
+        # number_part = "B80021462"
+        # payload = {countryCode: "ES", vatNumber: "B80021462"}
+        # This looks correct.
+        
+        # Maybe the user typed "ES ESB80021462"? Or something odd?
+        # Or maybe the "B" is part of the number and my splitting logic is fine.
+
+        # Let's check if the number_part STILL starts with the country code?
+        if number_part.upper().startswith(country_code):
+             number_part = number_part[2:]
+             
         # Check if first 2 chars are letters
         if not country_code.isalpha():
              return Response({'error': 'Az adószámnak kétbetűs országkóddal kell kezdődnie (pl. DE123456789)'}, status=status.HTTP_400_BAD_REQUEST)
@@ -243,6 +314,24 @@ class CustomerViewSet(viewsets.ModelViewSet):
             resp = requests.post(url, json=payload, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
+                
+                # FIX: FR addresses often come concatenated (Address + Zip + City)
+                # We try to parse them to avoid validation errors on long addresses
+                is_valid = data.get('isValid') or data.get('valid')
+                if country_code == 'FR' and is_valid and data.get('address'):
+                    import re
+                    addr = data['address'].strip()
+                    # Regex to find last occurrence of 5-digit zip followed by city
+                    # Group 1: Address part
+                    # Group 2: Zip (5 digits)
+                    # Group 3: City
+                    match = re.search(r'^(.*)(\d{5})\s+(.*)$', addr, re.DOTALL)
+                    if match:
+                        cleaned_addr = match.group(1).strip().strip(',').strip()
+                        data['address'] = cleaned_addr
+                        data['zip_code'] = match.group(2)
+                        data['city'] = match.group(3).strip()
+
                 return Response(data)
             else:
                 return Response({'error': 'VIES API hiba', 'details': resp.text}, status=resp.status_code)
@@ -411,6 +500,274 @@ class APIClientViewSet(viewsets.ModelViewSet):
         return Response({'ok': True})
 
 
+def num2words_hu(n):
+    ones = ['', 'egy', 'kettő', 'három', 'négy', 'öt', 'hat', 'hét', 'nyolc', 'kilenc']
+    tens = ['', 'tíz', 'húsz', 'harminc', 'negyven', 'ötven', 'hatvan', 'hetven', 'nyolcvan', 'kilencven']
+    hundred = 'száz'
+
+    def chunk(num):
+        if not num: return ''
+        s = ''
+        sz = num // 100
+        t = (num % 100) // 10
+        o = num % 10
+        if sz > 0:
+            if sz == 1: s += hundred
+            elif sz == 2: s += 'kétszáz'
+            else: s += ones[sz] + hundred
+        if t == 1:
+            if o == 0: s += 'tíz'
+            else: s += 'tizen' + ones[o]
+            return s
+        if t == 2:
+            if o == 0: s += 'húsz'
+            else: s += 'huszon' + ones[o]
+            return s
+        if t > 2: s += tens[t]
+        if o > 0 and t != 1 and t != 2: s += ones[o]
+        return s
+
+    def scale(count, singular):
+        if not count: return ''
+        if singular == 'ezer':
+            if count == 1: return 'ezer'
+            if count == 2: return 'kétezer'
+            return chunk(count) + 'ezer'
+        if count == 1: return 'egy' + singular
+        if count == 2: return 'két' + singular
+        return chunk(count) + singular
+
+    if n == 0: return 'nulla'
+    n = int(n)
+    b = n // 1_000_000_000
+    m = (n % 1_000_000_000) // 1_000_000
+    e = (n % 1_000_000) // 1000
+    r = n % 1000
+    parts = []
+    if b: parts.append(scale(b, 'milliárd'))
+    if m: parts.append(scale(m, 'millió'))
+    if e: parts.append(scale(e, 'ezer'))
+    if r: parts.append(chunk(r))
+    return '-'.join(filter(None, parts))
+
+def get_amount_words_hu(amount, curr):
+    abs_val = abs(amount or 0)
+    whole = int(abs_val)
+    fraction = int(round((abs_val - whole) * 100))
+    main = num2words_hu(whole) + ' ' + ('forint' if curr == 'HUF' else curr)
+    if curr == 'HUF':
+        if fraction > 0:
+            return f"azaz {main} {num2words_hu(fraction)} fillér"
+        return f"azaz {main}"
+    if fraction > 0:
+        return f"azaz {main} és {fraction} cent"
+    return f"azaz {main}"
+
+
+def _generate_pdf_bytes_v2(inv):
+    try:
+        from weasyprint import HTML
+    except ImportError:
+        HTML = None
+    from django.template.loader import render_to_string
+    import io
+    from collections import defaultdict
+
+    # Calculate VAT summary
+    vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
+    
+    # Needs items prefetch to be efficient
+    for item in inv.items.all():
+         r = item.vat_rate
+         vt = item.vat_type
+         
+         if vt and vt.category != 'PERCENT':
+             eff_rate = vt.percentage if vt.percentage is not None else r
+             if eff_rate % 1 == 0:
+                 label = f"{int(eff_rate)}%"
+             else:
+                 label = f"{eff_rate}%"
+             key = (r, vt.code)
+         else:
+             if r % 1 == 0:
+                 l_str = f"{int(r)}%"
+             else:
+                 l_str = f"{r}%"
+             key = (r, 'PERCENT')
+             label = l_str
+
+         vat_map[key]['rate'] = r
+         vat_map[key]['label'] = label
+         vat_map[key]['net'] += item.net_amount
+         vat_map[key]['vat'] += item.vat_amount
+         vat_map[key]['gross'] += item.gross_amount
+         
+    vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
+    
+    huf_totals = None
+    if (inv.currency or '').upper() != 'HUF':
+         ex = inv.exchange_rate or 1
+         huf_totals = {
+             'net': inv.total_net_amount * ex,
+             'vat': inv.total_vat_amount * ex,
+             'gross': inv.total_gross_amount * ex
+         }
+
+    advances_sum = 0
+    if hasattr(inv, 'advance_allocations_as_final'):
+         advances_sum = sum([a.amount for a in inv.advance_allocations_as_final.all()])
+    
+    rounding_diff = 0
+    payable_amount = inv.total_gross_amount - advances_sum
+    
+    if (inv.currency or 'HUF') == 'HUF' and inv.payment_method in ['cash', 'cod']:
+         try:
+             # Use Decimal for precise calculation
+             from decimal import Decimal, ROUND_HALF_UP
+             gross = Decimal(str(payable_amount))
+             d_5 = Decimal(5)
+             rounded = (gross / d_5).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * d_5
+             rounding_diff = rounded - gross
+             payable_amount = rounded
+         except Exception:
+             pass
+    
+    amount_words = get_amount_words_hu(payable_amount, inv.currency or 'HUF')
+
+    try:
+        ctx = { 
+            'invoice': inv, 
+            'bilingual': (inv.currency or '').upper() != 'HUF',
+            'block': inv.invoice_block,
+            'vat_summary': vat_summary,
+            'huf_totals': huf_totals,
+            'rounding_diff': rounding_diff,
+            'payable_amount': payable_amount,
+            'amount_words': amount_words
+        }
+        html = render_to_string('invoices/print_invoice_v2.html', ctx)
+        pdf_buf = io.BytesIO()
+        if HTML:
+            HTML(string=html).write_pdf(target=pdf_buf)
+            pdf_buf.seek(0)
+            return pdf_buf.read()
+    except Exception as e:
+        print(f"WeasyPrint PDF generation error: {e}")
+    return None
+
+def _send_bulk_email_thread(invoice_ids, subject, body, from_addr, to, cc, bcc, smtp_config, imap_config, sig_lines=None):
+    from invoices.models import Invoice
+    from django.db import connection
+    from email.message import EmailMessage
+    import smtplib, ssl, imaplib, os, io, traceback, datetime
+
+    def log(msg):
+        ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[BG-EMAIL {ts}] {msg}")
+
+    try:
+        invoices = Invoice.objects.filter(id__in=invoice_ids).select_related(
+            'company', 'customer', 'invoice_block'
+        ).prefetch_related(
+            'items', 'items__vat_type', 'company__bank_accounts', 'advance_allocations_as_final'
+        )
+        if not invoices:
+            log("No invoices found.")
+            return
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = from_addr
+        msg['To'] = ', '.join(to)
+        if cc:
+            msg['Cc'] = ', '.join(cc)
+        if bcc:
+            msg['Bcc'] = ', '.join(bcc)
+
+        if sig_lines and (body or '').find('--') == -1:
+            body = (body or '') + "\n--\n" + "\n".join(sig_lines)
+        
+        # Determine if body is HTML (simple check)
+        is_html = (body and ('<' in body and '>' in body))
+        if is_html:
+            msg.set_content("HTML-only e-mail") # Fallback
+            msg.add_alternative(body, subtype='html')
+        else:
+            msg.set_content(body)
+
+        for inv in invoices:
+            pdf_content = _generate_pdf_bytes_v2(inv)
+            if pdf_content:
+                filename = f"{inv.invoice_number or 'szamla'}.pdf"
+                msg.add_attachment(pdf_content, maintype='application', subtype='pdf', filename=filename)
+
+        host, port, user, pwd, use_tls = smtp_config
+        log(f"Sending to {to} via {host}:{port} (TLS={use_tls})")
+        
+        try:
+            if port == 465:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            elif use_tls:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(host, port) as server:
+                    server.starttls(context=context)
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            log("Email sent successfully.")
+        except Exception as smtp_err:
+            log(f"SMTP Error: {smtp_err}")
+            traceback.print_exc()
+            return
+                
+        # IMAP Append
+        imap_host, imap_user, imap_pwd, imap_port, sent_folder = imap_config
+        if imap_host and imap_user and imap_pwd:
+                log(f"Appending to IMAP {imap_host}...")
+                raw = msg.as_bytes()
+                try:
+                    try:
+                        M = imaplib.IMAP4_SSL(imap_host, imap_port)
+                    except Exception:
+                        try:
+                            context = ssl.create_default_context()
+                            M = imaplib.IMAP4(imap_host)
+                            M.starttls(ssl_context=context)
+                        except Exception:
+                            M = imaplib.IMAP4(imap_host)
+                    
+                    M.login(imap_user, imap_pwd)
+                    
+                    used_folder = sent_folder or 'Sent'
+                    try:
+                        M.append(used_folder, '(\\Seen)', None, raw)
+                    except:
+                         # Fallback to standard names if config failed
+                         for f in ['Sent', 'Sent Items']:
+                             try:
+                                 M.append(f, '(\\Seen)', None, raw)
+                                 break
+                             except: pass
+                    
+                    try:
+                        M.logout()
+                    except: pass
+                    log("IMAP append successful.")
+                except Exception as imap_err:
+                    log(f"IMAP Append failed: {imap_err}")
+
+    except Exception as e:
+        log(f"Background email failed: {e}")
+        traceback.print_exc()
+    finally:
+        connection.close()
+
 class InvoiceViewSet(viewsets.ModelViewSet):
     """ViewSet for managing invoices"""
     queryset = Invoice.objects.all()
@@ -450,6 +807,22 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             )
         if payment_method_filter and payment_method_filter != 'all':
             queryset = queryset.filter(payment_method__iexact=payment_method_filter.upper())
+
+        # Date filtering
+        issue_date_from = self.request.query_params.get('issue_date_from')
+        issue_date_to = self.request.query_params.get('issue_date_to')
+        delivery_date_from = self.request.query_params.get('delivery_date_from')
+        delivery_date_to = self.request.query_params.get('delivery_date_to')
+
+        if issue_date_from:
+            queryset = queryset.filter(issue_date__gte=issue_date_from)
+        if issue_date_to:
+            queryset = queryset.filter(issue_date__lte=issue_date_to)
+        if delivery_date_from:
+            queryset = queryset.filter(delivery_date__gte=delivery_date_from)
+        if delivery_date_to:
+            queryset = queryset.filter(delivery_date__lte=delivery_date_to)
+
         return queryset
 
     @action(detail=False, methods=['get'])
@@ -878,60 +1251,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         inv = Invoice.objects.select_related(
             'company', 'customer', 'invoice_block'
         ).prefetch_related(
-            'items', 'items__vat_type', 'company__bank_accounts'
+            'items', 'items__vat_type', 'company__bank_accounts', 'advance_allocations_as_final'
         ).get(pk=inv.pk)
-
-        # Calculate VAT summary for the print view (SAME AS PDF VIEW)
-        from collections import defaultdict
-        vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
-        
-        for item in inv.items.all():
-             r = item.vat_rate
-             vt = item.vat_type
-             if vt and vt.category != 'PERCENT':
-                 eff_rate = vt.percentage if vt.percentage is not None else r
-                 if eff_rate % 1 == 0:
-                     label = f"{int(eff_rate)}%"
-                 else:
-                     label = f"{eff_rate}%"
-                 key = (r, vt.code) 
-             else:
-                 if r % 1 == 0:
-                     l_str = f"{int(r)}%"
-                 else:
-                     l_str = f"{r}%"
-                 key = (r, 'PERCENT')
-                 label = l_str
-
-             vat_map[key]['rate'] = r
-             vat_map[key]['label'] = label
-             vat_map[key]['net'] += item.net_amount
-             vat_map[key]['vat'] += item.vat_amount
-             vat_map[key]['gross'] += item.gross_amount
-             
-        vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
-        
-        huf_totals = None
-        if (inv.currency or '').upper() != 'HUF':
-             ex = inv.exchange_rate or 1
-             huf_totals = {
-                 'net': inv.total_net_amount * ex,
-                 'vat': inv.total_vat_amount * ex,
-                 'gross': inv.total_gross_amount * ex
-             }
 
         pdf_buf = io.BytesIO()
         log("Starting PDF generation...")
-        if HTML:
-            ctx = {
-                'invoice': inv, 
-                'bilingual': (inv.currency or '').upper() != 'HUF',
-                'block': inv.invoice_block,
-                'vat_summary': vat_summary,
-                'huf_totals': huf_totals
-            }
-            html = render_to_string('invoices/print_invoice_v2.html', ctx)
-            HTML(string=html).write_pdf(target=pdf_buf)
+        
+        pdf_bytes = _generate_pdf_bytes_v2(inv)
+        if pdf_bytes:
+            pdf_buf.write(pdf_bytes)
         else:
             from reportlab.pdfgen import canvas
             from reportlab.lib.pagesizes import A4
@@ -1302,6 +1630,28 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                  'gross': inv.total_gross_amount * ex
              }
 
+        # Calculate advances first
+        advances_sum = 0
+        if hasattr(inv, 'advance_allocations_as_final'):
+             advances_sum = sum([a.amount for a in inv.advance_allocations_as_final.all()])
+        
+        # Rounding logic for HUF Cash/COD
+        rounding_diff = 0
+        payable_amount = inv.total_gross_amount - advances_sum
+        
+        if (inv.currency or 'HUF') == 'HUF' and inv.payment_method in ['cash', 'cod']:
+             try:
+                 from decimal import Decimal, ROUND_HALF_UP
+                 gross = Decimal(str(payable_amount))
+                 d_5 = Decimal(5)
+                 rounded = (gross / d_5).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * d_5
+                 rounding_diff = rounded - gross
+                 payable_amount = rounded
+             except Exception:
+                 pass
+        
+        amount_words = get_amount_words_hu(payable_amount, inv.currency or 'HUF')
+
         pdf_buf = io.BytesIO()
         if HTML:
             try:
@@ -1310,7 +1660,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     'bilingual': (inv.currency or '').upper() != 'HUF',
                     'block': inv.invoice_block,
                     'vat_summary': vat_summary,
-                    'huf_totals': huf_totals
+                    'huf_totals': huf_totals,
+                    'rounding_diff': rounding_diff,
+                    'payable_amount': payable_amount,
+                    'amount_words': amount_words
                 }
                 html = render_to_string('invoices/print_invoice_v2.html', ctx)
                 HTML(string=html).write_pdf(target=pdf_buf)
@@ -1470,24 +1823,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         """Send multiple invoices in one email (attachments) or open Thunderbird compose.
         Constraints: all invoices must belong to the same company.
         """
-        import io, smtplib, ssl, imaplib
-        from email.message import EmailMessage
-        from django.template.loader import render_to_string
-        try:
-            from weasyprint import HTML
-        except Exception:
-            HTML = None
-
+        import io, os, threading
+        
+        # Initial validation & Data prep
         data = request.data or {}
         ids = data.get('invoice_ids') or []
         if not isinstance(ids, list) or not ids:
             return Response({'error': 'Nincs kiválasztott számla'}, status=status.HTTP_400_BAD_REQUEST)
 
         from invoices.models import Invoice
+        # We only strictly need IDs and check company consistency here
+        # Full loading happens in thread
         invoices = list(Invoice.objects.filter(id__in=ids).select_related('customer', 'company'))
         if not invoices:
             return Response({'error': 'Nem találhatók a kiválasztott számlák'}, status=status.HTTP_404_NOT_FOUND)
-        # Validate all in same company
+        
         companies = {inv.company_id for inv in invoices if getattr(inv, 'company_id', None)}
         if len(companies) != 1:
             return Response({'error': 'A számláknak ugyanahhoz a céghez kell tartozniuk'}, status=status.HTTP_400_BAD_REQUEST)
@@ -1504,42 +1854,35 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             if len(cust_ids) == 1 and invoices[0].customer and getattr(invoices[0].customer, 'email', None):
                 to = [invoices[0].customer.email]
         if not to:
-            return Response({'error': 'Nincs címzett megadva'}, status=status.HTTP_400_BAD_REQUEST)
+             return Response({'error': 'Nincs címzett megadva'}, status=status.HTTP_400_BAD_REQUEST)
 
-        # Subject/body
+        # Subject logic
         subject = (data.get('subject') or '').strip()
+        
+        # Body logic
         body = data.get('body')
         body_from_request = bool(body)
-
-        def fill(tpl, inv=None):
-            inv = inv or invoices[0]
-            return (tpl or '')\
-                .replace('{invoice_number}', getattr(inv, 'invoice_number', '') or '')\
-                .replace('{customer_name}', getattr(inv.customer, 'name', '') if getattr(inv, 'customer', None) else '')\
-                .replace('{company_name}', getattr(inv.company, 'name', '') if getattr(inv, 'company', None) else '')
-
-        if not subject:
-            if ces and getattr(ces, 'default_subject_template', None):
-                subject = fill(ces.default_subject_template)
-            else:
-                if len(invoices) == 1:
-                    subject = f"Számla {invoices[0].invoice_number}"
-                else:
-                    subject = f"Számlák: {', '.join([inv.invoice_number for inv in invoices])}"
+        
+        from django.template import Template, Context
+        def fill(tpl_str, ctx_dict):
+             try:
+                 return Template(tpl_str).render(Context(ctx_dict))
+             except: return tpl_str
 
         if not body:
-            try:
-                rows = [
-                    "Számla sorszám\tKelt\tNetto(HUF)\tÁfa(HUF)",
-                ]
+             try:
+                rows = []
                 for inv in invoices:
-                    row = f"{inv.invoice_number}\t{inv.issue_date}\t{float(inv.total_net_amount):,.0f} (HUF)\t{float(inv.total_vat_amount):,.0f} (HUF)".replace(',', ' ').replace('\xa0',' ')
+                    # User request: "keltezés dátum - sorszám"
+                    # e.g. 2023-10-25 - 2023/00123
+                    row = f"{inv.issue_date} - {inv.invoice_number}"
                     rows.append(row)
+                
                 customer = invoices[0].customer
                 header = [
                     f"Tisztelt {getattr(customer, 'name', 'Ügyfelünk')}!",
                     "",
-                    "Mellékelve küldöm az alábbi számlát/számlákat:",
+                    "Mellékelve küldöm az alábbi számlákat:",
                     "",
                 ]
                 footer = [
@@ -1551,25 +1894,32 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     "A számlák aláírás és pecsét nélkül is érvényes!",
                 ]
                 body = "\n".join(header + rows + footer)
-            except Exception:
-                body = None
+             except Exception:
+                 body = None
+        
         if not body and ces and getattr(ces, 'default_body_template', None):
-            body = fill(ces.default_body_template)
+            body = fill(ces.default_body_template, {'invoice': invoices[0], 'customer': invoices[0].customer})
+            
         if not body:
             body = 'Küldjük a számlákat PDF csatolmányként.'
 
-        # Bilingual extension
+        # Bilingual extensions
         any_fx = any(((inv.currency or '').upper() != 'HUF') for inv in invoices)
         if any_fx and ces:
-            en_subj = fill(getattr(ces, 'subject_template_en', None)) or f"Invoice {invoices[0].invoice_number}"
-            if en_subj and en_subj not in subject:
-                subject = f"{en_subj} / {subject}"
-            if not body_from_request and getattr(ces, 'body_template_en', None):
-                # If body was auto-generated, prepend English.
-                # If body came from request (e.g. user edited it), assume it is already bilingual
-                body = fill(ces.body_template_en) + "<br><br><hr><br><br>" + body
+             en_subj = fill(getattr(ces, 'subject_template_en', None), {'invoice': invoices[0]}) or f"Invoice {invoices[0].invoice_number}"
+             if not subject and invoices[0].invoice_number:
+                 subject = f"Számla {invoices[0].invoice_number}"
+             
+             if en_subj and en_subj not in subject:
+                 subject = f"{en_subj} / {subject}" if subject else en_subj
+                 
+             if not body_from_request and getattr(ces, 'body_template_en', None):
+                 body = fill(ces.body_template_en, {'invoice': invoices[0]}) + "<br><br><hr><br><br>" + body
 
-        # Thunderbird compose mode for bulk
+        if not subject:
+            subject = f"Számla {invoices[0].invoice_number}"
+
+        # Thunderbird logic - synchronous is fine
         use_th = bool(data.get('use_thunderbird')) or bool(getattr(ces, 'use_thunderbird', False))
         if use_th:
             try:
@@ -1593,160 +1943,43 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 return Response({'error': f'Thunderbird indítási hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-        # SMTP sending
-        msg = EmailMessage()
-        msg['Subject'] = subject
-
+        # SMTP - Async Trigger
+        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
+        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
+        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+        use_tls = bool(ces.smtp_use_tls) if ces and ces.smtp_use_tls is not None else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+        
+        if not host or not user or not pwd:
+            return Response({'error': 'SMTP beállítások hiányoznak (HOST/USER/PASSWORD)'}, status=status.HTTP_400_BAD_REQUEST)
+        
+        # Imap config
+        imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
+        imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or user
+        imap_pwd = (ces.imap_password if ces and ces.imap_password else None) or os.environ.get('IMAP_PASSWORD') or pwd
+        imap_port = int((ces.imap_port if ces and getattr(ces, 'imap_port', None) else None) or os.environ.get('IMAP_PORT') or 993)
+        sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
+        
+        smtp_config = (host, port, user, pwd, use_tls)
+        imap_config = (imap_host, imap_user, imap_pwd, imap_port, sent_folder)
+        
         from_addr = (data.get('from') or '').strip() or (ces.smtp_from if ces and ces.smtp_from else None) or os.environ.get('SMTP_FROM') or os.environ.get('SMTP_USER')
-        if not from_addr:
-            return Response({'error': 'SMTP_FROM vagy SMTP_USER nincs beállítva'}, status=status.HTTP_400_BAD_REQUEST)
-        msg['From'] = from_addr
-        msg['To'] = ', '.join(to)
-        if cc:
-            msg['Cc'] = ', '.join(cc)
-        if bcc:
-            msg['Bcc'] = ', '.join(bcc)
-
+        
+        sig_lines = []
         if ces:
-            sig_lines = []
             if getattr(ces, 'default_sender_name', None):
                 sig_lines.append(str(ces.default_sender_name))
             if getattr(ces, 'default_sender_phone', None):
                 sig_lines.append(str(ces.default_sender_phone))
-            if sig_lines and (body or '').find('--') == -1:
-                body = (body or '') + "\n--\n" + "\n".join(sig_lines)
-        msg.set_content(body)
 
-        for inv in invoices:
-            try:
-                pdf_buf = io.BytesIO()
-                if HTML:
-                    html = render_to_string('invoices/print_invoice.html', {
-                        'invoice': inv,
-                        'bilingual': (inv.currency or '').upper() != 'HUF',
-                    })
-                    HTML(string=html).write_pdf(target=pdf_buf)
-                else:
-                    from reportlab.pdfgen import canvas
-                    from reportlab.lib.pagesizes import A4
-                    c = canvas.Canvas(pdf_buf, pagesize=A4)
-                    w, h = A4
-                    c.setFont("Helvetica-Bold", 14)
-                    c.drawString(40, h-50, f"Számla: {inv.invoice_number}")
-                    c.setFont("Helvetica", 11)
-                    c.drawString(40, h-70, f"Kibocsátás: {inv.issue_date}")
-                    c.drawString(40, h-85, f"Vevő: {getattr(inv.customer, 'name', '')}")
-                    c.drawString(40, h-100, f"Összeg (bruttó): {float(inv.total_gross_amount):,.2f} {inv.currency}")
-                    c.showPage(); c.save()
-                pdf_buf.seek(0)
-                filename = f"{inv.invoice_number or 'szamla'}.pdf"
-                msg.add_attachment(pdf_buf.read(), maintype='application', subtype='pdf', filename=filename)
-            except Exception:
-                continue
+        t = threading.Thread(
+            target=_send_bulk_email_thread,
+            args=(ids, subject, body, from_addr, to, cc, bcc, smtp_config, imap_config, sig_lines)
+        )
+        t.start()
+        
+        return Response({'success': True, 'message': 'E-mail küldése folyamatban...'})
 
-        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST')
-        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or 587)
-        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER')
-        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD')
-        use_tls = bool(ces.smtp_use_tls) if ces and ces.smtp_use_tls is not None else (os.environ.get('SMTP_USE_TLS', '1') == '1')
-        if not host or not user or not pwd:
-            return Response({'error': 'SMTP beállítások hiányoznak (HOST/USER/PASSWORD)'}, status=status.HTTP_400_BAD_REQUEST)
-
-        try:
-            if use_tls:
-                context = ssl.create_default_context()
-                with smtplib.SMTP(host, port) as server:
-                    server.starttls(context=context)
-                    server.login(user, pwd)
-                    server.send_message(msg)
-            else:
-                with smtplib.SMTP(host, port) as server:
-                    server.login(user, pwd)
-                    server.send_message(msg)
-        except Exception as e:
-            return Response({'error': f'E-mail küldési hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
-        try:
-            imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
-            imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or user
-            imap_pwd = (ces.imap_password if ces and ces.imap_password else None) or os.environ.get('IMAP_PASSWORD') or pwd
-            imap_port = int((ces.imap_port if ces and getattr(ces, 'imap_port', None) else None) or os.environ.get('IMAP_PORT') or 993)
-            sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
-            if imap_host and imap_user and imap_pwd:
-                raw = msg.as_bytes()
-                # Connect with SSL or STARTTLS fallbacks
-                try:
-                    M = imaplib.IMAP4_SSL(imap_host, imap_port)
-                except Exception:
-                    try:
-                        M = imaplib.IMAP4(imap_host, 143)
-                        M.starttls(ssl_context=ssl.create_default_context())
-                    except Exception:
-                        M = imaplib.IMAP4(imap_host)
-                M.login(imap_user, imap_pwd)
-                try:
-                    used_folder = sent_folder
-                    ok = False
-                    try:
-                        typ_chk, _ = M.select(used_folder, readonly=True)
-                        ok = (typ_chk == 'OK')
-                    except Exception:
-                        ok = False
-                    if not ok:
-                        try:
-                            typ_list, boxes = M.list()
-                            candidates = []
-                            if typ_list == 'OK' and boxes:
-                                import re as _re
-                                for rawline in boxes:
-                                    s = rawline.decode(errors='ignore') if isinstance(rawline, (bytes, bytearray)) else str(rawline)
-                                    m_flags = _re.search(r"\(([^)]*)\)", s)
-                                    flags_txt = m_flags.group(1) if m_flags else ''
-                                    m_q = _re.findall(r'"([^"\\]*(?:\\.[^"\\]*)*)"', s)
-                                    name = m_q[-1] if m_q else (s.split()[-1] if s.split() else '')
-                                    try:
-                                        from imaplib import IMAP4
-                                        name = IMAP4._decode_utf7(name)
-                                    except Exception:
-                                        pass
-                                    if name in ('.','', 'NIL'):
-                                        continue
-                                    if 'Noselect' in (flags_txt or '') or '\\Noselect' in (flags_txt or ''):
-                                        continue
-                                    candidates.append({'name': name, 'flags': flags_txt})
-                            cand = None
-                            for mb in candidates:
-                                if '\\Sent' in (mb['flags'] or ''):
-                                    cand = mb['name']
-                                    break
-                            if not cand:
-                                common = ['Sent','Sent Items','Sent Mail','Sent Messages','[Gmail]/Sent Mail','Elküldött','Elküldött levelek','Elküldött üzenetek','Küldött elemek']
-                                lower = {mb['name'].lower(): mb['name'] for mb in candidates}
-                                for cn in common:
-                                    if cn.lower() in lower:
-                                        cand = lower[cn.lower()]
-                                        break
-                            if cand:
-                                used_folder = cand
-                        except Exception:
-                            pass
-                    flags = '(\\Seen)'
-                    try:
-                        typ_app, _ = M.append(used_folder, flags, None, raw)
-                        if typ_app != 'OK':
-                            try:
-                                M.create(used_folder)
-                                M.append(used_folder, flags, None, raw)
-                            except Exception:
-                                pass
-                    except Exception:
-                        pass
-                finally:
-                    M.logout()
-        except Exception:
-            pass
-
-        return Response({'success': True})
 
     @action(detail=True, methods=['post'])
     def submit_to_nav(self, request, pk=None):
@@ -1993,6 +2226,59 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             
         data = IncomingInvoiceData.objects.filter(company=company, invoice_number=invoice_number).first()
         
+        if not data:
+            # Ha nincs meg az adat, próbáljuk meg letölteni a NAV-tól valós időben
+            try:
+                from invoices.models import CompanyNAVConfiguration
+                from invoices.nav_service import NAVService
+                import xml.etree.ElementTree as ET
+                import base64
+                import gzip
+                from io import BytesIO
+
+                supplier_tax_number = request.query_params.get('supplier_tax_number')
+                cfg = CompanyNAVConfiguration.objects.filter(company=company, is_active=True).first()
+                
+                if cfg:
+                    ns_service = NAVService(cfg)
+                    # Beszállítói adószám hasznos lehet a pontosításhoz
+                    resp = ns_service.query_invoice_data('INBOUND', invoice_number, supplier_tax_number=supplier_tax_number)
+                    
+                    if resp.get('success') and resp.get('response'):
+                        root = ET.fromstring(resp['response'])
+                        
+                        # Keresés namespace nélkül
+                        invoice_data_el = None
+                        compressed = False
+                        
+                        for elem in root.iter():
+                            if elem.tag.endswith('invoiceData'):
+                                invoice_data_el = elem
+                            elif elem.tag.endswith('compressedContentIndicator'):
+                                if elem.text and elem.text.lower() == 'true':
+                                    compressed = True
+                        
+                        if invoice_data_el is not None and invoice_data_el.text:
+                            raw_data = base64.b64decode(invoice_data_el.text)
+                            if compressed:
+                                with gzip.GzipFile(fileobj=BytesIO(raw_data)) as f:
+                                    xml_content = f.read().decode('utf-8')
+                            else:
+                                xml_content = raw_data.decode('utf-8')
+                            
+                            # Mentés adatbázisba
+                            data = IncomingInvoiceData.objects.create(
+                                company=company,
+                                invoice_number=invoice_number,
+                                supplier_tax_number=supplier_tax_number or '', 
+                                transaction_id='ON_DEMAND_FETCH',
+                                xml_text=xml_content
+                            )
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to fetch invoice details on demand: {e}")
+
         if not data:
             return Response(
                 {'error': 'Számla részletek nem találhatók'}, 
@@ -3520,6 +3806,8 @@ class IncomingDocumentViewSet(viewsets.ModelViewSet):
         invoice_number = self.request.query_params.get('invoice_number')
         supplier_tax_number = self.request.query_params.get('supplier_tax_number')
         doc_type = self.request.query_params.get('type')
+        search = self.request.query_params.get('search')
+        
         if company_id:
             qs = qs.filter(company_id=company_id)
         if invoice_number:
@@ -3528,6 +3816,16 @@ class IncomingDocumentViewSet(viewsets.ModelViewSet):
             qs = qs.filter(supplier_tax_number=supplier_tax_number)
         if doc_type:
             qs = qs.filter(type=doc_type)
+
+        if search:
+            search_regex = get_fuzzy_search_regex(search)
+            qs = qs.filter(
+                Q(invoice_number__icontains=search) |
+                Q(supplier_tax_number__icontains=search) |
+                Q(original_name__iregex=search_regex) |
+                Q(comment__iregex=search_regex)
+            )
+
         return qs
 
     def create(self, request, *args, **kwargs):
@@ -4131,14 +4429,15 @@ class ContactViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(customer_id=customer_id)
         
         if search:
+            search_regex = get_fuzzy_search_regex(search)
             queryset = queryset.filter(
-                Q(first_name__icontains=search) |
-                Q(last_name__icontains=search) |
+                Q(first_name__iregex=search_regex) |
+                Q(last_name__iregex=search_regex) |
                 Q(email__icontains=search) |
-                Q(position__icontains=search) |
-                Q(department__icontains=search) |
-                Q(customer__name__icontains=search) |
-                Q(customer__short_name__icontains=search) |
+                Q(position__iregex=search_regex) |
+                Q(department__iregex=search_regex) |
+                Q(customer__name__iregex=search_regex) |
+                Q(customer__short_name__iregex=search_regex) |
                 Q(customer__tax_number__icontains=search)
             )
         
@@ -6623,6 +6922,10 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         missing_items = []
         skipped_missing = []
         tx_items = []
+        
+        # Grouping dictionary: (account, currency) -> aggregation data
+        grouped_data = {}
+
         for it in batch.items.all():
             acct_type = None
             account = None
@@ -6652,17 +6955,45 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 })
                 missing_items.append(it)
                 continue
+            
             amount_val = decimal.Decimal(str(it.amount_gross))
             if round_to_whole:
                 amount_val = amount_val.quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP)
+            else:
+                amount_val = amount_val.quantize(decimal.Decimal('0.01'), rounding=decimal.ROUND_HALF_UP)
+            
+            # Grouping logic
+            currency = it.currency or batch.currency or 'HUF'
+            key = (account, currency)
+            
+            if key not in grouped_data:
+                grouped_data[key] = {
+                    'amount': decimal.Decimal(0),
+                    'invoices': [],
+                    'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
+                    'acct_type': acct_type or 'IBAN',
+                    'account': account,
+                    'first_invoice': it.invoice_number
+                }
+            
+            grouped_data[key]['amount'] += amount_val
+            grouped_data[key]['invoices'].append(it.invoice_number)
+
+        # Convert grouped data to tx_items
+        for (account, currency), data in grouped_data.items():
+            invoices_str = ", ".join(data['invoices'])
+            remittance = f"Számlák: {invoices_str}"
+            # Truncate if too long (optional, but good practice for SEPA max 140 chars)
+            # if len(remittance) > 135: remittance = remittance[:135] + "..."
+            
             tx_items.append({
-                'end_to_end': it.invoice_number,
-                'amount': str(amount_val),
-                'currency': it.currency or batch.currency or 'HUF',
-                'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
-                'acct_type': acct_type or 'IBAN',
+                'end_to_end': data['first_invoice'],
+                'amount': str(data['amount']),
+                'currency': currency,
+                'name': data['name'],
+                'acct_type': data['acct_type'],
                 'account': account,
-                'remittance': f"Számla {it.invoice_number}",
+                'remittance': remittance,
             })
 
         if missing_accounts and not skip_missing:

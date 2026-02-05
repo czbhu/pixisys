@@ -1,14 +1,28 @@
 import React from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
+import {
+    ShopOutlined,
+    BarcodeOutlined,
+    UserOutlined,
+    BarChartOutlined
+} from '@ant-design/icons';
 import Sales from './Sales';
 import Products from './Products';
 import Customers from './Customers';
 import Reports from './Reports';
+import ModuleDashboard from '../../components/ModuleDashboard';
 
 const POSModule = () => {
+    const dashboardItems = [
+        { key: '/pos/sales', label: 'Értékesítés', icon: <ShopOutlined /> },
+        { key: '/pos/products', label: 'Termékek', icon: <BarcodeOutlined /> },
+        { key: '/pos/customers', label: 'Ügyfelek', icon: <UserOutlined /> },
+        { key: '/pos/reports', label: 'Jelentések', icon: <BarChartOutlined /> },
+    ];
+
     return (
         <Routes>
-            <Route path="/" element={<Navigate to="/pos/sales" replace />} />
+            <Route path="/" element={<ModuleDashboard title="POS" items={dashboardItems} />} />
             <Route path="/sales" element={<Sales />} />
             <Route path="/products" element={<Products />} />
             <Route path="/customers" element={<Customers />} />

@@ -3,11 +3,15 @@ import api from './api';
 export interface ProductClass {
     id: number;
     name: string;
+    description?: string;
     is_default: boolean;
     calculators: string[];
     hr_department_names: string[];
     created_at: string;
     updated_at: string;
+    parent?: number | null;
+    parent_name?: string;
+    children?: ProductClass[];
 }
 
 export interface Project {
@@ -63,9 +67,11 @@ export interface ManufacturingProduct {
 
 export interface CreateProductClassData {
     name: string;
+    description?: string;
     is_default?: boolean;
     calculators?: string[];
     hr_departments?: number[];
+    parent?: number | null;
 }
 
 export interface CreateProjectData {
@@ -96,6 +102,12 @@ class ManufacturingService {
     async getProductClasses(): Promise<ProductClass[]> {
         const response = await api.get('/manufacturing/product-classes/');
         return response.data.results || response.data;
+    }
+
+    async getServices() {
+        const response = await api.get('/manufacturing/services/');
+        if (response.data && response.data.results) return response.data.results;
+        return response.data || [];
     }
 
     async createProductClass(data: CreateProductClassData): Promise<ProductClass> {

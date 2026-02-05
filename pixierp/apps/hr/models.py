@@ -429,6 +429,7 @@ class KioskDevice(BaseModel):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Státusz")
     last_seen = models.DateTimeField(null=True, blank=True, verbose_name="Utolsó aktivitás")
     ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP Cím")
+    zones = models.ManyToManyField('core.Zone', blank=True, related_name='kiosk_devices', verbose_name="Zónák")
     
     class Meta:
         db_table = 'hr_kiosk_devices'

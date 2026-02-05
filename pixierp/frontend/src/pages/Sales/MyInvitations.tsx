@@ -81,7 +81,7 @@ const MyInvitations: React.FC = () => {
         style={{ marginBottom: 16 }}
         allowClear
       />
-      <Table rowKey="id" loading={loading} columns={columns as any} dataSource={filtered} pagination={{ pageSize: 10 }} />
+      <Table rowKey="id" loading={loading} columns={columns as any} dataSource={filtered} pagination={{ pageSize: 10 }} size="small" />
     </Card>
   );
 };

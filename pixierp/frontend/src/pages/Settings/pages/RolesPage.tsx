@@ -16,6 +16,7 @@ const RolesPage: React.FC = () => {
   const [selectedRole, setSelectedRole] = useState<Role | null>(null);
   const [modulesAndActions, setModulesAndActions] = useState<ModulesAndActions>({ modules: [], resources: {}, actions: [] });
   const [permissions, setPermissions] = useState<Record<string, string[]>>({});
+  const [canApproveOrders, setCanApproveOrders] = useState(false);
 
   useEffect(() => {
     loadRoles();
@@ -86,6 +87,7 @@ const RolesPage: React.FC = () => {
 
   const handleManagePermissions = async (role: Role) => {
     setSelectedRole(role);
+    setCanApproveOrders(role.can_approve_orders || false);
     
     // Load current permissions (almodul szinten)
     const currentPermissions: Record<string, string[]> = {};
@@ -176,6 +178,15 @@ const RolesPage: React.FC = () => {
       });
       
       await rolesService.setRolePermissions(selectedRole.id, permissionsArray);
+
+      // Update can_approve_orders flag if changed
+      if (selectedRole.can_approve_orders !== canApproveOrders) {
+        await rolesService.updateRole(selectedRole.id, { 
+          name: selectedRole.name,
+          can_approve_orders: canApproveOrders 
+        });
+      }
+
       message.success('Jogosultságok frissítve');
       setPermissionsModalOpen(false);
       loadRoles();
@@ -261,6 +272,7 @@ const RolesPage: React.FC = () => {
         }
       >
         <Table
+          size="small"
           columns={columns}
           dataSource={roles}
           rowKey="id"
@@ -290,6 +302,10 @@ const RolesPage: React.FC = () => {
           <Form.Item name="description" label="Leírás">
             <TextArea rows={3} />
           </Form.Item>
+
+          <Form.Item name="can_approve_orders" valuePropName="checked">
+            <Checkbox>Jóváhagyó (Mindent jóváhagyhat)</Checkbox>
+          </Form.Item>
         </Form>
       </Modal>
 
@@ -303,6 +319,15 @@ const RolesPage: React.FC = () => {
         cancelText="Mégse"
         width={800}
       >
+        <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f5f5f5', borderRadius: 4 }}>
+          <Checkbox 
+            checked={canApproveOrders}
+            onChange={e => setCanApproveOrders(e.target.checked)}
+          >
+            <strong>Jóváhagyó</strong> (Teljes jóváhagyási jogkör minden rendelésre)
+          </Checkbox>
+        </div>
+
         <Collapse>
           {modulesAndActions.modules.map(module => {
             const moduleResources = modulesAndActions.resources[module.value];

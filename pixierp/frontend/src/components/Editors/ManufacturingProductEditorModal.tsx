@@ -1,6 +1,7 @@
-import React, { useEffect, useState, useMemo } from 'react';
-import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox } from 'antd';
-import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
+import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag } from 'antd';
+import { useNavigate } from 'react-router-dom';
+import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { manufacturingService, ProductClass, Project } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -34,7 +35,22 @@ interface CostItem {
     department_id?: number | null;
 }
 
+const CALCULATOR_CATEGORIES = [
+  { label: 'Íves/Táblás nyomtatás', value: 'sheet_print', color: 'blue' },
+  { label: 'Tekercses nyomtatás', value: 'roll_print', color: 'green' },
+  { label: 'Világító tábla', value: 'lightbox', color: 'orange' },
+  { label: 'Egyéb', value: 'other', color: 'default' }
+];
+
+const CALCULATOR_TYPES = [
+  { label: 'Általános', value: 'generic' },
+  { label: 'Íves/Táblás optimalizálás', value: 'sheet_print' },
+  { label: 'Tekercses kalkuláció', value: 'roll_print' }
+];
+
 const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated, customer, editingProduct }) => {
+  const navigate = useNavigate();
+  const postActionRef = useRef<string | null>(null);
   const [form] = Form.useForm();
   const [submitting, setSubmitting] = useState(false);
   const [productClasses, setProductClasses] = useState<ProductClass[]>([]);
@@ -42,6 +58,13 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [customers, setCustomers] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
   const [costItems, setCostItems] = useState<CostItem[]>([]);
+  
+  // Calculator States
+  const [calculatorTemplates, setCalculatorTemplates] = useState<any[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | null>(null);
+  const [calculatorState, setCalculatorState] = useState<any>({});
+
+
   // Store displayed totals
   const [displayedTotals, setDisplayedTotals] = useState({
       totalCost: 0,
@@ -103,15 +126,19 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
           if (editingProduct.date) form.setFieldValue('date', dayjs(editingProduct.date));
           if (editingProduct.deadline) form.setFieldValue('deadline', dayjs(editingProduct.deadline));
           
-          if (editingProduct.cost_items && Array.isArray(editingProduct.cost_items)) {
-              setCostItems(editingProduct.cost_items.map((c: any) => ({
-                  ...c,
-                  id: c.id || Date.now() + Math.random(),
-                  supplier_id: c.supplier || c.supplier_id, // Map supplier FK to supplier_id
-                  department_id: c.department || c.department_id,
-                  is_internal: c.is_internal || false
-              })));
-          }
+          const rawCosts = editingProduct.cost_items || [];
+          setCostItems(rawCosts.map((c: any) => ({
+              ...c,
+              id: c.id || Date.now() + Math.random(),
+              supplier_id: c.supplier || c.supplier_id, 
+              department_id: c.department || c.department_id,
+              is_internal: c.is_internal || false,
+              // Ensure fields are numbers
+              unit_price: Number(c.unit_price) || 0,
+              cost_price: Number(c.cost_price) || 0,
+              selling_unit_price: Number(c.selling_unit_price) || 0,
+              selling_price: Number(c.selling_price) || 0
+          })));
       } else {
         form.setFieldsValue({
             status: 'quote_request_open',
@@ -121,21 +148,45 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
             customer_ids: customer ? [`company_${customer.id}`] : [],
         });
       }
+
+    // Force gen code if we have a generated product from calculator
+    if (open && editingProduct && editingProduct._from_calculator && !form.getFieldValue('code')) {
+        // Triggered via separate effect when products loaded
+      }
     }
   }, [open, customer, editingProduct]);
 
+  useEffect(() => {
+    // Auto-generate code for calculator-created products once products are loaded
+    if (open && editingProduct && editingProduct._from_calculator && existingProducts.length > 0) {
+        if (!form.getFieldValue('code')) {
+            generateCode();
+        }
+        
+        // Ensure totals are set from initial data if present (override default calc)
+        if (editingProduct.net_unit_price) {
+             // We don't have a direct field for "net_unit_price" in the form? 
+             // The form seems to calculate it from CostItems.
+             // But we have displayedTotals state.
+             // The costItems effect will overwrite it.
+             // So we must ensure costItems are correct.
+        }
+    }
+  }, [existingProducts, open, editingProduct]);
+
   const loadData = async () => {
     try {
-      const [pcs, projs, custs, contactsRes, matsRes, servsRes, suppsRes, prodsRes, deptsRes] = await Promise.all([
+      const [pcs, projs, custs, contactsRes, matsRes, servsRes, suppsRes, prodsRes, deptsRes, templatesRes] = await Promise.all([
         manufacturingService.getProductClasses(),
         manufacturingService.getOpenProjects(),
         crmService.getCompanies(),
         crmService.getContacts(),
         api.get('/warehouse/materials/?filter_type=all&page_size=1000'), 
-        salesService.getServices(),
+        manufacturingService.getServices(),
         api.get('/crm/companies/?is_supplier=true&page_size=1000'),
         api.get('/manufacturing/products/?page_size=10000'),
         hrService.getDepartments(),
+        api.get('/manufacturing/calculator-templates/'),
       ]);
       
       const mList = (matsRes.data.results ?? matsRes.data).map((m: any) => ({
@@ -165,10 +216,51 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       setSuppliers(suppList);
       setDepartments((deptsRes.results ?? deptsRes));
       setExistingProducts(((prodsRes as any).data?.results ?? (prodsRes as any).data ?? []));
+      setCalculatorTemplates(templatesRes.data?.results ?? templatesRes.data ?? []);
     } catch (e) {
       console.error(e);
     }
   };
+
+  // Effect to load missing suppliers
+  useEffect(() => {
+    const fetchMissingSuppliers = async () => {
+        if (!costItems || costItems.length === 0 || suppliers.length === 0) return;
+        
+        const existingIds = new Set(suppliers.map((s: any) => s.id));
+        const missingIds = new Set<number>();
+        
+        costItems.forEach(item => {
+            if (item.supplier_id && !existingIds.has(Number(item.supplier_id))) {
+                missingIds.add(Number(item.supplier_id));
+            }
+        });
+        
+        if (missingIds.size > 0) {
+            const newSuppliers: any[] = [];
+            for (const id of Array.from(missingIds)) {
+                try {
+                    const res = await api.get(`/crm/companies/${id}/`);
+                    if (res.data) newSuppliers.push(res.data);
+                } catch (e) {
+                    console.error(`Could not fetch supplier ${id}`, e);
+                }
+            }
+            
+            if (newSuppliers.length > 0) {
+                setSuppliers(prev => {
+                    // Unique merge
+                    const combined = [...prev, ...newSuppliers];
+                    // Remove duplicates just in case
+                    const unique = Array.from(new Map(combined.map(item => [item['id'], item])).values());
+                    return unique.sort((a: any, b: any) => a.name.localeCompare(b.name));
+                });
+            }
+        }
+    };
+    
+    fetchMissingSuppliers();
+  }, [costItems, suppliers.length]);
 
   const calculateWeightFromDimensions = () => {
     const width = form.getFieldValue('width');
@@ -491,6 +583,79 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     }));
   };
 
+  const handleCalculate = () => {
+      const template = calculatorTemplates.find(t => t.id === selectedTemplateId);
+      if (!template) return;
+      
+      const state = calculatorState;
+      let newCostItems: CostItem[] = [];
+      
+      if (template.calculator_type === 'sheet_print') {
+          const quantity = form.getFieldValue('quantity') || 1;
+          const materialId = state.material_id;
+          // Search in allowed details first as they are populated
+          const material = template.allowed_materials_details?.find((m:any) => m.id === materialId);
+          
+          if (material) {
+              // Very basic mock calculation: assume SRA3 (approx 0.144 sqm) vs Product size
+              // We'd need sheet dimensions and product dimensions to do this real.
+              // For now: 
+              const sheetsNeeded = Math.ceil(quantity * 1.1); // 10% waste
+              const unitPrice = 50; // Mock price if not in material object
+              const cost = sheetsNeeded * unitPrice;
+              
+              newCostItems.push({
+                id: Date.now(),
+                type: 'material',
+                name: `${material.name} (Kalkulált)`,
+                unit: 'ív',
+                quantity: sheetsNeeded,
+                unit_price: unitPrice,
+                cost_price: cost,
+                markup_percent: template.default_markup_percentage || 30,
+                selling_unit_price: unitPrice * (1 + (template.default_markup_percentage || 30)/100),
+                selling_price: cost * (1 + (template.default_markup_percentage || 30)/100),
+                supplier_id: null,
+                is_per_unit: false
+              });
+          }
+      } else if (template.calculator_type === 'roll_print') {
+           const quantity = form.getFieldValue('quantity') || 1;
+           const materialId = state.material_id;
+           const material = template.allowed_materials_details?.find((m:any) => m.id === materialId);
+           
+           if (material) {
+               // Mock: 1 sqm per product
+               const area = quantity * 1.0; 
+               const unitPrice = 2500; // Mock sqm price
+               const cost = area * unitPrice;
+               
+                newCostItems.push({
+                id: Date.now(),
+                type: 'material',
+                name: `${material.name} (Kalkulált)`,
+                unit: 'nm',
+                quantity: area,
+                unit_price: unitPrice,
+                cost_price: cost,
+                markup_percent: template.default_markup_percentage || 30,
+                selling_unit_price: unitPrice * (1 + (template.default_markup_percentage || 30)/100),
+                selling_price: cost * (1 + (template.default_markup_percentage || 30)/100),
+                supplier_id: null,
+                is_per_unit: false
+              });
+           }
+      }
+      
+      if (newCostItems.length > 0) {
+          setCostItems(prev => [...prev, ...newCostItems]);
+          message.success('Kalkuláció hozzáadva a költségekhez!');
+          setActiveTab('1'); 
+      } else {
+          message.warning('Nem sikerült költséget számolni a megadott adatokból. Kérem ellenőrizze a kiválasztott anyagot.');
+      }
+  };
+
   const handleOk = async () => {
     try {
         const v = await form.validateFields();
@@ -611,8 +776,16 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
           created = await manufacturingService.createProduct(payload);
           message.success('Egyedi gyártás létrehozva');
       }
+
+      if (postActionRef.current === 'createOffer' && created) {
+         // Navigate or Open a new tab for Quote creation
+         // Using a query param that the Sales module (Quotes) should understand
+         window.open(`/sales/rfqs?create=true&add_item_id=${created.id}&add_item_type=manufacturing`, '_blank');
+      }
+
       onCreated(created);
       form.resetFields();
+      postActionRef.current = null;
     } catch (e: any) {
         console.error(e);
         if (e.response && e.response.data) {
@@ -663,34 +836,31 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                         const unit = found.unit || (isMat ? 'db' : 'alkalom');
                         const costPrice = isMat 
                             ? (Number(found.moving_average_cost) || Number(found.net_unit_price) || 0)
-                            : (Number(found.base_price) || 0);
+                            : (Number(found.unit_cost_price) || Number(found.unit_price) || 0);
 
                         // Use CURRENT markup/selling from found item
                         // For Material: markup_percentage, unit_selling_price
-                        // For Service: markup_percentage(?), or just base_price as cost and calc?
+                        // For Service (Mfg): unit_selling_price, markup_percentage
                         
                         let mu = 30;
                         let sellUnit = costPrice * 1.3;
                         
-                        if (isMat) {
+                        if (isMat || !isMat) { // Same logic for both if fields exist
                              if (found.markup_percentage) mu = Number(found.markup_percentage);
+                             else mu = 35; // Default markup if missing
+
                              if (found.unit_selling_price) sellUnit = Number(found.unit_selling_price);
-                             else sellUnit = costPrice * (1 + mu / 100);
-                        } else {
-                            // Service usually has base_price (net). 
-                            // If it has specific markup, use it.
-                            // If base_price is Selling Price? ServiceEditor usually treats base_price as Net Price.
-                            // Let's assume standard logic unless service has markup field.
-                            // Services in salesService/getServices result don't typically have markup, 
-                            // but let's assume valid default.
+                             else if (costPrice > 0) sellUnit = costPrice * (1 + mu / 100);
+                             else sellUnit = 0; // If free?
                         }
                         
+                        const qty = r.quantity || 1;
                         updateCostItem(r.id, 'unit', unit);
                         updateCostItem(r.id, 'unit_price', costPrice); // Beszerzési
-                        updateCostItem(r.id, 'cost_price', costPrice); 
+                        updateCostItem(r.id, 'cost_price', costPrice * qty); 
                         updateCostItem(r.id, 'markup_percent', mu);
                         updateCostItem(r.id, 'selling_unit_price', sellUnit);
-                        updateCostItem(r.id, 'selling_price', sellUnit * (r.quantity || 1));
+                        updateCostItem(r.id, 'selling_price', sellUnit * qty);
                     }
                 }}
             >
@@ -705,7 +875,6 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} precision={2} /> },
     { title: 'Eladási e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CostItem) => <InputNumber value={r.selling_unit_price} onChange={v => updateCostItem(r.id, 'selling_unit_price', v)} disabled={r.type !== 'other'} controls={false} /> },
     { title: 'Beszállító', key: 'supplier_id', width: 260, render: (_: any, r: CostItem) => {
-        if (r.type !== 'other') return null;
         return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                  <Checkbox 
@@ -767,7 +936,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                             </>
                         )}
                     >
-                        {suppliers.slice(0, 50).map(s => (
+                        {suppliers.map(s => (
                             <Select.Option key={s.id} value={s.id} label={s.name} shortLabel={s.name.length > 20 ? `${s.name.substring(0, 20)}...` : s.name}>
                                 {s.name}
                             </Select.Option>
@@ -803,8 +972,20 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     }
   };
 
+  const customFooter = [
+    <Button key="cancel" onClick={handleInternalCancel}>Visszavonás</Button>,
+    <Button key="createOffer" onClick={() => {
+        postActionRef.current = 'createOffer';
+        handleOk();
+    }}>Új ajánlat készítése</Button>,
+    <Button key="submit" type="primary" loading={submitting} onClick={() => {
+        postActionRef.current = null;
+        handleOk();
+    }}>Mentés</Button>
+  ];
+
   return (
-    <Modal open={open} onCancel={handleInternalCancel} onOk={handleOk} confirmLoading={submitting} title={editingProduct ? "Egyedi Gyártás szerkesztése" : "Új Egyedi Gyártás"} width={1100} destroyOnHidden>
+    <Modal open={open} onCancel={handleInternalCancel} footer={customFooter} title={editingProduct ? "Egyedi Gyártás szerkesztése" : "Új Egyedi Gyártás"} width={1100} destroyOnHidden>
         <Tabs activeKey={activeTab} onChange={setActiveTab} items={[
             {
                 key: '1',
@@ -816,6 +997,46 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                           setCostItems([...costItems]); // Trigger effect deps
                       }
                   }}>
+                     {editingProduct && editingProduct._from_calculator && (
+                        <div style={{ marginBottom: 16, padding: 12, border: '1px solid #1890ff', borderRadius: 6, background: '#e6f7ff' }}>
+                            <Space align="center" style={{ width: '100%', justifyContent: 'space-between' }}>
+                                <Space>
+                                    <CalculatorOutlined style={{ fontSize: 20, color: '#1890ff' }} />
+                                    <div>
+                                        <strong>Kalkulátorból generálva</strong>
+                                        <div style={{ fontSize: 12, color: 'rgba(0,0,0,0.65)' }}>
+                                        Ez az űrlap a kalkulátor adataival lett előtöltve.
+                                        </div>
+                                    </div>
+                                </Space>
+                                {editingProduct._calculator_state && (
+                                    <Button 
+                                        size="small" 
+                                        type="primary" 
+                                        onClick={() => {
+                                            try {
+                                                const stateStr = editingProduct._calculator_state;
+                                                // If it's already an object (passed via memory), handle it, otherwise parse string
+                                                const stateObj = typeof stateStr === 'string' ? JSON.parse(stateStr) : stateStr;
+                                                localStorage.setItem('calculator_restore_data', JSON.stringify(stateObj));
+                                                
+                                                if (stateObj.templateId) {
+                                                    window.open(`/manufacturing/calculator/${stateObj.templateId}?restore=true`, '_blank');
+                                                } else {
+                                                    message.error('Hiányzó sablon azonosító');
+                                                }
+                                            } catch(e) {
+                                                console.error(e);
+                                                message.error('Hiba a kalkulátor megnyitásakor');
+                                            }
+                                        }}
+                                    >
+                                        Kalkulátor megnyitása
+                                    </Button>
+                                )}
+                            </Space>
+                        </div>
+                     )}
                      <Form.Item label="Név" name="name" rules={[{ required: true }]}>
                        <Input />
                      </Form.Item>
@@ -990,6 +1211,113 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                                 <span>Egység eladási: {unitSelling.toFixed(2)} HUF</span>
                             </div>
                         </div>
+                    </div>
+                )
+            },
+            {
+                key: 'calculator',
+                label: 'Kalkulátor',
+                children: (
+                    <div style={{ padding: 16 }}>
+                        <Form.Item label="Kalkulátor sablon">
+                            <Select 
+                                placeholder="Válasszon sablont" 
+                                onChange={(val) => setSelectedTemplateId(val)}
+                                value={selectedTemplateId}
+                                showSearch
+                                optionFilterProp="children"
+                            >
+                                {calculatorTemplates.map(t => (
+                                    <Select.Option key={t.id} value={t.id}>
+                                        {t.name} ({t.code})
+                                    </Select.Option>
+                                ))}
+                            </Select>
+                        </Form.Item>
+                        
+                        {selectedTemplateId && (() => {
+                            const template = calculatorTemplates.find(t => t.id === selectedTemplateId);
+                            if (!template) return null;
+                            
+                            const cat = CALCULATOR_CATEGORIES.find(c => c.value === template.category);
+                            
+                            return (
+                                <div style={{ border: '1px solid #eee', padding: 16, borderRadius: 8, background: '#fafafa' }}>
+                                    <div style={{ marginBottom: 16 }}>
+                                        <Tag color={cat?.color}>{cat?.label || template.category}</Tag>
+                                        <Tag>{CALCULATOR_TYPES.find(t => t.value === template.calculator_type)?.label || template.calculator_type}</Tag>
+                                        <span>{template.description}</span>
+                                    </div>
+                                    
+                                    {/* Specialized Inputs based on Type */}
+                                    {template.calculator_type === 'sheet_print' && (
+                                        <div>
+                                            <h4>Íves nyomtatás paraméterek</h4>
+                                            <Row gutter={16}>
+                                                <Col span={12}>
+                                                    <Form.Item label="Papír méret">
+                                                        <Select defaultValue="SRA3">
+                                                            <Select.Option value="A4">A4 (210x297)</Select.Option>
+                                                            <Select.Option value="A3">A3 (297x420)</Select.Option>
+                                                            <Select.Option value="SRA3">SRA3 (320x450)</Select.Option>
+                                                        </Select>
+                                                    </Form.Item>
+                                                </Col>
+                                                <Col span={12}>
+                                                    <Form.Item label="Papír típus">
+                                                        <Select 
+                                                            placeholder="Válasszon papírt"
+                                                            onChange={(val) => setCalculatorState((prev: any) => ({ ...prev, material_id: val }))}
+                                                            value={calculatorState.material_id}
+                                                        >
+                                                            {template.allowed_materials_details?.map((m: any) => (
+                                                                <Select.Option key={m.id} value={m.id}>{m.name}</Select.Option>
+                                                            ))}
+                                                        </Select>
+                                                    </Form.Item>
+                                                </Col>
+                                            </Row>
+                                        </div>
+                                    )}
+                                    
+                                    {template.calculator_type === 'roll_print' && (
+                                        <div>
+                                            <h4>Tekercses nyomtatás paraméterek</h4>
+                                             <Row gutter={16}>
+                                                <Col span={12}>
+                                                    <Form.Item label="Média típus">
+                                                        <Select 
+                                                            placeholder="Válasszon médiát"
+                                                            onChange={(val) => setCalculatorState((prev: any) => ({ ...prev, material_id: val }))}
+                                                            value={calculatorState.material_id}
+                                                        >
+                                                            {template.allowed_materials_details?.map((m: any) => (
+                                                                <Select.Option key={m.id} value={m.id}>{m.name}</Select.Option>
+                                                            ))}
+                                                        </Select>
+                                                    </Form.Item>
+                                                </Col>
+                                                 <Col span={12}>
+                                                    <Form.Item label="Tekercs szélesség (mm)">
+                                                        <InputNumber style={{ width: '100%' }} />
+                                                    </Form.Item>
+                                                </Col>
+                                            </Row>
+                                        </div>
+                                    )}
+
+                                     {template.calculator_type === 'generic' && (
+                                        <div>
+                                            <p>Általános kalkuláció esetén használja a költség tételeket az Alapadatok fülön, vagy konfiguráljon speciális mezőket a sablonban.</p>
+                                        </div>
+                                    )}
+                                    
+                                    <div style={{ marginTop: 16 }}>
+                                        <Button type="primary" onClick={handleCalculate}>Kiszámol és Alkalmaz</Button>
+                                    </div>
+                                </div>
+                            );
+                        })()}
                     </div>
                 )
             }

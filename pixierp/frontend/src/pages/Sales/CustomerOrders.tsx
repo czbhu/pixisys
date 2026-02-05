@@ -1,13 +1,26 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown } from 'antd';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown, Popover, Grid, Form } from 'antd';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 import { OrderItemsDrawer } from './OrderItemsDrawer';
+import { useTimeTracker } from '../../contexts/TimeTrackerContext';
+import { useActionHistory } from '../../contexts/ActionHistoryContext';
 
 const { Search } = Input;
+const { useBreakpoint } = Grid;
+
+interface PendingApproval {
+  id: number;
+  requested_status: string;
+  previous_status: string;
+  requester: string;
+}
 
 interface CustomerOrder {
   id: number;
@@ -32,16 +45,45 @@ interface CustomerOrder {
   created_by_name?: string;
   delivery_note_number?: string;
   invoice_number?: string;
+  pending_approval?: PendingApproval;
+  last_rejection?: { note: string; date: string };
 }
 
-const CustomerOrders: React.FC = () => {
+  const { confirm } = Modal;
+
+  const CustomerOrders: React.FC = () => {
+  const screens = useBreakpoint();
   const navigate = useNavigate();
+  const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
+  const { addAction } = useActionHistory();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
+  
+  // Email sending state
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailForm] = Form.useForm();
+  const [emailTargetOrder, setEmailTargetOrder] = useState<CustomerOrder | null>(null);
+  const [emailSending, setEmailSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
+  
+  // Load settings from localStorage
+  const savedSettings = useMemo(() => {
+    try {
+      const settings = localStorage.getItem('customerOrdersSettings');
+      return settings ? JSON.parse(settings) : null;
+    } catch (e) {
+      return null;
+    }
+  }, []);
+
   // Default filter: show everything EXCEPT cancelled and invoiced/delivered (archived)
-  const [statusFilter, setStatusFilter] = useState<string[]>(['new', 'confirmed', 'in_production']);
-  const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<string[]>(
+    savedSettings?.statusFilter || ['new', 'confirmed', 'in_production']
+  );
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(
+    savedSettings?.creatorFilter || null
+  );
+  
   const [timestampModalOpen, setTimestampModalOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<CustomerOrder | null>(null);
   const [selectedTimestamp, setSelectedTimestamp] = useState<dayjs.Dayjs | null>(null);
@@ -49,7 +91,20 @@ const CustomerOrders: React.FC = () => {
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
   const [itemsDrawerOpen, setItemsDrawerOpen] = useState(false);
   const [drawerOrder, setDrawerOrder] = useState<{id: number, number: string} | null>(null);
-  const [isItemsView, setIsItemsView] = useState(false);
+  const [isItemsView, setIsItemsView] = useState(
+    savedSettings?.isItemsView || false
+  );
+
+  // Save settings to localStorage whenever they change
+  useEffect(() => {
+    const settings = {
+        statusFilter,
+        creatorFilter,
+        isItemsView
+    };
+    localStorage.setItem('customerOrdersSettings', JSON.stringify(settings));
+  }, [statusFilter, creatorFilter, isItemsView]);
+
   
   // Column visibility for Items View
   const [descriptionVisible, setDescriptionVisible] = useState(true); // "Leírás" (Product Desc)
@@ -75,6 +130,99 @@ const CustomerOrders: React.FC = () => {
     fetchOrders();
   }, []);
 
+  const handleWorkflowStatusChange = async (orderId: number, newStatus: string, record?: CustomerOrder) => {
+    const doUpdate = async (sendEmail: boolean = false) => {
+        const oldStatus = record?.status;
+        try {
+            const response = await api.post(`/sales/customer-orders/${orderId}/update_status/`, { 
+                status: newStatus,
+                send_email: sendEmail
+            });
+            
+            if (response.data.status === 'approval_requested') {
+                message.info('Jóváhagyásra elküldve!');
+            } else {
+                message.success('Státusz frissítve');
+                if (sendEmail) {
+                    message.success('Visszaigazoló e-mail elküldve');
+                }
+
+                // Add to history
+                if (oldStatus && oldStatus !== newStatus) {
+                    // We need to define textMap here or move it outside, 
+                    // but for now I'll use simple text or duplicate the map slightly or just raw values if needed
+                    // Better reuse the map if possible, but it's inside statusTag.
+                    // I will use raw values for now or a simple helper if needed.
+                    addAction({
+                        description: `Megrendelés (${record?.order_number}) státusz: ${oldStatus} -> ${newStatus}`,
+                        undo: async () => {
+                            await api.post(`/sales/customer-orders/${orderId}/update_status/`, { status: oldStatus });
+                            fetchOrders(); // Only effective if component is mounted
+                        },
+                        redo: async () => {
+                            await api.post(`/sales/customer-orders/${orderId}/update_status/`, { status: newStatus });
+                            fetchOrders();
+                        }
+                    });
+                }
+            }
+            fetchOrders();
+        } catch (error: any) {
+            message.error(error.response?.data?.error || 'Hiba a státusz frissítésekor');
+        }
+    };
+
+    if (newStatus === 'confirmed') {
+        const modal = Modal.confirm({
+            title: 'Megerősítés',
+            icon: <ExclamationCircleOutlined />,
+            width: 500,
+            content: (
+                <div>
+                    <p>Biztosan megerősíti a rendelést?</p>
+                    <p>Válassza ki a visszaigazoló e-mail küldésének módját:</p>
+                </div>
+            ),
+            footer: (
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 24 }}>
+                    <Button onClick={() => modal.destroy()}>Mégse</Button>
+                    <Button onClick={() => {
+                        modal.destroy();
+                        doUpdate(false);
+                    }}>Csak státuszváltás</Button>
+                    <Button icon={<EyeOutlined />} onClick={async () => {
+                         modal.destroy();
+                         // Open preview
+                         if (record) {
+                             setEmailTargetOrder(record);
+                             setEmailModalOpen(true);
+                             try {
+                                 const res = await api.post(`/sales/customer-orders/${record.id}/render_confirmation_email/`);
+                                 emailForm.setFieldsValue({
+                                     to: res.data.to,
+                                     subject: res.data.subject,
+                                     body: res.data.body
+                                 });
+                             } catch(e) {
+                                 message.error("Hiba az előnézet betöltésekor");
+                             }
+                        } else {
+                            // Fallback if record is somehow missing
+                            doUpdate(false);
+                        }
+                    }}>Előnézet</Button>
+                    <Button type="primary" icon={<MailOutlined />} onClick={() => {
+                        modal.destroy();
+                        doUpdate(true);
+                    }}>Azonnali Küldés</Button>
+                </div>
+            )
+        });
+    } else {
+        doUpdate(false);
+    }
+  };
+
   const statusTag = (status: string, record: CustomerOrder) => {
     if (record.invoice_number) {
         return (
@@ -94,7 +242,40 @@ const CustomerOrders: React.FC = () => {
       cancelled: { color: 'red', text: 'Törölve' },
     };
     const { color, text } = statusMap[status] || { color: 'default', text: status };
-    return <Tag color={color}>{text}</Tag>;
+    
+    const content = (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {Object.keys(statusMap).map(s => (
+                <Button 
+                    key={s} 
+                    size="small" 
+                    type={s === status ? 'primary' : 'text'}
+                    disabled={s === status}
+                    onClick={() => handleWorkflowStatusChange(record.id, s, record)}
+                >
+                    {statusMap[s].text}
+                </Button>
+            ))}
+        </div>
+    );
+
+    return (
+        <Space>
+            <Popover content={content} title="Státusz váltás" trigger="click">
+                <Tag color={color} style={{ cursor: 'pointer' }}>{text}</Tag>
+            </Popover>
+            {record.pending_approval && (
+                <Tooltip title={`Jóváhagyásra vár: ${statusMap[record.pending_approval.requested_status]?.text || record.pending_approval.requested_status} (${record.pending_approval.requester})`}>
+                    <QuestionCircleOutlined style={{ color: '#faad14' }} />
+                </Tooltip>
+            )}
+            {record.last_rejection && (
+                <Tooltip title={`Visszaküldve: ${record.last_rejection.note}`}>
+                    <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />
+                </Tooltip>
+            )}
+        </Space>
+    );
   };
 
   const handleStatusChange = async (orderId: number, action: string, actionText: string) => {
@@ -147,8 +328,9 @@ const CustomerOrders: React.FC = () => {
   const actionsColumn = {
     title: 'Műveletek',
     key: 'actions',
-    width: 400,
-    fixed: 'right' as const,
+    width: 160,
+    fixed: (screens.md ? 'right' : undefined) as any,
+    onCell: () => ({ style: { paddingRight: 0 } }),
     render: (_: any, item: any) => {
       const record = item.originalOrder || item;
       return (
@@ -161,49 +343,11 @@ const CustomerOrders: React.FC = () => {
             />
           </Tooltip>
           
-          {record.status === 'new' && (
-            <Tooltip title="Jóváhagyás">
-              <Button
-                type="primary"
-                icon={<CheckOutlined />}
-                size="small"
-                onClick={() => handleStatusChange(record.id, 'confirm', 'Jóváhagyás')}
-              >
-                Jóváhagyás
-              </Button>
-            </Tooltip>
-          )}
+          { record.status === 'new' && null }
           
-          {record.status === 'confirmed' && (
-            <Tooltip title="Gyártás indítása">
-              <Button
-                type="primary"
-                icon={<RocketOutlined />}
-                size="small"
-                onClick={() => handleStatusChange(record.id, 'start_production', 'Gyártás indítása')}
-              >
-                Gyártás
-              </Button>
-            </Tooltip>
-          )}
+          { record.status === 'confirmed' && null }
 
-          {record.status === 'in_production' && (
-            <Tooltip title="Készre jelentés">
-              <Button
-                type="primary"
-                icon={<ToolOutlined />}
-                size="small"
-                onClick={() => {
-                  setSelectedOrder(record);
-                  setTimestampAction('mark_ready');
-                  setSelectedTimestamp(dayjs());
-                  setTimestampModalOpen(true);
-                }}
-              >
-                Készre
-              </Button>
-            </Tooltip>
-          )}
+          { record.status === 'in_production' && null }
           
           {(record.status === 'ready' || record.status === 'in_delivery') && (
             <Tooltip title={record.status === 'ready' ? "Szállítás indítása" : "Szállítási email újraküldése"}>
@@ -214,29 +358,11 @@ const CustomerOrders: React.FC = () => {
                 onClick={() => {
                   window.open(`/sales/delivery-notes?create_from_order=${record.id}`, '_blank');
                 }}
-              >
-                Szállítás
-              </Button>
+              />
             </Tooltip>
           )}
           
-          {record.status === 'in_delivery' && (
-            <Tooltip title="Leszállítva">
-              <Button
-                type="primary"
-                icon={<CheckCircleOutlined />}
-                size="small"
-                onClick={() => {
-                  setSelectedOrder(record);
-                  setTimestampAction('mark_delivered');
-                  setSelectedTimestamp(dayjs());
-                  setTimestampModalOpen(true);
-                }}
-              >
-                Leszállítva
-              </Button>
-            </Tooltip>
-          )}
+          { record.status === 'in_delivery' && null }
 
           {record.status !== 'cancelled' && !isItemsView && (
             <Tooltip title="Tételek">
@@ -356,7 +482,6 @@ const CustomerOrders: React.FC = () => {
       key: 'customer_name',
       ellipsis: true,
       width: 140,
-      responsive: ['sm'] as any,
       render: (text: string, record: CustomerOrder) => (
          <div>
              <div style={{fontWeight: 'bold', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '20ch'}}>
@@ -601,7 +726,7 @@ const CustomerOrders: React.FC = () => {
           />
         </Tooltip>
         
-        <Dropdown
+        {/* <Dropdown
             menu={{
                 items: [
                    { key: 'new', label: 'Új' },
@@ -615,7 +740,21 @@ const CustomerOrders: React.FC = () => {
             }}
         >
             <Button size="small" icon={<SyncOutlined />} />
-        </Dropdown>
+        </Dropdown> */}
+
+        <Tooltip title="Munkaóra indítása">
+            <Button 
+                icon={<FieldTimeOutlined />} 
+                size="small" 
+                onClick={() => {
+                    const orderId = record.originalOrder.id;
+                    const itemId = record.id;
+                    setPreselectedOrderId(orderId);
+                    setPreselectedItemId(itemId);
+                    setTimerModalOpen(true);
+                }}
+            />
+        </Tooltip>
 
         <Tooltip title="Törlés">
             <Button
@@ -793,6 +932,7 @@ const CustomerOrders: React.FC = () => {
         dataSource={isItemsView ? flattenedItems : filteredOrders}
         rowKey={isItemsView ? 'uniqueId' : 'id'}
         loading={loading}
+        size="small"
         scroll={{ x: 'max-content' }}
         pagination={{
           pageSize: 20,
@@ -928,6 +1068,52 @@ const CustomerOrders: React.FC = () => {
         orderNumber={drawerOrder?.number}
         onOrderUpdate={fetchOrders}
       />
+      
+      <Modal
+            title="Visszaigazoló Email"
+            open={emailModalOpen}
+            width={800}
+            onCancel={() => setEmailModalOpen(false)}
+            footer={[
+                <Button key="cancel" onClick={() => setEmailModalOpen(false)}>Mégse</Button>,
+                <Button key="send" type="primary" loading={emailSending} onClick={async () => {
+                    if (!emailTargetOrder) return;
+                    try {
+                        const values = await emailForm.validateFields();
+                        setEmailSending(true);
+                        
+                        // 1. Update status WITHOUT email
+                        await api.post(`/sales/customer-orders/${emailTargetOrder.id}/update_status/`, { 
+                            status: 'confirmed',
+                            send_email: false
+                        });
+
+                        // 2. Send custom email
+                        await api.post(`/sales/customer-orders/${emailTargetOrder.id}/send_confirmation_email_manual/`, values);
+                        
+                        message.success('Státusz frissítve és email elküldve');
+                        setEmailModalOpen(false);
+                        fetchOrders();
+                    } catch (e: any) {
+                         message.error(e.response?.data?.error || 'Hiba történt');
+                    } finally {
+                        setEmailSending(false);
+                    }
+                }}>Küldés</Button>
+            ]}
+        >
+            <Form form={emailForm} layout="vertical">
+                <Form.Item name="to" label="Címzett" rules={[{ required: true, message: 'Kötelező mező' }]}>
+                    <Input />
+                </Form.Item>
+                <Form.Item name="subject" label="Tárgy" rules={[{ required: true, message: 'Kötelező mező' }]}>
+                    <Input />
+                </Form.Item>
+                <Form.Item name="body" label="Üzenet szövege" rules={[{ required: true, message: 'Kötelező mező' }]}>
+                    <ReactQuill theme="snow" style={{ height: 300, marginBottom: 50 }} />
+                </Form.Item>
+            </Form>
+        </Modal>
     </Card>
   );
 };

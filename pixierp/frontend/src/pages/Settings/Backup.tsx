@@ -439,6 +439,7 @@ const BackupPage: React.FC = () => {
           style={{ marginBottom: 16 }}
         />
         <Table
+          size="small"
           columns={columns}
           dataSource={backups}
           rowKey="id"

@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge, MenuProps } from 'antd';
-import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined } from '@ant-design/icons';
+import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge, MenuProps, Tooltip } from 'antd';
+import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined, UndoOutlined, RedoOutlined } from '@ant-design/icons';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
+import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { TimerModal } from '../WorkLog/TimerModal';
 import QRScannerModal from '../QRScannerModal';
@@ -21,14 +23,22 @@ interface HeaderProps {
 }
 
 const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCount = 0 }) => {
+    const navigate = useNavigate();
     const { user, logout } = useAuth();
+    const { undo, redo, canUndo, canRedo, history, currentIndex } = useActionHistory();
     const { activeLog, elapsedSeconds, setModalOpen } = useTimeTracker();
     const [qrModalOpen, setQrModalOpen] = useState(false);
     
     // Attendance state
     const [attendanceModalOpen, setAttendanceModalOpen] = useState(false);
     const [personalQrModalOpen, setPersonalQrModalOpen] = useState(false);
+    // State for Universal QR -> Attendance handover
+    const [personalQrInitialToken, setPersonalQrInitialToken] = useState<string | null>(null);
+    const [personalQrInitialKioskId, setPersonalQrInitialKioskId] = useState<string | null>(null);
+    const [personalQrInitialMode, setPersonalQrInitialMode] = useState<'phone_qr' | 'kiosk_qr' | 'authorized_qr' | null>(null);
+    
     const [attendanceStatus, setAttendanceStatus] = useState<{
+
         is_clocked_in: boolean, 
         check_in: string | null, 
         check_out: string | null, 
@@ -102,6 +112,84 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
             }
         }
         return 'permission-denied';
+    };
+
+    const handleUniversalScan = async (data: string) => {
+        try {
+            console.log("Universal Scan Data:", data);
+            
+            // 1. Try sending to backend scan endpoint (Handles Attendance/Kiosk)
+            const response = await api.post('/hr/attendances/scan/', { qr_code: data });
+             
+            if (response.data.action === 'show_user_qr' && response.data.access_token) {
+                 // OLD FLOW: Switch to Token Display.
+                 message.success(response.data.message || 'Kioszk azonosítva!');
+                 setQrModalOpen(false);
+                 setPersonalQrModalOpen(true);
+                 // We don't have token prop logic here anymore as we removed it for simplicity in last step? 
+                 // Wait, I updated Props in previous turn, but logic in views.py changed action to 'kiosk_challenge_sent'
+                 return;
+            } else if (response.data.action === 'kiosk_challenge_sent') {
+                 // NEW FLOW: Challenge Sent to Kiosk
+                 message.success(response.data.message || 'Kioszk azonosítva! Olvasd be a megjelenő kódot!');
+                 // KEEP SCANNER OPEN or RE-OPEN logic?
+                 // Ideally, we just show a message "Most olvasd be a kódot a kioszkon!"
+                 // And the scanner stays active. 
+                 // We need to ensure the scanner doesn't close or reset.
+                 // Current logic: we only setQrModalOpen(false) if we return early.
+                 // So if we just message.success, scanner stays open?
+                 // But handleUniversalScan usually closes or navigates.
+                 
+                 // Let's add a visual feedback in the Scanner Modal? Or just toast message.
+                 // Scanner Modal doesn't have "message" area easily accessible via prop?
+                 // Using 'message.success' displays a toast which is visible over modal.
+                 
+                 // Important: Prevent re-scanning the SAME kiosk code immediately.
+                 // The Scanner component has a `processScannedData` debouncer/lock?
+                 // Yes, usually.
+                 
+                 return; // Keep scanner open
+                 
+            } else if (response.data.action === 'check_in' || response.data.action === 'check_out') {
+                 // Direct action success (e.g. Scanned Challenge Token)
+                 message.success(response.data.message);
+                 setQrModalOpen(false); // Success -> Close
+                 return;
+            }
+            
+            // 2. Fallback: Check if it's a URL
+             if (data.startsWith('http')) {
+                const url = new URL(data);
+                if (url.pathname) {
+                    navigate(url.pathname + url.search);
+                    message.success('Sikeres URL beolvasás!');
+                    setQrModalOpen(false); 
+                    return;
+                }
+            }
+            
+        } catch (error: any) {
+            console.error("Universal Scan Error", error);
+            // If backend rejected it, and it's not a URL, show error
+            // Check if it WAS a URL but backend rejected it as QR code?
+            // The try block around api.post might catch network errors too.
+            
+            if (data.startsWith('http')) {
+                // If it looks like a URL but backend failed scan (expected), try navigation
+                 try {
+                    const url = new URL(data);
+                    if (url.pathname) {
+                        navigate(url.pathname + url.search);
+                        message.success('Sikeres URL beolvasás!');
+                        setQrModalOpen(false); 
+                        return;
+                    }
+                 } catch(e) {}
+            }
+            
+            const errorMsg = error.response?.data?.error || error.response?.data?.message || 'Ismeretlen vagy érvénytelen QR kód';
+            message.error(errorMsg);
+        }
     };
 
     // --- ACTIVITY TRACKING LOGIC ---
@@ -312,20 +400,24 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
             label: (
                 <div style={{ cursor: 'default', color: '#666' }} onClick={(e) => e.stopPropagation()}>
                     <div style={{ display: 'flex', alignItems: 'center', marginBottom: 4 }}>
-                         <FieldTimeOutlined style={{ marginRight: 8, color: '#1890ff' }} />
+                         <FieldTimeOutlined style={{ marginRight: 8, color: attendanceStatus?.is_clocked_in ? '#1890ff' : '#999' }} />
                          <span>
-                             Belépve: <span style={{ fontWeight: 'bold' }}>
-                                 {(attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid())
-                                    ? dayjs.duration(currentTime.diff(dayjs(attendanceStatus.check_in))).format('HH:mm:ss') 
-                                    : 'Inaktív'}
-                             </span>
-                             {attendanceStatus?.daily_worked_seconds ? (
+                             {(attendanceStatus?.is_clocked_in && attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid()) ? (
+                                <>
+                                    Belépve: <span style={{ fontWeight: 'bold' }}>
+                                        {dayjs.duration(currentTime.diff(dayjs(attendanceStatus.check_in))).format('HH:mm:ss')}
+                                    </span>
+                                </>
+                             ) : (
+                                <span style={{ color: '#999' }}>Kilépve</span>
+                             )}
+                             {attendanceStatus?.daily_worked_seconds !== undefined && (
                                 <>
                                     <span style={{ margin: '0 8px' }}>|</span>
                                     <span>
                                         Mai nap: <span style={{ fontWeight: 'bold' }}>
                                         {(() => {
-                                            const currentSessionSeconds = (attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid()) 
+                                            const currentSessionSeconds = (attendanceStatus?.is_clocked_in && attendanceStatus?.check_in && dayjs(attendanceStatus.check_in).isValid()) 
                                                 ? currentTime.diff(dayjs(attendanceStatus.check_in), 'second') 
                                                 : 0;
                                             const totalSeconds = (attendanceStatus.daily_worked_seconds || 0) + currentSessionSeconds;
@@ -336,7 +428,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                                         </span>
                                     </span>
                                 </>
-                             ) : null}
+                             )}
                          </span>
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center' }}>
@@ -421,7 +513,12 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                 </div>
              </Modal>
 
-             <QRScannerModal open={qrModalOpen} onClose={() => setQrModalOpen(false)} isMobile={isMobile} />
+             <QRScannerModal 
+                open={qrModalOpen} 
+                onClose={() => setQrModalOpen(false)} 
+                isMobile={isMobile} 
+                onScan={handleUniversalScan} // Add Universal Handler
+             />
              <QRScannerModal 
                 open={attendanceModalOpen} 
                 onClose={() => setAttendanceModalOpen(false)} 
@@ -435,7 +532,16 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
              />
              <AttendanceQRModal 
                 open={personalQrModalOpen}
-                onClose={() => setPersonalQrModalOpen(false)}
+                onClose={() => {
+                    setPersonalQrModalOpen(false);
+                    // Reset initial props on close to avoid sticky state
+                    setPersonalQrInitialToken(null);
+                    setPersonalQrInitialKioskId(null);
+                    setPersonalQrInitialMode(null);
+                }}
+                initialToken={personalQrInitialToken}
+                initialKioskId={personalQrInitialKioskId}
+                initialMode={personalQrInitialMode || undefined}
              />
 
             <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
@@ -457,28 +563,42 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                 }}>
                     {isMobile ? 'PixiERP' : `PixiERP Dashboard ${process.env.REACT_APP_VERSION || 'dev'}`}
                 </h2>
+                <Space size={4}>
+                    <Tooltip title={canUndo ? `Visszavonás: ${history[currentIndex]?.description}` : "Nincs visszavonható művelet"}>
+                        <Button 
+                            icon={<UndoOutlined />} 
+                            onClick={() => undo()} 
+                            disabled={!canUndo}
+                            type="text"
+                        />
+                    </Tooltip>
+                    <Tooltip title={canRedo ? `Újra: ${history[currentIndex + 1]?.description}` : "Nincs újra végrehajtható művelet"}>
+                        <Button 
+                            icon={<RedoOutlined />} 
+                            onClick={() => redo()} 
+                            disabled={!canRedo}
+                            type="text"
+                        />
+                    </Tooltip>
+                </Space>
             </div>
 
             <Space>
                 <Button 
                     type="text" 
                     icon={<QrcodeOutlined />} 
-                    onClick={() => setQrModalOpen(true)}
-                    title="QR Kód Beolvasás"
+                    onClick={() => {
+                        setPersonalQrInitialMode('kiosk_qr');
+                        setPersonalQrModalOpen(true);
+                    }}
+                    title="QR Kód Beolvasás / Kioszk"
                 >
-                    {!isMobile && 'QR Kód'}
+                    QR Kód
                 </Button>
-                {isMobile && (
-                    <Button 
-                        type="text" 
-                        icon={attendanceStatus?.is_clocked_in ? <LogoutOutlined /> : <LoginOutlined />} 
-                        onClick={handleInitiateAttendance}
-                        title={attendanceStatus?.is_clocked_in ? "Kilépés" : "Belépés"}
-                        style={{ color: attendanceStatus?.is_clocked_in ? '#cf1322' : '#389e0d' }}
-                    >
-                        {/* {attendanceStatus?.is_clocked_in ? 'Kilépés' : 'Belépés'} */}
-                    </Button>
-                )}
+                {/* 
+                   Mobile Login/Logout Button Removed as per request.
+                   Universal Checker is now primarily QR driven.
+                */}
                 <div 
                     onClick={() => setModalOpen(true)} 
                     style={{ 

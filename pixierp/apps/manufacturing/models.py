@@ -217,18 +217,32 @@ class Quality(models.Model):
 class ProductClass(models.Model):
     """Termék osztály"""
     name = models.CharField(max_length=100, verbose_name="Név")
+    description = models.TextField(blank=True, verbose_name="Leírás")
     is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
     calculators = models.JSONField(default=list, blank=True, verbose_name="Kalkulátorok")
     hr_departments = models.ManyToManyField(Department, blank=True, verbose_name="HR osztályok")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name="Szülő kategória"
+    )
 
     class Meta:
         verbose_name = "Termék osztály"
         verbose_name_plural = "Termék osztályok"
 
-    def __str__(self):
+    def get_full_name(self):
+        if self.parent:
+            return f"{self.parent.get_full_name()} > {self.name}"
         return self.name
+
+    def __str__(self):
+        return self.get_full_name()
 
 
 class Project(models.Model):
@@ -351,6 +365,32 @@ class ManufacturingCostItem(models.Model):
         return f"{self.name} ({self.product.name})"
 
 
+class ServiceGroup(models.Model):
+    """Szolgáltatás csoport modell"""
+    name = models.CharField(max_length=100, unique=True, verbose_name="Csoport neve")
+    description = models.TextField(blank=True, verbose_name="Leírás")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Létrehozta")
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name="Szülő csoport"
+    )
+
+    class Meta:
+        verbose_name = "Szolgáltatás csoport"
+        verbose_name_plural = "Szolgáltatás csoportok"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
 class Service(models.Model):
     """Gyártási szolgáltatás modell (munkadíjak, szolgáltatási díjak)"""
     UNIT_CHOICES = [
@@ -442,8 +482,15 @@ class Service(models.Model):
     category = models.CharField(
         max_length=100,
         blank=True,
-        verbose_name="Kategória",
+        verbose_name="Kategória (Legacy)",
         help_text="pl. Nyomtatás, Utómunka, Szállítás"
+    )
+
+    groups = models.ManyToManyField(
+        ServiceGroup,
+        blank=True,
+        verbose_name="Szolgáltatás csoportok",
+        related_name="services"
     )
     
     # Beszállítók és belső gyártás

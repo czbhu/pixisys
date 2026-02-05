@@ -1,12 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
 import { manufacturingService, Currency as MCurrency } from '../../services/manufacturingService';
 import { settingsService } from '../../services/settingsService';
+import { warehouseService } from '../../services/warehouseService';
 import { useAuth } from '../../contexts/AuthContext';
 import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
@@ -17,6 +21,7 @@ const { TextArea } = Input;
 
 const RFQs: React.FC = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams(); // Add this
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -450,6 +455,11 @@ const RFQs: React.FC = () => {
       setNewCosts([]);
       setRfqFiles([]);
       setRfqFileRemarks({});
+      
+      if (searchParams.get('create') === 'true') {
+        navigate('/sales/rfqs', { replace: true });
+      }
+
       loadData();
     } catch (e) {
       // validation or api error
@@ -469,10 +479,131 @@ const RFQs: React.FC = () => {
       const def = currs.find(c => c.is_default);
       if (def?.code) setCurrency(def.code.toUpperCase());
     } catch {}
+    
+    // Check if we have items to add from URL
+    const addItemId = searchParams.get('add_item_id');
+    const addItemType = searchParams.get('add_item_type');
+    
+    if (addItemId && addItemType) {
+        // Pre-fill items list
+        // We probably need to fetch the item detail to display it correctly in the ItemsTable/list
+        // Or if 'newItems' state structure supports just ID and type, we push it.
+        // Looking at handleAddItem in RFQs.tsx or ItemSelectorModal payload.
+        // Usually items need full object.
+        
+        try {
+            let item: any = null;
+            if (addItemType === 'manufacturing') {
+                item = await manufacturingService.getProduct(Number(addItemId));
+                // Transform to RFQ Item structure
+                 const rfqItem = {
+                    item_type: 'manufacturing',
+                    ref_id: item.id,
+                    manufacturing_product: item,
+                    name: item.name || `Egyedi termék #${item.id}`,
+                    quantity: Number(item.quantity) || 1,
+                    unit: item.quantity_unit || 'db',
+                    net_unit_price: Number(item.net_unit_price) || 0,
+                    vat_rate: 27,
+                    description: item.description || '',
+                    code: item.code
+                 };
+                 setNewItems([rfqItem]);
+                 
+                 // Transform Cost Items if available
+                 if (item.cost_items && Array.isArray(item.cost_items)) {
+                     // Need to fetch company names for suppliers if possible, or just load them async
+                     const loadedCosts = await Promise.all(item.cost_items.map(async (ci: any, idx: number) => {
+                        let supplierName = '';
+                        let code = ci.code || '';
+                        
+                        // Try to fetch material details to get real code and supplier
+                        if (ci.material || (!ci.code && ci.ref_id)) {
+                             try {
+                                 const matId = ci.material || ci.ref_id;
+                                 const mat = await warehouseService.getMaterial(matId);
+                                 if (mat) {
+                                     code = mat.code;
+                                     // If we don't have supplier yet, use material's supplier
+                                     if (!ci.supplier && mat.supplier) {
+                                         ci.supplier = mat.supplier; // Assuming ID
+                                     }
+                                 }
+                             } catch (e) {
+                                 console.warn("Failed to fetch material details for cost item", ci);
+                             }
+                        }
+                        
+                        // Resolve supplier name and ID properly
+                        let supplierId = ci.supplier;
+                        if (typeof ci.supplier === 'object' && ci.supplier !== null) {
+                            supplierId = ci.supplier.id;
+                            if (ci.supplier.name) supplierName = ci.supplier.name;
+                        }
+                        
+                        // Use supplier_name from API if available (added to serializer)
+                        if (ci.supplier_name) {
+                            supplierName = ci.supplier_name;
+                        }
+                        
+                        if (supplierId && !supplierName) {
+                                try {
+                                    // Try finding in loaded companies (customers) first, unlikely but possible
+                                    const existing = companies.find(c => c.id == supplierId);
+                                    if (existing) {
+                                        supplierName = existing.name;
+                                    } else {
+                                        const sup = await crmService.getCompany(supplierId);
+                                        supplierName = sup.name;
+                                    }
+                                } catch {
+                                    supplierName = `Beszállító #${supplierId}`;
+                                }
+                        }
+                        
+                        return {
+                         id: Date.now() + idx,
+                         code: code || ci.ref_id, // Fallback to ref_id if still no code
+                         name: ci.name,
+                         quantity: Number(ci.quantity) || 0,
+                         unit: ci.unit || 'db',
+                         net_unit_price: Number(ci.cost_price) || 0,
+                         net_total: (Number(ci.quantity) || 0) * (Number(ci.cost_price) || 0),
+                         supplier: supplierId, 
+                         supplier_name: supplierName,
+                         currency: item.currency_info?.code || 'HUF',
+                         is_stock: false
+                        };
+                     }));
+                     setNewCosts(loadedCosts);
+                 }
+            }
+            // Add other types if needed
+        } catch (e) {
+            console.error('Failed to load item from URL', e);
+        }
+    }
+    
     setCreateOpen(true);
   };
 
+  useEffect(() => {
+    if (searchParams.get('create') === 'true' && !loading) {
+       openCreate();
+       // Clear params to avoid loop? Or keep them until closed?
+       // Ideally we should wait for rfqs/companies/projects to load first. 
+       // 'loading' flag handles that.
+    }
+  }, [searchParams, loading]); // Trigger when params change or loading finishes
+
+
   const handleCancel = () => {
+    const clearParams = () => {
+         if (searchParams.get('create') === 'true') {
+            navigate('/sales/rfqs', { replace: true });
+         }
+    };
+
     if (form.isFieldsTouched()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
@@ -483,11 +614,13 @@ const RFQs: React.FC = () => {
         onOk: () => {
           setCreateOpen(false);
           form.resetFields();
+          clearParams();
         },
       });
     } else {
       setCreateOpen(false);
       form.resetFields();
+      clearParams();
     }
   };
 
@@ -559,20 +692,63 @@ const RFQs: React.FC = () => {
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} />
+        <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} size="small" />
       </Card>
-      <Modal title="Ajánlat kiküldése e-mailen" open={!!sendOpenId} onOk={async () => {
-        const v = await sendForm.validateFields();
-        if (!sendOpenId) return;
-        try {
-          await salesService.sendQuoteRequestEmail(sendOpenId, v);
-          message.success('E-mail elküldve');
-          setSendOpenId(null);
-        } catch {
-          message.error('Nem sikerült elküldeni az e-mailt');
+      <Modal 
+        title={`Ajánlat kérő kiküldése: ${(() => {
+            const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+            const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
+            return rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
+        })()}`}
+        open={!!sendOpenId} 
+        width={800}
+        onCancel={() => setSendOpenId(null)}
+        footer={[
+             <Button key="preview" onClick={async () => {
+                const v = await sendForm.getFieldsValue();
+                if (!sendOpenId) return;
+                try {
+                  const p = await salesService.renderQuoteRequestEmail(sendOpenId, { 
+                      template_key: v.template_key, 
+                      signature_key: v.signature_key, 
+                      context: v.context, 
+                      ...(v.subject ? { subject: v.subject } : {}), 
+                      ...(v.body ? { body: v.body } : {}) 
+                  });
+                  setSendPreview(p);
+                } catch {
+                  message.error('Előnézet nem elérhető');
+                }
+             }}>Előnézet</Button>,
+             <Button key="cancel" onClick={() => setSendOpenId(null)}>Mégse</Button>,
+             <Button key="send" type="primary" icon={<SendOutlined />} onClick={async () => {
+                const v = await sendForm.validateFields();
+                if (!sendOpenId) return;
+                try {
+                  await salesService.sendQuoteRequestEmail(sendOpenId, v);
+                  message.success('E-mail elküldve');
+                  setSendOpenId(null);
+                } catch {
+                  message.error('Nem sikerült elküldeni az e-mailt');
+                }
+             }}>Küldés</Button>
+        ]}
+      >
+        <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }} onValuesChange={async (changedValues, allValues) => {
+        if (changedValues.template_key || changedValues.signature_key || changedValues.subject !== undefined || changedValues.body !== undefined) {
+             if (!sendOpenId) return;
+             try {
+               const p = await salesService.renderQuoteRequestEmail(sendOpenId, { 
+                 template_key: allValues.template_key, 
+                 signature_key: allValues.signature_key, 
+                 context: allValues.context, 
+                 ...(allValues.subject ? { subject: allValues.subject } : {}), 
+                 ...(allValues.body ? { body: allValues.body } : {}) 
+               }); 
+               setSendPreview(p); 
+             } catch {}
         }
-      }} onCancel={() => setSendOpenId(null)}>
-        <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }}>
+      }}>
           <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}>
             <Input placeholder="email1@example.com, email2@example.com" />
           </Form.Item>
@@ -582,146 +758,132 @@ const RFQs: React.FC = () => {
           <Form.Item label="Válaszcím (Reply-To)" name="reply_to">
             <Input placeholder="reply@example.com" />
           </Form.Item>
-          <Form.Item label="Email sablon" name="template_key" rules={[{ required: true, message: 'Válassz sablont' }]}>
-            <Select 
-              placeholder="Válassz email sablont" 
-              showSearch 
-              optionFilterProp="label"
-              onChange={async (templateKey: string) => {
-                // Load and set subject, body, cc and reply_to from template
-                const template = emailTemplates.find((t: any) => t.key === templateKey);
-                if (template) {
-                  // Get current RFQ data to build context
-                  const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
-                  if (rec) {
-                    let subject = template.subject_template || '';
-                    let body = template.body_template || '';
-                    const cc = template.default_cc || '';
-                    const replyTo = template.default_reply_to || '';
-                    
-                    // Build contact names
-                    const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
-                    
-                    // Replace variables in subject
-                    subject = subject.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
-                    subject = subject.replace(/{rfq_title}/g, rec.title || '');
-                    subject = subject.replace(/{company_name}/g, rec.company?.name || '');
-                    subject = subject.replace(/{contact_names}/g, contactNames);
-                    
-                    // Replace variables in body
-                    body = body.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
-                    body = body.replace(/{rfq_title}/g, rec.title || '');
-                    body = body.replace(/{company_name}/g, rec.company?.name || '');
-                    body = body.replace(/{contact_names}/g, contactNames);
-                    body = body.replace(/{public_order_url}/g, rec.public_order_url || '');
-                    
-                    // Append current signature if exists
-                    const sigKey = sendForm.getFieldValue('signature_key');
-                    if (sigKey) {
-                        const signature = signatures.find((s: any) => s.key === sigKey);
-                        if (signature && signature.body_html) {
-                            let sigBody = signature.body_html;
-                            // Substitute user variables in signature
-                            const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
-                            sigBody = sigBody.replace(/{user_name}/g, uName);
-                            sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
-                            sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
-                            sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
-                            
-                            body = body + (template.is_html ? '' : '\n\n') + sigBody;
+          
+          <div style={{ display: 'flex', gap: 16 }}>
+             <Form.Item label="Email sablon" name="template_key" rules={[{ required: true, message: 'Válassz sablont' }]} style={{ flex: 1 }}>
+                <Select 
+                  placeholder="Válassz email sablont" 
+                  showSearch 
+                  optionFilterProp="label"
+                  onChange={async (templateKey: string) => {
+                    // Load and set subject, body, cc and reply_to from template
+                    const template = emailTemplates.find((t: any) => t.key === templateKey);
+                    if (template) {
+                      // Get current RFQ data to build context
+                      const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+                      if (rec) {
+                        let subject = template.subject_template || '';
+                        let body = template.body_template || '';
+                        const cc = template.default_cc || '';
+                        const replyTo = template.default_reply_to || '';
+                        
+                        // Build contact names
+                        const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+                        
+                        // Replace variables in subject
+                        subject = subject.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
+                        subject = subject.replace(/{rfq_title}/g, rec.title || '');
+                        subject = subject.replace(/{company_name}/g, rec.company?.name || '');
+                        subject = subject.replace(/{contact_names}/g, contactNames);
+                        
+                        // Replace variables in body
+                        body = body.replace(/{rfq_number}/g, rec.number || rec.request_number || '');
+                        body = body.replace(/{rfq_title}/g, rec.title || '');
+                        body = body.replace(/{company_name}/g, rec.company?.name || '');
+                        body = body.replace(/{contact_names}/g, contactNames);
+                        body = body.replace(/{public_order_url}/g, rec.public_order_url || '');
+                        
+                        // Append current signature if exists
+                        const sigKey = sendForm.getFieldValue('signature_key');
+                        if (sigKey) {
+                            const signature = signatures.find((s: any) => s.key === sigKey);
+                            if (signature && signature.body_html) {
+                                let sigBody = signature.body_html;
+                                // Substitute user variables in signature
+                                const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
+                                sigBody = sigBody.replace(/{user_name}/g, uName);
+                                sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
+                                sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
+                                sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
+                                
+                                body = body + (template.is_html ? '' : '\n\n') + sigBody;
+                            }
                         }
+                        
+                        sendForm.setFieldsValue({ subject, body, cc, reply_to: replyTo });
+                      }
+                    }
+                  }}
+                >
+                  {emailTemplates.map((tpl: any) => (
+                    <Select.Option key={tpl.key} value={tpl.key} label={tpl.name}>
+                      {tpl.name} ({tpl.key})
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Form.Item label="Aláírás" name="signature_key" style={{ flex: 1 }}>
+                <Select 
+                  placeholder="Válassz aláírást" 
+                  allowClear 
+                  showSearch 
+                  optionFilterProp="label"
+                  onChange={(sigKey: string) => {
+                    // Update body with new signature
+                    const currentBody = sendForm.getFieldValue('body') || '';
+                    const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+                    if (!rec) return;
+                    
+                    // Remove old signature from body (everything after last occurrence of signature delimiter)
+                    let bodyWithoutSig = currentBody;
+                    const template = emailTemplates.find((t: any) => t.key === sendForm.getFieldValue('template_key'));
+                    if (template && template.body_template) {
+                      // Try to find where template body ends
+                      const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+                      let templateBody = template.body_template || '';
+                      templateBody = templateBody.replace('{rfq_number}', rec.number || rec.request_number || '');
+                      templateBody = templateBody.replace('{rfq_title}', rec.title || '');
+                      templateBody = templateBody.replace('{company_name}', rec.company?.name || '');
+                      templateBody = templateBody.replace('{contact_names}', contactNames);
+                      templateBody = templateBody.replace('{public_order_url}', rec.public_order_url || '');
+                      bodyWithoutSig = templateBody;
                     }
                     
-                    sendForm.setFieldsValue({ subject, body, cc, reply_to: replyTo });
-                  }
-                }
-              }}
-            >
-              {emailTemplates.map((tpl: any) => (
-                <Select.Option key={tpl.key} value={tpl.key} label={tpl.name}>
-                  {tpl.name} ({tpl.key})
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Aláírás" name="signature_key">
-            <Select 
-              placeholder="Válassz aláírást" 
-              allowClear 
-              showSearch 
-              optionFilterProp="label"
-              onChange={(sigKey: string) => {
-                // Update body with new signature
-                const currentBody = sendForm.getFieldValue('body') || '';
-                const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
-                if (!rec) return;
-                
-                // Remove old signature from body (everything after last occurrence of signature delimiter)
-                let bodyWithoutSig = currentBody;
-                const template = emailTemplates.find((t: any) => t.key === sendForm.getFieldValue('template_key'));
-                if (template && template.body_template) {
-                  // Try to find where template body ends
-                  const contactNames = (rec.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
-                  let templateBody = template.body_template || '';
-                  templateBody = templateBody.replace('{rfq_number}', rec.number || rec.request_number || '');
-                  templateBody = templateBody.replace('{rfq_title}', rec.title || '');
-                  templateBody = templateBody.replace('{company_name}', rec.company?.name || '');
-                  templateBody = templateBody.replace('{contact_names}', contactNames);
-                  templateBody = templateBody.replace('{public_order_url}', rec.public_order_url || '');
-                  bodyWithoutSig = templateBody;
-                }
-                
-                // Add new signature
-                let newBody = bodyWithoutSig;
-                if (sigKey) {
-                  const signature = signatures.find((s: any) => s.key === sigKey);
-                  if (signature && signature.body_html) {
-                    let sigBody = signature.body_html;
-                    // Substitute user variables in signature
-                    const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
-                    sigBody = sigBody.replace(/{user_name}/g, uName);
-                    sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
-                    sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
-                    sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
+                    // Add new signature
+                    let newBody = bodyWithoutSig;
+                    if (sigKey) {
+                      const signature = signatures.find((s: any) => s.key === sigKey);
+                      if (signature && signature.body_html) {
+                        let sigBody = signature.body_html;
+                        // Substitute user variables in signature
+                        const uName = user?.last_name && user?.first_name ? `${user.last_name} ${user.first_name}` : (user?.username || user?.name || '');
+                        sigBody = sigBody.replace(/{user_name}/g, uName);
+                        sigBody = sigBody.replace(/{user_email}/g, user?.email || '');
+                        sigBody = sigBody.replace(/{user_phonenumber}/g, user?.employee_profile?.phone || user?.phone || '');
+                        sigBody = sigBody.replace(/{user_position}/g, user?.employee_profile?.position?.title || user?.position || '');
 
-                    newBody = bodyWithoutSig + '\n\n' + sigBody;
-                  }
-                }
-                
-                sendForm.setFieldsValue({ body: newBody });
-              }}
-            >
-              {signatures.map((sig: any) => (
-                <Select.Option key={sig.key} value={sig.key} label={sig.name}>
-                  {sig.name} ({sig.key})
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
+                        newBody = bodyWithoutSig + (template?.is_html ? '' : '\n\n') + sigBody;
+                      }
+                    }
+                    
+                    sendForm.setFieldsValue({ body: newBody });
+                  }}
+                >
+                  {signatures.map((sig: any) => (
+                    <Select.Option key={sig.key} value={sig.key} label={sig.name}>
+                      {sig.name} ({sig.key})
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+          </div>
+
           <Form.Item label="Tárgy" name="subject">
-            <Input placeholder="E-mail tárgya" onChange={async () => {
-              const v = await sendForm.getFieldsValue();
-              if (!sendOpenId) return;
-              try { const p = await salesService.renderQuoteRequestEmail(sendOpenId, { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) }); setSendPreview(p); } catch {}
-            }} />
+            <Input placeholder="E-mail tárgya" />
           </Form.Item>
           <Form.Item label="Törzs" name="body">
-            <Input.TextArea rows={8} placeholder="E-mail törzse" onChange={async () => {
-              const v = await sendForm.getFieldsValue();
-              if (!sendOpenId) return;
-              try { const p = await salesService.renderQuoteRequestEmail(sendOpenId, { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) }); setSendPreview(p); } catch {}
-            }} />
+            <ReactQuill theme="snow" style={{ height: 300, marginBottom: 50 }} />
           </Form.Item>
-          <Button onClick={async () => {
-            const v = await sendForm.validateFields();
-            if (!sendOpenId) return;
-            try {
-              const p = await salesService.renderQuoteRequestEmail(sendOpenId, { template_key: v.template_key, signature_key: v.signature_key, context: v.context, ...(v.subject ? { subject: v.subject } : {}), ...(v.body ? { body: v.body } : {}) });
-              setSendPreview(p);
-            } catch {
-              message.error('Előnézet nem elérhető');
-            }
-          }}>Előnézet</Button>
           {(() => {
             const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
             const url = rec?.public_order_url;
@@ -734,13 +896,16 @@ const RFQs: React.FC = () => {
         </Form>
         {sendPreview && (
           <div style={{ marginTop: 12, borderTop: '1px solid #eee', paddingTop: 12 }}>
-            <div><strong>Tárgy:</strong> {sendPreview.subject}</div>
-            <div style={{ marginTop: 8 }}>
-              {sendPreview.is_html ? (
-                <div dangerouslySetInnerHTML={{ __html: (sendPreview.body || '').replace(/<a /gi, '<a target="_blank" ') }} />
-              ) : (
-                <pre style={{ whiteSpace: 'pre-wrap' }}>{sendPreview.body}</pre>
-              )}
+            <Divider>Előnézet</Divider>
+            <div style={{ border: '1px solid #ddd', padding: 16, borderRadius: 4 }}>
+                <div style={{marginBottom: 8}}><b>Tárgy:</b> {sendPreview.subject}</div>
+                <div className="email-preview-content">
+                    {sendPreview.is_html ? (
+                        <div dangerouslySetInnerHTML={{ __html: (sendPreview.body || '').replace(/<a /gi, '<a target="_blank" ') }} />
+                    ) : (
+                        <pre style={{whiteSpace: 'pre-wrap'}}>{sendPreview.body}</pre>
+                    )}
+                </div>
             </div>
           </div>
         )}
@@ -1122,7 +1287,10 @@ const RFQs: React.FC = () => {
                 net_total: (Number(it.quantity) || 0) * (Number(it.net_unit_price) || 0),
                 vat_rate: it.vat_rate,
                 gross_total: ((Number(it.quantity) || 0) * (Number(it.net_unit_price) || 0)) * (1 + (Number(it.vat_rate) || 0) / 100),
-                product_code: it.code,
+                product_code: (it.item_type === 'product' || !it.item_type) ? it.code : undefined,
+                manufacturing_product_code: it.item_type === 'manufacturing' ? it.code : undefined,
+                service_code: it.item_type === 'service' ? it.code : undefined,
+                manufacturing_product: (it as any).manufacturing_product,
               } as any;
               // compute discounted totals to mirror server logic
               const discountPercent = Number((it as any).discount_percent || 0);
@@ -1194,7 +1362,12 @@ const RFQs: React.FC = () => {
           setEditIdx(null);
         }}
         mode={editIdx !== null ? 'edit' : 'add'}
-        initialSelection={editIdx !== null ? (newItems[editIdx] ? { item_type: newItems[editIdx].item_type, ref_id: newItems[editIdx].ref_id, name: newItems[editIdx].name } : undefined) : undefined}
+        initialSelection={editIdx !== null ? (newItems[editIdx] ? { 
+            item_type: newItems[editIdx].item_type, 
+            ref_id: newItems[editIdx].ref_id, 
+            name: newItems[editIdx].name,
+            code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined)
+        } : undefined) : undefined}
         initialValues={editIdx !== null ? (newItems[editIdx] ? {
           quantity: Number(newItems[editIdx].quantity || 1),
           unit: newItems[editIdx].unit,

@@ -82,6 +82,7 @@ interface Employee {
     user_username: string;
     phone?: string;
     last_activity?: string;
+    is_online?: boolean;
 }
 
 const Employees: React.FC = () => {
@@ -595,7 +596,18 @@ const Employees: React.FC = () => {
             width: 200,
             render: (_: any, r: Employee) => (
                 <Space direction="vertical" size={0}>
-                  <div style={{ fontWeight: 'bold' }}>{r.full_name}</div>
+                  <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {r.full_name}
+                      <Tooltip title={r.is_online ? "Elérhető" : "Nem elérhető"}>
+                        <div style={{ 
+                            width: 8, 
+                            height: 8, 
+                            borderRadius: '50%', 
+                            backgroundColor: r.is_online ? '#52c41a' : '#ff4d4f',
+                            boxShadow: r.is_online ? '0 0 4px #52c41a' : 'none'
+                        }} />
+                      </Tooltip>
+                  </div>
                   <div style={{ fontSize: '12px', color: '#666' }}>{r.position_name || '-'}</div>
                   <div style={{ fontSize: '11px', color: '#888' }}>{r.employee_id}</div>
                 </Space>

@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import { salesService } from '../services/salesService';
 import { message } from 'antd';
+import { useAuth } from './AuthContext';
 
 interface WorkLog {
   id: number;
@@ -23,17 +24,25 @@ interface TimeTrackerContextType {
   setModalOpen: (open: boolean) => void;
   preselectedOrderId: number | null;
   setPreselectedOrderId: (id: number | null) => void;
+  preselectedItemId: number | null;
+  setPreselectedItemId: (id: number | null) => void;
 }
 
 const TimeTrackerContext = createContext<TimeTrackerContextType | undefined>(undefined);
 
 export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  const { user } = useAuth();
   const [activeLog, setActiveLog] = useState<WorkLog | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [modalOpen, setModalOpen] = useState(false);
   const [preselectedOrderId, setPreselectedOrderId] = useState<number | null>(null);
+  const [preselectedItemId, setPreselectedItemId] = useState<number | null>(null);
 
   const refreshActiveLog = async () => {
+    if (!user) {
+        setActiveLog(null);
+        return;
+    }
     try {
       const log = await salesService.getActiveWorkLog();
       // API might return empty object if no active log
@@ -45,7 +54,7 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
   useEffect(() => {
     refreshActiveLog();
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     if (!activeLog) {
@@ -92,7 +101,19 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   };
 
   return (
-    <TimeTrackerContext.Provider value={{ activeLog, elapsedSeconds, refreshActiveLog, startTimer, stopTimer, modalOpen, setModalOpen, preselectedOrderId, setPreselectedOrderId }}>
+    <TimeTrackerContext.Provider value={{ 
+        activeLog, 
+        elapsedSeconds, 
+        refreshActiveLog, 
+        startTimer, 
+        stopTimer, 
+        modalOpen, 
+        setModalOpen, 
+        preselectedOrderId, 
+        setPreselectedOrderId,
+        preselectedItemId,
+        setPreselectedItemId
+    }}>
       {children}
     </TimeTrackerContext.Provider>
   );

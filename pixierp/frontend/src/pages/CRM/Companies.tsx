@@ -627,6 +627,18 @@ const Companies: React.FC = () => {
                     layout="vertical"
                     form={form}
                     initialValues={defaultFormValues}
+                    onValuesChange={(changedValues) => {
+                        if ('vat_status' in changedValues) {
+                            const status = changedValues.vat_status;
+                            if (status === 'DOMESTIC') {
+                                // Clear EU tax number when switching to Domestic
+                                // User request: prevent saving OTHER's EU ID
+                                form.setFieldsValue({ eu_tax_number: '' });
+                            } else if (status === 'PRIVATE_PERSON') {
+                                form.setFieldsValue({ tax_number: '', eu_tax_number: '' });
+                            }
+                        }
+                    }}
                 >
                     <Form.Item name="full_tax_number" hidden><Input /></Form.Item>
                     <Form.Item name="vat_code" hidden><Input /></Form.Item>

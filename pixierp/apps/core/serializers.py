@@ -219,7 +219,7 @@ class RoleSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Role
-        fields = ['id', 'name', 'description', 'is_system', 'permissions', 'permissions_count', 'users_count', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description', 'is_system', 'can_approve_orders', 'permissions', 'permissions_count', 'users_count', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
     
     def get_permissions_count(self, obj):
@@ -254,3 +254,45 @@ class NotificationSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'message', 'link', 'type', 'is_read', 'created_at']
         read_only_fields = ['id', 'created_at']
 
+
+from .models import Zone
+# We need to import DepartmentSerializer for nested representation or just use PrimaryKeyRelatedField
+
+class ZoneSerializer(serializers.ModelSerializer):
+    departments_details = serializers.SerializerMethodField()
+    department_ids = serializers.ListField(
+        child=serializers.IntegerField(),
+        write_only=True,
+        required=False
+    )
+
+    class Meta:
+        model = Zone
+        fields = ['id', 'name', 'zone_number', 'note', 'department_ids', 'departments_details', 'created_at', 'updated_at']
+        read_only_fields = ['created_at', 'updated_at', 'departments_details']
+
+    def get_departments_details(self, obj):
+        return [{'id': d.id, 'name': d.name} for d in obj.departments.all()]
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        ret['department_ids'] = list(instance.departments.values_list('id', flat=True))
+        return ret
+
+    def create(self, validated_data):
+        dept_ids = validated_data.pop('department_ids', [])
+        zone = Zone.objects.create(**validated_data)
+        if dept_ids:
+            from apps.hr.models import Department
+            zone.departments.set(Department.objects.filter(id__in=dept_ids))
+        return zone
+
+    def update(self, instance, validated_data):
+        dept_ids = validated_data.pop('department_ids', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if dept_ids is not None:
+             from apps.hr.models import Department
+             instance.departments.set(Department.objects.filter(id__in=dept_ids))
+        return instance

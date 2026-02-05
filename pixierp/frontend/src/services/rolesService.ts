@@ -5,6 +5,7 @@ export interface Role {
   name: string;
   description: string;
   is_system: boolean;
+  can_approve_orders: boolean;
   permissions: Permission[];
   permissions_count: number;
   users_count: number;

@@ -25,6 +25,7 @@ import KioskPage from './pages/Public/KioskPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
+import { ActionHistoryProvider } from './contexts/ActionHistoryContext';
 import { manufacturingService } from './services/manufacturingService';
 import { notificationWS } from './services/notificationWebSocket';
 import './App.css';
@@ -250,9 +251,11 @@ function App() {
     <ConfigProvider locale={huHU}>
       <SettingsProvider>
         <AuthProvider>
-          <TimeTrackerProvider>
-            <AppContent />
-          </TimeTrackerProvider>
+          <ActionHistoryProvider>
+            <TimeTrackerProvider>
+              <AppContent />
+            </TimeTrackerProvider>
+          </ActionHistoryProvider>
         </AuthProvider>
       </SettingsProvider>
     </ConfigProvider>

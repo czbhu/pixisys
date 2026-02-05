@@ -1,6 +1,6 @@
 from rest_framework import serializers
 from .models import (
-    ProductClass, Project, ManufacturingProduct, Service, 
+    ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
     ManufacturingCostItem
 )
@@ -14,6 +14,7 @@ from apps.warehouse.models import Material
 
 class ProductClassSerializer(serializers.ModelSerializer):
     hr_department_names = serializers.SerializerMethodField()
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
     
     class Meta:
         model = ProductClass
@@ -51,6 +52,7 @@ class ManufacturingCostItemSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     department = serializers.PrimaryKeyRelatedField(
         queryset=Department.objects.all(),
         required=False,
@@ -222,6 +224,16 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
         
         product = ManufacturingProduct.objects.create(**validated_data)
         
+        # Generate code if missing
+        if not product.code:
+             import re
+             name = product.name or "GY"
+             base = re.sub(r'[^A-Z0-9]', '', name[:10].upper())
+             if not base:
+                 base = "GY"
+             product.code = f"{base}-{product.id}"
+             product.save()
+        
         if allowed_companies_ids:
             companies = self._resolve_companies(allowed_companies_ids)
             product.allowed_companies.set(companies)
@@ -292,6 +304,18 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
             }
         return None
 
+class ServiceGroupSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
+    services_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ServiceGroup
+        fields = '__all__'
+
+    def get_services_count(self, obj):
+        return 0
+
 class ServiceSerializer(serializers.ModelSerializer):
     """Szolgáltatás serializer"""
     unit_display = serializers.CharField(source='get_unit_display', read_only=True)
@@ -301,6 +325,7 @@ class ServiceSerializer(serializers.ModelSerializer):
     internal_production_department_name = serializers.CharField(
         source='internal_production_department.name', read_only=True
     )
+    group_names = serializers.SerializerMethodField()
     
     class Meta:
         model = Service
@@ -310,6 +335,9 @@ class ServiceSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return 'Rendszer'
+
+    def get_group_names(self, obj):
+        return [g.name for g in obj.groups.all()]
 
 
 class CalculatorTemplateSerializer(serializers.ModelSerializer):
@@ -331,12 +359,18 @@ class CalculatorTemplateSerializer(serializers.ModelSerializer):
             'unit': m.unit,
             'material_format': m.material_format,
             'roll_width': m.roll_width,
+            'width': m.width,
+            'length': m.length,
             'sheet_division': m.sheet_division,
             'yield_percentage': m.yield_percentage,
             'unit_cost_price': m.unit_cost_price,
             'markup_percentage': m.markup_percentage,
             'unit_selling_price': m.unit_selling_price,
             'currency': m.currency,
+            'group_id': m.material_group.id if m.material_group else None,
+            'group_name': m.material_group.name if m.material_group else None,
+            'default_supplier_id': m.default_supplier.id if m.default_supplier else None,
+            'default_supplier_name': m.default_supplier.name if m.default_supplier else None,
             'is_internal_production': m.is_internal_production,
             'internal_production_cost': m.internal_production_cost,  # deprecated
             'internal_fixed_cost': m.internal_fixed_cost,
@@ -354,6 +388,8 @@ class CalculatorTemplateSerializer(serializers.ModelSerializer):
             'name': s.name,
             'code': s.code,
             'unit': s.unit,
+            'default_supplier_id': s.default_supplier.id if s.default_supplier else None,
+            'default_supplier_name': s.default_supplier.name if s.default_supplier else None,
             'unit_price': s.unit_price,
             'calculation_basis': s.calculation_basis,  # deprecated
             'category': s.category,

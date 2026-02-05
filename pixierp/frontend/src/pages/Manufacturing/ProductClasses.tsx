@@ -12,7 +12,8 @@ import {
     message,
     Tag,
     Tooltip,
-    Popconfirm
+    Popconfirm,
+    TreeSelect
 } from 'antd';
 import {
     PlusOutlined,
@@ -21,6 +22,7 @@ import {
     EyeOutlined,
     SearchOutlined,
     ExclamationCircleOutlined,
+    MinusOutlined
 } from '@ant-design/icons';
 import { manufacturingService, ProductClass } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
@@ -40,10 +42,77 @@ const ProductClasses: React.FC = () => {
     const [viewingProductClass, setViewingProductClass] = useState<ProductClass | null>(null);
     const [form] = Form.useForm();
 
+    const buildTree = (items: ProductClass[]): ProductClass[] => {
+        const itemMap = new Map<number, ProductClass>();
+        const roots: ProductClass[] = [];
+        // Deep clone to avoid mutating original state if needed, though we passed new array to filtered
+        const clonedItems = items.map(item => ({ ...item, children: [] as ProductClass[] }));
+        
+        clonedItems.forEach(item => itemMap.set(item.id, item));
+        
+        clonedItems.forEach(item => {
+            if (item.parent) {
+                const parent = itemMap.get(item.parent);
+                if (parent) {
+                    parent.children = parent.children || [];
+                    parent.children.push(item);
+                } else {
+                    roots.push(item);
+                }
+            } else {
+                roots.push(item);
+            }
+        });
+
+        const cleanup = (nodes: ProductClass[]) => {
+            nodes.forEach(node => {
+                if (node.children && node.children.length === 0) {
+                    delete node.children;
+                } else if (node.children) {
+                    cleanup(node.children);
+                }
+            })
+        };
+        cleanup(roots);
+        return roots;
+    };
+
+    const getTreeData = (nodes: ProductClass[], currentId?: number): any[] => {
+        return nodes
+            .filter(node => node.id !== currentId)
+            .map(node => ({
+                value: node.id,
+                title: node.name,
+                children: node.children ? getTreeData(node.children, currentId) : undefined,
+                disabled: node.id === currentId
+            }));
+    };
+
     useEffect(() => {
         loadProductClasses();
         loadDepartments();
     }, []);
+
+    useEffect(() => {
+        const normalize = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        const q = normalize(query);
+
+        if (q) {
+            // Flat search
+            const result = productClasses.filter(item => {
+                const hay = [
+                    item.name, 
+                    ...(item.calculators || []), 
+                    ...(item.hr_department_names || [])
+                ].join(' ');
+                return normalize(hay).includes(q);
+            });
+            setFiltered(result);
+        } else {
+            // Tree view
+            setFiltered(buildTree(productClasses));
+        }
+    }, [productClasses, query]);
 
     const loadProductClasses = async () => {
         try {
@@ -71,7 +140,9 @@ const ProductClasses: React.FC = () => {
         if (productClass) {
             setEditingProductClass(productClass);
             form.setFieldsValue({
+                parent: productClass.parent || undefined,
                 name: productClass.name,
+                description: productClass.description,
                 is_default: productClass.is_default,
                 calculators: productClass.calculators,
                 hr_departments: productClass.hr_department_names.map(name =>
@@ -258,6 +329,7 @@ const ProductClasses: React.FC = () => {
                 <Table
                     columns={columns}
                     dataSource={filtered}
+                    expandable={{ defaultExpandAllRows: true }}
                     pagination={{
                         pageSize: 20,
                         showSizeChanger: true,
@@ -308,11 +380,30 @@ const ProductClasses: React.FC = () => {
                     onFinish={handleSubmit}
                 >
                     <Form.Item
+                        name="parent"
+                        label="Szülő osztály"
+                    >
+                         <TreeSelect
+                            allowClear
+                            placeholder="Válassz szülő osztályt (opcionális)"
+                            treeData={getTreeData(buildTree(productClasses), editingProductClass?.id)}
+                            switcherIcon={({ expanded }: any) => expanded ? <MinusOutlined /> : <PlusOutlined />}
+                         />
+                    </Form.Item>
+
+                    <Form.Item
                         name="name"
                         label="Név"
                         rules={[{ required: true, message: 'Kérjük, adja meg a nevet!' }]}
                     >
                         <Input placeholder="Termék osztály neve" />
+                    </Form.Item>
+
+                    <Form.Item
+                        name="description"
+                        label="Leírás"
+                    >
+                        <TextArea rows={3} placeholder="Leírás" />
                     </Form.Item>
 
                     <Form.Item

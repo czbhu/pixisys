@@ -14,7 +14,8 @@ websocket_urlpatterns = [
     re_path(r'^ws/access-control/?$', AccessControlConsumer.as_asgi()),
     
     # Kiosk WebSocket containing QR display
-    re_path(r'^ws/attendance/?$', AttendanceKioskConsumer.as_asgi()),
+    re_path(r'^ws/attendance/(?P<device_id>[\w-]+)/?$', AttendanceKioskConsumer.as_asgi()),
+    re_path(r'^ws/attendance/?$', AttendanceKioskConsumer.as_asgi()), # Legacy fallback
     
     # Device WebSocket - for physical devices to connect
     re_path(r'^ws/device/?$', DeviceConsumer.as_asgi()),
