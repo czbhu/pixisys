@@ -178,6 +178,11 @@ const KioskPage: React.FC = () => {
            .then(res => {
                if (res.data.kiosk_logo) {
                    let url = res.data.kiosk_logo;
+                   // Force HTTPS if we are on HTTPS
+                   if (window.location.protocol === 'https:' && url.startsWith('http:')) {
+                       url = url.replace('http:', 'https:');
+                   }
+
                    // Fix for development URLs showing up in production
                    if (url && (url.includes('127.0.0.1') || url.includes('localhost'))) {
                        try {
@@ -268,6 +273,9 @@ const KioskPage: React.FC = () => {
                                 setIdentifyData(null);
                              }
                          }
+                    } else if (data.type === 'restart' || data.type === 'reload') {
+                         console.log("Remote restart command received");
+                         window.location.reload();
                     }
                 } catch (e) { console.error(e); }
             };

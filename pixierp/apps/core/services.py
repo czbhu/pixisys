@@ -36,6 +36,6 @@ def send_notification(user, title, message, link=None, type='info'):
             "title": title,
             "message": message,
             "link": link,
-            "type": type
+            "notification_type": type
         }
     )

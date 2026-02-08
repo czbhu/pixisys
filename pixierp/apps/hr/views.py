@@ -841,177 +841,194 @@ class AttendanceReportViewSet(viewsets.ViewSet):
     permission_resource = 'hr.attendance'
     
     def list(self, request):
-        """
-        Get attendance report with filtering options
-        Query params:
-        - employee_id: Filter by employee
-        - start_date: Start of date range (default: first day of current month)
-        - end_date: End of date range (default: last day of current month)
-        - month: Quick filter - 'current' or 'previous'
-        """
-        # Get filter parameters
-        employee_id = request.query_params.get('employee_id')
-        start_date = request.query_params.get('start_date')
-        end_date = request.query_params.get('end_date')
-        month_filter = request.query_params.get('month', 'current')
+        try:
+            """
+            Get attendance report with filtering options
+            """
+            # Get filter parameters
+            employee_id = request.query_params.get('employee_id')
+            start_date = request.query_params.get('start_date')
+            end_date = request.query_params.get('end_date')
+            month_filter = request.query_params.get('month', 'current')
 
-        user = request.user
-        can_view_all = check_permission(user, self.permission_module, self.permission_resource, 'view')
-        can_view_own = has_own_data_permission(user, self.permission_module, self.permission_resource)
-        can_edit = check_permission(user, self.permission_module, self.permission_resource, 'edit')
-
-        # Deny access if the user has no relevant permission
-        if not (can_view_all or can_view_own):
-            return Response(
-                {'detail': 'Nincs jogosultság a jelenlét adatok megtekintéséhez.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-        
-        # Calculate date range
-        today = date.today()
-        
-        if month_filter == 'previous':
-            # Previous month
-            if today.month == 1:
-                year = today.year - 1
-                month = 12
-            else:
-                year = today.year
-                month = today.month - 1
-            start_date = date(year, month, 1)
-            _, last_day = monthrange(year, month)
-            end_date = date(year, month, last_day)
-        elif start_date and end_date:
-            # Custom date range
-            start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
-            end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
-        else:
-            # Current month (default)
-            start_date = date(today.year, today.month, 1)
-            _, last_day = monthrange(today.year, today.month)
-            end_date = date(today.year, today.month, last_day)
-        
-        # Build query
-        # Decide which employee(s) the user is allowed to see
-        if can_view_all:
-            target_employee_id = employee_id
-        else:
-            user_employee = Employee.objects.filter(user=user, is_active=True).first()
-            if not user_employee:
-                return Response({
-                    'results': [],
-                    'summary': {
-                        'total_days_worked': 0,
-                        'total_hours': 0,
-                        'start_date': start_date,
-                        'end_date': end_date,
-                    }
-                })
-            target_employee_id = user_employee.id
-
-        filters = Q(check_in_time__date__gte=start_date, check_in_time__date__lte=end_date)
-        if target_employee_id:
-            filters &= Q(employee_id=target_employee_id)
-        
-        # Get all access logs in the date range
-        access_logs = AccessLog.objects.filter(filters).select_related('employee', 'employee__user')
-        
-        # Group by employee and date
-        attendance_dict = defaultdict(lambda: defaultdict(list))
-        
-        for log in access_logs:
-            # Use Local Time for date grouping
-            log_date = timezone.localtime(log.check_in_time).date()
-            attendance_dict[log.employee_id][log_date].append(log)
-        
-        # Build report data
-        report_data = []
-        
-        # Get all employees in the filter
-        if target_employee_id:
-            employees = Employee.objects.filter(id=target_employee_id, is_active=True)
-        else:
-            employees = Employee.objects.filter(is_active=True)
-        
-        for employee in employees:
-            # Calculate total monthly hours
-            monthly_hours = 0
+            user = request.user
+            can_view_all = check_permission(user, self.permission_module, self.permission_resource, 'view')
+            can_view_own = has_own_data_permission(user, self.permission_module, self.permission_resource)
             
-            # Iterate through all days in the range
-            current_date = start_date
-            while current_date <= end_date:
-                logs_for_day = attendance_dict[employee.id].get(current_date, [])
-                
-                segments = []
-                check_in = None
-                check_out = None
-                hours_worked = 0
-                notes = ''
-                access_log_id = None
+            # Check if requesting own data implicitly
+            is_requesting_own = False
+            try:
+                if hasattr(user, 'employee_profile'):
+                    user_emp_id = user.employee_profile.id
+                    # If no employee_id specified, it defaults to own (handled later)
+                    if not employee_id:
+                        is_requesting_own = True
+                    # If specified, must match
+                    elif str(employee_id) == str(user_emp_id):
+                        is_requesting_own = True
+            except:
+                pass
 
-                if logs_for_day:
-                    # Sort logs by check_in time
-                    logs_for_day.sort(key=lambda x: x.check_in_time)
-                    
-                    # Get first check-in and last check-out for summary
-                    check_in = logs_for_day[0].check_in_time
-                    
-                    # Calculate total hours (sum of all durations)
-                    # And build segments list
-                    for log in logs_for_day:
-                        duration = 0
-                        c_out = log.check_out_time
-                        if c_out and log.check_in_time:
-                            delta = c_out - log.check_in_time
-                            duration = round(delta.total_seconds() / 3600, 2)
-                        
-                        hours_worked += duration
-                        
-                        segments.append({
-                            'id': log.id,
-                            'check_in': log.check_in_time,
-                            'check_out': log.check_out_time,
-                            'duration': duration,
-                            'notes': log.notes or ''
-                        })
-                    
-                    # Last check out text (summary)
-                    if logs_for_day[-1].check_out_time:
-                         check_out = logs_for_day[-1].check_out_time
+            # Deny access if the user has no relevant permission AND is not requesting own data
+            if not (can_view_all or can_view_own or is_requesting_own):
+                return Response(
+                    {'detail': 'Nincs jogosultság a jelenlét adatok megtekintéséhez.'},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+            
+            # Calculate date range
+            today = date.today()
+            
+            if month_filter == 'previous':
+                # Previous month
+                if today.month == 1:
+                    year = today.year - 1
+                    month = 12
+                else:
+                    year = today.year
+                    month = today.month - 1
+                start_date = date(year, month, 1)
+                _, last_day = monthrange(year, month)
+                end_date = date(year, month, last_day)
+            elif start_date and end_date:
+                # Custom date range
+                start_date = datetime.strptime(start_date, '%Y-%m-%d').date()
+                end_date = datetime.strptime(end_date, '%Y-%m-%d').date()
+            else:
+                # Current month (default)
+                start_date = date(today.year, today.month, 1)
+                _, last_day = monthrange(today.year, today.month)
+                end_date = date(today.year, today.month, last_day)
+            
+            # Build query
+            # Decide which employee(s) the user is allowed to see
+            if can_view_all and employee_id:
+                 target_employee_id = employee_id
+            else:
+                user_employee = Employee.objects.filter(user=user, is_active=True).first()
+                if not user_employee:
+                    return Response({
+                        'results': [],
+                        'summary': {
+                            'total_days_worked': 0,
+                            'total_hours': 0,
+                            'start_date': start_date,
+                            'end_date': end_date,
+                        }
+                    })
+                target_employee_id = user_employee.id
 
-                    notes = logs_for_day[0].notes or ''
-                    access_log_id = logs_for_day[0].id
+            filters = Q(check_in_time__date__gte=start_date, check_in_time__date__lte=end_date)
+            if target_employee_id:
+                filters &= Q(employee_id=target_employee_id)
+            
+            # Get all access logs in the date range
+            access_logs = AccessLog.objects.filter(filters).select_related('employee', 'employee__user')
+            
+            # Group by employee and date
+            attendance_dict = defaultdict(lambda: defaultdict(list))
+            
+            for log in access_logs:
+                # Use Local Time for date grouping
+                if log.check_in_time:
+                    log_date = timezone.localtime(log.check_in_time).date()
+                    attendance_dict[log.employee_id][log_date].append(log)
+            
+            # Build report data
+            report_data = []
+            
+            # Get all employees in the filter
+            if target_employee_id:
+                employees = Employee.objects.filter(id=target_employee_id, is_active=True)
+            else:
+                employees = Employee.objects.filter(is_active=True)
+            
+            can_edit = check_permission(user, self.permission_module, self.permission_resource, 'edit')
+
+            for employee in employees:
+                # Calculate total monthly hours
+                monthly_hours = 0
                 
-                report_data.append({
-                    'id': access_log_id,
-                    'employee_id': employee.id,
-                    'employee_name': employee.user.get_full_name(),
-                    'date': current_date,
-                    'check_in': check_in,
-                    'check_out': check_out,
-                    'hours_worked': round(hours_worked, 2), # Total sum
-                    'notes': notes,
-                    'is_editable': can_edit,
-                    'segments': segments # New field
-                })
-                
-                current_date += timedelta(days=1)
-        
-        serializer = AttendanceReportSerializer(report_data, many=True)
-        
-        # Calculate summary
-        total_days_worked = sum(1 for item in report_data if item['hours_worked'] > 0)
-        total_hours = sum(item['hours_worked'] for item in report_data)
-        
-        return Response({
-            'results': serializer.data,
-            'summary': {
-                'total_days_worked': total_days_worked,
-                'total_hours': round(total_hours, 2),
-                'start_date': start_date,
-                'end_date': end_date
-            }
-        })
+                # Iterate through all days in the range
+                current_date = start_date
+                while current_date <= end_date:
+                    logs_for_day = attendance_dict[employee.id].get(current_date, [])
+                    
+                    segments = []
+                    check_in = None
+                    check_out = None
+                    hours_worked = 0
+                    notes = ''
+                    access_log_id = None
+
+                    if logs_for_day:
+                        # Sort logs by check_in time
+                        logs_for_day.sort(key=lambda x: x.check_in_time)
+                        
+                        # Get first check-in and last check-out for summary
+                        check_in = logs_for_day[0].check_in_time
+                        
+                        # Calculate total hours (sum of all duration)
+                        # And build segments list
+                        for log in logs_for_day:
+                            duration = 0
+                            c_out = log.check_out_time
+                            if c_out and log.check_in_time:
+                                delta = c_out - log.check_in_time
+                                duration = round(delta.total_seconds() / 3600, 2)
+                            
+                            hours_worked += duration
+                            
+                            segments.append({
+                                'id': log.id,
+                                'check_in': log.check_in_time,
+                                'check_out': log.check_out_time,
+                                'duration': duration,
+                                'notes': log.notes or ''
+                            })
+                        
+                        # Last check out text (summary)
+                        last_log = logs_for_day[-1]
+                        if last_log.check_out_time:
+                            check_out = last_log.check_out_time
+
+                        notes = logs_for_day[0].notes or ''
+                        access_log_id = logs_for_day[0].id
+                    
+                    report_data.append({
+                        'id': access_log_id,
+                        'employee_id': employee.id,
+                        'employee_name': employee.user.get_full_name(),
+                        'date': current_date,
+                        'check_in': check_in,
+                        'check_out': check_out,
+                        'hours_worked': round(hours_worked, 2), # Total sum
+                        'notes': notes,
+                        'is_editable': can_edit,
+                        'segments': segments # New field
+                    })
+                    
+                    current_date += timedelta(days=1)
+            
+            serializer = AttendanceReportSerializer(report_data, many=True)
+            
+            # Calculate summary
+            total_days_worked = sum(1 for item in report_data if item['hours_worked'] > 0)
+            total_hours = sum(item['hours_worked'] for item in report_data)
+            
+            return Response({
+                'results': serializer.data,
+                'summary': {
+                    'total_days_worked': total_days_worked,
+                    'total_hours': round(total_hours, 2),
+                    'start_date': start_date,
+                    'end_date': end_date
+                }
+            })
+        except Exception as e:
+            import traceback
+            logger.error(f"Attendance Report Error: {str(e)}\n{traceback.format_exc()}")
+            return Response({'error': str(e), 'detail': traceback.format_exc()}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
     
     def update(self, request, pk=None):
         """Update a specific attendance record"""
@@ -1334,6 +1351,27 @@ class KioskDeviceViewSet(viewsets.ModelViewSet):
         device.status = 'blocked'
         device.save()
         return Response(KioskDeviceSerializer(device).data)
+
+    @action(detail=True, methods=['post'])
+    def restart(self, request, pk=None):
+        if not request.user.is_authenticated:
+            return Response(status=401)
+        device = self.get_object()
+        
+        from channels.layers import get_channel_layer
+        from asgiref.sync import async_to_sync
+        
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            f"attendance_kiosk_{device.device_id}",
+            {
+                "type": "kiosk_message",
+                "message": {
+                    "type": "restart"
+                }
+            }
+        )
+        return Response({'status': 'restart_sent'})
 
     @action(detail=True, methods=['post'])
     def identify(self, request, pk=None):

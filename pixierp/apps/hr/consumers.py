@@ -277,7 +277,9 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
     @database_sync_to_async
     def get_allowed_kiosks_for_user(self, user):
         try:
+            print(f"[KIOSK_DEBUG] Checking kiosks for user: {user} (ID: {user.id})")
             if not user or not user.is_authenticated:
+                print("[KIOSK_DEBUG] User not authenticated")
                 return []
             
             # 1. If user has employee profile, strictly follow Zone logic
@@ -285,19 +287,29 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
             if hasattr(user, 'employee_profile'):
                 employee = user.employee_profile
                 departments = employee.departments.all()
+                print(f"[KIOSK_DEBUG] User {user} is Employee. Depts: {list(departments)}")
                 
                 if departments:
                     zones = Zone.objects.filter(departments__in=departments)
+                    print(f"[KIOSK_DEBUG] Zones: {list(zones)}")
                     kiosks = KioskDevice.objects.filter(zones__in=zones, status='approved').distinct()
-                    return [k.device_id for k in kiosks]
+                    kiosk_ids = [k.device_id for k in kiosks]
+                    print(f"[KIOSK_DEBUG] Found Kiosks: {kiosk_ids}")
+                    return kiosk_ids
+                else:
+                    print("[KIOSK_DEBUG] No departments found for employee")
 
             # 2. Fallback: Allow staff/superusers to control ALL kiosks ONLY if they are not constrained by employee zones (e.g. pure admin)
             if user.is_staff or user.is_superuser:
+                 print("[KIOSK_DEBUG] User is Admin (Fallback)")
                  return [k.device_id for k in KioskDevice.objects.filter(status='approved')]
             
+            print("[KIOSK_DEBUG] No matching rules found for user")
             return []
         except Exception as e:
             print(f"Error finding allowed kiosks: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     # Receive message from room group

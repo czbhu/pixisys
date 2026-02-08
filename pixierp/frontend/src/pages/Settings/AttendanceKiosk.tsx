@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Table, Button, Badge, message, Tag, Space, Card, Typography, Popconfirm, Modal, Select, Tooltip } from 'antd';
-import { DeleteOutlined, EditOutlined, EyeOutlined } from '@ant-design/icons';
+import { DeleteOutlined, EditOutlined, EyeOutlined, ReloadOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import moment from 'moment';
 
@@ -146,6 +146,15 @@ const AttendanceKiosk: React.FC = () => {
         }
     };
 
+    const handleRestart = async (id: number) => {
+        try {
+            await api.post(`/hr/kiosk-devices/${id}/restart/`);
+            message.success('Újraindítás parancs elküldve');
+        } catch (e) {
+            message.error('Sikertelen művelet');
+        }
+    };
+
     const columns = [
         {
             title: 'Eszköz Azonosító',
@@ -212,6 +221,11 @@ const AttendanceKiosk: React.FC = () => {
                             className={isIdentifying ? "blink-button" : ""}
                         />
                         <Button icon={<EditOutlined />} onClick={() => handleEdit(record)} />
+                        {record.status === 'approved' && (
+                             <Tooltip title="Kioszk Újraindítása">
+                                <Button icon={<ReloadOutlined />} onClick={() => handleRestart(record.id)} />
+                             </Tooltip>
+                        )}
                         <Popconfirm
                             title="Biztosan törölni szeretnéd?"
                             onConfirm={() => handleDelete(record.id)}

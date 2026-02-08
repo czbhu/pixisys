@@ -247,11 +247,16 @@ def logout_view(request):
     try:
         refresh_token = request.data.get('refresh')
         if refresh_token:
-            token = RefreshToken(refresh_token)
-            token.blacklist()
+            try:
+                token = RefreshToken(refresh_token)
+                token.blacklist()
+            except Exception:
+                # Token érvénytelen vagy már feketelistán van - nem hiba kijelentkezésnél
+                pass
         return Response({'message': 'Successfully logged out'})
     except Exception as e:
-        return Response({'error': 'Invalid token'}, status=status.HTTP_400_BAD_REQUEST)
+        # Minden egyéb hiba esetén is sikeresnek tekintjük a kijelentkezést a kliens felé
+        return Response({'message': 'Successfully logged out'})
 
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])

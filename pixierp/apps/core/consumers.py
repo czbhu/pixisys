@@ -31,7 +31,8 @@ class NotificationConsumer(AsyncWebsocketConsumer):
         message = event['message']
         title = event.get('title', 'Értesítés')
         link = event.get('link', None)
-        type = event.get('type', 'info')
+        # Fix: use 'notification_type' if available, otherwise fallback to 'type' (legacy)
+        msg_type = event.get('notification_type', event.get('type', 'info'))
 
         # Send message to WebSocket
         await self.send(text_data=json.dumps({
@@ -39,5 +40,5 @@ class NotificationConsumer(AsyncWebsocketConsumer):
             'title': title,
             'message': message,
             'link': link,
-            'level': type
+            'level': msg_type
         }))
