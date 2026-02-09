@@ -20,7 +20,7 @@ def _split_csv(value: str):
 
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS',
-    default='localhost,127.0.0.1,0.0.0.0,192.168.5.61,erp.pixisys.eu,te.pixisys.eu',
+    default='localhost,127.0.0.1,0.0.0.0,192.168.5.61,erp.pixisys.eu,te.pixisys.eu,e.pixisys.eu',
     cast=_split_csv,
 )
 
@@ -182,7 +182,7 @@ REST_FRAMEWORK = {
 # CORS settings
 CORS_ALLOWED_ORIGINS = config(
     'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu,http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000',
+    default='http://localhost:3000,http://127.0.0.1:3000,http://192.168.5.61:3000,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu,https://e.pixisys.eu,http://e.pixisys.eu,http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000',
     cast=_split_csv,
 )
 
@@ -190,7 +190,7 @@ CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://192.168.5.61:3000,http://192.168.5.61:8003,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu',
+    default='http://192.168.5.61:3000,http://192.168.5.61:8003,https://erp.pixisys.eu,http://erp.pixisys.eu,https://te.pixisys.eu,http://te.pixisys.eu,https://e.pixisys.eu,http://e.pixisys.eu',
     cast=_split_csv,
 )
 
