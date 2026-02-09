@@ -39,18 +39,33 @@ def create_admin(email, password, username="admin"):
         print("Superuser created successfully.")
 
     # Create Employee profile if missing
-    if not hasattr(user, 'employee'):
+    has_profile = False
+    if hasattr(user, 'employee_profile'):
+        print("Employee profile (employee_profile) already exists.")
+        has_profile = True
+    elif hasattr(user, 'employee'):
+        print("Employee profile (employee) already exists.")
+        has_profile = True
+
+    if not has_profile:
         print("Creating Employee profile...")
         # Generate a unique Employee ID
-        emp_id = f"SYSADMIN-{datetime.now().strftime('%Y%m%d')}"
+        # Try to avoid collision only if strict check needed, but random suffix helps
+        base_id = f"SYSADMIN-{datetime.now().strftime('%Y%m%d')}"
+        emp_id = base_id
+        
+        # Check if ID exists (rare, but possible if multiple deletions happened today)
+        counter = 1
+        while Employee.objects.filter(employee_id=emp_id).exists():
+            emp_id = f"{base_id}-{counter}"
+            counter += 1
+
         Employee.objects.create(
             user=user,
             employee_id=emp_id,
             is_active=True
         )
         print(f"Employee profile created ({emp_id}).")
-    else:
-        print("Employee profile already exists.")
 
     # Create "CEO" Department if it doesn't exist
     print("Checking 'CEO' Department...")
