@@ -148,6 +148,8 @@ def sso_login_view(request):
 def login_view(request):
     """User login endpoint - accepts email or username, supports both Django User and SystemUser"""
     email = request.data.get('email')
+    if email and isinstance(email, str):
+        email = email.strip()
     password = request.data.get('password')
     
     if not email or not password:
