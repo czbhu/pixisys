@@ -49,18 +49,22 @@ def emergency_login_view(request):
                 status=status.HTTP_401_UNAUTHORIZED
             )
         
-        # Admin user keresése (admin@pixisys.eu)
-        try:
-            user = User.objects.get(email='admin@pixisys.eu', is_active=True)
-        except User.DoesNotExist:
-            # Fallback: próbáljuk username alapján
-            try:
-                user = User.objects.get(username='admin@pixisys.eu', is_active=True)
-            except User.DoesNotExist:
-                return Response(
-                    {'error': 'Admin felhasználó nem található'},
-                    status=status.HTTP_404_NOT_FOUND
-                )
+        # Admin user keresése
+        user = None
+        # 1. Próbáljuk a "szabványos" admin@pixisys.eu címet
+        user = User.objects.filter(email='admin@pixisys.eu', is_active=True).first()
+        if not user:
+            user = User.objects.filter(username='admin@pixisys.eu', is_active=True).first()
+        
+        # 2. Ha nincs ilyen, keressünk bármilyen superusert
+        if not user:
+            user = User.objects.filter(is_superuser=True, is_active=True).first()
+            
+        if not user:
+             return Response(
+                {'error': 'Admin felhasználó nem található a rendszerben'},
+                status=status.HTTP_404_NOT_FOUND
+            )
         
         # Token megjelölése használtként
         client_ip = get_client_ip(request)
