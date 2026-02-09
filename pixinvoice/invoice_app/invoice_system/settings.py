@@ -32,7 +32,7 @@ def _split_csv(value: str):
 
 ALLOWED_HOSTS = config(
     'ALLOWED_HOSTS',
-    default='localhost,127.0.0.1,0.0.0.0,192.168.5.61,inv.pixisys.eu,ti.pixisys.eu',
+    default='localhost,127.0.0.1,0.0.0.0,192.168.5.61,inv.pixisys.eu,ti.pixisys.eu,i.pixisys.eu',
     cast=_split_csv,
 )
 
@@ -167,7 +167,7 @@ if DEBUG:
 else:
     CORS_ALLOWED_ORIGINS = config(
         'CORS_ALLOWED_ORIGINS',
-        default='http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000,https://inv.pixisys.eu,http://inv.pixisys.eu,https://ti.pixisys.eu,http://ti.pixisys.eu',
+        default='http://localhost:4000,http://127.0.0.1:4000,http://192.168.5.61:4000,https://inv.pixisys.eu,http://inv.pixisys.eu,https://ti.pixisys.eu,http://ti.pixisys.eu,https://i.pixisys.eu,http://i.pixisys.eu',
         cast=_split_csv,
     )
 
@@ -195,7 +195,7 @@ CORS_ALLOW_METHODS = [
 
 CSRF_TRUSTED_ORIGINS = config(
     'CSRF_TRUSTED_ORIGINS',
-    default='http://192.168.5.61:4000,http://192.168.5.61:4001,https://inv.pixisys.eu,http://inv.pixisys.eu,https://ti.pixisys.eu,http://ti.pixisys.eu',
+    default='http://192.168.5.61:4000,http://192.168.5.61:4001,https://inv.pixisys.eu,http://inv.pixisys.eu,https://ti.pixisys.eu,http://ti.pixisys.eu,https://i.pixisys.eu,http://i.pixisys.eu',
     cast=_split_csv,
 )
 
