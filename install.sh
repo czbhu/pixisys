@@ -216,6 +216,56 @@ echo -e "${BLUE}🚀 PixiInvoice Backend előkészítése...${NC}"
 # PixiInvoice requirements a venv mappában szokott lenni? Nem, az invoice_app alatt.
 setup_venv "$SCRIPT_DIR/pixinvoice/invoice_app"
 
+# Adatbázis migrációk és Admin létrehozása
+echo ""
+echo -e "${BLUE}👤 Adminisztrátor létrehozása és Adatbázis inicializálás...${NC}"
+echo "Add meg a rendszeradminisztrátor (szuperfelhasználó) adatait."
+echo "Ez a felhasználó teljes hozzáférést kap az ERP-hez és a Számlázóhoz is."
+echo ""
+
+read -p "Admin Email: " ADMIN_EMAIL
+# Jelszó bekérése rejtve
+unset ADMIN_PASSWORD
+while [ -z "$ADMIN_PASSWORD" ]; do
+    read -s -p "Admin Jelszó: " ADMIN_PASSWORD
+    echo ""
+    read -s -p "Jelszó megerősítése: " ADMIN_PASSWORD_CONFIRM
+    echo ""
+    if [ "$ADMIN_PASSWORD" != "$ADMIN_PASSWORD_CONFIRM" ]; then
+        echo -e "${RED}A jelszavak nem egyeznek! Próbáld újra.${NC}"
+        ADMIN_PASSWORD=""
+    fi
+done
+
+if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
+    # 1. PixiERP Migráció és User
+    echo -e "${BLUE}PixiERP adatbázis migráció...${NC}"
+    (
+        source "$SCRIPT_DIR/pixierp/venv/bin/activate"
+        cd "$SCRIPT_DIR/pixierp"
+        python manage.py migrate --noinput
+        
+        echo -e "${BLUE}PixiERP admin létrehozása...${NC}"
+        python create_initial_admin.py "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
+    )
+    
+    # 2. PixiInvoice Migráció és User
+    echo -e "${BLUE}PixiInvoice adatbázis migráció...${NC}"
+    (
+        source "$SCRIPT_DIR/pixinvoice/invoice_app/venv/bin/activate"
+        cd "$SCRIPT_DIR/pixinvoice/invoice_app"
+        python manage.py migrate --noinput
+        
+        echo -e "${BLUE}PixiInvoice admin létrehozása...${NC}"
+        python create_initial_admin.py "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
+    )
+    
+    echo -e "${GREEN}✓ Adminisztrátor létrehozva mindkét rendszerben.${NC}"
+else
+    echo -e "${YELLOW}⚠️  Admin adatok hiányosak, felhasználó létrehozása kihagyva.${NC}"
+fi
+
+
 
 # Frontend telepítések
 echo -e "${BLUE}🚀 PixiERP Frontend build...${NC}"
