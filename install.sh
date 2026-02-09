@@ -313,6 +313,42 @@ echo -e "${BLUE}Nginx tesztelése...${NC}"
 if sudo nginx -t; then
     sudo systemctl reload nginx
     echo -e "${GREEN}✓ Nginx újratöltve.${NC}"
+    
+    # SSL Tanúsítvány kérése (opcionális)
+    # Csak akkor foglalkozunk vele, ha nincs még cert
+    NEED_CERT=false
+    if ! sudo test -d "/etc/letsencrypt/live/$ERP_DOMAIN_NAME"; then
+        NEED_CERT=true
+    fi
+    if ! sudo test -d "/etc/letsencrypt/live/$INV_DOMAIN_NAME"; then
+        NEED_CERT=true
+    fi
+    
+    if [ "$NEED_CERT" = "true" ]; then
+        echo ""
+        echo -e "${YELLOW}⚠️  Nem találtam SSL tanúsítványt a domainekhez.${NC}"
+        echo -e "Ha ez a szerver közvetlenül elérhető az internetről (vagy a proxy továbbítja a kéréseket),"
+        echo -e "érdemes lehet kérni egy ingyenes Let's Encrypt tanúsítványt."
+        echo ""
+        read -p "Szeretnéd megpróbálni a tanúsítvány lekérését (Certbot)? (i/N): " ASK_SSL
+        if [[ "$ASK_SSL" =~ ^[IiYy]$ ]]; then
+             read -p "Adj meg egy email címet a regisztrációhoz: " CERT_EMAIL
+             if [ -n "$CERT_EMAIL" ]; then
+                  echo -e "${BLUE}Tanúsítvány kérése...${NC}"
+                  # ERP
+                  sudo certbot --nginx -d "$ERP_DOMAIN_NAME" --non-interactive --agree-tos --email "$CERT_EMAIL" --redirect || echo -e "${RED}Hiba az ERP cert kérésnél${NC}"
+                  # INV
+                  sudo certbot --nginx -d "$INV_DOMAIN_NAME" --non-interactive --agree-tos --email "$CERT_EMAIL" --redirect || echo -e "${RED}Hiba az INV cert kérésnél${NC}"
+             else
+                  echo -e "${RED}Email cím kötelező! Kihagyva.${NC}"
+             fi
+        else
+             echo "SSL kérés kihagyva."
+        fi
+    else
+        echo -e "${GREEN}✓ SSL tanúsítványok már léteznek.${NC}"
+    fi
+
 else
     echo -e "${RED}⚠️  Nginx hiba (lásd fent). A telepítés folytatódik.${NC}"
 fi
