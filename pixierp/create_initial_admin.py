@@ -10,7 +10,7 @@ os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'erp_system.settings')
 django.setup()
 
 from django.contrib.auth import get_user_model
-from apps.hr.models import Employee
+from apps.hr.models import Employee, Department
 from apps.core.models import Role, UserRole
 
 User = get_user_model()
@@ -48,18 +48,40 @@ def create_admin(email, password, username="admin"):
     else:
         print("Employee profile already exists.")
 
-    # Assign all roles
-    print("Assigning roles...")
+    # Create "CEO" Department if it doesn't exist
+    print("Checking 'CEO' Department...")
+    ceo_department, dept_created = Department.objects.get_or_create(name="CEO")
+    if dept_created:
+        print("Created 'CEO' Department.")
+    else:
+        print("'CEO' Department already exists.")
+    
+    # Add user to CEO department
+    if hasattr(user, 'employee_profile'):
+        print("Adding user to CEO Department...")
+        user.employee_profile.departments.add(ceo_department)
+    elif hasattr(user, 'employee'):
+         # Fallback if related_name is 'employee'
+         user.employee.departments.add(ceo_department)
+    else:
+         print("ERROR: Could not find employee profile relationship to add to department.")
+
+    # Assign all roles to the CEO department
+    print("Assigning ALL roles to CEO Department...")
     all_roles = Role.objects.all()
     if not all_roles.exists():
         print("WARNING: No roles found in database. Please load initial data/fixtures.")
     
+    ceo_department.roles.add(*all_roles)
+    print(f"Assigned {all_roles.count()} roles to CEO Department.")
+    
+    # Also assign directly to user just in case
     count = 0
     for role in all_roles:
         _, created = UserRole.objects.get_or_create(user=user, role=role)
         if created:
             count += 1
-    print(f"Assigned {count} new roles (Total roles: {all_roles.count()}).")
+    print(f"Assigned {count} new roles directly to user.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
