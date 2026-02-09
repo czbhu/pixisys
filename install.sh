@@ -376,12 +376,20 @@ if sudo nginx -t; then
     fi
     
     if [ "$NEED_CERT" = "true" ]; then
-        echo ""
-        echo -e "${YELLOW}⚠️  Nem találtam SSL tanúsítványt a domainekhez.${NC}"
-        echo -e "Ha ez a szerver közvetlenül elérhető az internetről (vagy a proxy továbbítja a kéréseket),"
-        echo -e "érdemes lehet kérni egy ingyenes Let's Encrypt tanúsítványt."
-        echo ""
-        read -p "Szeretnéd megpróbálni a tanúsítvány lekérését (Certbot)? (i/N): " ASK_SSL
+        # Ellenőrizzük, hogy a domain nem localhost vagy IP cím
+        if [[ "$ERP_DOMAIN_NAME" == "localhost" ]] || [[ "$ERP_DOMAIN_NAME" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+             echo ""
+             echo -e "${YELLOW}ℹ️  A domain ($ERP_DOMAIN_NAME) localhost vagy IP cím, SSL tanúsítvány kérése kihagyva.${NC}"
+             ASK_SSL="n"
+        else
+            echo ""
+            echo -e "${YELLOW}⚠️  Nem találtam SSL tanúsítványt a domainekhez.${NC}"
+            echo -e "Ha ez a szerver közvetlenül elérhető az internetről (vagy a proxy továbbítja a kéréseket),"
+            echo -e "érdemes lehet kérni egy ingyenes Let's Encrypt tanúsítványt."
+            echo ""
+            read -p "Szeretnéd megpróbálni a tanúsítvány lekérését (Certbot)? (i/N): " ASK_SSL
+        fi
+        
         if [[ "$ASK_SSL" =~ ^[IiYy]$ ]]; then
              read -p "Adj meg egy email címet a regisztrációhoz: " CERT_EMAIL
              if [ -n "$CERT_EMAIL" ]; then
@@ -409,6 +417,7 @@ echo "Elérhető domainek:"
 echo "  ERP: http://$ERP_DOMAIN_NAME"
 echo "  SZÁMLÁZÓ: http://$INV_DOMAIN_NAME"
 echo ""
-echo "Fontos: Ha ez új telepítés, ne felejtsd el beállítani az .env fájlokat és migrálni az adatbázist!"
-echo "Lásd: INSTALL.md"
+echo "A rendszer használatra kész!"
+echo "Bejelentkezéshez használd a megadott admin email címet és jelszót."
+
 
