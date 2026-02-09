@@ -231,6 +231,24 @@ echo -e "${BLUE}🔧 Nginx konfigurálása...${NC}"
 # Jogosultságok biztosítása (Current User)
 sudo chown -R $USER:$USER "$SCRIPT_DIR"
 
+# Nginx hozzáférés biztosítása a home könyvtárhoz
+echo -e "${BLUE}Jogosultságok ellenőrzése Nginx számára...${NC}"
+# A home könyvtárnak legalább 'execute' joggal kell rendelkeznie 'others' számára,
+# hogy az Nginx (www-data) be tudjon lépni.
+HOME_PERM=$(stat -c "%a" "$HOME")
+if [[ "$HOME_PERM" != *1 ]] && [[ "$HOME_PERM" != *5 ]] && [[ "$HOME_PERM" != *7 ]]; then
+    echo -e "${YELLOW}⚠️  A home könyvtár ($HOME) túl szigorú jogosultságokkal rendelkezik ($HOME_PERM).${NC}"
+    echo -e "${YELLOW}   Az Nginx nem fogja elérni a static fájlokat (500 Internal Server Error).${NC}"
+    echo -e "${BLUE}   Jogosultság javítása (o+x)...${NC}"
+    chmod o+x "$HOME"
+fi
+
+# Biztosítjuk, hogy a frontend build fájlok olvashatóak legyenek
+find "$SCRIPT_DIR/pixierp/frontend/build" -type d -exec chmod 755 {} \; 2>/dev/null || true
+find "$SCRIPT_DIR/pixierp/frontend/build" -type f -exec chmod 644 {} \; 2>/dev/null || true
+find "$SCRIPT_DIR/pixinvoice/frontend/build" -type d -exec chmod 755 {} \; 2>/dev/null || true
+find "$SCRIPT_DIR/pixinvoice/frontend/build" -type f -exec chmod 644 {} \; 2>/dev/null || true
+
 # Config fileok másolása (ha léteznek eredetiben, akkor frissítsük a SCRIPT_DIR-t)
 # Feltételezzük, hogy az nginx/ mappában ott vannak a sablonok
 if [ -d "$SCRIPT_DIR/nginx" ]; then
