@@ -65,13 +65,24 @@ install_system_deps() {
 }
 
 setup_nodejs() {
-    if ! check_command node; then
-        echo -e "${BLUE}Node.js telepítés (20.x)...${NC}"
+    # Node verzió ellenőrzése
+    local CURRENT_NODE_VER=0
+    if command -v node &> /dev/null; then
+        # v18.20.4 -> 18
+        CURRENT_NODE_VER=$(node -v | cut -d. -f1 | tr -d 'v')
+    fi
+    
+    if [ "$CURRENT_NODE_VER" -lt 20 ]; then
+        echo -e "${BLUE}Node.js frissítése/telepítése (20.x)... (Jelenlegi: v$CURRENT_NODE_VER)${NC}"
         curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
         sudo apt-get install -y nodejs
+    else
+        echo -e "${GREEN}✓ Node.js verzió megfelelő (v$CURRENT_NODE_VER)${NC}"
     fi
+
     # NPM frissítés
     if command -v npm &> /dev/null; then
+        echo -e "${BLUE}npm frissítése...${NC}"
         sudo npm install -g npm@latest
         # React Scripts globális telepítést nem erőltetjük, inkább lokális build
     fi
