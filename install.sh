@@ -3,6 +3,7 @@
 # v2.0 - Javított verzió (2025-01-30)
 
 # Használat:
+# git pull origin main
 # chmod +x install.sh
 # ./install.sh
 
@@ -175,7 +176,8 @@ setup_nodejs
 
 # Konfiguráció betöltése
 if [ -f config.sh ]; then
-    source config.sh
+    # --load-only kapcsolóval hívjuk meg, hogy ne induljon el a belső interaktív mód
+    source config.sh --load-only
 fi
 
 # Interaktív mód csak ha nincs beállítva változó
