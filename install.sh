@@ -258,10 +258,20 @@ if [ -d "$SCRIPT_DIR/nginx" ]; then
             
             # Másolás és csere
             cp "$TEMPLATE_CONF" "$TARGET_CONF"
-            # Cseréljük ki a domain nevet és az elérési utat
-            # Figyelem: A sablonban server_name erp.pixisys.eu; van.
-            # Cseréljük le a server_name-t a user domainjére
+            
+            # Domain nevek cseréje (mindenhol, nem csak a server_name sorban)
+            # Ez kezeli az 'if ($host = ...)' és egyéb blokkokat is.
+            if [[ "$domain" == "$ERP_DOMAIN_NAME" ]]; then
+                 # Az ERP sablonban 'erp.pixisys.eu' a default
+                 sed -i "s|erp.pixisys.eu|$domain|g" "$TARGET_CONF"
+            else
+                 # Az INV sablonban 'inv.pixisys.eu' a default
+                 sed -i "s|inv.pixisys.eu|$domain|g" "$TARGET_CONF"
+            fi
+            
+            # Biztonsági háló: server_name pontosítása, ha a fenti nem találta volna meg (pl. már szerkesztett sablon)
             sed -i "s|server_name .*|server_name $domain;|g" "$TARGET_CONF"
+            
             sed -i "s|root .*/frontend/build|root $SCRIPT_DIR/pixierp/frontend/build|g" "$TARGET_CONF"
             # Ha invoice, akkor pixinvoice path
             if [[ "$domain" == "$INV_DOMAIN_NAME" ]]; then
