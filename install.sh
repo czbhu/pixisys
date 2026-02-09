@@ -111,6 +111,7 @@ setup_venv() {
     # Al-shellben futtatjuk, hogy ne zavarja meg a globális környezetet
     (
         source "$VENV_DIR/bin/activate"
+        # Fontos: setuptools telepítése a 'pkg_resources' hibák elkerülésére
         pip install --upgrade pip setuptools wheel
         
         if [ -f "$TARGET_DIR/requirements.txt" ]; then
