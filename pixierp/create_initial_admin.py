@@ -20,11 +20,15 @@ def create_admin(email, password, username="admin"):
     
     user = None
     if User.objects.filter(email=email).exists():
-        print("User with this email already exists.")
+        print("User with this email already exists. Updating password...")
         user = User.objects.get(email=email)
+        user.set_password(password)
+        user.save()
     elif User.objects.filter(username=username).exists():
-        print("User with this username already exists.")
+        print("User with this username already exists. Updating password...")
         user = User.objects.get(username=username)
+        user.set_password(password)
+        user.save()
     else:
         print("Creating new superuser...")
         user = User.objects.create_superuser(

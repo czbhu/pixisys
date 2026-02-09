@@ -17,9 +17,10 @@ def create_admin(email, password):
     
     user = None
     if SystemUser.objects.filter(email=email).exists():
-        print("User with this email already exists.")
+        print("User with this email already exists. Updating password...")
         user = SystemUser.objects.get(email=email)
-        # Update password just in case? No, let's keep it safe.
+        user.set_password(password)
+        user.save()
     else:
         print("Creating new SystemUser...")
         user = SystemUser.objects.create(
