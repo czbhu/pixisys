@@ -220,35 +220,23 @@ fi
 cd ..
 echo -e "${GREEN}✓ PixiERP backend frissítve${NC}"
 
-# PixiERP Frontend frissítése
-if [ "$SKIP_FRONTEND" = false ]; then
-    echo -e "${BLUE}[6/10] PixiERP frontend frissítése...${NC}"
-    cd pixierp/frontend
-    
-    if [ -f "package.json" ]; then
-        # Package.json változás check
-        if git diff HEAD@{1} package.json | grep -q "^+" ; then
-            echo -e "${YELLOW}  • Új NPM csomagok telepítése...${NC}"
-            npm install --quiet
-        else
-            echo -e "${GREEN}  • NPM csomagok nem változtak${NC}"
-        fi
-        
-        # Production build check
-        if [ -f "../../pixierp/.env" ]; then
-            source ../../pixierp/.env
-            if [ "$DEBUG" = "False" ] || [ "$DEBUG" = "false" ]; then
-                echo -e "${YELLOW}  • Production build...${NC}"
-                npm run build
-            fi
-        fi
+# PixiERP Frontend frissítése (Dependencies only)
+echo -e "${BLUE}[6/10] PixiERP frontend függőségek...${NC}"
+cd pixierp/frontend
+
+if [ -f "package.json" ]; then
+    # Package.json változás check
+    if git diff HEAD@{1} package.json | grep -q "^+" ; then
+        echo -e "${YELLOW}  • Új NPM csomagok telepítése...${NC}"
+        npm install --quiet
+    else
+        echo -e "${GREEN}  • NPM csomagok nem változtak${NC}"
     fi
-    
-    cd ../..
-    echo -e "${GREEN}✓ PixiERP frontend frissítve${NC}"
-else
-    echo -e "${YELLOW}[6/10] Frontend build kihagyva (--skip-frontend)${NC}"
+    # Build skipped here, handled by start.sh
 fi
+
+cd ../..
+echo -e "${GREEN}✓ PixiERP frontend függőségek rendben${NC}"
 
 # PixInvoice Backend frissítése
 echo -e "${BLUE}[7/10] PixInvoice backend frissítése...${NC}"
@@ -295,85 +283,52 @@ fi
 cd ../..
 echo -e "${GREEN}✓ PixInvoice backend frissítve${NC}"
 
-# PixInvoice Frontend frissítése
-if [ "$SKIP_FRONTEND" = false ]; then
-    echo -e "${BLUE}[8/10] PixInvoice frontend frissítése...${NC}"
-    cd pixinvoice/frontend
-    
-    if [ -f "package.json" ]; then
-        # Package.json változás check
-        if git diff HEAD@{1} package.json | grep -q "^+" ; then
-            echo -e "${YELLOW}  • Új NPM csomagok telepítése...${NC}"
-            npm install --quiet
-        else
-            echo -e "${GREEN}  • NPM csomagok nem változtak${NC}"
-        fi
-        
-        # Production build check
-        if [ -f "../../pixinvoice/invoice_app/.env" ]; then
-            source ../../pixinvoice/invoice_app/.env
-            if [ "$DEBUG" = "False" ] || [ "$DEBUG" = "false" ]; then
-                echo -e "${YELLOW}  • Production build...${NC}"
-                npm run build
-            fi
-        fi
-    fi
-    
-    cd ../..
-    echo -e "${GREEN}✓ PixInvoice frontend frissítve${NC}"
-else
-    echo -e "${YELLOW}[8/10] Frontend build kihagyva (--skip-frontend)${NC}"
-fi
+# PixInvoice Frontend frissítése (Dependencies only)
+echo -e "${BLUE}[8/10] PixInvoice frontend függőségek...${NC}"
+cd pixinvoice/frontend
 
-# Service restart
-echo -e "${BLUE}[9/10] Service újraindítás...${NC}"
-
-if [ "$AUTO_RESTART" = true ]; then
-    if [ "$EUID" -eq 0 ]; then
-        echo -e "${YELLOW}  • PixiERP backend restart...${NC}"
-        systemctl restart pixierp-backend || echo -e "${YELLOW}⚠️  pixierp-backend service nem található${NC}"
-        
-        echo -e "${YELLOW}  • PixInvoice backend restart...${NC}"
-        systemctl restart pixinvoice-backend || echo -e "${YELLOW}⚠️  pixinvoice-backend service nem található${NC}"
-        
-        echo -e "${YELLOW}  • Nginx reload...${NC}"
-        systemctl reload nginx || echo -e "${YELLOW}⚠️  nginx service nem található${NC}"
-        
-        echo -e "${GREEN}✓ Services újraindítva${NC}"
+if [ -f "package.json" ]; then
+    # Package.json változás check
+    if git diff HEAD@{1} package.json | grep -q "^+" ; then
+        echo -e "${YELLOW}  • Új NPM csomagok telepítése...${NC}"
+        npm install --quiet
     else
-        echo -e "${YELLOW}⚠️  Nem root user, service restart kihagyva${NC}"
-        echo -e "${YELLOW}  Futtasd: sudo systemctl restart pixierp-backend pixinvoice-backend${NC}"
+        echo -e "${GREEN}  • NPM csomagok nem változtak${NC}"
     fi
-else
-    echo -e "${YELLOW}⚠️  Manuális restart szükséges:${NC}"
-    echo ""
-    echo -e "${BLUE}  sudo systemctl restart pixierp-backend${NC}"
-    echo -e "${BLUE}  sudo systemctl restart pixinvoice-backend${NC}"
-    echo -e "${BLUE}  sudo systemctl reload nginx${NC}"
-    echo ""
+    # Build skipped here, handled by start.sh
 fi
 
-# Health check
+cd ../..
+echo -e "${GREEN}✓ PixInvoice frontend függőségek rendben${NC}"
+
+# System Build & Restart
+echo -e "${BLUE}[9/10] Rendszer újraépítése és indítása...${NC}"
+echo -e "${YELLOW}⚠️  start.sh futtatása (párhuzamos build + server restart)...${NC}"
+
+if ./start.sh; then
+    echo -e "${GREEN}✓ Rendszer sikeresen újraindítva${NC}"
+else
+    echo -e "${RED}❌ Hiba a start.sh futtatása közben${NC}"
+    exit 1
+fi
+
+# Health Check (Simple Port Check)
 echo -e "${BLUE}[10/10] Health check...${NC}"
 
-check_service() {
-    local service=$1
-    if systemctl is-active --quiet "$service" 2>/dev/null; then
-        echo -e "${GREEN}✓ $service: running${NC}"
-        return 0
+check_port() {
+    local port=$1
+    local name=$2
+    if ss -lnt | grep -q ":$port "; then
+        echo -e "${GREEN}✓ $name ($port): listening${NC}"
     else
-        echo -e "${RED}✗ $service: stopped${NC}"
-        return 1
+        echo -e "${RED}✗ $name ($port): not accessible${NC}"
     fi
 }
 
-if [ "$AUTO_RESTART" = true ] && [ "$EUID" -eq 0 ]; then
-    check_service "pixierp-backend"
-    check_service "pixinvoice-backend"
-    check_service "nginx"
-else
-    echo -e "${YELLOW}⚠️  Health check kihagyva (használd --auto-restart flag-et)${NC}"
-fi
+# Wait a moment for startup
+sleep 2    
+check_port 8003 "PixiERP Backend"
+check_port 4001 "PixInvoice Backend"
 
 # Összefoglaló
 echo ""
