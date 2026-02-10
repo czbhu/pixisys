@@ -58,10 +58,17 @@ check_command() {
 install_system_deps() {
     echo -e "${BLUE}📦 Rendszerfüggőségek telepítése (apt)...${NC}"
     sudo apt-get update
-    # Hozzáadjuk a build-essential-t, python3-dev-et, libpq-dev-et
+    # Hozzáadjuk a build-essential-t, python3-dev-et, libpq-dev-et, postgresql-client-16-ot
+    echo "PostgreSQL repository hozzáadása..."
+    sudo install -d /usr/share/postgresql-common/pgdg
+    sudo curl -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc --fail https://www.postgresql.org/media/keys/ACCC4CF8.asc
+    sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+    sudo apt-get update
+
     sudo apt-get install -y python3 python3-pip python3-venv python3-dev \
                             git redis-server nginx curl build-essential \
                             libpq-dev postgresql postgresql-contrib \
+                            postgresql-client-16 \
                             certbot python3-certbot-nginx
 }
 
@@ -209,6 +216,46 @@ echo "ERP_DOMAIN=\"$ERP_DOMAIN_NAME\"" >> config.sh
 echo "INV_DOMAIN=\"$INV_DOMAIN_NAME\"" >> config.sh
 chmod +x config.sh
 
+# --- .env Setup ---
+echo -e "${BLUE}🔧 Environment (.env) fájlok létrehozása...${NC}"
+
+# PixiERP .env
+ERP_ENV_FILE="$SCRIPT_DIR/pixierp/.env"
+echo "Creating $ERP_ENV_FILE..."
+# Dinamikus CORS/CSRF generálás a short domainekre is
+ERP_SHORT_DOMAIN="e.${ERP_DOMAIN_NAME#*.}"
+if [[ "$ERP_DOMAIN_NAME" == "erp.pixisys.eu" ]]; then
+    ERP_SHORT_DOMAIN="e.pixisys.eu"
+fi
+
+cat > "$ERP_ENV_FILE" << EOF
+DEBUG=False
+SECRET_KEY=$(openssl rand -base64 50)
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${ERP_DOMAIN_NAME},${ERP_SHORT_DOMAIN}
+CORS_ALLOWED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN}
+CSRF_TRUSTED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN}
+DATA_UPLOAD_MAX_MEMORY_SIZE=1048576000
+FILE_UPLOAD_MAX_MEMORY_SIZE=1048576000
+EOF
+
+# PixiInvoice .env
+INV_ENV_FILE="$SCRIPT_DIR/pixinvoice/invoice_app/.env"
+echo "Creating $INV_ENV_FILE..."
+INV_SHORT_DOMAIN="i.${INV_DOMAIN_NAME#*.}"
+if [[ "$INV_DOMAIN_NAME" == "inv.pixisys.eu" ]]; then
+    INV_SHORT_DOMAIN="i.pixisys.eu"
+fi
+
+cat > "$INV_ENV_FILE" << EOF
+DEBUG=False
+SECRET_KEY=$(openssl rand -base64 50)
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${INV_DOMAIN_NAME},${INV_SHORT_DOMAIN}
+CORS_ALLOWED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN}
+CSRF_TRUSTED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN}
+DATA_UPLOAD_MAX_MEMORY_SIZE=1048576000
+FILE_UPLOAD_MAX_MEMORY_SIZE=1048576000
+EOF
+
 # Backend telepítések
 echo -e "${BLUE}🚀 PixiERP Backend előkészítése...${NC}"
 setup_venv "$SCRIPT_DIR/pixierp"
@@ -244,9 +291,15 @@ if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
     (
         source "$SCRIPT_DIR/pixierp/venv/bin/activate"
         cd "$SCRIPT_DIR/pixierp"
+        
+        # Dependency check fix for system-wide vs venv issues
+        pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        
         python manage.py migrate --noinput
         
-        echo -e "${BLUE}PixiERP admin létrehozása...${NC}"
+        echo -e "${BLUE}PixiERP admin és jogosultságok létrehozása...${NC}"
+        # A create_initial_admin.py már tartalmazza a jogosultságok és a jwt route-ok javítását
         python create_initial_admin.py "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
     )
     
@@ -255,9 +308,13 @@ if [ -n "$ADMIN_EMAIL" ] && [ -n "$ADMIN_PASSWORD" ]; then
     (
         source "$SCRIPT_DIR/pixinvoice/invoice_app/venv/bin/activate"
         cd "$SCRIPT_DIR/pixinvoice/invoice_app"
+        
+        pip install --upgrade pip setuptools wheel
+        pip install -r requirements.txt
+        
         python manage.py migrate --noinput
         
-        echo -e "${BLUE}PixiInvoice admin létrehozása...${NC}"
+        echo -e "${BLUE}PixiInvoice admin és jogosultságok létrehozása...${NC}"
         python create_initial_admin.py "$ADMIN_EMAIL" "$ADMIN_PASSWORD"
     )
     
@@ -333,18 +390,36 @@ if [ -d "$SCRIPT_DIR/nginx" ]; then
             if [[ "$domain" == "$ERP_DOMAIN_NAME" ]]; then
                  # Az ERP sablonban 'erp.pixisys.eu' a default
                  sed -i "s|erp.pixisys.eu|$domain|g" "$TARGET_CONF"
+                 
+                 # Upload limit beállítása 1000M-re
+                 if grep -q "client_max_body_size" "$TARGET_CONF"; then
+                     sed -i "s|client_max_body_size .*|client_max_body_size 1000M;|g" "$TARGET_CONF"
+                 else
+                     sed -i "/server_name/a \    client_max_body_size 1000M;" "$TARGET_CONF"
+                 fi
             else
                  # Az INV sablonban 'inv.pixisys.eu' a default
                  sed -i "s|inv.pixisys.eu|$domain|g" "$TARGET_CONF"
+
+                 # Upload limit beállítása 1000M-re
+                 if grep -q "client_max_body_size" "$TARGET_CONF"; then
+                     sed -i "s|client_max_body_size .*|client_max_body_size 1000M;|g" "$TARGET_CONF"
+                 else
+                     sed -i "/server_name/a \    client_max_body_size 1000M;" "$TARGET_CONF"
+                 fi
             fi
             
             # Biztonsági háló: server_name pontosítása, ha a fenti nem találta volna meg (pl. már szerkesztett sablon)
             sed -i "s|server_name .*|server_name $domain;|g" "$TARGET_CONF"
             
             sed -i "s|root .*/frontend/build|root $SCRIPT_DIR/pixierp/frontend/build|g" "$TARGET_CONF"
+            # Media path javítása
+            sed -i "s|alias .*/media/|alias $SCRIPT_DIR/pixierp/media/|g" "$TARGET_CONF"
+            
             # Ha invoice, akkor pixinvoice path
             if [[ "$domain" == "$INV_DOMAIN_NAME" ]]; then
                  sed -i "s|root .*/frontend/build|root $SCRIPT_DIR/pixinvoice/frontend/build|g" "$TARGET_CONF"
+                 sed -i "s|alias .*/media/|alias $SCRIPT_DIR/pixinvoice/invoice_app/media/|g" "$TARGET_CONF"
             fi
             
             # SCRIPT_DIR csere ha van placeholder

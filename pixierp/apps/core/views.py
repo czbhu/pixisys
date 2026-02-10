@@ -1164,9 +1164,21 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 return Response({
                     'error': 'A backup fájl nem található'
                 }, status=status.HTTP_404_NOT_FOUND)
-			
+
+            # Check if file is SQLite
+            with open(backup.filepath, 'rb') as f:
+                header = f.read(16)
+            
+            is_sqlite = header == b'SQLite format 3\x00'
+            
             db_settings = settings.DATABASES['default']
             engine = db_settings.get('ENGINE', '')
+            
+            if is_sqlite and 'postgresql' in engine:
+                 return Response({
+                    'error': 'Nem lehet SQLite formátumú mentést PostgreSQL adatbázisba visszaállítani. Kérjük, használjon PostgreSQL kompatibilis (pl. pg_dump -Fc) mentést.'
+                }, status=status.HTTP_400_BAD_REQUEST)
+			
             host = db_settings.get('HOST') or 'localhost'
             port = str(db_settings.get('PORT') or 5432)
             user = db_settings.get('USER') or ''
@@ -1174,19 +1186,27 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             db_name = db_settings.get('NAME')
 
             if 'postgresql' in engine:
+                # Use explicit path for Postgres 16 tools if available
+                pg_dump_cmd = 'pg_dump'
+                pg_restore_cmd = 'pg_restore'
+                pg_bin_16 = '/usr/lib/postgresql/16/bin'
+                if os.path.exists(os.path.join(pg_bin_16, 'pg_restore')):
+                    pg_dump_cmd = os.path.join(pg_bin_16, 'pg_dump')
+                    pg_restore_cmd = os.path.join(pg_bin_16, 'pg_restore')
+
                 # Create pre-restore backup
                 pre_filename = f"pre_restore_{timezone.now().strftime('%Y%m%d_%H%M%S')}.dump"
                 pre_path = os.path.join(settings.BASE_DIR, 'backups', pre_filename)
                 os.makedirs(os.path.dirname(pre_path), exist_ok=True)
                 env = {**os.environ, 'PGPASSWORD': password}
                 pre_cmd = [
-                    'pg_dump', '-h', host, '-p', port, '-U', user, '-F', 'c', '-f', pre_path, db_name
+                    pg_dump_cmd, '-h', host, '-p', port, '-U', user, '-F', 'c', '-f', pre_path, db_name
                 ]
                 subprocess.check_call(pre_cmd, env=env)
 
                 # Restore using pg_restore (clean + if-exists)
                 restore_cmd = [
-                    'pg_restore',
+                    pg_restore_cmd,
                     '--clean', '--if-exists',
                     '-h', host,
                     '-p', port,

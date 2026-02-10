@@ -38,6 +38,20 @@ def create_admin(email, password):
 
     # Assign all roles
     print("Assigning roles...")
+    
+    # Ensure default roles exist if database is empty
+    if not Role.objects.exists():
+        print("Creating default Invoice roles...")
+        default_roles = [
+            'ADMIN',
+            'ACCOUNTANT',
+            'MANAGER',
+            'USER'
+        ]
+        for role_name in default_roles:
+            Role.objects.get_or_create(name=role_name)
+            print(f"  - Created role: {role_name}")
+
     all_roles = Role.objects.all()
     if not all_roles.exists():
         print("WARNING: No roles found. Please load initial data.")

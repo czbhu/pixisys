@@ -143,11 +143,19 @@ def sso_login_view(request):
         )
 
 
+import logging
+logger = logging.getLogger(__name__)
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
     """User login endpoint - accepts email or username, supports both Django User and SystemUser"""
-    email = request.data.get('email')
+    # logger.warning(f"LOGIN DEBUG: Data={request.data}, Headers={request.headers}")
+    
+    email = request.data.get('email') or request.data.get('username')
+    if email and isinstance(email, str):
+        email = email.strip()
+    password = request.data.get('password')
     if email and isinstance(email, str):
         email = email.strip()
     password = request.data.get('password')

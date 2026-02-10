@@ -7480,10 +7480,15 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 capture_output=True
             )
             
+            # Determine pg_restore command (prefer PG 16 if available to support newer backups)
+            pg_restore_cmd = 'pg_restore'
+            if os.path.exists('/usr/lib/postgresql/16/bin/pg_restore'):
+                pg_restore_cmd = '/usr/lib/postgresql/16/bin/pg_restore'
+
             # Drop and recreate database (requires superuser or database owner)
             # Alternative: use --clean --if-exists with pg_restore
             cmd = [
-                'pg_restore',
+                pg_restore_cmd,
                 '-h', db_host,
                 '-p', str(db_port),
                 '-U', db_user,
@@ -7502,7 +7507,8 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             
             # pg_restore may return warnings (non-zero exit) but still succeed
             # Check stderr for actual errors
-            if result.returncode != 0 and 'ERROR' in result.stderr:
+            # Note: pg_restore uses 'error' (lowercase) or 'ERROR' depending on context/locale
+            if result.returncode != 0 and ('ERROR' in result.stderr or 'error' in result.stderr or 'fatal' in result.stderr.lower()):
                 return Response({
                     'error': f'pg_restore hiba: {result.stderr}',
                     'safety_backup': safety_filepath

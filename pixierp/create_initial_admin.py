@@ -11,7 +11,7 @@ django.setup()
 
 from django.contrib.auth import get_user_model
 from apps.hr.models import Employee, Department
-from apps.core.models import Role, UserRole
+from apps.core.models import Role, UserRole, Permission
 
 User = get_user_model()
 
@@ -87,9 +87,59 @@ def create_admin(email, password, username="admin"):
 
     # Assign all roles to the CEO department
     print("Assigning ALL roles to CEO Department...")
+    
+    # Ensure default roles exist if database is empty
+    if not Role.objects.exists():
+        print("Creating default roles...")
+        default_roles = [
+            ('ADMIN', 'System Administrator'),
+            ('CEO', 'Chief Executive Officer'),
+            ('HR_MANAGER', 'HR Manager'),
+            ('SALES_MANAGER', 'Sales Manager'),
+            ('WAREHOUSE_MANAGER', 'Warehouse Manager'),
+            ('PRODUCTION_MANAGER', 'Production Manager'),
+            ('FINANCE_MANAGER', 'Finance Manager'),
+            ('CRM_MANAGER', 'CRM Manager'),
+            ('IT_ADMIN', 'IT Administrator'),
+            ('LOGISTICS_MANAGER', 'Logistics Manager'),
+            ('PURCHASING_MANAGER', 'Purchasing Manager'),
+            ('QUALITY_MANAGER', 'Quality Manager')
+        ]
+        
+        for role_name, role_desc in default_roles:
+            Role.objects.get_or_create(name=role_name, defaults={'description': role_desc})
+            print(f"  - Created role: {role_name}")
+
+    # Fix Permissions for Admin roles
+    print("Updating Permissions for ADMIN/CEO roles...")
+    for role_name in ['ADMIN', 'CEO']:
+        if Role.objects.filter(name=role_name).exists():
+            role = Role.objects.get(name=role_name)
+            print(f"  -> Assigning ALL permissions to {role_name}...")
+             # Iterate over all defined resources in Permission model
+            for resource_code, resource_name in Permission.RESOURCE_CHOICES:
+                # Grant 'manage' (full access)
+                Permission.objects.get_or_create(
+                    role=role,
+                    resource=resource_code,
+                    module=resource_code.split('.')[0], # Extract module from resource
+                    action='manage',
+                    defaults={'allowed': True}
+                )
+            # Also generic module permissions if resource is not used everywhere
+            for module_code, module_name in Permission.MODULE_CHOICES:
+                    Permission.objects.get_or_create(
+                    role=role,
+                    module=module_code,
+                    resource='',
+                    action='manage',
+                    defaults={'allowed': True}
+                )
+    
     all_roles = Role.objects.all()
     if not all_roles.exists():
-        print("WARNING: No roles found in database. Please load initial data/fixtures.")
+        print("WARNING: No roles found in database even after creation attempt.")
+
     
     ceo_department.roles.add(*all_roles)
     print(f"Assigned {all_roles.count()} roles to CEO Department.")

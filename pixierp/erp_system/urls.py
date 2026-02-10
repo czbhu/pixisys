@@ -7,6 +7,10 @@ from django.conf import settings
 from django.conf.urls.static import static
 from django.views.static import serve
 from rest_framework import routers
+from rest_framework_simplejwt.views import (
+    TokenObtainPairView,
+    TokenRefreshView,
+)
 from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet, UserPreferenceViewSet, NotificationViewSet
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
@@ -47,6 +51,9 @@ urlpatterns = [
     path('device/check_login', check_device_login, name='device_check_login'),
     path('device/check_registration', check_device_registration, name='device_check_registration'),
     path('device/upload_log', device_upload_log_view),
+    # JWT Auth
+    path('api/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('api/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     # Regular routes
     path('admin/', admin.site.urls),
     path('api/v1/', include(router.urls)),

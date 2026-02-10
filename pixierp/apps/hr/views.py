@@ -51,6 +51,15 @@ class EmployeeViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     permission_resource = 'hr.employees'
     own_data_user_field = 'user'
     
+    def perform_destroy(self, instance):
+        """
+        Delete the associated User when the Employee is deleted.
+        """
+        user = instance.user
+        instance.delete()
+        if user:
+            user.delete()
+
     # ELTÁVOLÍTVA: Egyéni jogosultságok már nem használtak
     # Csak osztály-alapú szerepkörök vannak használva (Department.roles)
     # @action(detail=True, methods=['get', 'post'])
