@@ -10,6 +10,11 @@
 # Hibakezelés: Bármilyen hiba esetén álljon le a script, kivéve ha kezelve van
 set -e
 
+# Avoid interactive prompts from apt/dpkg (e.g. PostgreSQL cluster upgrade)
+export DEBIAN_FRONTEND=noninteractive
+export APT_LISTCHANGES_FRONTEND=none
+APT_NONINTERACTIVE_OPTS=("-y" "-o" "Dpkg::Options::=--force-confdef" "-o" "Dpkg::Options::=--force-confold")
+
 # Színek definiálása
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -65,11 +70,14 @@ install_system_deps() {
     sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
     sudo apt-get update
 
-    sudo apt-get install -y python3 python3-pip python3-venv python3-dev \
-                            git redis-server nginx curl build-essential \
-                            libpq-dev postgresql postgresql-contrib \
-                            postgresql-client-16 \
-                            certbot python3-certbot-nginx
+    # Use non-interactive apt options to prevent interactive prompts during install
+    sudo DEBIAN_FRONTEND=${DEBIAN_FRONTEND} APT_LISTCHANGES_FRONTEND=${APT_LISTCHANGES_FRONTEND} \
+         apt-get "${APT_NONINTERACTIVE_OPTS[@]}" install \
+            python3 python3-pip python3-venv python3-dev \
+            git redis-server nginx curl build-essential \
+            libpq-dev postgresql postgresql-contrib \
+            postgresql-client-16 \
+            certbot python3-certbot-nginx
 }
 
 setup_nodejs() {
@@ -82,8 +90,9 @@ setup_nodejs() {
     
     if [ "$CURRENT_NODE_VER" -lt 20 ]; then
         echo -e "${BLUE}Node.js frissítése/telepítése (20.x)... (Jelenlegi: v$CURRENT_NODE_VER)${NC}"
-        curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-        sudo apt-get install -y nodejs
+           curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+           sudo DEBIAN_FRONTEND=${DEBIAN_FRONTEND} APT_LISTCHANGES_FRONTEND=${APT_LISTCHANGES_FRONTEND} \
+               apt-get "${APT_NONINTERACTIVE_OPTS[@]}" install nodejs
     else
         echo -e "${GREEN}✓ Node.js verzió megfelelő (v$CURRENT_NODE_VER)${NC}"
     fi
@@ -227,16 +236,19 @@ ERP_SHORT_DOMAIN="e.${ERP_DOMAIN_NAME#*.}"
 if [[ "$ERP_DOMAIN_NAME" == "erp.pixisys.eu" ]]; then
     ERP_SHORT_DOMAIN="e.pixisys.eu"
 fi
+# Also always include public PixiSys aliases as fallbacks
+ERP_FALLBACKS="erp.pixisys.eu,e.pixisys.eu"
 
 cat > "$ERP_ENV_FILE" << EOF
 DEBUG=False
 SECRET_KEY=$(openssl rand -base64 50)
-ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${ERP_DOMAIN_NAME},${ERP_SHORT_DOMAIN}
-CORS_ALLOWED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN}
-CSRF_TRUSTED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN}
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${ERP_DOMAIN_NAME},${ERP_SHORT_DOMAIN},${ERP_FALLBACKS}
+CORS_ALLOWED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN},https://erp.pixisys.eu,http://erp.pixisys.eu,https://e.pixisys.eu,http://e.pixisys.eu
+CSRF_TRUSTED_ORIGINS=https://${ERP_DOMAIN_NAME},http://${ERP_DOMAIN_NAME},https://${ERP_SHORT_DOMAIN},http://${ERP_SHORT_DOMAIN},https://erp.pixisys.eu,http://erp.pixisys.eu,https://e.pixisys.eu,http://e.pixisys.eu
 DATA_UPLOAD_MAX_MEMORY_SIZE=1048576000
 FILE_UPLOAD_MAX_MEMORY_SIZE=1048576000
 EOF
+
 
 # PixiInvoice .env
 INV_ENV_FILE="$SCRIPT_DIR/pixinvoice/invoice_app/.env"
@@ -246,12 +258,15 @@ if [[ "$INV_DOMAIN_NAME" == "inv.pixisys.eu" ]]; then
     INV_SHORT_DOMAIN="i.pixisys.eu"
 fi
 
+# Also always include public PixiSys aliases as fallbacks
+INV_FALLBACKS="inv.pixisys.eu,i.pixisys.eu"
+
 cat > "$INV_ENV_FILE" << EOF
 DEBUG=False
 SECRET_KEY=$(openssl rand -base64 50)
-ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${INV_DOMAIN_NAME},${INV_SHORT_DOMAIN}
-CORS_ALLOWED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN}
-CSRF_TRUSTED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN}
+ALLOWED_HOSTS=localhost,127.0.0.1,0.0.0.0,${INV_DOMAIN_NAME},${INV_SHORT_DOMAIN},${INV_FALLBACKS}
+CORS_ALLOWED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN},https://inv.pixisys.eu,http://inv.pixisys.eu,https://i.pixisys.eu,http://i.pixisys.eu
+CSRF_TRUSTED_ORIGINS=https://${INV_DOMAIN_NAME},http://${INV_DOMAIN_NAME},https://${INV_SHORT_DOMAIN},http://${INV_SHORT_DOMAIN},https://inv.pixisys.eu,http://inv.pixisys.eu,https://i.pixisys.eu,http://i.pixisys.eu
 DATA_UPLOAD_MAX_MEMORY_SIZE=1048576000
 FILE_UPLOAD_MAX_MEMORY_SIZE=1048576000
 EOF
@@ -338,6 +353,20 @@ echo -e "${BLUE}🔧 Nginx konfigurálása...${NC}"
 
 # Jogosultságok biztosítása (Current User)
 sudo chown -R $USER:$USER "$SCRIPT_DIR"
+
+# Ensure nginx (www-data) can read frontend build files and keep group permissions
+sudo chgrp -R www-data "$SCRIPT_DIR/pixinvoice/frontend/build" "$SCRIPT_DIR/pixierp/frontend/build" 2>/dev/null || true
+sudo find "$SCRIPT_DIR/pixinvoice/frontend/build" -type d -exec chmod 2755 {} \; 2>/dev/null || true
+sudo find "$SCRIPT_DIR/pixinvoice/frontend/build" -type f -exec chmod 0644 {} \; 2>/dev/null || true
+sudo find "$SCRIPT_DIR/pixierp/frontend/build" -type d -exec chmod 2755 {} \; 2>/dev/null || true
+sudo find "$SCRIPT_DIR/pixierp/frontend/build" -type f -exec chmod 0644 {} \; 2>/dev/null || true
+
+# Ensure nginx enforces a large upload limit globally in case vhost templates miss it
+if [ ! -f /etc/nginx/conf.d/client_max_body_size.conf ]; then
+    sudo tee /etc/nginx/conf.d/client_max_body_size.conf > /dev/null <<'NGINXEOF'
+client_max_body_size 1000M;
+NGINXEOF
+fi
 
 # Nginx hozzáférés biztosítása a home könyvtárhoz
 echo -e "${BLUE}Jogosultságok ellenőrzése Nginx számára...${NC}"
