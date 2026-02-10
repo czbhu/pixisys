@@ -1,4 +1,5 @@
 amqp==5.3.1
+anyio==4.12.1
 asgiref==3.11.1
 async-timeout==5.0.1
 attrs==25.4.0
@@ -27,6 +28,7 @@ djangorestframework==3.14.0
 djangorestframework-simplejwt==5.3.1
 gunicorn==21.2.0
 h11==0.16.0
+httptools==0.7.1
 hyperlink==21.0.0
 idna==3.11
 Incremental==24.11.0
@@ -44,7 +46,9 @@ PyJWT==2.11.0
 pyOpenSSL==25.3.0
 python-dateutil==2.9.0.post0
 python-decouple==3.8
+python-dotenv==1.2.1
 pytz==2025.2
+PyYAML==6.0.3
 qrcode==8.2
 redis==5.0.1
 reportlab==4.4.7
@@ -59,7 +63,10 @@ tzdata==2025.3
 ujson==5.11.0
 urllib3==2.6.3
 uvicorn==0.40.0
+uvloop==0.22.1
 vine==5.1.0
+watchfiles==1.1.1
 wcwidth==0.6.0
 websocket-client==1.8.0
+websockets==16.0
 zope.interface==8.2
