@@ -303,13 +303,43 @@ echo -e "${GREEN}✓ PixInvoice frontend függőségek rendben${NC}"
 
 # System Build & Restart
 echo -e "${BLUE}[9/10] Rendszer újraépítése és indítása...${NC}"
-echo -e "${YELLOW}⚠️  start.sh futtatása (párhuzamos build + server restart)...${NC}"
 
-if ./start.sh; then
-    echo -e "${GREEN}✓ Rendszer sikeresen újraindítva${NC}"
+# Check if systemd services are active/enabled
+USE_SYSTEMD=false
+if systemctl is-active --quiet pixierp-backend || systemctl is-enabled --quiet pixierp-backend; then
+    USE_SYSTEMD=true
+fi
+
+if [ "$USE_SYSTEMD" = "true" ]; then
+    echo -e "${YELLOW}⚠️  Systemd érzékelve: Csak build futtatása start.sh-val...${NC}"
+    
+    # 1. Run Build Only
+    if ./start.sh --build-only; then
+        echo -e "${GREEN}✓ Frontend build sikeres${NC}"
+    else
+        echo -e "${RED}❌ Hiba a frontend build közben${NC}"
+        exit 1
+    fi
+
+    # 2. Restart Services
+    if [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; then
+        echo -e "${YELLOW}  • Systemd service-ek újraindítása...${NC}"
+        sudo systemctl restart pixierp-backend pixinvoice-backend
+        echo -e "${GREEN}✓ Backendak újraindítva (Systemd)${NC}"
+    else
+        echo -e "${RED}⚠️  Nincs sudo jog, nem tudom újraindítani a service-eket!${NC}"
+        echo -e "Kérlek futtasd kézzel: ${BLUE}sudo systemctl restart pixierp-backend pixinvoice-backend${NC}"
+    fi
+
 else
-    echo -e "${RED}❌ Hiba a start.sh futtatása közben${NC}"
-    exit 1
+    # Legacy / Manual Mode
+    echo -e "${YELLOW}⚠️  start.sh futtatása (teljes restart)...${NC}"
+    if ./start.sh; then
+        echo -e "${GREEN}✓ Rendszer sikeresen újraindítva${NC}"
+    else
+        echo -e "${RED}❌ Hiba a start.sh futtatása közben${NC}"
+        exit 1
+    fi
 fi
 
 # Health Check (Simple Port Check)

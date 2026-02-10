@@ -9,6 +9,13 @@ cd "$SCRIPT_DIR"
 
 # Production mode flag (default: true for production)
 PRODUCTION_MODE=${PRODUCTION_MODE:-true}
+BUILD_ONLY=false
+
+# Check for --build-only argument
+if [[ "$1" == "--build-only" ]]; then
+    BUILD_ONLY=true
+    echo -e "${YELLOW}Argument --build-only detected: Skipping backend startup.${NC}"
+fi
 
 # Load domain configuration
 if [ -f "$SCRIPT_DIR/config.sh" ]; then
@@ -41,8 +48,9 @@ kill_port() {
     fi
 }
 
-# Kill any existing processes on our ports
-echo "🧹 Cleaning up existing processes..."
+if [ "$BUILD_ONLY" = "false" ]; then
+    # Kill any existing processes on our ports
+    echo "🧹 Cleaning up existing processes..."
 kill_port 8003  # ERP backend (Daphne)
 kill_port 4001  # Invoice backend
 
@@ -103,9 +111,10 @@ INVOICE_BACKEND_PID=$!
 echo -e "${GREEN}✅ Invoice Backend started (PID: $INVOICE_BACKEND_PID)${NC}"
 deactivate
 
-# Wait for backends to start
-echo "⏳ Waiting for backends to initialize..."
-sleep 3
+    # Wait for backends to start
+    echo "⏳ Waiting for backends to initialize..."
+    sleep 3
+fi
 
 if [ "$PRODUCTION_MODE" = "true" ]; then
     # Production mode: Build frontends for nginx
