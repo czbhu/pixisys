@@ -66,7 +66,13 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-daphne -b 0.0.0.0 -p ${ERP_BACKEND_PORT} erp_system.asgi:application > /tmp/pixierp_backend.log 2>&1 &
+if [ "$PRODUCTION_MODE" = "true" ]; then
+    echo -e "${BLUE}⚡ Starting ERP Backend in Production Mode (Gunicorn + Uvicorn)...${NC}"
+    gunicorn erp_system.asgi:application --bind 0.0.0.0:${ERP_BACKEND_PORT} -w 4 -k uvicorn.workers.UvicornWorker --timeout 120 --access-logfile - --error-logfile - > /tmp/pixierp_backend.log 2>&1 &
+else
+    echo -e "${YELLOW}Starting ERP Backend in Dev Mode (Daphne)...${NC}"
+    daphne -b 0.0.0.0 -p ${ERP_BACKEND_PORT} erp_system.asgi:application > /tmp/pixierp_backend.log 2>&1 &
+fi
 ERP_BACKEND_PID=$!
 echo -e "${GREEN}✅ ERP Backend started (PID: $ERP_BACKEND_PID)${NC}"
 deactivate
@@ -85,7 +91,14 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
-python manage.py runserver 0.0.0.0:${INV_BACKEND_PORT} > /tmp/pixinvoice_backend.log 2>&1 &
+if [ "$PRODUCTION_MODE" = "true" ]; then
+    echo -e "${BLUE}⚡ Starting Invoice Backend in Production Mode (Gunicorn w/ 6 workers)...${NC}"
+    # Using 6 workers to maximize throughput for 12-core CPU on IO-bound tasks
+    gunicorn invoice_system.wsgi:application --bind 0.0.0.0:${INV_BACKEND_PORT} -w 6 --timeout 120 --access-logfile - --error-logfile - > /tmp/pixinvoice_backend.log 2>&1 &
+else
+    echo -e "${YELLOW}Starting Invoice Backend in Dev Mode (runserver)...${NC}"
+    python manage.py runserver 0.0.0.0:${INV_BACKEND_PORT} > /tmp/pixinvoice_backend.log 2>&1 &
+fi
 INVOICE_BACKEND_PID=$!
 echo -e "${GREEN}✅ Invoice Backend started (PID: $INVOICE_BACKEND_PID)${NC}"
 deactivate
@@ -98,35 +111,53 @@ if [ "$PRODUCTION_MODE" = "true" ]; then
     # Production mode: Build frontends for nginx
     echo -e "${BLUE}🏗️  Production Mode: Building frontends...${NC}"
     
-    # Build ERP Frontend
-    echo -e "${BLUE}Building ERP Frontend...${NC}"
-    cd "$SCRIPT_DIR/pixierp/frontend"
-    if [ ! -f "package.json" ]; then
-        echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
-        exit 1
-    fi
-    # Use relative API path so nginx can proxy to backend in production
-    REACT_APP_API_URL="/api/v1" npm run build > /tmp/pixierp_build.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ ERP Frontend built successfully${NC}"
-    else
-        echo -e "${RED}❌ ERP Frontend build failed. Check /tmp/pixierp_build.log${NC}"
-        exit 1
-    fi
-    
-    # Build Invoice Frontend
-    echo -e "${BLUE}Building Invoice Frontend...${NC}"
-    cd "$SCRIPT_DIR/pixinvoice/frontend"
-    if [ ! -f "package.json" ]; then
-        echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
-        exit 1
-    fi
-    # PixInvoice frontend expects endpoints like /api/companies, so leave base empty for same-origin
-    REACT_APP_API_URL="" npm run build > /tmp/pixinvoice_build.log 2>&1
-    if [ $? -eq 0 ]; then
-        echo -e "${GREEN}✅ Invoice Frontend built successfully${NC}"
-    else
-        echo -e "${RED}❌ Invoice Frontend build failed. Check /tmp/pixinvoice_build.log${NC}"
+    echo -e "${BLUE}🏗️  Production Mode: Building frontends in parallel (Optimized)...${NC}"
+
+    (
+        echo -e "${BLUE}Building ERP Frontend...${NC}"
+        cd "$SCRIPT_DIR/pixierp/frontend"
+        if [ ! -f "package.json" ]; then
+            echo -e "${RED}❌ Error: pixierp/frontend/package.json not found${NC}"
+            exit 1
+        fi
+        # Use relative API path so nginx can proxy to backend in production
+        # Optimize: Disable source maps to speed up build
+        GENERATE_SOURCEMAP=false REACT_APP_API_URL="/api/v1" npm run build > /tmp/pixierp_build.log 2>&1
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✅ ERP Frontend built successfully${NC}"
+        else
+            echo -e "${RED}❌ ERP Frontend build failed. Check /tmp/pixierp_build.log${NC}"
+            exit 1
+        fi
+    ) &
+    PID_ERP=$!
+
+    (
+        echo -e "${BLUE}Building Invoice Frontend...${NC}"
+        cd "$SCRIPT_DIR/pixinvoice/frontend"
+        if [ ! -f "package.json" ]; then
+            echo -e "${RED}❌ Error: pixinvoice/frontend/package.json not found${NC}"
+            exit 1
+        fi
+        # PixInvoice frontend expects endpoints like /api/companies, so leave base empty for same-origin
+        # Optimize: Disable source maps to speed up build
+        GENERATE_SOURCEMAP=false REACT_APP_API_URL="" npm run build > /tmp/pixinvoice_build.log 2>&1
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✅ Invoice Frontend built successfully${NC}"
+        else
+            echo -e "${RED}❌ Invoice Frontend build failed. Check /tmp/pixinvoice_build.log${NC}"
+            exit 1
+        fi
+    ) &
+    PID_INV=$!
+
+    wait $PID_ERP
+    STATUS_ERP=$?
+    wait $PID_INV
+    STATUS_INV=$?
+
+    if [ $STATUS_ERP -ne 0 ] || [ $STATUS_INV -ne 0 ]; then
+        echo -e "${RED}❌ One or more builds failed.${NC}"
         exit 1
     fi
     

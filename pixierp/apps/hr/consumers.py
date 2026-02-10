@@ -150,6 +150,12 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
                     self.user_group_name,
                     self.channel_name
                 )
+        
+        # Always add to broadcast group for restart commands
+        await self.channel_layer.group_add(
+            "attendance_kiosk_broadcast",
+            self.channel_name
+        )
 
         await self.channel_layer.group_add(
             self.group_name,
@@ -164,6 +170,11 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
         if self.rotation_task:
             self.rotation_task.cancel()
         
+        await self.channel_layer.group_discard(
+            "attendance_kiosk_broadcast",
+            self.channel_name
+        )
+
         await self.channel_layer.group_discard(
             self.group_name,
             self.channel_name

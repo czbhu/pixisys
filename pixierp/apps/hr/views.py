@@ -1303,6 +1303,24 @@ class AttendanceKioskConfigViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(config)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['post'], permission_classes=[HasPermission])
+    def restart_all(self, request):
+        """
+        Broadcasts a 'reload' message to all connected Kiosk devices.
+        """
+        logger.info(f"Kiosk Restart initiated by user {request.user}")
+        channel_layer = get_channel_layer()
+        async_to_sync(channel_layer.group_send)(
+            "attendance_kiosk_broadcast",
+            {
+                'type': 'kiosk_message',
+                'message': {
+                    'type': 'reload'
+                }
+            }
+        )
+        return Response({'status': 'restarted', 'message': 'Újraindítási parancs elküldve minden Kiosknak.'})
+
 from .models import KioskDevice
 from .serializers import KioskDeviceSerializer
 

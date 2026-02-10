@@ -96,4 +96,8 @@ export const settingsService = {
      });
      return r.data;
   },
+  async restartKiosks() {
+     const r = await api.post('/hr/attendance-kiosk-config/restart_all/');
+     return r.data;
+  },
 };

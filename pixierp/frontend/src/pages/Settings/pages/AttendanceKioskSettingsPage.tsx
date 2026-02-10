@@ -10,6 +10,7 @@ const { Option } = Select;
 const AttendanceKioskSettingsPage: React.FC = () => {
     const [form] = Form.useForm();
     const [loading, setLoading] = useState(false);
+    const [restartLoading, setRestartLoading] = useState(false);
     const [config, setConfig] = useState<any>(null);
     const [fileList, setFileList] = useState<any[]>([]);
 
@@ -38,6 +39,18 @@ const AttendanceKioskSettingsPage: React.FC = () => {
             message.error('Hiba a beállítások betöltésekor');
         } finally {
             setLoading(false);
+        }
+    };
+
+    const handleRestart = async () => {
+        setRestartLoading(true);
+        try {
+            await settingsService.restartKiosks();
+            message.success('Újraindítási parancs elküldve minden Kioszknak');
+        } catch (error) {
+            message.error('Hiba az újraindítás parancs küldésekor');
+        } finally {
+            setRestartLoading(false);
         }
     };
 
@@ -122,9 +135,20 @@ const AttendanceKioskSettingsPage: React.FC = () => {
                 </Form.Item>
 
                 <Form.Item>
-                    <Button type="primary" htmlType="submit" loading={loading}>
-                        Mentés
-                    </Button>
+                    <div style={{ display: 'flex', gap: '10px' }}>
+                        <Button type="primary" htmlType="submit" loading={loading}>
+                            Mentés
+                        </Button>
+                        <Button 
+                            danger // Red color to verify caution, or maybe default? Danger implies destructive. Reloading is annoying but not destructive.
+                            // Let's use 'default' but with specific text. Or 'dashed'.
+                            // User asked specifically so make it visible.
+                            onClick={handleRestart} 
+                            loading={restartLoading}
+                        >
+                            Kioszkoldalak Távoli Frissítése (Reload)
+                        </Button>
+                    </div>
                 </Form.Item>
             </Form>
             
