@@ -17,13 +17,22 @@ interface InvoiceableOrder {
   order_date: string;
   invoice_number: string | null;
   quote_request: {
-    company: {
+    company?: {
       id: number;
       name: string;
       tax_number: string;
       city?: string;
       postal_code?: string;
       address?: string;
+    };
+    customer?: {
+      id: number;
+      name: string;
+      company?: string;
+      email?: string;
+      phone?: string;
+      address?: string;
+      tax_number?: string;
     };
   };
   items: Array<{
@@ -140,11 +149,30 @@ const Invoicing: React.FC = () => {
       for (const [companyName, companyOrders] of Object.entries(groupedByCompany)) {
         const firstOrder = companyOrders[0];
         const company = firstOrder.quote_request?.company;
+        const customer = firstOrder.quote_request?.customer;
         
-        if (!company) {
-          message.warning(`Nincs cég hozzárendelve a megrendeléshez: ${firstOrder.order_number}`);
-          continue;
+        // Prepare customer data - use company if available, otherwise customer, otherwise leave empty
+        let customerData: any = {};
+        if (company) {
+          // Company customer
+          customerData = {
+            name: company.name,
+            tax_number: company.tax_number,
+            city: company.city,
+            postal_code: company.postal_code,
+            address: company.address,
+          };
+        } else if (customer) {
+          // Individual customer (magánszemély)
+          customerData = {
+            name: customer.name || customer.company || '',
+            tax_number: customer.tax_number || '',
+            city: '',  // Customer model doesn't have city/postal_code in separate fields
+            postal_code: '',
+            address: customer.address || '',
+          };
         }
+        // If neither company nor customer, customerData remains empty and invoice form will ask for it
 
         // Prepare invoice items
         const items: any[] = [];
@@ -152,7 +180,7 @@ const Invoicing: React.FC = () => {
           order.items?.forEach((item: any) => {
             // Use the flattened fields from serializer
             const itemName = item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel';
-            const itemCode = item.product_code || item.material_code || '';
+            const itemCode = item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '';
             
             console.log('[INVOICE] Item:', {
               name: itemName,
@@ -175,13 +203,7 @@ const Invoicing: React.FC = () => {
 
         // Prepare invoice data for PixInvoice
         const invoiceData = {
-          customer: {
-            name: company.name,
-            tax_number: company.tax_number,
-            city: company.city,
-            postal_code: company.postal_code,
-            address: company.address,
-          },
+          customer: customerData,
           items: items,
           notes: `ERP megrendelések: ${companyOrders.map(o => o.order_number).join(', ')}`,
           erp_order_ids: companyOrders.map(o => o.id), // Send order IDs for callback

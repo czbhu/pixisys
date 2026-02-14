@@ -4,9 +4,12 @@ import axios from 'axios';
 const DEFAULT_DEV_API_BASE_URL = 'http://localhost:8003/api/v1';
 const DEFAULT_PROD_API_BASE_URL = '/api/v1';
 
+const configuredApiUrl = process.env.REACT_APP_API_URL;
+
 const API_BASE_URL =
-    process.env.REACT_APP_API_URL ||
-    (process.env.NODE_ENV === 'production' ? DEFAULT_PROD_API_BASE_URL : DEFAULT_DEV_API_BASE_URL);
+    process.env.NODE_ENV === 'development'
+        ? (configuredApiUrl && configuredApiUrl.startsWith('http') ? configuredApiUrl : DEFAULT_DEV_API_BASE_URL)
+        : (configuredApiUrl || DEFAULT_PROD_API_BASE_URL);
 
 // Create axios instance
 const api = axios.create({

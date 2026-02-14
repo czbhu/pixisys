@@ -12,6 +12,7 @@ from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
 from django.conf import settings
 from decouple import config
 import jwt
+import json
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from invoices.models import SystemUser, Role
 
@@ -146,29 +147,73 @@ def sso_login_view(request):
 import logging
 logger = logging.getLogger(__name__)
 
+
+def _extract_login_credentials(request):
+    data = request.data if isinstance(request.data, dict) else {}
+    nested = data.get('credentials') if isinstance(data, dict) else None
+    nested = nested if isinstance(nested, dict) else {}
+
+    identifier = (
+        data.get('email')
+        or data.get('username')
+        or data.get('identifier')
+        or data.get('login')
+        or nested.get('email')
+        or nested.get('username')
+        or nested.get('identifier')
+        or nested.get('login')
+    )
+    password = data.get('password') or nested.get('password')
+
+    if not identifier or not password:
+        raw_body = request.body.decode('utf-8', errors='ignore').strip()
+        if raw_body:
+            try:
+                body_data = json.loads(raw_body)
+                if isinstance(body_data, dict):
+                    body_nested = body_data.get('credentials') if isinstance(body_data.get('credentials'), dict) else {}
+                    identifier = identifier or (
+                        body_data.get('email')
+                        or body_data.get('username')
+                        or body_data.get('identifier')
+                        or body_data.get('login')
+                        or body_nested.get('email')
+                        or body_nested.get('username')
+                        or body_nested.get('identifier')
+                        or body_nested.get('login')
+                    )
+                    password = password or body_data.get('password') or body_nested.get('password')
+            except (json.JSONDecodeError, UnicodeDecodeError):
+                pass
+
+    if isinstance(identifier, str):
+        identifier = identifier.strip()
+    if isinstance(password, str):
+        password = password.strip()
+
+    return identifier, password
+
 @api_view(['POST'])
 @permission_classes([AllowAny])
 def login_view(request):
     """User login endpoint - accepts email or username, supports both Django User and SystemUser"""
-    # logger.warning(f"LOGIN DEBUG: Data={request.data}, Headers={request.headers}")
-    
-    email = request.data.get('email') or request.data.get('username')
-    if email and isinstance(email, str):
-        email = email.strip()
-    password = request.data.get('password')
-    if email and isinstance(email, str):
-        email = email.strip()
-    password = request.data.get('password')
-    
-    if not email or not password:
+    identifier, password = _extract_login_credentials(request)
+
+    if not identifier or not password:
+        request_keys = list(request.data.keys()) if isinstance(request.data, dict) else []
+        logger.warning(
+            "Login request missing credentials. content_type=%s keys=%s",
+            request.content_type,
+            request_keys,
+        )
         return Response(
-            {'error': 'Email and password are required'}, 
+            {'error': 'Email/username and password are required'}, 
             status=status.HTTP_400_BAD_REQUEST
         )
     
     # Try SystemUser first
     try:
-        system_user = SystemUser.objects.get(email=email, is_active=True)
+        system_user = SystemUser.objects.get(email=identifier, is_active=True)
         if system_user.check_password(password):
             # Update last login time
             from django.utils import timezone
@@ -177,9 +222,9 @@ def login_view(request):
             
             # Get or create corresponding Django user for JWT
             django_user, created = User.objects.get_or_create(
-                email=email,
+                email=identifier,
                 defaults={
-                    'username': email,
+                    'username': identifier,
                     'first_name': system_user.first_name,
                     'last_name': system_user.last_name,
                     'is_active': True,
@@ -216,11 +261,11 @@ def login_view(request):
     # Fallback to Django User authentication
     user = None
     try:
-        user_obj = User.objects.get(email=email)
+        user_obj = User.objects.get(email=identifier)
         user = authenticate(username=user_obj.username, password=password)
     except User.DoesNotExist:
         # Fallback: try as username for backward compatibility
-        user = authenticate(username=email, password=password)
+        user = authenticate(username=identifier, password=password)
     
     if user:
         refresh = RefreshToken.for_user(user)

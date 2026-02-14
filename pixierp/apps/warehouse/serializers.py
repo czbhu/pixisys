@@ -1,4 +1,5 @@
 from rest_framework import serializers
+from django.db import models
 from .models import (
     MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
     Inventory, MaterialCostItem,
@@ -45,10 +46,67 @@ class MaterialSerializer(serializers.ModelSerializer):
         source='internal_production_department.name', read_only=True
     )
     base_price = serializers.SerializerMethodField()
+    gross_price = serializers.SerializerMethodField()
+    net_price = serializers.SerializerMethodField()
+    vat_rate = serializers.SerializerMethodField()
+    current_stock = serializers.SerializerMethodField()
+    discount_price = serializers.SerializerMethodField()
+    
+    # Cache for VAT types to avoid repeated API calls
+    _vat_types_cache = {}
     
     def get_base_price(self, obj):
         """Return unit_selling_price as base_price for compatibility with product selector"""
         return obj.unit_selling_price
+    
+    def get_net_price(self, obj):
+        """Return unit_selling_price as net_price for POS"""
+        return float(obj.unit_selling_price or 0)
+    
+    def get_vat_rate(self, obj):
+        """Get VAT rate from vat_type_id"""
+        if not obj.vat_type_id:
+            return 27.0  # Default VAT rate in Hungary
+        
+        # Try to get from cache first
+        if obj.vat_type_id in self._vat_types_cache:
+            return self._vat_types_cache[obj.vat_type_id]
+        
+        try:
+            import requests
+            response = requests.get(
+                f'https://inv.pixisys.eu/api/vat-types/{obj.vat_type_id}/',
+                timeout=2
+            )
+            if response.status_code == 200:
+                vat_data = response.json()
+                vat_percentage = float(vat_data.get('percentage', 27.0))
+                # Cache it
+                self._vat_types_cache[obj.vat_type_id] = vat_percentage
+                return vat_percentage
+        except Exception as e:
+            print(f"Error fetching VAT type: {e}")
+        
+        return 27.0  # Fallback to default
+    
+    def get_gross_price(self, obj):
+        """Calculate gross price from net price and VAT rate"""
+        net_price = self.get_net_price(obj)
+        vat_rate = self.get_vat_rate(obj)
+        gross_price = net_price * (1 + vat_rate / 100)
+        return round(gross_price, 2)
+    
+    def get_current_stock(self, obj):
+        """Get total current stock from all warehouses"""
+        from apps.warehouse.models import Inventory
+        total = Inventory.objects.filter(material=obj).aggregate(
+            total=models.Sum('quantity')
+        )['total']
+        return float(total or 0)
+    
+    def get_discount_price(self, obj):
+        """Placeholder for discount price - can be implemented based on campaigns"""
+        return None
     
     class Meta:
         model = Material
@@ -63,6 +121,7 @@ class MaterialSerializer(serializers.ModelSerializer):
             'area_weight', 'area_weight_unit', 'specific_weight', 'specific_weight_unit',
             'weight', 'weight_unit', 'volume_liter',
             'unit_cost_price', 'markup_percentage', 'unit_selling_price', 'base_price',
+            'vat_type_id', 'gross_price', 'net_price', 'vat_rate', 'current_stock', 'discount_price',
             'currency', 'default_supplier', 'default_supplier_name',
             'is_internal_production', 'internal_production_department',
             'internal_production_department_name', 'internal_production_cost',

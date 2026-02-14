@@ -45,7 +45,7 @@ THIRD_PARTY_APPS = [
 LOCAL_APPS = [
     'apps.core',
     'apps.hr',
-    'apps.sales',
+    'apps.sales.apps.SalesConfig',
     'apps.manufacturing',
     'apps.finance',
     'apps.crm',

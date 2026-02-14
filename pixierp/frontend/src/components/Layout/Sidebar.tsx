@@ -12,6 +12,7 @@ import {
   BarcodeOutlined,
   InboxOutlined,
   BarChartOutlined,
+  FileTextOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -50,7 +51,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/dashboard',
       '/personal', '/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings',
       '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/approvals',
-      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics',
+      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
@@ -226,6 +227,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           key: '/hr/analytics',
           icon: <BarChartOutlined />,
           label: 'Teljesítmény Mérés',
+        },
+        {
+          key: '/hr/activity-log',
+          icon: <FileTextOutlined />,
+          label: 'Napló',
         },
       ],
     },
@@ -661,6 +667,19 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         <a href="#" onClick={(e) => {
           e.preventDefault();
           handlePixInvoiceSSO();
+        }}>{label}</a>
+      );
+    }
+    
+    // Special handling for POS Sales - open in new fullscreen tab
+    if (key === '/pos/sales') {
+      return (
+        <a href={key} onClick={(e) => {
+          e.preventDefault();
+          const protocol = window.location.protocol;
+          const host = window.location.host;
+          const url = `${protocol}//${host}${key}`;
+          window.open(url, '_blank', 'fullscreen=yes');
         }}>{label}</a>
       );
     }

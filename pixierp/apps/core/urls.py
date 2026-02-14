@@ -17,6 +17,7 @@ router.register(r'notifications', views.NotificationViewSet, basename='notificat
 router.register(r'email-templates', views.EmailTemplateViewSet, basename='email-template')
 router.register(r'signature-templates', views.SignatureTemplateViewSet, basename='signature-template')
 router.register(r'zones', views.ZoneViewSet, basename='zone')
+router.register(r'activity-logs', views.ActivityLogViewSet, basename='activity-log')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

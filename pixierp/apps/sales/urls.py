@@ -25,6 +25,13 @@ router.register(r'chats', views.ChatThreadViewSet)
 router.register(r'delivery-notes', views.DeliveryNoteViewSet)
 router.register(r'delivery-note-items', views.DeliveryNoteItemViewSet)
 
+# POS endpoints
+router.register(r'pos/customer-identifications', views.POSCustomerIdentificationViewSet, basename='pos-customer-identification')
+router.register(r'pos/coupons', views.POSCouponViewSet, basename='pos-coupon')
+router.register(r'pos/transactions', views.POSTransactionViewSet, basename='pos-transaction')
+router.register(r'pos/transaction-items', views.POSTransactionItemViewSet, basename='pos-transaction-item')
+router.register(r'pos/payments', views.POSPaymentViewSet, basename='pos-payment')
+
 urlpatterns = [
     path('', include(router.urls)),
     path('quote-requests/public/<str:token>/order/', views.public_order_view, name='rfq_public_order'),

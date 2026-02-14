@@ -111,9 +111,9 @@ if [ "$SKIP_BACKUP" = false ]; then
         BACKUP_FILE="$BACKUP_DIR/erp_backup_${TIMESTAMP}.sql"
         
         if command -v pg_dump &> /dev/null; then
-            pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
+            pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
                 echo -e "${YELLOW}⚠️  PostgreSQL backup jelszót kér (vagy használd .pgpass fájlt)${NC}"
-                PGPASSWORD="" pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE"
+                PGPASSWORD="$DB_PASSWORD" pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE"
             }
             echo -e "${GREEN}✓ Backup mentve: $BACKUP_FILE${NC}"
         else
@@ -131,9 +131,9 @@ if [ "$SKIP_BACKUP" = false ]; then
         BACKUP_FILE="$BACKUP_DIR/invoice_backup_${TIMESTAMP}.sql"
         
         if command -v pg_dump &> /dev/null; then
-            pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
+            pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
                 echo -e "${YELLOW}⚠️  PostgreSQL backup jelszót kér (vagy használd .pgpass fájlt)${NC}"
-                PGPASSWORD="" pg_dump -U "$DB_USER" "$DB_NAME" > "$BACKUP_FILE"
+                PGPASSWORD="$DB_PASSWORD" pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE"
             }
             echo -e "${GREEN}✓ Backup mentve: $BACKUP_FILE${NC}"
         fi

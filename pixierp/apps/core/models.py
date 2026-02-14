@@ -1,6 +1,8 @@
 from django.db import models
 from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator
+from django.contrib.contenttypes.models import ContentType
+from django.contrib.contenttypes.fields import GenericForeignKey
 
 # Import emergency access model
 from .models_emergency import EmergencyAccessToken
@@ -459,3 +461,49 @@ class Zone(models.Model):
 
     def __str__(self):
         return f"{self.zone_number} - {self.name}"
+
+
+class ActivityLog(models.Model):
+    """Activity/Audit log for tracking user actions across the system"""
+    ACTION_CHOICES = [
+        ('create', 'Létrehozva'),
+        ('update', 'Módosítva'),
+        ('delete', 'Törölve'),
+        ('approve', 'Jóváhagyva'),
+        ('reject', 'Elutasítva'),
+        ('cancel', 'Törölve/Megszakítva'),
+        ('send', 'Elküldve'),
+        ('complete', 'Befejezve'),
+        ('other', 'Egyéb'),
+    ]
+    
+    user = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, related_name='activity_logs', verbose_name="Felhasználó")
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Időpont", db_index=True)
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES, verbose_name="Művelet")
+    description = models.TextField(verbose_name="Leírás")
+    
+    # Generic foreign key for polymorphic relationship to any model
+    content_type = models.ForeignKey(ContentType, on_delete=models.CASCADE, null=True, blank=True, verbose_name="Objektum típus")
+    object_id = models.PositiveIntegerField(null=True, blank=True, verbose_name="Objektum ID")
+    content_object = GenericForeignKey('content_type', 'object_id')
+    
+    # Optional JSON field for storing detailed changes
+    changes = models.JSONField(null=True, blank=True, verbose_name="Változások")
+    
+    # IP address and user agent for additional context
+    ip_address = models.GenericIPAddressField(null=True, blank=True, verbose_name="IP cím")
+    user_agent = models.TextField(blank=True, default='', verbose_name="User Agent")
+    
+    class Meta:
+        verbose_name = "Tevékenység napló"
+        verbose_name_plural = "Tevékenység naplók"
+        ordering = ['-timestamp']
+        db_table = 'activity_logs'
+        indexes = [
+            models.Index(fields=['content_type', 'object_id']),
+            models.Index(fields=['user', 'timestamp']),
+        ]
+    
+    def __str__(self):
+        user_name = self.user.get_full_name() if self.user else "Rendszer"
+        return f"{self.timestamp.strftime('%Y-%m-%d %H:%M')} - {user_name}: {self.description}"

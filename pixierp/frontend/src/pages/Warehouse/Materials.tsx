@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox, Row, Col } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
@@ -22,6 +22,7 @@ interface Material {
   unit_cost_price: number;
   markup_percentage: number;
   unit_selling_price: number;
+  vat_type_id?: string;
   currency: string;
   material_type: string;
   material_group?: number;
@@ -98,6 +99,15 @@ interface Warehouse {
   id: number;
   name: string;
   code: string;
+}
+
+interface VatType {
+  id: string;
+  code: string;
+  name: string;
+  category: string;
+  percentage: number;
+  active: boolean;
 }
 
 interface MaterialStock {
@@ -217,10 +227,15 @@ const Materials: React.FC = () => {
   const [filteredSuppliers, setFilteredSuppliers] = useState<{ value: string }[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [vatTypes, setVatTypes] = useState<VatType[]>([]);
   const [isInternalProduction, setIsInternalProduction] = useState(false);
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
   const [searchText, setSearchText] = useState<string>('');
   const [filterType, setFilterType] = useState<string>('all');
+  const [netUnitPrice, setNetUnitPrice] = useState<number>(0);
+  const [calculatedVat, setCalculatedVat] = useState<number>(0);
+  const [calculatedGross, setCalculatedGross] = useState<number>(0);
+  const [selectedVatTypeId, setSelectedVatTypeId] = useState<string | undefined>(undefined);
   
   // Súly számítás terület súlyból vagy fajsúlyból
   const calculateWeightFromDimensions = () => {
@@ -403,7 +418,23 @@ const Materials: React.FC = () => {
     fetchMaterialGroups();
     fetchDepartments();
     fetchWarehouses();
+    fetchVatTypes();
   }, []);
+
+  // Recalculate VAT and gross price when vatTypes are loaded and editing
+  useEffect(() => {
+    if (selectedVatTypeId && vatTypes.length > 0 && netUnitPrice > 0) {
+      const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+      if (vat) {
+        const vatPercentage = Number(vat.percentage);
+        const net = Number(netUnitPrice);
+        const vatAmount = net * (vatPercentage / 100);
+        const gross = net + vatAmount;
+        setCalculatedVat(vatAmount);
+        setCalculatedGross(gross);
+      }
+    }
+  }, [vatTypes, selectedVatTypeId, netUnitPrice]);
 
   // Újratöltés szűrő vagy keresés változásakor
   useEffect(() => {
@@ -496,6 +527,21 @@ const Materials: React.FC = () => {
       setWarehouses(data);
     } catch (error) {
       console.error('Hiba a raktárak betöltésekor:', error);
+    }
+  };
+
+  const fetchVatTypes = async () => {
+    try {
+      // Fetch VAT types from ERP API (which proxies to invoice system)
+      const response = await api.get('/warehouse/vat-types/', {
+        params: { active: true }
+      });
+      const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
+      console.log('✅ VAT Types loaded:', data.length, 'types');
+      setVatTypes(data);
+    } catch (error) {
+      console.error('Hiba az ÁFA típusok betöltésekor:', error);
+      message.error('Nem sikerült betölteni az ÁFA típusokat');
     }
   };
 
@@ -607,20 +653,54 @@ const Materials: React.FC = () => {
     setCostItems([]);
     setAddedSuppliers([]);
     setSupplierSearchValue('');
+    setNetUnitPrice(0);
+    setCalculatedVat(0);
+    setCalculatedGross(0);
+    setSelectedVatTypeId(undefined);
     setModalVisible(true);
   };
 
   const handleEdit = (material: Material) => {
+    console.log('📖 Loading material - vat_type_id:', material.vat_type_id);
     setEditingMaterial(material);
+    setSelectedVatTypeId(material.vat_type_id || undefined);
     setIsInternalProduction(material.is_internal_production);
     setSelectedMaterialFormat(material.material_format || 'piece');
     
+    // Initialize net price and VAT calculations
+    if (material.unit_selling_price) {
+      const netPrice = Number(material.unit_selling_price);
+      setNetUnitPrice(netPrice);
+      if (material.vat_type_id) {
+        const vat = vatTypes.find(v => v.id === material.vat_type_id);
+        const vatPercentage = vat?.percentage || 0;
+        const vatAmount = netPrice * (Number(vatPercentage) / 100);
+        const gross = netPrice + vatAmount;
+        setCalculatedVat(vatAmount);
+        setCalculatedGross(gross);
+      }
+    }
+    
     // Transform data for form: if internal, set default_supplier_selection to 'internal'
-    const formData = {
+    const formData: any = {
         ...material,
         default_supplier_selection: material.is_internal_production ? 'internal' : material.default_supplier
     };
+    
+    // Remove read-only/computed fields that shouldn't be in the form
+    const readOnlyFields = ['material_type_name', 'material_group_name', 'created_by_name', 
+                            'default_supplier_name', 'internal_production_department_name',
+                            'base_price', 'gross_price', 'net_price', 'vat_rate', 
+                            'current_stock', 'discount_price'];
+    readOnlyFields.forEach(field => delete formData[field]);
+    
+    console.log('🔍 formData.vat_type_id before setFieldsValue:', formData.vat_type_id);
+    
     form.setFieldsValue(formData);
+    console.log('🔍 After setFieldsValue - form value:', form.getFieldValue('vat_type_id'));
+    
+    // Open modal
+    setModalVisible(true);
     
     // Load added suppliers
     fetchAddedSuppliers(material.id);
@@ -640,8 +720,6 @@ const Materials: React.FC = () => {
       setSelectedSourceForCost(null);
       setCostItems([]);
     }
-    
-    setModalVisible(true);
   };
 
   const handleDelete = async (id: number) => {
@@ -690,24 +768,34 @@ const Materials: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
+      // Get ALL form values including those in non-active tabs
+      const allValues = form.getFieldsValue(true);
+      
+      // Use allValues instead of values to include all fields from all tabs
+      const submitData = { ...allValues };
+      submitData.vat_type_id = selectedVatTypeId || null;
+      
+      // Sync calculated prices with form values
+      submitData.unit_selling_price = Number(netUnitPrice.toFixed(2));
+      
       // Map 'default_supplier_selection' to backend fields
-      const selection = values.default_supplier_selection;
+      const selection = submitData.default_supplier_selection;
       
       if (selection === 'internal') {
-          values.is_internal_production = true;
-          values.default_supplier = null;
+          submitData.is_internal_production = true;
+          submitData.default_supplier = null;
       } else if (selection) {
-          values.is_internal_production = false;
-          values.default_supplier = Number(selection);
-          values.internal_production_department = null;
+          submitData.is_internal_production = false;
+          submitData.default_supplier = Number(selection);
+          submitData.internal_production_department = null;
       } else {
         // Validation should prevent this, but just in case
-        values.is_internal_production = false;
-        values.default_supplier = null;
+        submitData.is_internal_production = false;
+        submitData.default_supplier = null;
       }
 
       // Cleanup aux field
-      delete values.default_supplier_selection;
+      delete submitData.default_supplier_selection;
 
       // Clean up empty strings for optional numeric fields to prevent 400 errors
       const numericFields = [
@@ -720,22 +808,26 @@ const Materials: React.FC = () => {
       ];
       
       numericFields.forEach(field => {
-          if (values[field] === '') {
-              values[field] = null;
+          if (submitData[field] === '') {
+              submitData[field] = null;
           }
       });
       
       // Ha nincs beállítva, alapértelmezés szerint mindkét checkbox be van pipálva
-      if (values.is_material === undefined) values.is_material = true;
-      if (values.is_product === undefined) values.is_product = true;
+      if (submitData.is_material === undefined) submitData.is_material = true;
+      if (submitData.is_product === undefined) submitData.is_product = true;
+      
+      console.log('🚀 Sending to API - submitData.vat_type_id:', submitData.vat_type_id);
+      console.log('🚀 Full submitData being sent:', submitData);
       
       let savedMaterial: any;
       if (editingMaterial) {
-        const res = await api.patch(`/warehouse/materials/${editingMaterial.id}/`, values);
+        const res = await api.patch(`/warehouse/materials/${editingMaterial.id}/`, submitData);
         savedMaterial = res.data;
+        console.log('✅ Backend response - savedMaterial.vat_type_id:', savedMaterial.vat_type_id);
         message.success('Alapanyag/Termék frissítve');
       } else {
-        const res = await api.post('/warehouse/materials/', values);
+        const res = await api.post('/warehouse/materials/', submitData);
         savedMaterial = res.data;
         message.success('Alapanyag/Termék létrehozva');
         
@@ -804,6 +896,7 @@ const Materials: React.FC = () => {
   const handleSaveWithoutClose = async () => {
     try {
       const values = await form.validateFields();
+      values.vat_type_id = selectedVatTypeId || null;
       
       // Map 'default_supplier_selection' to backend fields
       const selection = values.default_supplier_selection;
@@ -909,6 +1002,7 @@ const Materials: React.FC = () => {
   // Helper to init form data after save/load
   const formDataForEdit = (data: any) => {
      setEditingMaterial(data);
+      setSelectedVatTypeId(data.vat_type_id || undefined);
      form.setFieldsValue({
         ...data,
         default_supplier_selection: data.is_internal_production ? 'internal' : data.default_supplier
@@ -1130,6 +1224,15 @@ const Materials: React.FC = () => {
       unit_selling_price: Number(selling.toFixed(2)),
       markup_percentage: Number(markup.toFixed(2))
     });
+    
+    // Set net price and recalculate VAT
+    setNetUnitPrice(Number(selling.toFixed(2)));
+    const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+    const vatPercentage = vat?.percentage || 0;
+    const vatAmount = selling * (Number(vatPercentage) / 100);
+    const gross = selling + vatAmount;
+    setCalculatedVat(vatAmount);
+    setCalculatedGross(gross);
     
     message.success('Árak átvezetve az alapadatokhoz');
   };
@@ -1547,6 +1650,7 @@ const Materials: React.FC = () => {
             {
               key: '1',
               label: 'Alapadatok',
+              forceRender: true,
               children: (
                 <Form
               form={form}
@@ -2034,9 +2138,98 @@ const Materials: React.FC = () => {
               key: '2',
               label: 'Beszállítók és árkalkuláció',
               disabled: !editingMaterial,
+              forceRender: true,
               children: (
             <>
             <div style={{ marginBottom: 16 }}>
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={6}>
+                  <Form.Item
+                    label="ÁFA osztály"
+                  >
+                   <Select
+                      value={selectedVatTypeId}
+                      placeholder="Válassz ÁFA osztályt..."
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      onChange={(vatTypeId) => {
+                        const normalizedVatTypeId = vatTypeId || undefined;
+                        setSelectedVatTypeId(normalizedVatTypeId);
+                        form.setFieldValue('vat_type_id', normalizedVatTypeId || null);
+                        const vat = vatTypes.find(v => v.id === vatTypeId);
+                        const vatPercentage = vat?.percentage || 0;
+                        const vatAmount = netUnitPrice * (Number(vatPercentage) / 100);
+                        const gross = netUnitPrice + vatAmount;
+                        setCalculatedVat(vatAmount);
+                        setCalculatedGross(gross);
+                      }}
+                      options={vatTypes.map(vat => ({
+                        label: `${vat.code} - ${vat.name} (${vat.percentage}%)`,
+                        value: vat.id,
+                      }))}
+                      filterOption={(input, option) =>
+                        (option?.label as string || '').toLowerCase().includes(input.toLowerCase())
+                      }
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="Nettó egységár">
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      value={netUnitPrice}
+                      onChange={(value) => {
+                        const net = value || 0;
+                        setNetUnitPrice(net);
+                        const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+                        const vatPercentage = vat?.percentage || 0;
+                        const vatAmount = net * (Number(vatPercentage) / 100);
+                        const gross = net + vatAmount;
+                        setCalculatedVat(vatAmount);
+                        setCalculatedGross(gross);
+                      }}
+                      min={0}
+                      precision={2}
+                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                      parser={(value) => Number(value!.replace(/\s/g, ''))}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="ÁFA">
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      value={calculatedVat}
+                      disabled
+                      precision={2}
+                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={6}>
+                  <Form.Item label="Bruttó egységár">
+                    <InputNumber
+                      style={{ width: '100%' }}
+                      value={calculatedGross}
+                      onChange={(value) => {
+                        const gross = value || 0;
+                        setCalculatedGross(gross);
+                        const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+                        const vatPercentage = vat?.percentage || 0;
+                        const net = gross / (1 + Number(vatPercentage) / 100);
+                        const vatAmount = gross - net;
+                        setNetUnitPrice(net);
+                        setCalculatedVat(vatAmount);
+                      }}
+                      min={0}
+                      precision={2}
+                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                      parser={(value) => Number(value!.replace(/\s/g, ''))}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
               <Space direction="vertical" style={{ width: '100%' }}>
                 <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
                   <Select
@@ -2098,6 +2291,7 @@ const Materials: React.FC = () => {
               key: '3',
               label: 'Készletek',
               disabled: !editingMaterial,
+              forceRender: true,
               children: (
             <Space direction="vertical" style={{ width: '100%' }} size="large">
               <div style={{ textAlign: 'right' }}>
@@ -2217,6 +2411,7 @@ const Materials: React.FC = () => {
               key: '4',
               label: 'Bevételezések',
               disabled: !editingMaterial,
+              forceRender: true,
               children: (
             <Space direction="vertical" style={{ width: '100%' }} size="large">
               <div style={{ display: 'flex', gap: 16, alignItems: 'flex-end' }}>

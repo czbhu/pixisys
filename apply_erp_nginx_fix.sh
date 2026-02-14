@@ -1,43 +1,43 @@
 #!/bin/bash
-# apply_erp_nginx_fix.sh
+# apply_erp_nginx_fix.sh - Fix redirect loop by adding X-Forwarded-Proto header
 
-SRC="/home/ceze/pixisys/nginx/erp.pixisys.eu.conf"
+SRC="/home/ceze/pixisys/nginx/erp.pixisys.eu.conf.fixed"
 DEST="/etc/nginx/sites-available/erp.pixisys.eu.conf"
 
-echo "Applying PixiERP Nginx Fix (Upload limit increase)..."
+echo "=== Applying PixiERP Nginx Fix (Redirect Loop) ==="
+
 if [ ! -f "$SRC" ]; then
-    echo "Error: Source file not found at $SRC"
+    echo "Error: Fixed config not found at $SRC"
     exit 1
 fi
 
-# Add client_max_body_size if not present
-if ! grep -q "client_max_body_size" "$SRC"; then
-    sed -i '/server_name erp.pixisys.eu;/a \    client_max_body_size 1000M;' "$SRC"
-fi
-
-echo "Backing up current config..."
+echo "1. Backing up current config..."
 if [ -f "$DEST" ]; then
-    cp "$DEST" "${DEST}.bak"
+    cp "$DEST" "${DEST}.backup.$(date +%Y%m%d_%H%M%S)"
+    echo "   Backup saved"
 fi
 
-echo "Copying new config..."
+echo "2. Copying fixed config..."
 cp "$SRC" "$DEST"
 
-# Remove conflicting old config
-if [ -L "/etc/nginx/sites-enabled/e.pixisys.eu.conf" ]; then
-    echo "Removing conflicting e.pixisys.eu.conf..."
-    rm /etc/nginx/sites-enabled/e.pixisys.eu.conf
+echo "3. Testing nginx configuration..."
+nginx -t
+if [ $? -ne 0 ]; then
+    echo "ERROR: Nginx configuration test failed!"
+    exit 1
 fi
 
-echo "Ensuring site is enabled..."
-if [ ! -L "/etc/nginx/sites-enabled/erp.pixisys.eu.conf" ]; then
-    ln -s "$DEST" "/etc/nginx/sites-enabled/erp.pixisys.eu.conf"
-    echo "Symlink created."
-else
-    echo "Symlink already exists."
-fi
-
-echo "Reloading Nginx..."
+echo "4. Reloading nginx..."
 systemctl reload nginx
 
-echo "Done!"
+echo ""
+echo "=== SUCCESS ==="
+echo "✓ Nginx configuration updated"
+echo "✓ X-Forwarded-Proto header added to /api/ location"
+echo "✓ Redirect loop should now be fixed"
+echo ""
+echo "Verifying fix:"
+grep -A 10 "location /api/" "$DEST" | grep "X-Forwarded-Proto" && echo "✓ Header confirmed in config!" || echo "✗ Header missing!"
+
+echo ""
+echo "Done! Refresh your browser to test."

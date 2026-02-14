@@ -116,7 +116,9 @@ export const crmService = {
                 console.log('[CRM] NAV lookup (finance) ← response', fr.status, fr.data);
             }
             const ok = fr?.data?.success;
-            const navPayload = fr?.data?.data;
+            // Double nested: fr.data.data contains the PixInvoice response which has another 'data' field
+            const pixinvoiceResponse = fr?.data?.data;
+            const navPayload = pixinvoiceResponse?.data;  // The actual parsed taxpayer data
             if (ok && navPayload) {
                 const normalized = normalizeFromNav(navPayload);
                 if (normalized) return normalized;
@@ -128,6 +130,29 @@ export const crmService = {
             }
         }
         return { found: false };
+    },
+
+    async lookupCompanyByVies(euVat: string, opts?: { debug?: boolean }): Promise<any> {
+        try {
+            if (opts?.debug) {
+                console.log('[CRM] VIES lookup → POST /crm/companies/validate_eu_vat/', { vat_number: euVat });
+            }
+            const response = await api.post('/crm/companies/validate_eu_vat/', { vat_number: euVat });
+            if (opts?.debug) {
+                console.log('[CRM] VIES lookup ← response', response.status, response.data);
+            }
+            return response.data;
+        } catch (err: any) {
+            if (opts?.debug) {
+                console.warn('[CRM] VIES lookup ✖ error', err);
+            }
+            throw err;
+        }
+    },
+
+    async validateEuVat(data: { vat_number: string }) {
+        const response = await api.post('/crm/companies/validate_eu_vat/', data);
+        return response.data;
     },
 
     // Contacts
@@ -169,10 +194,5 @@ export const crmService = {
     async searchContacts(query: string) {
         const response = await api.get('/crm/contacts/', { params: { q: query } });
         return response.data?.results || response.data;
-    },
-
-    async validateEuVat(data: { vat_number: string }) {
-        const response = await api.post('/crm/companies/validate_eu_vat/', data);
-        return response.data;
     },
 };

@@ -38,12 +38,13 @@ from .serializers import (
     RoleSerializer,
     PermissionSerializer,
     UserRoleSerializer,
+    ActivityLogSerializer,
 )
 from rest_framework import viewsets
 from .models import (
     Company, BankAccount, EmailServerConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
-    BackupFile, UserPreference, Role, Permission, UserRole
+    BackupFile, UserPreference, Role, Permission, UserRole, ActivityLog
 )
 from apps.hr.models import Employee
 import traceback
@@ -1455,4 +1456,42 @@ class ZoneViewSet(viewsets.ModelViewSet):
                 next_num = int(num_part) + 1
                 
         return Response({'next_number': f"{prefix}{next_num:03d}"})
+
+
+class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for viewing activity logs"""
+    queryset = ActivityLog.objects.all()
+    serializer_class = ActivityLogSerializer
+    permission_classes = [IsAuthenticated]
+    filterset_fields = ['user', 'action', 'content_type']
+    search_fields = ['description', 'user__first_name', 'user__last_name', 'user__username']
+    ordering_fields = ['timestamp', 'user', 'action']
+    ordering = ['-timestamp']
+    
+    def get_queryset(self):
+        """Filter activity logs with date range and user filters"""
+        queryset = super().get_queryset()
+        
+        # Date filtering
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        
+        if date_from:
+            queryset = queryset.filter(timestamp__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(timestamp__lte=date_to)
+        
+        # User filtering
+        user_id = self.request.query_params.get('user_id')
+        if user_id:
+            queryset = queryset.filter(user_id=user_id)
+        
+        # Content type and object filtering for related object logs
+        content_type_id = self.request.query_params.get('content_type_id')
+        object_id = self.request.query_params.get('object_id')
+        
+        if content_type_id and object_id:
+            queryset = queryset.filter(content_type_id=content_type_id, object_id=object_id)
+        
+        return queryset.select_related('user', 'content_type')
 

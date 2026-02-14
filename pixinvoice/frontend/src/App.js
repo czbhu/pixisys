@@ -112,6 +112,7 @@ function AppContent() {
                 <Route path="/settings/email" element={guard('settings_email', <EmailSettings />)} />
                 <Route path="/settings/companies" element={guard('settings_companies', <Companies />)} />
                 <Route path="/settings/companies/new" element={guard('settings_companies', <CompanyForm />)} />
+                <Route path="/settings/companies/:id" element={guard('settings_companies', <CompanyForm />)} />
                 <Route path="/settings/companies/:id/edit" element={guard('settings_companies', <CompanyForm />)} />
                 <Route path="/settings/users" element={guard('settings_users', <SystemUsers />)} />
                 <Route path="/settings/users/new" element={guard('settings_users', <SystemUserForm />)} />

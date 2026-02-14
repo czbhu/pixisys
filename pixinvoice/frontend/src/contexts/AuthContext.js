@@ -31,8 +31,16 @@ export const AuthProvider = ({ children }) => {
     }, []);
 
     const login = async (credentials) => {
+        const identifier = (credentials?.email || credentials?.username || '').trim();
+        const password = credentials?.password || '';
+        const payload = {
+            email: identifier,
+            username: identifier,
+            password,
+        };
+
         try {
-            const response = await axios.post('/api/auth/login/', credentials);
+            const response = await axios.post('/api/auth/login/', payload);
             const { user: userData, tokens } = response.data;
             const normalized = normalizeUser(userData);
             
@@ -46,9 +54,12 @@ export const AuthProvider = ({ children }) => {
             return { success: true };
         } catch (error) {
             console.error('Login error:', error);
+            const backendError = error.response?.data?.error;
+            const detailError = error.response?.data?.detail;
+            const messageError = error.response?.data?.message;
             return { 
                 success: false, 
-                error: error.response?.data?.error || 'Bejelentkezési hiba' 
+                error: backendError || detailError || messageError || 'Bejelentkezési hiba' 
             };
         }
     };

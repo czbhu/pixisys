@@ -7,6 +7,7 @@ from django.db.models import Q, Sum
 from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 import os
+import requests
 from datetime import datetime, date
 from .nav_invoice_service import NavInvoiceService
 from .models import (
@@ -955,3 +956,33 @@ class ScrapItemViewSet(viewsets.ModelViewSet):
             stock.quantity = 0
         stock.save()
 
+
+class VATTypeProxyViewSet(viewsets.ViewSet):
+    """
+    Proxy ViewSet to fetch VAT types from the invoice system.
+    This avoids CORS issues when calling from the frontend.
+    """
+    permission_classes = []
+    
+    def list(self, request):
+        """Fetch VAT types from invoice system"""
+        try:
+            # Call the invoice API
+            response = requests.get(
+                'https://inv.pixisys.eu/api/vat-types/',
+                params={'active': 'true'},
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return Response(response.json())
+            else:
+                return Response(
+                    {'error': 'Failed to fetch VAT types from invoice system'},
+                    status=response.status_code
+                )
+        except requests.RequestException as e:
+            return Response(
+                {'error': f'Error connecting to invoice system: {str(e)}'},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE
+            )

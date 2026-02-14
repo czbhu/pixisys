@@ -11,6 +11,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { Table } from 'antd';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
+import ActivityLogModal from '../../components/ActivityLogModal';
 
 const { TextArea } = Input;
 
@@ -37,6 +38,7 @@ const CustomerOrderDetail: React.FC = () => {
   const [logModalOpen, setLogModalOpen] = useState(false);
   const [workLogs, setWorkLogs] = useState<any[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
 
   const loadLogs = async () => {
     try {
@@ -199,6 +201,7 @@ const CustomerOrderDetail: React.FC = () => {
             setTimerModalOpen(true);
         }}>Stopper</Button>
         <Button icon={<HistoryOutlined />} onClick={loadLogs}>Munkanapló</Button>
+        <Button icon={<FileTextOutlined />} onClick={() => setActivityLogOpen(true)}>Napló</Button>
         {order.status === 'new' && (
           <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('confirm')}>
             Megerősítés
@@ -587,6 +590,14 @@ const CustomerOrderDetail: React.FC = () => {
         orderId={Number(id)} 
         rfqId={order.quote_request?.id}
         title={`Chat - ${order.order_number}`}
+      />
+
+      <ActivityLogModal
+        visible={activityLogOpen}
+        onClose={() => setActivityLogOpen(false)}
+        objectType="customerorder"
+        objectId={Number(id)}
+        objectTitle={order.order_number || ''}
       />
     </div>
   );

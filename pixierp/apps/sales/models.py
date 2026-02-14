@@ -732,3 +732,255 @@ class ApprovalRequest(models.Model):
 
     def __str__(self):
         return f"{self.requester} - {self.customer_order} ({self.requested_status})"
+
+
+# ==================== POS (Point of Sale) Models ====================
+
+class POSCustomerIdentification(models.Model):
+    """QR kód alapú vásárló azonosítás"""
+    customer = models.ForeignKey(CrmCompany, on_delete=models.CASCADE, related_name='pos_identifications', verbose_name="Ügyfél")
+    qr_code = models.CharField(max_length=100, unique=True, verbose_name="QR kód")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True)
+    last_used_at = models.DateTimeField(null=True, blank=True, verbose_name="Utoljára használva")
+
+    class Meta:
+        verbose_name = "POS vásárló azonosítás"
+        verbose_name_plural = "POS vásárló azonosítások"
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.qr_code}"
+
+
+class POSCoupon(models.Model):
+    """Kupon/kedvezmény rendszer"""
+    DISCOUNT_TYPE_CHOICES = [
+        ('fixed', 'Fix összeg'),
+        ('percent', 'Százalék'),
+    ]
+    
+    code = models.CharField(max_length=50, unique=True, verbose_name="Kupon kód")
+    discount_type = models.CharField(max_length=10, choices=DISCOUNT_TYPE_CHOICES, verbose_name="Kedvezmény típusa")
+    discount_value = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Kedvezmény értéke")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    valid_from = models.DateTimeField(null=True, blank=True, verbose_name="Érvényes ettől")
+    valid_until = models.DateTimeField(null=True, blank=True, verbose_name="Érvényes eddig")
+    usage_limit = models.IntegerField(null=True, blank=True, verbose_name="Használati limit")
+    usage_count = models.IntegerField(default=0, verbose_name="Használat száma")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "POS kupon"
+        verbose_name_plural = "POS kuponok"
+
+    def __str__(self):
+        return f"{self.code} - {self.get_discount_type_display()}: {self.discount_value}"
+    
+    def is_valid(self):
+        """Kupon érvényességének ellenőrzése"""
+        from django.utils import timezone
+        now = timezone.now()
+        
+        if not self.is_active:
+            return False
+        if self.valid_from and now < self.valid_from:
+            return False
+        if self.valid_until and now > self.valid_until:
+            return False
+        if self.usage_limit and self.usage_count >= self.usage_limit:
+            return False
+        return True
+
+
+class POSTransaction(models.Model):
+    """POS tranzakció (nyugta vagy számla)"""
+    TRANSACTION_TYPE_CHOICES = [
+        ('receipt', 'Nyugta'),
+        ('invoice', 'Számla'),
+    ]
+    
+    PAYMENT_METHOD_CHOICES = [
+        ('cash', 'Készpénz'),
+        ('card', 'Hitelkártya'),
+        ('customer_card', 'Ügyfélkártya'),
+    ]
+    
+    STATUS_CHOICES = [
+        ('draft', 'Vázlat'),
+        ('pending', 'Fizetés folyamatban'),
+        ('completed', 'Befejezve'),
+        ('failed', 'Sikertelen'),
+        ('cancelled', 'Törölve'),
+    ]
+    
+    transaction_number = models.CharField(max_length=50, unique=True, verbose_name="Tranzakció száma")
+    transaction_type = models.CharField(max_length=20, choices=TRANSACTION_TYPE_CHOICES, verbose_name="Tranzakció típusa")
+    payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, verbose_name="Fizetési mód")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', verbose_name="Státusz")
+    
+    # Ügyfél adatok
+    customer = models.ForeignKey(CrmCompany, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Ügyfél")
+    customer_name = models.CharField(max_length=200, blank=True, verbose_name="Ügyfél neve")
+    customer_address = models.TextField(blank=True, verbose_name="Ügyfél címe")
+    customer_tax_number = models.CharField(max_length=20, blank=True, verbose_name="Adószám")
+    customer_email = models.EmailField(blank=True, verbose_name="E-mail")
+    
+    # Vásárló azonosítás (QR kód alapú)
+    shopper_identification = models.ForeignKey(POSCustomerIdentification, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Vásárló azonosítás")
+    shopper_name = models.CharField(max_length=200, blank=True, verbose_name="Vásárló neve")
+    
+    # Összegek
+    subtotal = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Részösszeg")
+    discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezmény összege")
+    total_net = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó összesen")
+    total_vat = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="ÁFA összesen")
+    total_gross = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Bruttó összesen")
+    
+    # Készpénzes fizetés
+    amount_received = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Átvett összeg")
+    amount_change = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Visszajáró")
+    
+    # Kupon
+    coupon = models.ForeignKey(POSCoupon, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Felhasznált kupon")
+    
+    # NAV integráció
+    nav_invoice_number = models.CharField(max_length=100, blank=True, verbose_name="NAV számla szám")
+    nav_transaction_id = models.CharField(max_length=100, blank=True, verbose_name="NAV tranzakció ID")
+    nav_sent_at = models.DateTimeField(null=True, blank=True, verbose_name="NAV-nak küldve")
+    
+    # Terminál integráció
+    terminal_transaction_id = models.CharField(max_length=100, blank=True, verbose_name="Terminál tranzakció ID")
+    terminal_response = models.TextField(blank=True, verbose_name="Terminál válasz")
+    
+    # Kasszafiók
+    drawer_opened_at = models.DateTimeField(null=True, blank=True, verbose_name="Kasszafiók nyitva")
+    
+    # Rögzítés adatai
+    cashier = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Pénztáros")
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name="Befejezve")
+    
+    # Nyomtatás
+    printed_at = models.DateTimeField(null=True, blank=True, verbose_name="Kinyomtatva")
+    
+    class Meta:
+        verbose_name = "POS tranzakció"
+        verbose_name_plural = "POS tranzakciók"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.transaction_number} - {self.get_transaction_type_display()} - {self.total_gross}"
+    
+    def calculate_totals(self):
+        """Összegek újraszámítása a tételek alapján"""
+        items = self.items.all()
+        self.subtotal = sum(item.gross_total for item in items)
+        self.total_net = sum(item.net_total for item in items)
+        self.total_vat = sum(item.vat_amount for item in items)
+        
+        # Kupon kedvezmény alkalmazása
+        if self.coupon and self.coupon.is_valid():
+            if self.coupon.discount_type == 'fixed':
+                self.discount_amount = min(self.coupon.discount_value, self.subtotal)
+            else:  # percent
+                self.discount_amount = self.subtotal * (self.coupon.discount_value / 100)
+        else:
+            self.discount_amount = 0
+        
+        self.total_gross = self.subtotal - self.discount_amount
+        
+        # HUF kerekítés készpénzes fizetésnél
+        if self.payment_method == 'cash' and self.total_gross:
+            from apps.core.models import Currency
+            try:
+                currency = Currency.objects.get(code='HUF')
+                # Kerekítés 5 Ft-ra
+                remainder = self.total_gross % 5
+                if remainder <= 2:
+                    self.total_gross -= remainder
+                else:
+                    self.total_gross += (5 - remainder)
+            except Currency.DoesNotExist:
+                pass
+        
+        # Visszajáró számítása
+        if self.payment_method == 'cash' and self.amount_received:
+            self.amount_change = self.amount_received - self.total_gross
+        
+        self.save()
+
+
+class POSTransactionItem(models.Model):
+    """POS tranzakció tétel"""
+    transaction = models.ForeignKey(POSTransaction, on_delete=models.CASCADE, related_name='items', verbose_name="Tranzakció")
+    material = models.ForeignKey('warehouse.Material', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Termék")
+    
+    # Termék adatok pillanatkép
+    product_code = models.CharField(max_length=50, blank=True, verbose_name="Cikkszám")
+    product_name = models.CharField(max_length=200, verbose_name="Termék neve")
+    product_description = models.TextField(blank=True, verbose_name="Leírás")
+    
+    quantity = models.DecimalField(max_digits=10, decimal_places=2, verbose_name="Mennyiség")
+    unit = models.CharField(max_length=20, verbose_name="Mértékegység")
+    
+    # Árak
+    gross_unit_price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Bruttó egységár")
+    net_unit_price = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Nettó egységár")
+    vat_rate = models.DecimalField(max_digits=5, decimal_places=2, verbose_name="ÁFA %")
+    
+    # Összegek
+    net_total = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Nettó összesen")
+    vat_amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="ÁFA összeg")
+    gross_total = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Bruttó összesen")
+    
+    # Kedvezményes ár (ha ügyfél kedvezményes árat kap)
+    is_discounted = models.BooleanField(default=False, verbose_name="Kedvezményes")
+    original_gross_price = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True, verbose_name="Eredeti bruttó ár")
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "POS tranzakció tétel"
+        verbose_name_plural = "POS tranzakció tételek"
+
+    def __str__(self):
+        return f"{self.product_name} x {self.quantity}"
+    
+    def save(self, *args, **kwargs):
+        # Összegek kiszámítása
+        self.net_total = self.quantity * self.net_unit_price
+        self.vat_amount = self.net_total * (self.vat_rate / 100)
+        self.gross_total = self.quantity * self.gross_unit_price
+        super().save(*args, **kwargs)
+
+
+class POSPayment(models.Model):
+    """POS fizetési kísérlet (több is lehet egy tranzakcióhoz)"""
+    STATUS_CHOICES = [
+        ('pending', 'Folyamatban'),
+        ('success', 'Sikeres'),
+        ('failed', 'Sikertelen'),
+        ('cancelled', 'Törölve'),
+    ]
+    
+    transaction = models.ForeignKey(POSTransaction, on_delete=models.CASCADE, related_name='payments', verbose_name="Tranzakció")
+    amount = models.DecimalField(max_digits=12, decimal_places=2, verbose_name="Összeg")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending', verbose_name="Státusz")
+    
+    # Terminál adatok
+    terminal_id = models.CharField(max_length=50, blank=True, verbose_name="Terminál ID")
+    terminal_transaction_id = models.CharField(max_length=100, blank=True, verbose_name="Terminál tranzakció ID")
+    terminal_response_code = models.CharField(max_length=50, blank=True, verbose_name="Terminál válasz kód")
+    terminal_response_message = models.TextField(blank=True, verbose_name="Terminál válasz üzenet")
+    
+    # Időbélyegek
+    created_at = models.DateTimeField(auto_now_add=True)
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name="Befejezve")
+    
+    class Meta:
+        verbose_name = "POS fizetés"
+        verbose_name_plural = "POS fizetések"
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.transaction.transaction_number} - {self.amount} - {self.get_status_display()}"

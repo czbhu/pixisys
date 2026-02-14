@@ -22,6 +22,7 @@ import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
 import PublicDelivery from './pages/Public/PublicDelivery';
 import PublicDeliveryNote from './pages/Public/PublicDeliveryNote';
 import KioskPage from './pages/Public/KioskPage';
+import POSSales from './pages/POS/Sales';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
@@ -177,6 +178,13 @@ function AppContent() {
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
+  }
+
+  // POS Sales fullscreen mode - no sidebar, no header
+  const isPOSSales = location.pathname === '/pos/sales';
+  
+  if (isPOSSales) {
+    return <POSSales />;
   }
 
   return (

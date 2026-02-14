@@ -22,4 +22,5 @@ root.render(
 );
 
 // Register service worker for PWA functionality and Notifications
-serviceWorkerRegistration.register();
+// TEMPORARILY DISABLED to clear cache and fix redirect loop
+serviceWorkerRegistration.unregister();

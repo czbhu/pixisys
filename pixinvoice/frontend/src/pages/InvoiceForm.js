@@ -1645,14 +1645,14 @@ const InvoiceForm = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAdvances, openAdvances, watch('invoice_category'), watch('items')]);
 
-  // Map vat_type_id for auto advance lines once vatTypes are available
+  // Map vat_type_id for items with vat_rate but no vat_type_id (auto advance lines, ERP imports, etc.)
   React.useEffect(() => {
     if (!Array.isArray(vatTypes) || !vatTypes.length) return;
     const items = watch('items') || [];
     items.forEach((it, idx) => {
-      if (!it || !it.__isAdvanceDeduction) return;
+      if (!it) return;
       const rate = Number(it?.vat_rate ?? 0);
-      if (!it.vat_type_id) {
+      if (!it.vat_type_id && rate > 0) {
         const match = vatTypes.find(v => v.category === 'PERCENT' && Number(v.percentage) === rate);
         if (match) setValue(`items.${idx}.vat_type_id`, match.id, { shouldDirty: true, shouldValidate: false });
       }
@@ -2656,7 +2656,7 @@ const InvoiceForm = () => {
             <TableHeader>
               <tr>
                 <TableHeaderCell>Név</TableHeaderCell>
-                {isSimplified && <TableHeaderCell>Termékkód</TableHeaderCell>}
+                {isSimplified && <TableHeaderCell>Cikkszám</TableHeaderCell>}
                 <TableHeaderCell>Mennyiség</TableHeaderCell>
                 <TableHeaderCell>Me. egység</TableHeaderCell>
                 <TableHeaderCell>
@@ -2702,7 +2702,7 @@ const InvoiceForm = () => {
                     </TableCell>
                     {isSimplified && (
                       <TableCell>
-                        <SmallInput {...register(`items.${index}.product_code_value`)} placeholder="Termékkód (opcionális)" />
+                        <SmallInput {...register(`items.${index}.product_code_value`)} placeholder="Cikkszám (opcionális)" />
                       </TableCell>
                     )}
                     <TableCell>

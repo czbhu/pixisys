@@ -349,13 +349,35 @@ const RFQs: React.FC = () => {
       console.log('[RFQs] contact_ids type:', typeof values.contact_ids, 'isArray:', Array.isArray(values.contact_ids));
       console.log('[RFQs] contact_ids value:', values.contact_ids);
       
+      // Ellenőrizzük a határidőt
+      if (!values.deadline) {
+        const suggestedDate = addWorkdays(values.issue_date || dayjs(), 14);
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: 'Nincs határidő megadva',
+            content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
+            okText: 'Igen',
+            cancelText: 'Mégsem',
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+          });
+        });
+        
+        if (confirmed) {
+          values.deadline = suggestedDate;
+          form.setFieldValue('deadline', suggestedDate);
+        } else {
+          return; // Vissza az ajánlatba
+        }
+      }
+      
       const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
       const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
       const createPayload = {
         title: computedTitle,
         description: computedDescription,
         issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
-        deadline: values.deadline.format('YYYY-MM-DD'),
+        deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
         partial_order_allowed: partialOrderAllowed,
       } as any;
       
@@ -966,7 +988,7 @@ const RFQs: React.FC = () => {
         cancelText="Mégse"
         width={1100}
       >
-        <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs(), deadline: addWorkdays(dayjs(), 14) }}>
+        <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
             <Tooltip title="Az árajánlat még nem lett elmentve, a napló üres. Mentés után a részleteknél elérhető.">
               <Button size="small" onClick={() => message.info('Mentés előtt nincs napló. Mentsd az árajánlatot, majd a részletek nézetben megnyitható a Napló.')}>
@@ -991,7 +1013,7 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
             <Col xs={24} md={6}>
-              <Form.Item label="Határidő" name="deadline" rules={[{ required: true, message: 'Válassz határidőt' }]} style={{ marginBottom: 6 }}>
+              <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
                 <DatePicker style={{ width: '100%' }} />
               </Form.Item>
             </Col>

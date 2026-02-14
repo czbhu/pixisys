@@ -1,0 +1,304 @@
+.pos-layout {
+  height: 100vh;
+  width: 100vw;
+  background: #f0f2f5;
+}
+
+.pos-header {
+  background: #001529;
+  padding: 0 24px;
+  display: flex;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.pos-content {
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.pos-main-container {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.last-transaction-card {
+  margin-bottom: 24px;
+}
+
+.pos-main-menu {
+  margin-top: 24px;
+}
+
+.pos-menu-card {
+  text-align: center;
+  padding: 32px 24px;
+  height: 250px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  transition: all 0.3s;
+  cursor: pointer;
+}
+
+.pos-menu-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.15);
+}
+
+.pos-menu-card.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pos-menu-card.disabled:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.pos-menu-icon {
+  font-size: 64px;
+  color: #1890ff;
+  margin-bottom: 16px;
+}
+
+.pos-menu-card h3 {
+  margin: 8px 0;
+}
+
+.pos-menu-card p {
+  color: #666;
+  margin: 0;
+}
+
+/* Touch-friendly buttons */
+.ant-btn {
+  min-height: 48px;
+  font-size: 16px;
+}
+
+.ant-btn-lg {
+  min-height: 56px;
+  font-size: 18px;
+}
+
+/* Touch-friendly inputs */
+.ant-input,
+.ant-input-number,
+.ant-select-selector {
+  min-height: 48px !important;
+  font-size: 16px !important;
+}
+
+/* Touch-friendly table rows */
+.ant-table-tbody > tr > td {
+  padding: 16px !important;
+  font-size: 16px !important;
+}
+
+/* Customer card */
+.customer-card {
+  cursor: pointer;
+  transition: all 0.3s;
+}
+
+.customer-card:hover {
+  background: #f0f7ff;
+}
+
+.customer-card.selected {
+  background: #e6f7ff;
+  border-color: #1890ff;
+}
+
+/* POS Sales - compact tables and touchscreen scrollbar */
+.pos-compact-table .ant-table-thead > tr > th {
+  padding: 3px 6px !important;
+  font-size: 24px !important;
+  line-height: 1.1 !important;
+}
+
+.pos-compact-table .ant-table-tbody > tr > td {
+  padding: 2px 6px !important;
+  font-size: 24px !important;
+  line-height: 1.05 !important;
+}
+
+.pos-compact-table .ant-table-tbody > tr {
+  height: 26px !important;
+}
+
+.pos-products-table .ant-table-body::-webkit-scrollbar,
+.pos-cart-table .ant-table-body::-webkit-scrollbar {
+  width: 36px;
+  height: 36px;
+}
+
+.pos-products-table .ant-table-body::-webkit-scrollbar-track,
+.pos-cart-table .ant-table-body::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 12px;
+}
+
+.pos-products-table .ant-table-body::-webkit-scrollbar-thumb,
+.pos-cart-table .ant-table-body::-webkit-scrollbar-thumb {
+  background: #1890ff;
+  border-radius: 18px;
+  border: 6px solid #f1f1f1;
+}
+
+.pos-products-table .ant-table-body,
+.pos-cart-table .ant-table-body {
+  scrollbar-width: auto;
+  scrollbar-color: #1890ff #f1f1f1;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+.pos-products-table .ant-table-body,
+.pos-cart-table .ant-table-body,
+.pos-products-table .ant-table-content,
+.pos-cart-table .ant-table-content {
+  overscroll-behavior: contain;
+}
+
+.pos-content .ant-input::placeholder {
+  text-align: center;
+}
+
+.pos-product-search {
+  height: 29px !important;
+  min-height: 29px !important;
+  font-size: 24px !important;
+  line-height: 29px !important;
+  padding: 0 6px !important;
+}
+
+.pos-product-search .ant-input {
+  height: 29px !important;
+  min-height: 29px !important;
+  font-size: 24px !important;
+  line-height: 29px !important;
+  padding: 0 !important;
+}
+
+.pos-product-search .ant-input-affix-wrapper,
+.pos-product-search.ant-input-affix-wrapper {
+  padding: 0 6px !important;
+}
+
+.pos-cart-item-row {
+  width: 100%;
+  overflow: hidden;
+}
+
+.pos-cart-item-name {
+  width: 100%;
+  font-size: 24px;
+  line-height: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #eaf4ff;
+  border-radius: 4px;
+  padding: 8px 6px;
+}
+
+.pos-cart-item-meta {
+  margin-top: 2px;
+  display: grid;
+  grid-template-columns: 112px 44px minmax(0, 1fr) minmax(0, 1fr) 34px;
+  align-items: center;
+  gap: 2px;
+  font-size: 24px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.pos-cart-cell-unit,
+.pos-cart-cell-unitprice,
+.pos-cart-cell-total {
+  font-size: 24px;
+  line-height: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pos-cart-cell-total {
+  justify-self: end;
+}
+
+.pos-cart-cell-qty {
+  width: 112px;
+  justify-self: start;
+}
+
+.pos-cart-cell-unit {
+  justify-self: start;
+  padding-right: 12px;
+  font-size: 19px;
+}
+
+.pos-cart-cell-unitprice {
+  justify-self: end;
+  text-align: right;
+}
+
+.pos-cart-item-meta > .ant-btn:last-child {
+  justify-self: end;
+}
+
+.pos-cart-cell-qty .ant-btn,
+.pos-cart-cell-qty .ant-input-number {
+  height: 26px !important;
+  min-height: 26px !important;
+}
+
+.pos-cart-cell-qty .ant-input-number-input {
+  height: 24px !important;
+  text-align: center !important;
+  font-size: 20px !important;
+}
+
+.pos-cart-item-meta > .ant-btn {
+  min-height: 26px !important;
+  height: 26px !important;
+  min-width: 34px !important;
+  width: 34px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+}
+
+.pos-cart-item-meta > .ant-btn .anticon {
+  font-size: 16px !important;
+}
+
+.pos-cart-header-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pos-cart-header-total {
+  font-size: 20px;
+  font-weight: 700;
+  color: #3f8600;
+  margin-left: auto;
+}
+
+.pos-cart-table .ant-table-content {
+  overflow-x: hidden !important;
+}
+
+.pos-products-table .pos-col-action {
+  padding-right: 3px !important;
+}
+
+.pos-products-table .pos-col-name {
+  padding-left: 3px !important;
+}

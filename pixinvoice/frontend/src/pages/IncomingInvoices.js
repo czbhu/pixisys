@@ -816,7 +816,7 @@ export default function IncomingInvoices() {
       const deliveryDate = firstText('invoiceDeliveryDate') || firstText('fulfillmentDate');
       const paymentDate = firstText('paymentDate') || firstText('dueDate');
       const paymentMethod = firstText('paymentMethod');
-  const currency = firstText('invoiceCurrencyCode') || firstText('invoiceCurrency');
+  const currency = firstText('invoiceCurrencyCode') || firstText('invoiceCurrency') || firstText('currencyCode') || firstText('currency');
   const exchangeRate = firstText('exchangeRate');
   const invoiceCategory = firstText('invoiceCategory');
   const invoiceOperation = firstText('invoiceOperation');
@@ -889,6 +889,9 @@ export default function IncomingInvoices() {
       let totalNet = number(firstText('invoiceNetAmount')) || null;
       let totalVat = number(firstText('invoiceVatAmount')) || null;
       let totalGross = number(firstText('invoiceGrossAmount')) || null;
+      let totalNetHUF = number(firstText('invoiceNetAmountHUF')) || null;
+      let totalVatHUF = number(firstText('invoiceVatAmountHUF')) || null;
+      let totalGrossHUF = number(firstText('invoiceGrossAmountHUF')) || null;
       if (totalNet == null || totalVat == null || totalGross == null) {
         totalNet = 0; totalVat = 0; totalGross = 0;
         lines.forEach(l => {
@@ -933,6 +936,7 @@ export default function IncomingInvoices() {
         vatSummary,
         additionalData,
         totals: { net: totalNet, vat: totalVat, gross: totalGross },
+        totalsHUF: { net: totalNetHUF, vat: totalVatHUF, gross: totalGrossHUF },
       });
     } catch (e) {
       setParsed(null);
@@ -991,7 +995,16 @@ export default function IncomingInvoices() {
   const selectedCurrencies = Array.from(new Set(selectedRows.map(r => r.currency).filter(Boolean)));
   const selectedCurrency = (selectedRows[0]?.currency) || '';
   const effectiveBatchCurrency = batchCurrency || selectedCurrencies[0] || 'HUF';
-  const selectedRowsForBatch = selectedRows.filter(r => !effectiveBatchCurrency || !r.currency || r.currency === effectiveBatchCurrency);
+  const selectedRowsForBatch = selectedRows.filter(r => {
+    if (!effectiveBatchCurrency || !r.currency || r.currency === effectiveBatchCurrency) {
+      return true;
+    }
+    // If batch is HUF and invoice has HUF amounts available, include it
+    if (effectiveBatchCurrency === 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+      return true;
+    }
+    return false;
+  });
   const excludedForBatch = selectedRows.length - selectedRowsForBatch.length;
   const selectedTotal = selectedRowsForBatch.reduce((sum, r) => sum + Number(r.grossAmount || 0), 0);
 
@@ -1157,13 +1170,22 @@ export default function IncomingInvoices() {
     try {
       const res = await api.post('/api/payment-batches/', { company: companyId, name: batchName, bank_account: batchBankAccount || null, currency });
       const batch = res.data;
-      const itemsPayload = selectedRowsForBatch.map(r => ({
-        invoice_number: r.invoiceNumber,
-        supplier_tax_number: r.supplierTaxNumber,
-        supplier_name: r.supplierName,
-        amount_gross: r.grossAmount,
-        currency: r.currency,
-      }));
+      const itemsPayload = selectedRowsForBatch.map(r => {
+        // If batch is HUF and invoice has HUF amount, use that; otherwise use original
+        let amountToUse = r.grossAmount;
+        let currencyToUse = r.currency;
+        if (currency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+          currencyToUse = 'HUF';
+        }
+        return {
+          invoice_number: r.invoiceNumber,
+          supplier_tax_number: r.supplierTaxNumber,
+          supplier_name: r.supplierName,
+          amount_gross: amountToUse,
+          currency: currencyToUse,
+        };
+      });
       const addRes = await api.post(`/api/payment-batches/${batch.id}/add-items/`, { items: itemsPayload });
       const cr = addRes.data || {};
       toast.success(`Csomag létrehozva: ${cr.created} tétel${excludedForBatch? `, kihagyva: ${excludedForBatch}`:''}`);
@@ -1325,13 +1347,22 @@ export default function IncomingInvoices() {
       const currency = batch.currency || '';
       const filtered = selectedRows.filter(r => !currency || !r.currency || r.currency === currency);
       const excluded = selectedRows.length - filtered.length;
-      const itemsPayload = filtered.map(r => ({
-        invoice_number: r.invoiceNumber,
-        supplier_tax_number: r.supplierTaxNumber,
-        supplier_name: r.supplierName,
-        amount_gross: r.grossAmount,
-        currency: r.currency,
-      }));
+      const itemsPayload = filtered.map(r => {
+        // If batch is HUF and invoice has HUF amount, use that; otherwise use original
+        let amountToUse = r.grossAmount;
+        let currencyToUse = r.currency;
+        if (currency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+          currencyToUse = 'HUF';
+        }
+        return {
+          invoice_number: r.invoiceNumber,
+          supplier_tax_number: r.supplierTaxNumber,
+          supplier_name: r.supplierName,
+          amount_gross: amountToUse,
+          currency: currencyToUse,
+        };
+      });
       const res = await api.post(`/api/payment-batches/${batch.id}/add-items/`, { items: itemsPayload });
       const cr = res.data || {};
       toast.success(`Hozzáadva: ${cr.created}, kihagyva: ${excluded + (cr.skipped||0)}`);
@@ -1409,13 +1440,23 @@ export default function IncomingInvoices() {
     if (!editingBatch) return;
     setSavingEdit(true);
     try {
-      const itemsPayload = selectedRows.map(r => ({
-        invoice_number: r.invoiceNumber,
-        supplier_tax_number: r.supplierTaxNumber,
-        supplier_name: r.supplierName,
-        amount_gross: r.grossAmount,
-        currency: r.currency,
-      }));
+      const batchCurrency = editingBatch.currency || '';
+      const itemsPayload = selectedRows.map(r => {
+        // If batch is HUF and invoice has HUF amount, use that; otherwise use original
+        let amountToUse = r.grossAmount;
+        let currencyToUse = r.currency;
+        if (batchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+          currencyToUse = 'HUF';
+        }
+        return {
+          invoice_number: r.invoiceNumber,
+          supplier_tax_number: r.supplierTaxNumber,
+          supplier_name: r.supplierName,
+          amount_gross: amountToUse,
+          currency: currencyToUse,
+        };
+      });
       await api.post(`/api/payment-batches/${editingBatch.id}/set-items/`, { items: itemsPayload });
       toast.success('Csomag mentve');
       setEditingBatch(null);
@@ -1637,7 +1678,14 @@ export default function IncomingInvoices() {
                 <TableCell>{row.currency}</TableCell>
                 <TableCell className="text-right">{row.netAmount}</TableCell>
                 <TableCell className="text-right">{row.vatAmount}</TableCell>
-                <TableCell className="text-right">{row.grossAmount}</TableCell>
+                <TableCell className="text-right">
+                  <div>{row.grossAmount} {row.currency || ''}</div>
+                  {row.currency && row.currency !== 'HUF' && row.netAmountHUF && (
+                    <SmallMuted>
+                      {Number(row.netAmountHUF) + Number(row.vatAmountHUF || 0)} HUF
+                    </SmallMuted>
+                  )}
+                </TableCell>
                 <TableCell>
                   {isTransfer ? (
                     canApproveInvoices ? (
@@ -1803,7 +1851,7 @@ export default function IncomingInvoices() {
                             <div>Esedékesség</div><div>{parsed.paymentDate || '-'}</div>
                             <div>Fizetési mód</div><div>{parsed.paymentMethod || '-'}</div>
                             <div>Deviza</div><div>{parsed.currency || '-'}</div>
-                            {parsed.exchangeRate && (<><div>Árfolyam</div><div>{parsed.exchangeRate}</div></>)}
+                            {parsed.exchangeRate && (<><div>Árfolyam</div><div>{parsed.exchangeRate} HUF/{parsed.currency || ''}</div></>)}
                             {parsed.operation && (<><div>Művelet</div><div>{parsed.operation}</div></>)}
                             {parsed.category && (<><div>Kategória</div><div>{parsed.category}</div></>)}
                             {parsed.appearance && (<><div>Megjelenés</div><div>{parsed.appearance}</div></>)}
@@ -1906,6 +1954,14 @@ export default function IncomingInvoices() {
                         <div><strong>Nettó:</strong> {fmt(parsed.totals?.net)}</div>
                         <div><strong>ÁFA:</strong> {fmt(parsed.totals?.vat)}</div>
                         <div><strong>Összesen:</strong> {fmt(parsed.totals?.gross)} {parsed.currency || ''}</div>
+                        {parsed.exchangeRate && parsed.currency !== 'HUF' && (
+                          <div style={{ marginTop: 4, fontSize: 12, color: '#7f8c8d' }}>Árfolyam: {parsed.exchangeRate} HUF/{parsed.currency}</div>
+                        )}
+                        {parsed.totalsHUF?.gross && parsed.currency !== 'HUF' && (
+                          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #ddd' }}>
+                            <div><strong>Összesen HUF-ban:</strong> {fmt(parsed.totalsHUF.gross)} HUF</div>
+                          </div>
+                        )}
                       </div>
                     </div>
                     {(parsed.additionalData && parsed.additionalData.length > 0) && (
@@ -2062,7 +2118,12 @@ export default function IncomingInvoices() {
                 <label style={{width:160}}>Pénznem</label>
                 <input value={batchCurrency || selectedCurrencies[0] || 'HUF'} readOnly style={{width:120, padding:6}} />
               </div>
-              {selectedCount>0 && batchCurrency && selectedRows.some(r => r.currency && r.currency !== batchCurrency) && (
+              {selectedCount>0 && batchCurrency && selectedRows.some(r => {
+                if (!r.currency || r.currency === batchCurrency) return false;
+                // If batch is HUF and invoice has HUF amount, it's OK
+                if (batchCurrency === 'HUF' && r.netAmountHUF && r.vatAmountHUF) return false;
+                return true;
+              }) && (
                 <div style={{color:'#ad5f00', background:'#fff4e5', padding:8, border:'1px solid #ffd8a8', borderRadius:6, marginTop:4}}>
                   Az eltérő pénznemű kijelöltek kimaradnak a csomagból.
                 </div>
@@ -2083,6 +2144,7 @@ export default function IncomingInvoices() {
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:50 }}>#</th>
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Eladó</th>
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee' }}>Számlaszám</th>
+                        <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:80 }}>Deviza</th>
                         <th style={{ textAlign:'left', padding:6, borderBottom:'1px solid #eee', width:150 }}>Bruttó összeg</th>
                         <th style={{ width: 40, borderBottom:'1px solid #eee' }}></th>
                       </tr>
@@ -2090,16 +2152,28 @@ export default function IncomingInvoices() {
                     <tbody>
                       {selectedRowsForBatch.length === 0 ? (
                         <tr>
-                          <td colSpan={5} style={{ padding:10, textAlign:'center', color:'#7f8c8d' }}>Nincs megjeleníthető tétel.</td>
+                          <td colSpan={6} style={{ padding:10, textAlign:'center', color:'#7f8c8d' }}>Nincs megjeleníthető tétel.</td>
                         </tr>
                       ) : (
-                        selectedRowsForBatch.map((r, idx) => (
+                        selectedRowsForBatch.map((r, idx) => {
+                          // Calculate the amount to use for this item
+                          let displayAmount = r.grossAmount;
+                          let displayCurrency = r.currency || effectiveBatchCurrency;
+                          if (effectiveBatchCurrency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
+                            displayAmount = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
+                            displayCurrency = 'HUF';
+                          }
+                          return (
                           <tr key={rowKey(r)}>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{idx + 1}</td>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.supplierName || '-'}</td>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.invoiceNumber || '-'}</td>
+                            <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>{r.currency || '-'}</td>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5' }}>
-                              {(formatMoney(r.grossAmount) ?? '-')} {effectiveBatchCurrency || ''}
+                              {(formatMoney(displayAmount) ?? '-')} {displayCurrency || ''}
+                              {r.currency !== 'HUF' && displayCurrency === 'HUF' && (
+                                <div style={{ fontSize: 11, color: '#7f8c8d' }}>({r.currency} → HUF)</div>
+                              )}
                             </td>
                             <td style={{ padding:6, borderBottom:'1px solid #f5f5f5', textAlign:'right' }}>
                               <IconButton
@@ -2118,7 +2192,8 @@ export default function IncomingInvoices() {
                               </IconButton>
                             </td>
                           </tr>
-                        ))
+                          );
+                        })
                       )}
                     </tbody>
                   </table>

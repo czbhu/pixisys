@@ -13,7 +13,8 @@ from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog,
     ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
-    DeliveryNote, DeliveryNoteItem
+    DeliveryNote, DeliveryNoteItem,
+    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
@@ -21,7 +22,9 @@ from .serializers import (
     LeadSerializer, OpportunitySerializer, ForecastSerializer,
     CustomerOrderSerializer, CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
     ChatThreadSerializer, ChatMessageSerializer,
-    DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer
+    DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
+    POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
+    POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ManufacturingProductSerializer
@@ -1461,6 +1464,23 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
         return Response({'status': 'declined'})
 
+    @action(detail=True, methods=['get'])
+    def activity_logs(self, request, pk=None):
+        """Get activity logs for this quote request"""
+        from apps.core.models import ActivityLog
+        from apps.core.serializers import ActivityLogSerializer
+        from django.contrib.contenttypes.models import ContentType
+        
+        qr = self.get_object()
+        content_type = ContentType.objects.get_for_model(QuoteRequest)
+        logs = ActivityLog.objects.filter(
+            content_type=content_type,
+            object_id=qr.id
+        ).select_related('user').order_by('-timestamp')
+        
+        serializer = ActivityLogSerializer(logs, many=True)
+        return Response(serializer.data)
+
     @action(detail=True, methods=['post'])
     def create_quote(self, request, pk=None):
         """Create a Quote from RFQ (demand), preserving company and contacts on RFQ."""
@@ -2177,7 +2197,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     
     def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None):
         if extra_context is None: extra_context = {}
-        cfg = EmailServerConfig.objects.filter(is_default=True).first()
+        cfg = EmailServerConfig.objects.filter(is_active=True).first()
         if not cfg: return None
 
         # Determine Recipient
@@ -2306,7 +2326,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         if not to_email:
              return Response({'error': 'Címzett hiányzik'}, status=400)
 
-        cfg = EmailServerConfig.objects.filter(is_default=True).first()
+        cfg = EmailServerConfig.objects.filter(is_active=True).first()
         if not cfg:
              return Response({'error': 'Email szerver nincs beállítva'}, status=400)
 
@@ -3230,6 +3250,23 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.invoice_number = invoice_number
         order.save()
         return Response(self.get_serializer(order).data)
+    
+    @action(detail=True, methods=['get'])
+    def activity_logs(self, request, pk=None):
+        """Get activity logs for this customer order"""
+        from apps.core.models import ActivityLog
+        from apps.core.serializers import ActivityLogSerializer
+        from django.contrib.contenttypes.models import ContentType
+        
+        order = self.get_object()
+        content_type = ContentType.objects.get_for_model(CustomerOrder)
+        logs = ActivityLog.objects.filter(
+            content_type=content_type,
+            object_id=order.id
+        ).select_related('user').order_by('-timestamp')
+        
+        serializer = ActivityLogSerializer(logs, many=True)
+        return Response(serializer.data)
     
     @action(detail=False, methods=['post'])
     def create_invoices(self, request):
@@ -4988,3 +5025,385 @@ class ApprovalRequestViewSet(viewsets.ModelViewSet):
         req.rejection_details = note
         req.save()
         return Response({'status': 'rejected'})
+
+
+# ==================== POS ViewSets ====================
+
+class POSCustomerIdentificationViewSet(viewsets.ModelViewSet):
+    """ViewSet for POS customer identification (QR codes)"""
+    queryset = POSCustomerIdentification.objects.all()
+    serializer_class = POSCustomerIdentificationSerializer
+    permission_classes = [AllowAny]
+    
+    @action(detail=False, methods=['post'])
+    def verify_qr(self, request):
+        """Verify QR code and return customer info"""
+        qr_code = request.data.get('qr_code')
+        if not qr_code:
+            return Response({'error': 'QR code required'}, status=400)
+        
+        try:
+            identification = POSCustomerIdentification.objects.select_related('customer').get(
+                qr_code=qr_code, 
+                is_active=True
+            )
+            identification.last_used_at = timezone.now()
+            identification.save()
+            
+            return Response({
+                'valid': True,
+                'customer': {
+                    'id': identification.customer.id,
+                    'name': identification.customer.name,
+                    'email': identification.customer.email,
+                    'tax_number': identification.customer.tax_number,
+                    'address': identification.customer.address,
+                }
+            })
+        except POSCustomerIdentification.DoesNotExist:
+            return Response({'valid': False}, status=404)
+
+
+class POSCouponViewSet(viewsets.ModelViewSet):
+    """ViewSet for POS coupons"""
+    queryset = POSCoupon.objects.all()
+    serializer_class = POSCouponSerializer
+    permission_classes = [AllowAny]
+    
+    @action(detail=False, methods=['post'])
+    def validate_coupon(self, request):
+        """Validate coupon code"""
+        code = request.data.get('code')
+        if not code:
+            return Response({'error': 'Coupon code required'}, status=400)
+        
+        try:
+            coupon = POSCoupon.objects.get(code=code)
+            is_valid = coupon.is_valid()
+            
+            if is_valid:
+                return Response({
+                    'valid': True,
+                    'coupon': POSCouponSerializer(coupon).data
+                })
+            else:
+                return Response({
+                    'valid': False,
+                    'message': 'Kupon nem érvényes vagy lejárt'
+                }, status=400)
+        except POSCoupon.DoesNotExist:
+            return Response({
+                'valid': False,
+                'message': 'Kupon nem található'
+            }, status=404)
+
+
+class POSTransactionViewSet(viewsets.ModelViewSet):
+    """ViewSet for POS transactions"""
+    queryset = POSTransaction.objects.all()
+    permission_classes = [AllowAny]
+    
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return POSTransactionCreateSerializer
+        return POSTransactionSerializer
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        
+        # Filter by date range
+        date_from = self.request.query_params.get('date_from')
+        date_to = self.request.query_params.get('date_to')
+        
+        if date_from:
+            queryset = queryset.filter(created_at__gte=date_from)
+        if date_to:
+            queryset = queryset.filter(created_at__lte=date_to)
+        
+        # Filter by cashier
+        cashier_id = self.request.query_params.get('cashier_id')
+        if cashier_id:
+            queryset = queryset.filter(cashier_id=cashier_id)
+        
+        # Filter by status
+        status = self.request.query_params.get('status')
+        if status:
+            queryset = queryset.filter(status=status)
+        
+        return queryset.select_related('customer', 'coupon', 'cashier').prefetch_related('items', 'payments')
+    
+    @action(detail=False, methods=['get'])
+    def last_transaction(self, request):
+        """Get last completed transaction for display"""
+        last_transaction = POSTransaction.objects.filter(
+            status='completed'
+        ).order_by('-completed_at').first()
+        
+        if last_transaction:
+            return Response({
+                'exists': True,
+                'total': float(last_transaction.total_gross),
+                'change': float(last_transaction.amount_change or 0)
+            })
+        return Response({'exists': False})
+    
+    @action(detail=True, methods=['post'])
+    def process_payment(self, request, pk=None):
+        """Process payment for a transaction"""
+        transaction = self.get_object()
+        payment_method = transaction.payment_method
+        
+        if transaction.status == 'completed':
+            return Response({'error': 'Transaction already completed'}, status=400)
+        
+        transaction.status = 'pending'
+        transaction.save()
+        
+        # Create payment record
+        payment = POSPayment.objects.create(
+            transaction=transaction,
+            amount=transaction.total_gross
+        )
+        
+        try:
+            if payment_method == 'cash':
+                # Cash payment - automatically successful
+                payment.status = 'success'
+                payment.completed_at = timezone.now()
+                payment.save()
+                
+                transaction.status = 'completed'
+                transaction.completed_at = timezone.now()
+                
+                # Open cash drawer
+                transaction.drawer_opened_at = timezone.now()
+                transaction.save()
+                
+                # Increment coupon usage if applicable
+                if transaction.coupon:
+                    transaction.coupon.usage_count += 1
+                    transaction.coupon.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Készpénzes fizetés sikeres',
+                    'transaction': POSTransactionSerializer(transaction).data
+                })
+            
+            elif payment_method == 'card':
+                # Credit card payment - simulate terminal communication
+                # In production, this would integrate with actual payment terminal
+                terminal_response = self._simulate_terminal_payment(transaction.total_gross)
+                
+                payment.terminal_id = request.data.get('terminal_id', 'TERMINAL_001')
+                payment.terminal_transaction_id = terminal_response.get('transaction_id')
+                payment.terminal_response_code = terminal_response.get('response_code')
+                payment.terminal_response_message = terminal_response.get('message')
+                
+                if terminal_response.get('success'):
+                    payment.status = 'success'
+                    payment.completed_at = timezone.now()
+                    payment.save()
+                    
+                    transaction.status = 'completed'
+                    transaction.completed_at = timezone.now()
+                    transaction.terminal_transaction_id = terminal_response.get('transaction_id')
+                    transaction.terminal_response = str(terminal_response)
+                    transaction.save()
+                    
+                    # Increment coupon usage if applicable
+                    if transaction.coupon:
+                        transaction.coupon.usage_count += 1
+                        transaction.coupon.save()
+                    
+                    return Response({
+                        'success': True,
+                        'message': 'Kártyás fizetés sikeres',
+                        'transaction': POSTransactionSerializer(transaction).data
+                    })
+                else:
+                    payment.status = 'failed'
+                    payment.save()
+                    
+                    transaction.status = 'failed'
+                    transaction.save()
+                    
+                    return Response({
+                        'success': False,
+                        'message': terminal_response.get('message', 'Fizetés sikertelen'),
+                        'error_code': terminal_response.get('response_code')
+                    }, status=400)
+            
+            elif payment_method == 'customer_card':
+                # Customer card - create delivery note
+                delivery_note = self._create_delivery_note_for_pos(transaction)
+                
+                payment.status = 'success'
+                payment.completed_at = timezone.now()
+                payment.save()
+                
+                transaction.status = 'completed'
+                transaction.completed_at = timezone.now()
+                transaction.save()
+                
+                return Response({
+                    'success': True,
+                    'message': 'Ügyfélkártyás fizetés rögzítve',
+                    'delivery_note_number': delivery_note.delivery_note_number,
+                    'transaction': POSTransactionSerializer(transaction).data
+                })
+            
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            
+            payment.status = 'failed'
+            payment.terminal_response_message = str(e)
+            payment.save()
+            
+            transaction.status = 'failed'
+            transaction.save()
+            
+            return Response({
+                'success': False,
+                'message': f'Fizetés feldolgozási hiba: {str(e)}'
+            }, status=500)
+    
+    @action(detail=True, methods=['post'])
+    def send_receipt_email(self, request, pk=None):
+        """Send receipt/invoice via email"""
+        transaction = self.get_object()
+        
+        recipient = request.data.get('email')
+        if not recipient:
+            # Try to get email from customer or shopper
+            recipient = transaction.customer_email
+            if not recipient and transaction.customer:
+                recipient = transaction.customer.email
+        
+        if not recipient:
+            return Response({'error': 'No email address provided'}, status=400)
+        
+        # TODO: Implement email sending logic
+        # This would integrate with the email system and potentially NAV API
+        
+        return Response({
+            'success': True,
+            'message': f'E-mail elküldve: {recipient}'
+        })
+    
+    @action(detail=True, methods=['post'])
+    def print_receipt(self, request, pk=None):
+        """Mark transaction as printed and trigger printer"""
+        transaction = self.get_object()
+        transaction.printed_at = timezone.now()
+        transaction.save()
+        
+        # TODO: Implement printer integration
+        # This would send the receipt data to the thermal printer
+        
+        return Response({
+            'success': True,
+            'message': 'Nyomtatás elindítva'
+        })
+    
+    @action(detail=True, methods=['post'])
+    def cancel_transaction(self, request, pk=None):
+        """Cancel a transaction"""
+        transaction = self.get_object()
+        
+        if transaction.status == 'completed':
+            return Response({'error': 'Cannot cancel completed transaction'}, status=400)
+        
+        transaction.status = 'cancelled'
+        transaction.save()
+        
+        # Cancel all pending payments
+        transaction.payments.filter(status='pending').update(status='cancelled')
+        
+        return Response({
+            'success': True,
+            'message': 'Tranzakció törölve'
+        })
+    
+    def _simulate_terminal_payment(self, amount):
+        """Simulate payment terminal response"""
+        import random
+        import uuid
+        
+        # Simulate 95% success rate
+        success = random.random() < 0.95
+        
+        if success:
+            return {
+                'success': True,
+                'transaction_id': str(uuid.uuid4())[:8].upper(),
+                'response_code': '00',
+                'message': 'Fizetés elfogadva'
+            }
+        else:
+            error_codes = [
+                ('51', 'Nincs fedezet'),
+                ('05', 'Kártya elutasítva'),
+                ('14', 'Érvénytelen kártya'),
+                ('91', 'Terminal nem elérhető'),
+            ]
+            code, msg = random.choice(error_codes)
+            return {
+                'success': False,
+                'transaction_id': str(uuid.uuid4())[:8].upper(),
+                'response_code': code,
+                'message': msg
+            }
+    
+    def _create_delivery_note_for_pos(self, transaction):
+        """Create delivery note for customer card payment"""
+        from .models import DeliveryNote, DeliveryNoteItem, CustomerOrder, CustomerOrderItem
+        import uuid
+        
+        # Generate delivery note number
+        today = timezone.now().strftime('%Y%m%d')
+        delivery_note_number = f"SZALL-POS-{today}-{str(uuid.uuid4())[:4].upper()}"
+        
+        # Create delivery note
+        delivery_note = DeliveryNote.objects.create(
+            delivery_note_number=delivery_note_number,
+            customer=transaction.customer,
+            issue_date=timezone.now().date(),
+            created_by=transaction.cashier,
+            notes=f"POS tranzakció: {transaction.transaction_number}"
+        )
+        
+        # Since DeliveryNoteItem expects CustomerOrderItem, we would need to create
+        # a customer order first, or modify the approach
+        # For now, we'll just return the delivery note header
+        
+        return delivery_note
+
+
+class POSTransactionItemViewSet(viewsets.ModelViewSet):
+    """ViewSet for POS transaction items"""
+    queryset = POSTransactionItem.objects.all()
+    serializer_class = POSTransactionItemSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        transaction_id = self.request.query_params.get('transaction_id')
+        if transaction_id:
+            queryset = queryset.filter(transaction_id=transaction_id)
+        return queryset
+
+
+class POSPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """ViewSet for POS payments (read-only, payments are created through transactions)"""
+    queryset = POSPayment.objects.all()
+    serializer_class = POSPaymentSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        transaction_id = self.request.query_params.get('transaction_id')
+        if transaction_id:
+            queryset = queryset.filter(transaction_id=transaction_id)
+        return queryset

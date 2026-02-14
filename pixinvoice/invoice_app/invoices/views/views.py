@@ -2738,6 +2738,34 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     continue
             return None
 
+        def _parse_huf_amounts_from_xml(xml_text: str):
+            """Extract HUF amounts and exchange rate from invoice XML"""
+            try:
+                import xml.etree.ElementTree as ET
+                from decimal import Decimal
+                root = ET.fromstring(xml_text)
+                result = {
+                    'invoice_net_amount_huf': None,
+                    'invoice_vat_amount_huf': None,
+                    'exchange_rate': None
+                }
+                for el in root.iter():
+                    try:
+                        tag_raw = el.tag.split('}', 1)[-1] if isinstance(el.tag, str) and '}' in el.tag else el.tag
+                        tag = (tag_raw or '').lower()
+                        val = (el.text or '').strip()
+                        if tag == 'invoicenetamounthuf' and val:
+                            result['invoice_net_amount_huf'] = Decimal(val)
+                        elif tag == 'invoicevatamounthuf' and val:
+                            result['invoice_vat_amount_huf'] = Decimal(val)
+                        elif tag == 'exchangerate' and val:
+                            result['exchange_rate'] = Decimal(val)
+                    except Exception:
+                        continue
+                return result
+            except Exception:
+                return None
+
         def extract_due_date_from_cache(inv_number, supplier_tax_number=None):
             try:
                 from invoices.models import IncomingInvoiceData
@@ -2820,6 +2848,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     return None
 
                 due_val = _parse_due_from_xml_text(decoded_xml)
+                huf_amounts = _parse_huf_amounts_from_xml(decoded_xml)
                 try:
                     if decoded_xml:
                         IncomingInvoiceData.objects.update_or_create(
@@ -2838,14 +2867,28 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 except Exception:
                     pass
 
-                if due_val:
+                # Update digest with due_date and HUF amounts if extracted
+                if due_val or huf_amounts:
                     try:
                         qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=inv_number)
                         if supplier_tax_number:
                             qs = qs.filter(supplier_tax_number=supplier_tax_number)
                         if digest_index:
                             qs = qs.filter(index=digest_index)
-                        qs.update(due_date=due_val)
+                        
+                        update_fields = {}
+                        if due_val:
+                            update_fields['due_date'] = due_val
+                        if huf_amounts:
+                            if huf_amounts.get('invoice_net_amount_huf') is not None:
+                                update_fields['invoice_net_amount_huf'] = huf_amounts['invoice_net_amount_huf']
+                            if huf_amounts.get('invoice_vat_amount_huf') is not None:
+                                update_fields['invoice_vat_amount_huf'] = huf_amounts['invoice_vat_amount_huf']
+                            if huf_amounts.get('exchange_rate') is not None:
+                                update_fields['exchange_rate'] = huf_amounts['exchange_rate']
+                        
+                        if update_fields:
+                            qs.update(**update_fields)
                     except Exception:
                         pass
                 fetched_due_cache[key] = due_val
@@ -2978,9 +3021,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'supplierTaxNumber': r.supplier_tax_number,
                 'supplierName': r.supplier_name,
                 'currency': r.currency,
+                'exchangeRate': (str(r.exchange_rate) if getattr(r, 'exchange_rate', None) is not None else None),
                 'netAmount': (str(r.invoice_net_amount) if r.invoice_net_amount is not None else None),
                 'vatAmount': (str(r.invoice_vat_amount) if r.invoice_vat_amount is not None else None),
                 'grossAmount': (str(gross_val) if gross_val is not None else None),
+                'netAmountHUF': (str(r.invoice_net_amount_huf) if getattr(r, 'invoice_net_amount_huf', None) is not None else None),
+                'vatAmountHUF': (str(r.invoice_vat_amount_huf) if getattr(r, 'invoice_vat_amount_huf', None) is not None else None),
                 'deliveryDate': (r.invoice_delivery_date.isoformat() if r.invoice_delivery_date else None),
                 'paymentDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
                 'paymentMethod': r.payment_method,
@@ -5424,6 +5470,37 @@ class CompanyNAVConfigurationViewSet(viewsets.ModelViewSet):
         except Exception as e:
             logger.exception('Company NAV config test_connection error')
             return Response({'success': False, 'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        """Toggle default status for company NAV configuration.
+        If already default, removes it. If not default, sets it as default (clearing ALL others system-wide).
+        Only ONE default configuration is allowed across all companies.
+        """
+        cfg = self.get_object()
+
+        if cfg.is_default:
+            # Remove default status
+            cfg.is_default = False
+            cfg.save(update_fields=['is_default', 'updated_at'])
+            message = 'Alapértelmezett NAV konfiguráció eltávolítva'
+        else:
+            # Set as default and clear ALL others (system-wide, not just company)
+            CompanyNAVConfiguration.objects.all().update(is_default=False)
+            cfg.is_default = True
+            if not cfg.is_active:
+                cfg.is_active = True
+                cfg.save(update_fields=['is_default', 'is_active', 'updated_at'])
+            else:
+                cfg.save(update_fields=['is_default', 'updated_at'])
+            message = 'Alapértelmezett NAV konfiguráció beállítva'
+
+        return Response({
+            'message': message,
+            'id': str(cfg.id),
+            'company_id': str(cfg.company_id),
+            'is_default': cfg.is_default,
+        })
 
 
 class CustomerBankAccountViewSet(viewsets.ModelViewSet):

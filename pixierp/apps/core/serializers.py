@@ -4,7 +4,8 @@ from django.db.models import Q
 from .models import (
     Company, BankAccount, EmailServerConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
-    BackupFile, UserPreference, Role, Permission, UserRole, Notification
+    BackupFile, UserPreference, Role, Permission, UserRole, Notification,
+    ActivityLog
 )
 
 User = get_user_model()
@@ -296,3 +297,32 @@ class ZoneSerializer(serializers.ModelSerializer):
              from apps.hr.models import Department
              instance.departments.set(Department.objects.filter(id__in=dept_ids))
         return instance
+
+
+class ActivityLogSerializer(serializers.ModelSerializer):
+    """Serializer for ActivityLog model"""
+    user_name = serializers.SerializerMethodField()
+    user_email = serializers.CharField(source='user.email', read_only=True)
+    action_display = serializers.CharField(source='get_action_display', read_only=True)
+    content_type_name = serializers.CharField(source='content_type.model', read_only=True)
+    timestamp_formatted = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ActivityLog
+        fields = [
+            'id', 'user', 'user_name', 'user_email', 'timestamp', 'timestamp_formatted',
+            'action', 'action_display', 'description', 'content_type', 'content_type_name',
+            'object_id', 'changes', 'ip_address'
+        ]
+        read_only_fields = ['id', 'timestamp']
+    
+    def get_user_name(self, obj):
+        """Get full name of user or 'Rendszer' if no user"""
+        if obj.user:
+            full_name = obj.user.get_full_name()
+            return full_name if full_name else obj.user.username
+        return "Rendszer"
+    
+    def get_timestamp_formatted(self, obj):
+        """Format timestamp as Hungarian datetime string"""
+        return obj.timestamp.strftime('%Y.%m.%d %H:%M:%S')

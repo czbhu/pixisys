@@ -19,6 +19,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
+import ActivityLogModal from '../../components/ActivityLogModal';
 
 const { TextArea } = Input;
 
@@ -33,6 +34,7 @@ const RFQDetail: React.FC = () => {
   const [formBasic] = Form.useForm();
   const [logsOpen, setLogsOpen] = useState(false);
   const [logs, setLogs] = useState<any[]>([]);
+  const [activityLogOpen, setActivityLogOpen] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
@@ -411,7 +413,7 @@ const RFQDetail: React.FC = () => {
             message.error(e?.response?.data?.error || 'Nem sikerült másolni');
           }
         }}>Másol</Button>
-  <Button onClick={openLogs}>Napló</Button>
+  <Button onClick={() => setActivityLogOpen(true)}>Napló</Button>
         {isDemandOpen && (
           <Button onClick={async () => { await salesService.setQuoteRequestStatus(Number(id), 'quoted'); message.success('Lezárva'); load(); }}>Lezár</Button>
         )}
@@ -444,6 +446,29 @@ const RFQDetail: React.FC = () => {
               message.error('A Cég mező kötelező.');
               return;
             }
+            
+            // Ellenőrizzük a határidőt
+            if (!v.deadline) {
+              const suggestedDate = dayjs(v.issue_date || rfq.issue_date || dayjs()).add(14, 'day');
+              const confirmed = await new Promise<boolean>((resolve) => {
+                Modal.confirm({
+                  title: 'Nincs határidő megadva',
+                  content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
+                  okText: 'Igen',
+                  cancelText: 'Mégsem',
+                  onOk: () => resolve(true),
+                  onCancel: () => resolve(false),
+                });
+              });
+              
+              if (confirmed) {
+                v.deadline = suggestedDate;
+                formBasic.setFieldValue('deadline', suggestedDate);
+              } else {
+                return; // Vissza az ajánlatba
+              }
+            }
+            
             const autoTitle = (!v.title || !String(v.title).trim())
               ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
               : String(v.title).trim();
@@ -1507,6 +1532,14 @@ const RFQDetail: React.FC = () => {
         onClose={() => setChatOpen(false)} 
         rfqId={Number(id)} 
         title={`Chat - ${rfq.number || rfq.request_number}`}
+      />
+
+      <ActivityLogModal
+        visible={activityLogOpen}
+        onClose={() => setActivityLogOpen(false)}
+        objectType="quoterequest"
+        objectId={Number(id)}
+        objectTitle={rfq.number || rfq.request_number || ''}
       />
     </div>
   );

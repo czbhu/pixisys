@@ -2,6 +2,7 @@ from django.db import models
 from django.core.validators import MinValueValidator, MaxValueValidator
 from django.contrib.auth import get_user_model
 from apps.crm.models import Company
+import uuid
 
 User = get_user_model()
 
@@ -365,6 +366,14 @@ class Material(models.Model):
         validators=[MinValueValidator(0)],
         verbose_name="Egységár (eladási)",
         help_text="Eladási ár mértékegységenként (számított vagy manuális)"
+    )
+    
+    # ÁFA osztály (reference to invoice app's VATType via UUID)
+    vat_type_id = models.UUIDField(
+        null=True,
+        blank=True,
+        verbose_name="ÁFA osztály",
+        help_text="Az alapértelmezett ÁFA osztály (PixInvoice VATType UUID)"
     )
     
     currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")

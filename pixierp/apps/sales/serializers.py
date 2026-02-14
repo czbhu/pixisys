@@ -5,7 +5,8 @@ from .models import (
     Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
     CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog,
-    ApprovalRequest
+    ApprovalRequest,
+    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer, ServiceSerializer as ManufacturingServiceSerializer
@@ -308,6 +309,7 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     material_name = serializers.SerializerMethodField()
     material_code = serializers.SerializerMethodField()
     manufacturing_product_name = serializers.SerializerMethodField()
+    manufacturing_product_code = serializers.SerializerMethodField()
     service_name = serializers.SerializerMethodField()
     service_code = serializers.SerializerMethodField()
     item_type = serializers.SerializerMethodField()
@@ -388,6 +390,9 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     
     def get_manufacturing_product_name(self, obj):
         return obj.quote_item.manufacturing_product.name if obj.quote_item and obj.quote_item.manufacturing_product else None
+    
+    def get_manufacturing_product_code(self, obj):
+        return obj.quote_item.manufacturing_product.code if obj.quote_item and obj.quote_item.manufacturing_product else None
     
     def get_service_name(self, obj):
         return obj.quote_item.service.name if obj.quote_item and obj.quote_item.service else None
@@ -805,3 +810,96 @@ class ApprovalRequestSerializer(serializers.ModelSerializer):
         if obj.requester:
             return f"{obj.requester.last_name} {obj.requester.first_name}"
         return ""
+
+
+# ==================== POS Serializers ====================
+
+class POSCustomerIdentificationSerializer(serializers.ModelSerializer):
+    customer_name = serializers.CharField(source='customer.name', read_only=True)
+    
+    class Meta:
+        model = POSCustomerIdentification
+        fields = '__all__'
+
+
+class POSCouponSerializer(serializers.ModelSerializer):
+    is_valid_now = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = POSCoupon
+        fields = '__all__'
+    
+    def get_is_valid_now(self, obj):
+        return obj.is_valid()
+
+
+class POSTransactionItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = POSTransactionItem
+        fields = '__all__'
+        read_only_fields = ['net_total', 'vat_amount', 'gross_total']
+
+
+class POSPaymentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = POSPayment
+        fields = '__all__'
+
+
+class POSTransactionSerializer(serializers.ModelSerializer):
+    items = POSTransactionItemSerializer(many=True, read_only=True)
+    payments = POSPaymentSerializer(many=True, read_only=True)
+    cashier_name = serializers.SerializerMethodField()
+    customer_name_display = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = POSTransaction
+        fields = '__all__'
+        read_only_fields = ['subtotal', 'discount_amount', 'total_net', 'total_vat', 'total_gross', 'amount_change']
+    
+    def get_cashier_name(self, obj):
+        if obj.cashier:
+            return f"{obj.cashier.last_name} {obj.cashier.first_name}"
+        return ""
+    
+    def get_customer_name_display(self, obj):
+        if obj.customer:
+            return obj.customer.name
+        return obj.customer_name or "Nyugtás"
+
+
+class POSTransactionCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating POS transactions with items"""
+    items = POSTransactionItemSerializer(many=True)
+    
+    class Meta:
+        model = POSTransaction
+        fields = ['transaction_type', 'payment_method', 'customer', 'customer_name', 
+                  'customer_address', 'customer_tax_number', 'customer_email',
+                  'shopper_identification', 'shopper_name', 'coupon', 'amount_received', 'items']
+    
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        
+        # Generate transaction number
+        from django.utils import timezone
+        import random
+        today = timezone.now().strftime('%Y%m%d')
+        random_part = str(random.randint(1000, 9999))
+        transaction_number = f"POS-{today}-{random_part}"
+        
+        transaction = POSTransaction.objects.create(
+            transaction_number=transaction_number,
+            cashier=self.context['request'].user if 'request' in self.context else None,
+            status='draft',
+            **validated_data
+        )
+        
+        # Create items
+        for item_data in items_data:
+            POSTransactionItem.objects.create(transaction=transaction, **item_data)
+        
+        # Calculate totals
+        transaction.calculate_totals()
+        
+        return transaction
