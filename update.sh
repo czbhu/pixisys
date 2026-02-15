@@ -26,6 +26,73 @@ TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 SKIP_BACKUP=false
 SKIP_FRONTEND=false
 AUTO_RESTART=false
+STASH_CREATED=false
+STASH_REF=""
+
+restore_stashed_changes() {
+    if [ "$STASH_CREATED" = true ]; then
+        echo -e "${BLUE}↩ Lokális változások visszaállítása...${NC}"
+        if git stash pop --index "$STASH_REF" >/dev/null 2>&1; then
+            echo -e "${GREEN}✓ Lokális változások visszaállítva${NC}"
+        else
+            echo -e "${YELLOW}⚠️  A stash visszaállítás közben konfliktus lehetett.${NC}"
+            echo -e "${YELLOW}   Ellenőrizd kézzel: git stash list && git stash pop${NC}"
+        fi
+        STASH_CREATED=false
+    fi
+}
+
+trap restore_stashed_changes EXIT
+
+run_pg_backup() {
+    local db_name="$1"
+    local db_user="$2"
+    local db_host="$3"
+    local db_port="$4"
+    local db_password="$5"
+    local backup_file="$6"
+
+    if ! command -v pg_dump &> /dev/null; then
+        return 2
+    fi
+
+    local -a dump_cmd=(pg_dump --no-password -h "$db_host" -p "$db_port" -U "$db_user" "$db_name")
+
+    if [ -n "$db_password" ]; then
+        if PGPASSWORD="$db_password" "${dump_cmd[@]}" > "$backup_file" 2>/dev/null; then
+            return 0
+        fi
+    else
+        if "${dump_cmd[@]}" > "$backup_file" 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+force_kill_backend_processes() {
+    echo -e "${YELLOW}  • Régi backend process-ek kényszerített leállítása...${NC}"
+
+    pkill -f "gunicorn erp_system.asgi:application" 2>/dev/null || true
+    pkill -f "gunicorn invoice_system.wsgi:application" 2>/dev/null || true
+    pkill -f "daphne -b 0.0.0.0 -p 8003" 2>/dev/null || true
+    pkill -f "runserver 0.0.0.0:4001" 2>/dev/null || true
+    pkill -f "runserver 0.0.0.0:8003" 2>/dev/null || true
+
+    if command -v lsof &> /dev/null; then
+        local pid
+        pid=$(lsof -ti:8003 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            kill -9 $pid 2>/dev/null || true
+        fi
+
+        pid=$(lsof -ti:4001 2>/dev/null || true)
+        if [ -n "$pid" ]; then
+            kill -9 $pid 2>/dev/null || true
+        fi
+    fi
+}
 
 # Logo
 echo -e "${BLUE}"
@@ -93,6 +160,16 @@ if [[ -n $(git status -s) ]]; then
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
         exit 1
     fi
+
+    echo -e "${YELLOW}  • Lokális változások ideiglenes stash-be mentése...${NC}"
+    if git stash push -u -m "pixisys-update-autostash-${TIMESTAMP}" >/dev/null; then
+        STASH_CREATED=true
+        STASH_REF=$(git stash list | head -n 1 | cut -d: -f1)
+        echo -e "${GREEN}✓ Lokális változások stash-elve ($STASH_REF)${NC}"
+    else
+        echo -e "${RED}❌ Nem sikerült a lokális változásokat stash-elni.${NC}"
+        exit 1
+    fi
 fi
 
 # Backup készítése
@@ -104,38 +181,42 @@ if [ "$SKIP_BACKUP" = false ]; then
     # PixiERP backup
     if [ -f "pixierp/.env" ]; then
         source pixierp/.env
-        DB_NAME=${DB_NAME:-pixierp_db}
-        DB_USER=${DB_USER:-pixierp_user}
+        ERP_DB_NAME=${DB_NAME:-${POSTGRES_DB:-pixierp_db}}
+        ERP_DB_USER=${DB_USER:-${POSTGRES_USER:-pixierp_user}}
+        ERP_DB_PASSWORD=${DB_PASSWORD:-${POSTGRES_PASSWORD:-}}
+        ERP_DB_HOST=${DB_HOST:-${POSTGRES_HOST:-localhost}}
+        ERP_DB_PORT=${DB_PORT:-${POSTGRES_PORT:-5432}}
         
-        echo -e "${YELLOW}  • PixiERP adatbázis: $DB_NAME${NC}"
+        echo -e "${YELLOW}  • PixiERP adatbázis: $ERP_DB_NAME ($ERP_DB_HOST:$ERP_DB_PORT)${NC}"
         BACKUP_FILE="$BACKUP_DIR/erp_backup_${TIMESTAMP}.sql"
-        
-        if command -v pg_dump &> /dev/null; then
-            pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
-                echo -e "${YELLOW}⚠️  PostgreSQL backup jelszót kér (vagy használd .pgpass fájlt)${NC}"
-                PGPASSWORD="$DB_PASSWORD" pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE"
-            }
+
+        if run_pg_backup "$ERP_DB_NAME" "$ERP_DB_USER" "$ERP_DB_HOST" "$ERP_DB_PORT" "$ERP_DB_PASSWORD" "$BACKUP_FILE"; then
             echo -e "${GREEN}✓ Backup mentve: $BACKUP_FILE${NC}"
-        else
+        elif [ $? -eq 2 ]; then
             echo -e "${YELLOW}⚠️  pg_dump nem található, backup kihagyva${NC}"
+        else
+            echo -e "${YELLOW}⚠️  PixiERP backup sikertelen. Ellenőrizd a DB_* / POSTGRES_* változókat a pixierp/.env fájlban.${NC}"
         fi
     fi
     
     # PixInvoice backup
     if [ -f "pixinvoice/invoice_app/.env" ]; then
         source pixinvoice/invoice_app/.env
-        DB_NAME=${DB_NAME:-pixinvoice_db}
-        DB_USER=${DB_USER:-pixinvoice_user}
+        INV_DB_NAME=${DB_NAME:-${POSTGRES_DB:-pixinvoice_db}}
+        INV_DB_USER=${DB_USER:-${POSTGRES_USER:-pixinvoice_user}}
+        INV_DB_PASSWORD=${DB_PASSWORD:-${POSTGRES_PASSWORD:-}}
+        INV_DB_HOST=${DB_HOST:-${POSTGRES_HOST:-localhost}}
+        INV_DB_PORT=${DB_PORT:-${POSTGRES_PORT:-5432}}
         
-        echo -e "${YELLOW}  • PixInvoice adatbázis: $DB_NAME${NC}"
+        echo -e "${YELLOW}  • PixInvoice adatbázis: $INV_DB_NAME ($INV_DB_HOST:$INV_DB_PORT)${NC}"
         BACKUP_FILE="$BACKUP_DIR/invoice_backup_${TIMESTAMP}.sql"
-        
-        if command -v pg_dump &> /dev/null; then
-            pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE" 2>/dev/null || {
-                echo -e "${YELLOW}⚠️  PostgreSQL backup jelszót kér (vagy használd .pgpass fájlt)${NC}"
-                PGPASSWORD="$DB_PASSWORD" pg_dump -w -U "$DB_USER" -h "${DB_HOST:-localhost}" -p "${DB_PORT:-5432}" "$DB_NAME" > "$BACKUP_FILE"
-            }
+
+        if run_pg_backup "$INV_DB_NAME" "$INV_DB_USER" "$INV_DB_HOST" "$INV_DB_PORT" "$INV_DB_PASSWORD" "$BACKUP_FILE"; then
             echo -e "${GREEN}✓ Backup mentve: $BACKUP_FILE${NC}"
+        elif [ $? -eq 2 ]; then
+            echo -e "${YELLOW}⚠️  pg_dump nem található, backup kihagyva${NC}"
+        else
+            echo -e "${YELLOW}⚠️  PixInvoice backup sikertelen. Ellenőrizd a DB_* / POSTGRES_* változókat a pixinvoice/invoice_app/.env fájlban.${NC}"
         fi
     fi
     
@@ -324,8 +405,30 @@ if [ "$USE_SYSTEMD" = "true" ]; then
     # 2. Restart Services
     if [ "$EUID" -eq 0 ] || sudo -n true 2>/dev/null; then
         echo -e "${YELLOW}  • Systemd service-ek újraindítása...${NC}"
-        sudo systemctl restart pixierp-backend pixinvoice-backend
-        echo -e "${GREEN}✓ Backendak újraindítva (Systemd)${NC}"
+        if [ "$EUID" -eq 0 ]; then
+            systemctl stop pixierp-backend pixinvoice-backend || true
+        else
+            sudo -n systemctl stop pixierp-backend pixinvoice-backend || true
+        fi
+
+        force_kill_backend_processes
+
+        if [ "$EUID" -eq 0 ]; then
+            systemctl start pixierp-backend pixinvoice-backend
+            systemctl is-active --quiet pixierp-backend
+            systemctl is-active --quiet pixinvoice-backend
+        else
+            sudo -n systemctl start pixierp-backend pixinvoice-backend
+            sudo -n systemctl is-active --quiet pixierp-backend
+            sudo -n systemctl is-active --quiet pixinvoice-backend
+        fi
+
+        if [ $? -eq 0 ]; then
+            echo -e "${GREEN}✓ Backendek újraindítva (Systemd, force-clean)${NC}"
+        else
+            echo -e "${RED}❌ A backend service-ek nem indultak el sikeresen restart után.${NC}"
+            exit 1
+        fi
     else
         echo -e "${RED}⚠️  Nincs sudo jog, nem tudom újraindítani a service-eket!${NC}"
         echo -e "Kérlek futtasd kézzel: ${BLUE}sudo systemctl restart pixierp-backend pixinvoice-backend${NC}"

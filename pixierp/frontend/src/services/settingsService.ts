@@ -78,6 +78,10 @@ export const settingsService = {
     const r = await api.put(`/core/hestia-configs/${id}/`, data);
     return r.data;
   },
+  async patchHestiaConfig(id: number, data: any) {
+    const r = await api.patch(`/core/hestia-configs/${id}/`, data);
+    return r.data;
+  },
   async testHestiaConfig(id: number) {
     const r = await api.post(`/core/hestia-configs/${id}/test_connection/`, {}, { timeout: 45000 });
     return r.data;

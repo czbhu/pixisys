@@ -2,9 +2,10 @@
 
 # PixiSys Unified Backup Script
 # Place this in crontab to run daily (e.g., at 02:00)
-# 0 2 * * * /home/ceze/pixisys/run_backups.sh >> /home/ceze/pixisys/logs/backup.log 2>&1
+# 0 2 * * * /bin/bash /path/to/pixisys/run_backups.sh >> /path/to/pixisys/logs/backup.log 2>&1
 
-WORKSPACE_DIR="/home/ceze/pixisys"
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+WORKSPACE_DIR="$SCRIPT_DIR"
 LOG_DIR="$WORKSPACE_DIR/logs"
 mkdir -p "$LOG_DIR"
 

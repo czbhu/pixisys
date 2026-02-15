@@ -185,6 +185,34 @@ build_frontend() {
     popd > /dev/null
 }
 
+setup_backup_cron() {
+    local CRON_SCHEDULE="0 2 * * *"
+    local CRON_CMD="/bin/bash $SCRIPT_DIR/run_backups.sh >> $SCRIPT_DIR/logs/backup.log 2>&1"
+    local CRON_JOB="$CRON_SCHEDULE $CRON_CMD"
+
+    echo -e "${BLUE}⏰ Automatikus backup cron beállítása...${NC}"
+
+    chmod +x "$SCRIPT_DIR/run_backups.sh"
+    mkdir -p "$SCRIPT_DIR/logs"
+
+    local EXISTING_CRONTAB
+    EXISTING_CRONTAB=$(crontab -l 2>/dev/null || true)
+
+    if echo "$EXISTING_CRONTAB" | grep -Fq "$CRON_CMD"; then
+        echo -e "${GREEN}✓ Backup cron már be van állítva.${NC}"
+        return
+    fi
+
+    {
+        if [ -n "$EXISTING_CRONTAB" ]; then
+            echo "$EXISTING_CRONTAB"
+        fi
+        echo "$CRON_JOB"
+    } | crontab -
+
+    echo -e "${GREEN}✓ Backup cron létrehozva: $CRON_SCHEDULE${NC}"
+}
+
 # --- Fő folyamat ---
 
 echo -e "${BLUE}Rendszer előkészítése...${NC}"
@@ -515,6 +543,8 @@ if sudo nginx -t; then
 else
     echo -e "${RED}⚠️  Nginx hiba (lásd fent). A telepítés folytatódik.${NC}"
 fi
+
+setup_backup_cron
 
 echo -e "${GREEN}=== Telepítés Kész! ===${NC}"
 echo "Elérhető domainek:"

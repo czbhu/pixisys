@@ -138,7 +138,11 @@ const HestiaPage: React.FC = () => {
     }
     try {
       setGeneratingKey(true);
-      const sshKeyId = form.getFieldValue('ssh_key_id');
+      const validated = await form.validateFields(['ssh_key_id']);
+      const sshKeyId = String(validated?.ssh_key_id || '').trim() || 'pixierp-hestia';
+      form.setFieldsValue({ ssh_key_id: sshKeyId });
+
+      await settingsService.patchHestiaConfig(currentId, { ssh_key_id: sshKeyId });
       const result = await settingsService.generateHestiaSshKey(currentId, true, sshKeyId);
       if (result?.private_key_path) {
         form.setFieldsValue({ ssh_private_key_path: result.private_key_path });

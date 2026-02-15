@@ -820,7 +820,7 @@ class HestiaConfigViewSet(viewsets.ModelViewSet):
     def generate_ssh_key(self, request, pk=None):
         cfg = self.get_object()
         overwrite = bool(request.data.get('overwrite', False))
-        request_ssh_key_id = request.data.get('ssh_key_id', None)
+        request_ssh_key_id = request.data.get('ssh_key_id', request.data.get('sshKeyId', None))
         if request_ssh_key_id is not None:
             ssh_key_id = str(request_ssh_key_id).strip() or 'pixierp-hestia'
         else:
