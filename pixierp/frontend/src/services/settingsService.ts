@@ -82,8 +82,12 @@ export const settingsService = {
     const r = await api.post(`/core/hestia-configs/${id}/test_connection/`, {}, { timeout: 45000 });
     return r.data;
   },
-  async generateHestiaSshKey(id: number, overwrite: boolean = false) {
-    const r = await api.post(`/core/hestia-configs/${id}/generate_ssh_key/`, { overwrite }, { timeout: 45000 });
+  async generateHestiaSshKey(id: number, overwrite: boolean = false, sshKeyId?: string) {
+    const r = await api.post(
+      `/core/hestia-configs/${id}/generate_ssh_key/`,
+      { overwrite, ssh_key_id: sshKeyId },
+      { timeout: 45000 }
+    );
     return r.data;
   },
   async getHestiaPublicKey(id: number) {

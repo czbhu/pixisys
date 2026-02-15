@@ -36,6 +36,7 @@ const HestiaPage: React.FC = () => {
           ...current,
           cli_bin_path: current.cli_bin_path || '/usr/local/hestia/bin',
           ssh_port: current.ssh_port || 22,
+          ssh_key_id: current.ssh_key_id || 'pixierp-hestia',
         });
       } else {
         setCurrentId(null);
@@ -52,6 +53,7 @@ const HestiaPage: React.FC = () => {
           ssh_host: '',
           ssh_port: 22,
           ssh_user: '',
+          ssh_key_id: 'pixierp-hestia',
           ssh_private_key_path: '',
           ssh_strict_host_key: true,
           rest_api_url: '',
@@ -136,9 +138,13 @@ const HestiaPage: React.FC = () => {
     }
     try {
       setGeneratingKey(true);
-      const result = await settingsService.generateHestiaSshKey(currentId, true);
+      const sshKeyId = form.getFieldValue('ssh_key_id');
+      const result = await settingsService.generateHestiaSshKey(currentId, true, sshKeyId);
       if (result?.private_key_path) {
         form.setFieldsValue({ ssh_private_key_path: result.private_key_path });
+      }
+      if (result?.ssh_key_id) {
+        form.setFieldsValue({ ssh_key_id: result.ssh_key_id });
       }
       if (result?.public_key) {
         setPublicKey(result.public_key);
@@ -322,6 +328,10 @@ const HestiaPage: React.FC = () => {
 
             <Form.Item name="ssh_user" label="SSH user (bejelentkezési user)">
               <Input placeholder="pl. ceze vagy root" />
+            </Form.Item>
+
+            <Form.Item name="ssh_key_id" label="SSH key ID (comment)">
+              <Input placeholder="pl. pixierp-hestia-prod" />
             </Form.Item>
 
             <Form.Item name="ssh_private_key_path" label="SSH private key útvonal (opcionális)">

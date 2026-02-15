@@ -820,6 +820,11 @@ class HestiaConfigViewSet(viewsets.ModelViewSet):
     def generate_ssh_key(self, request, pk=None):
         cfg = self.get_object()
         overwrite = bool(request.data.get('overwrite', False))
+        request_ssh_key_id = request.data.get('ssh_key_id', None)
+        if request_ssh_key_id is not None:
+            ssh_key_id = str(request_ssh_key_id).strip() or 'pixierp-hestia'
+        else:
+            ssh_key_id = (cfg.ssh_key_id or 'pixierp-hestia').strip() or 'pixierp-hestia'
         private_key_path = self._resolve_private_key_path(cfg)
         public_key_path = f"{private_key_path}.pub"
 
@@ -850,7 +855,7 @@ class HestiaConfigViewSet(viewsets.ModelViewSet):
                     '-t', 'ed25519',
                     '-f', private_key_path,
                     '-N', '',
-                    '-C', 'pixierp-hestia',
+                    '-C', ssh_key_id,
                 ],
                 capture_output=True,
                 text=True,
@@ -874,7 +879,8 @@ class HestiaConfigViewSet(viewsets.ModelViewSet):
                 os.chmod(public_key_path, 0o644)
 
             cfg.ssh_private_key_path = private_key_path
-            cfg.save(update_fields=['ssh_private_key_path', 'updated_at'])
+            cfg.ssh_key_id = ssh_key_id
+            cfg.save(update_fields=['ssh_private_key_path', 'ssh_key_id', 'updated_at'])
 
             public_key = ''
             if os.path.exists(public_key_path):
@@ -885,6 +891,7 @@ class HestiaConfigViewSet(viewsets.ModelViewSet):
                 {
                     'success': True,
                     'message': 'SSH kulcspár sikeresen legenerálva.',
+                    'ssh_key_id': ssh_key_id,
                     'private_key_path': private_key_path,
                     'public_key_path': public_key_path,
                     'public_key': public_key,

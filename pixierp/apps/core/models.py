@@ -195,6 +195,7 @@ class HestiaConfig(models.Model):
     ssh_host = models.CharField(max_length=255, blank=True, default='')
     ssh_port = models.PositiveIntegerField(default=22)
     ssh_user = models.CharField(max_length=255, blank=True, default='')
+    ssh_key_id = models.CharField(max_length=255, blank=True, default='pixierp-hestia')
     ssh_private_key_path = models.CharField(max_length=500, blank=True, default='')
     ssh_strict_host_key = models.BooleanField(default=True)
 
