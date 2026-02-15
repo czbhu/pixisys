@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Layout, Typography, Avatar, Dropdown, Button, Space, MenuProps } from 'antd';
+import { Layout, Typography, Avatar, Dropdown, Button, Space, MenuProps, Tag } from 'antd';
 import { UserOutlined, LogoutOutlined, FieldTimeOutlined, RestOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import POS from './POS';
@@ -7,6 +7,7 @@ import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
+import famApi from '../../services/famApi';
 
 dayjs.extend(duration);
 
@@ -24,6 +25,9 @@ const Sales = () => {
         inactivity_timeout?: number;
     } | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
+    const [famOnline, setFamOnline] = useState<boolean | null>(null);
+    const [famState, setFamState] = useState<string>('');
+    const famSystemId = process.env.REACT_APP_FAM_SYSTEM_ID || 'C00000001';
     const { user, logout } = useAuth();
     const navigate = useNavigate();
 
@@ -76,6 +80,24 @@ const Sales = () => {
         document.addEventListener('fullscreenchange', handleFullscreenChange);
         return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
     }, []);
+
+    useEffect(() => {
+        const checkFam = async () => {
+            try {
+                await famApi.health();
+                const status = await famApi.getSystemStatus(famSystemId);
+                setFamOnline(true);
+                setFamState(status?.fcuState || 'UNKNOWN');
+            } catch (error) {
+                setFamOnline(false);
+                setFamState('OFFLINE');
+            }
+        };
+
+        checkFam();
+        const interval = setInterval(checkFam, 30000);
+        return () => clearInterval(interval);
+    }, [famSystemId]);
 
     const handleLogout = async () => {
         await logout();
@@ -171,10 +193,17 @@ const Sales = () => {
                 zIndex: 1000,
                 height: '64px'
             }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <Text strong style={{ color: 'white', fontSize: '18px' }}>
                         PixiERP Dashboard v1.3.0 | POS - Értékesítés
                     </Text>
+                    <Space size={8}>
+                        <Text style={{ color: 'white' }}>FAM:</Text>
+                        <Tag color={famOnline ? 'green' : famOnline === false ? 'red' : 'default'} style={{ marginRight: 0 }}>
+                            {famOnline ? 'ONLINE' : famOnline === false ? 'OFFLINE' : 'ELLENŐRZÉS'}
+                        </Tag>
+                        <Text style={{ color: 'white', opacity: 0.85 }}>{famState || 'N/A'}</Text>
+                    </Space>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                     <Text style={{ color: 'white', fontSize: '16px' }}>

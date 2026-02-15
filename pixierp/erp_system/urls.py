@@ -11,7 +11,7 @@ from rest_framework_simplejwt.views import (
     TokenObtainPairView,
     TokenRefreshView,
 )
-from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet, UserPreferenceViewSet, NotificationViewSet
+from apps.core.views import EmailServerConfigViewSet, EmailTemplateViewSet, SignatureTemplateViewSet, PixinvoiceConfigViewSet, UserPreferenceViewSet, NotificationViewSet, HestiaConfigViewSet
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 import json
@@ -43,6 +43,7 @@ router.register(r'core/email-servers', EmailServerConfigViewSet, basename='email
 router.register(r'core/email-templates', EmailTemplateViewSet, basename='email-templates')
 router.register(r'core/signature-templates', SignatureTemplateViewSet, basename='signature-templates')
 router.register(r'core/pixinvoice-configs', PixinvoiceConfigViewSet, basename='pixinvoice-configs')
+router.register(r'core/hestia-configs', HestiaConfigViewSet, basename='core-hestia-configs')
 router.register(r'core/user-preferences', UserPreferenceViewSet, basename='core-user-preferences')
 router.register(r'core/notifications', NotificationViewSet, basename='core-notifications')
 

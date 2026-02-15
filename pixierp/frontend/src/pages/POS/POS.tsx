@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Typography, Card, Row, Col, Button, Table, Input, InputNumber, Checkbox, message, Modal, Space, Tag } from 'antd';
+import { Typography, Card, Row, Col, Button, Table, Input, InputNumber, message, Modal, Space, Tag } from 'antd';
 import { ShoppingCartOutlined, UserOutlined, PlusOutlined, MinusOutlined, DeleteOutlined } from '@ant-design/icons';
 import CustomerSelection from './components/CustomerSelection';
 import CheckoutSummary from './components/CheckoutSummary';
@@ -522,17 +522,24 @@ const POS: React.FC = () => {
           </Button>
         </Col>
         
-        {/* Discount checkbox */}
+        {/* Discount toggle button */}
         <Col>
-          <Card size="small" style={{ height: '60px', display: 'flex', alignItems: 'center', padding: '0 16px' }}>
-            <Checkbox
-              checked={showDiscountPrices}
-              onChange={(e) => setShowDiscountPrices(e.target.checked)}
-              disabled={!selectedCustomer}
-            >
-              <Text strong>Kedvezmény</Text>
-            </Checkbox>
-          </Card>
+          <Button
+            size="large"
+            disabled={!selectedCustomer}
+            onClick={() => setShowDiscountPrices((prev) => !prev)}
+            style={{
+              height: '60px',
+              minWidth: '220px',
+              backgroundColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
+              borderColor: showDiscountPrices ? '#52c41a' : '#8c8c8c',
+              color: 'white',
+              fontWeight: 600,
+              opacity: selectedCustomer ? 1 : 0.65
+            }}
+          >
+            {showDiscountPrices ? 'Kedvezmény: ✓' : 'Kedvezmény: Nincs'}
+          </Button>
         </Col>
       </Row>
 

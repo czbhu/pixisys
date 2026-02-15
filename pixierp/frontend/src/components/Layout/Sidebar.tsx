@@ -29,6 +29,7 @@ interface SidebarProps {
 const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, inviteCount = 0, notificationCounts = {} }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
+  const [hasCashRegisterAccess, setHasCashRegisterAccess] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
   const siderRef = useRef<HTMLDivElement>(null);
@@ -50,20 +51,20 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     const allMenuKeys = [
       '/dashboard',
       '/personal', '/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings',
-      '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/approvals',
+      '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/approvals', '/personal/cash-registers',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
-      '/finance/invoices', '/finance/payments', '/finance/budgets', '/finance/reports', '/finance/accounts',
+      '/finance/invoices', '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports', '/finance/accounts',
       '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities', '/crm/campaigns',
       '/orders/orders', '/orders/returns',
       '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
       '/pos/transactions', '/pos/products', '/pos/inventory',
-      '/pos/sales', '/pos/customers', '/pos/reports',
+      '/pos/sales', '/pos/customers', '/pos/reports', '/pos/fam',
       '/orders/shipments', '/orders/suppliers',
       '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports', '/warehouse/suppliers',
-      '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/backup', '/settings/zones'
+      '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/hestia', '/settings/backup', '/settings/zones'
     ];
     
     // Find the longest matching prefix
@@ -95,6 +96,31 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
 
     scrollToActiveMenuItem();
   }, [location.pathname]);
+
+  useEffect(() => {
+    const checkCashAccess = async () => {
+      const employeeId = user?.employee_id;
+      if (!employeeId) {
+        setHasCashRegisterAccess(true);
+        return;
+      }
+
+      try {
+        const response = await api.get('/finance/cash-register-employees/', {
+          params: {
+            employee: employeeId,
+          },
+        });
+        const data = response.data?.results || response.data || [];
+        const rows = Array.isArray(data) ? data : [];
+        setHasCashRegisterAccess(rows.length > 0);
+      } catch {
+        setHasCashRegisterAccess(true);
+      }
+    };
+
+    checkCashAccess();
+  }, [user?.employee_id]);
 
   // Keep only the current section open; start closed by default
   useEffect(() => {
@@ -186,6 +212,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/personal/approvals',
           label: 'Jóváhagyások',
+        },
+        {
+          key: '/personal/cash-registers',
+          label: 'Kassza',
         },
       ],
     },
@@ -336,6 +366,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           label: 'Fizetések',
         },
         {
+          key: '/finance/cash-registers',
+          label: 'Kasszák',
+        },
+        {
+          key: '/finance/cash-register-setup',
+          label: 'Kassza Regisztráció',
+        },
+        {
           key: '/finance/budgets',
           label: 'Költségvetések',
         },
@@ -463,6 +501,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           key: '/pos/reports',
           label: 'Jelentések',
         },
+        {
+          key: '/pos/fam',
+          label: 'FAM',
+        },
       ],
     },
     {
@@ -481,6 +523,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/zones', label: 'Zónák' },
         { key: '/settings/integrations', label: 'Integrációk' },
         { key: '/settings/pixinvoice', label: 'PIXINVOICE' },
+        { key: '/settings/hestia', label: 'Hestia' },
         { key: '/settings/backup', label: 'Backup' },
       ],
     },
@@ -523,6 +566,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     // Finance
     '/finance/invoices': 'finance.invoices',
     '/finance/payments': 'finance.payments',
+    '/finance/cash-registers': 'finance.cash_registers',
+    '/finance/cash-register-setup': 'finance.cash_registers',
     '/finance/budgets': 'finance.expenses',
     '/finance/reports': 'finance.invoices',
     '/finance/accounts': 'finance.invoices',
@@ -557,6 +602,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/pos/products': 'pos',
     '/pos/customers': 'pos',
     '/pos/reports': 'pos',
+    '/pos/fam': 'pos',
     '/pos/transactions': 'pos', 
     '/pos/inventory': 'pos',
 
@@ -571,7 +617,9 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/settings/signatures': 'settings',
     '/settings/integrations': 'settings',
     '/settings/pixinvoice': 'settings',
+    '/settings/hestia': 'settings',
     '/settings/backup': 'settings',
+    '/personal/cash-registers': 'finance.cash_registers',
   };
 
   const mapKeyToModule = (key: string) => {
@@ -583,6 +631,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   };
 
   const hasAccess = (itemKey: string) => {
+    if ((itemKey === '/personal/cash-registers' || itemKey === '/finance/cash-registers') && !hasCashRegisterAccess) {
+      return false;
+    }
+
     // 1. Always allow Dashboard and Personal
     if (['/dashboard', '/personal'].some(k => itemKey.startsWith(k))) {
         return true;
@@ -683,7 +735,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         }}>{label}</a>
       );
     }
-    
+
     return (
       <a href={key} onClick={(e) => {
         // Allow ctrl/cmd-click or middle/right click to open in new tab/window

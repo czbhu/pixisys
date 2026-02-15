@@ -1,13 +1,23 @@
-from rest_framework import generics, status, views
-from rest_framework.permissions import AllowAny
+from rest_framework import generics, status, views, viewsets, filters
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
+from rest_framework.decorators import action
 from decouple import config as dconfig
 import os
 import requests
 from datetime import datetime, timezone
 from django.db import transaction
 from django.db import models
-from apps.finance.models import Invoice, InvoiceItem, Payment
+from django_filters.rest_framework import DjangoFilterBackend
+from apps.finance.models import (
+    Invoice, InvoiceItem, Payment, CashRegister, CashRegisterEmployee,
+    CashRegisterTransaction, CashTransactionReason
+)
+from apps.finance.serializers import (
+    InvoiceSerializer, InvoiceItemSerializer, PaymentSerializer,
+    CashRegisterSerializer, CashRegisterEmployeeSerializer,
+    CashRegisterTransactionSerializer, CashTransactionReasonSerializer
+)
 from apps.crm.models import Company as CrmCompany
 from apps.crm.models import Contact as CrmContact
 from apps.core.models import Currency, Company as CoreCompany, BankAccount, PixinvoiceConfig
@@ -630,3 +640,207 @@ class PixinvoiceLookupTaxpayerView(views.APIView):
 			if host:
 				payload['host'] = host
 			return Response(payload, status=status.HTTP_502_BAD_GATEWAY)
+
+
+# Cash Register ViewSets
+
+class CashTransactionReasonViewSet(viewsets.ModelViewSet):
+	"""Kassza művelet okok kezelése"""
+	queryset = CashTransactionReason.objects.all()
+	serializer_class = CashTransactionReasonSerializer
+	permission_classes = [AllowAny]
+	filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+	filterset_fields = ['is_active', 'is_deposit', 'is_withdrawal']
+	search_fields = ['name']
+	ordering_fields = ['order', 'name']
+	ordering = ['order', 'name']
+
+
+class CashRegisterViewSet(viewsets.ModelViewSet):
+	"""Kasszák kezelése"""
+	queryset = CashRegister.objects.all()
+	serializer_class = CashRegisterSerializer
+	permission_classes = [AllowAny]
+	filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+	filterset_fields = ['is_active', 'currency']
+	search_fields = ['name', 'location']
+	ordering_fields = ['name', 'created_at']
+	ordering = ['name']
+
+	@action(detail=True, methods=['get'])
+	def balance(self, request, pk=None):
+		"""Kassza egyenleg lekérdezése"""
+		cash_register = self.get_object()
+		return Response({
+			'cash_register_id': cash_register.id,
+			'name': cash_register.name,
+			'current_balance': cash_register.current_balance,
+			'currency': cash_register.currency.code if cash_register.currency else None
+		})
+
+
+class CashRegisterEmployeeViewSet(viewsets.ModelViewSet):
+	"""Kassza-alkalmazott kapcsolatok kezelése"""
+	queryset = CashRegisterEmployee.objects.all()
+	serializer_class = CashRegisterEmployeeSerializer
+	permission_classes = [AllowAny]
+	filter_backends = [DjangoFilterBackend]
+	filterset_fields = ['cash_register', 'employee', 'can_deposit', 'can_withdraw', 'can_view']
+
+
+class CashRegisterTransactionViewSet(viewsets.ModelViewSet):
+	"""Kassza tranzakciók kezelése"""
+	queryset = CashRegisterTransaction.objects.select_related(
+		'cash_register', 'employee', 'reason', 'target_cash_register'
+	).all()
+	serializer_class = CashRegisterTransactionSerializer
+	permission_classes = [AllowAny]
+	filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+	filterset_fields = ['cash_register', 'employee', 'reason']
+	search_fields = ['note', 'employee__username', 'employee__first_name', 'employee__last_name']
+	ordering_fields = ['timestamp', 'amount']
+	ordering = ['-timestamp']
+
+	def get_queryset(self):
+		"""Szűrés dátum szerint és egyéb paraméterek alapján"""
+		queryset = super().get_queryset()
+		
+		# Dátum szűrés
+		start_date = self.request.query_params.get('start_date')
+		end_date = self.request.query_params.get('end_date')
+		
+		if start_date:
+			queryset = queryset.filter(timestamp__gte=start_date)
+		if end_date:
+			queryset = queryset.filter(timestamp__lte=end_date)
+		
+		return queryset
+
+	@action(detail=False, methods=['post'])
+	def deposit(self, request):
+		"""Betét művelet"""
+		cash_register_id = request.data.get('cash_register')
+		amount = request.data.get('amount')
+		reason_id = request.data.get('reason')
+		note = request.data.get('note', '')
+		
+		if not cash_register_id or not amount:
+			return Response(
+				{'error': 'cash_register és amount kötelező'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		try:
+			amount = float(amount)
+			if amount <= 0:
+				return Response(
+					{'error': 'Az összeg pozitív szám kell legyen'},
+					status=status.HTTP_400_BAD_REQUEST
+				)
+		except ValueError:
+			return Response(
+				{'error': 'Érvénytelen összeg'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		data = {
+			'cash_register': cash_register_id,
+			'amount': amount,
+			'reason': reason_id,
+			'note': note
+		}
+		
+		serializer = self.get_serializer(data=data)
+		serializer.is_valid(raise_exception=True)
+		self.perform_create(serializer)
+		
+		return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+	@action(detail=False, methods=['post'])
+	def withdraw(self, request):
+		"""Kivét művelet"""
+		cash_register_id = request.data.get('cash_register')
+		amount = request.data.get('amount')
+		reason_id = request.data.get('reason')
+		note = request.data.get('note', '')
+		
+		if not cash_register_id or not amount:
+			return Response(
+				{'error': 'cash_register és amount kötelező'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		try:
+			amount = float(amount)
+			if amount <= 0:
+				return Response(
+					{'error': 'Az összeg pozitív szám kell legyen'},
+					status=status.HTTP_400_BAD_REQUEST
+				)
+		except ValueError:
+			return Response(
+				{'error': 'Érvénytelen összeg'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		data = {
+			'cash_register': cash_register_id,
+			'amount': -abs(amount),  # Negatív összeg kivétnél
+			'reason': reason_id,
+			'note': note
+		}
+		
+		serializer = self.get_serializer(data=data)
+		serializer.is_valid(raise_exception=True)
+		self.perform_create(serializer)
+		
+		return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+	@action(detail=False, methods=['post'])
+	def transfer(self, request):
+		"""Kassza mozgatás (egyik kasszából a másikba)"""
+		source_id = request.data.get('source_cash_register')
+		target_id = request.data.get('target_cash_register')
+		amount = request.data.get('amount')
+		reason_id = request.data.get('reason')
+		note = request.data.get('note', '')
+		
+		if not source_id or not target_id or not amount:
+			return Response(
+				{'error': 'source_cash_register, target_cash_register és amount kötelező'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		if source_id == target_id:
+			return Response(
+				{'error': 'A forrás és cél kassza nem lehet azonos'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		try:
+			amount = float(amount)
+			if amount <= 0:
+				return Response(
+					{'error': 'Az összeg pozitív szám kell legyen'},
+					status=status.HTTP_400_BAD_REQUEST
+				)
+		except ValueError:
+			return Response(
+				{'error': 'Érvénytelen összeg'},
+				status=status.HTTP_400_BAD_REQUEST
+			)
+		
+		data = {
+			'cash_register': source_id,
+			'amount': -abs(amount),  # Negatív a forrás kasszánál
+			'reason': reason_id,
+			'note': note,
+			'target_cash_register': target_id
+		}
+		
+		serializer = self.get_serializer(data=data)
+		serializer.is_valid(raise_exception=True)
+		self.perform_create(serializer)
+		
+		return Response(serializer.data, status=status.HTTP_201_CREATED)
+

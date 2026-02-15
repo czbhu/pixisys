@@ -67,6 +67,10 @@ def check_permission(user, module, resource, action):
     Returns:
         bool: Van-e jogosultsága
     """
+    # Check if user is authenticated
+    if not user or not user.is_authenticated:
+        return False
+    
     # Resource query construction: match specific resource OR global (null/empty) resource
     resource_query = [resource]
     if resource:

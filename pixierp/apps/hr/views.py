@@ -11,9 +11,14 @@ from datetime import datetime, date, timedelta, time as dt_time
 from django.db.models import Min, Max, Q
 from calendar import monthrange
 from collections import defaultdict
+import re
+import unicodedata
+import subprocess
+import shlex
 from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +39,7 @@ User = get_user_model()
 
 
 class DepartmentViewSet(viewsets.ModelViewSet):
-    queryset = Department.objects.order_by('name')
+    queryset = Department.objects.order_by('sort_order', 'name')
     serializer_class = DepartmentSerializer
 
 
@@ -59,6 +64,148 @@ class EmployeeViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         instance.delete()
         if user:
             user.delete()
+
+    def _hestia_cli_run(self, cmd_parts, cfg, timeout=30):
+        cmd = list(cmd_parts)
+
+        if cfg and cfg.cli_use_sudo:
+            sudo_cmd = ['sudo', '-n']
+            sudo_runner = (cfg.cli_sudo_runner or '').strip()
+            ssh_user = (cfg.ssh_user or '').strip()
+            if sudo_runner and sudo_runner != ssh_user:
+                sudo_cmd.extend(['-u', sudo_runner])
+            cmd = sudo_cmd + cmd
+
+        if cfg and cfg.ssh_enabled:
+            remote_cmd = ' '.join(shlex.quote(part) for part in cmd)
+            ssh_cmd = [
+                'ssh',
+                '-p', str(cfg.ssh_port or 22),
+                '-o', 'BatchMode=yes',
+                '-o', 'ConnectTimeout=10',
+                '-o', f"StrictHostKeyChecking={'yes' if cfg.ssh_strict_host_key else 'no'}",
+            ]
+            if not cfg.ssh_strict_host_key:
+                ssh_cmd.extend(['-o', 'UserKnownHostsFile=/dev/null'])
+            if cfg.ssh_private_key_path:
+                ssh_cmd.extend(['-i', cfg.ssh_private_key_path])
+            ssh_cmd.append(f"{cfg.ssh_user}@{cfg.ssh_host}")
+            ssh_cmd.append(remote_cmd)
+            cmd = ssh_cmd
+
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+
+    def _delete_hestia_mailbox(self, email_address: str):
+        from apps.core.models import HestiaConfig
+
+        if not email_address or '@' not in email_address:
+            return {'success': True, 'skipped': True, 'message': 'Nincs érvényes e-mail cím, mailbox törlés kihagyva.'}
+
+        local_part, domain = email_address.strip().lower().split('@', 1)
+        hestia_config = HestiaConfig.objects.filter(is_active=True).first()
+        if not hestia_config:
+            return {'success': False, 'error': 'Nincs aktív Hestia konfiguráció.'}
+
+        hestia_mode = (hestia_config.mode or 'cli').strip().lower()
+        hestia_user = (hestia_config.hestia_user or '').strip()
+        hestia_bin = (hestia_config.cli_bin_path or '/usr/local/hestia/bin').rstrip('/')
+
+        if not hestia_user:
+            return {'success': False, 'error': 'A Hestia user nincs beállítva.'}
+
+        if hestia_mode == 'rest':
+            rest_api_url = (hestia_config.rest_api_url or '').strip()
+            rest_api_user = (hestia_config.rest_api_user or '').strip()
+            rest_api_password = (hestia_config.rest_api_password or '').strip()
+
+            if not rest_api_url or not rest_api_user or not rest_api_password:
+                return {'success': False, 'error': 'A Hestia REST módhoz hiányzik az API URL/felhasználó/jelszó.'}
+
+            try:
+                response = requests.post(
+                    rest_api_url,
+                    data={
+                        'user': rest_api_user,
+                        'password': rest_api_password,
+                        'returncode': 'yes',
+                        'cmd': 'v-delete-mail-account',
+                        'arg1': hestia_user,
+                        'arg2': domain,
+                        'arg3': local_part,
+                        'arg4': 'yes',
+                    },
+                    timeout=30,
+                )
+                payload = (response.text or '').strip()
+                lower_payload = payload.lower()
+                if response.status_code >= 400 or payload not in ('0', 'OK', 'ok', ''):
+                    if 'not exist' in lower_payload or 'does not exist' in lower_payload:
+                        return {'success': True, 'skipped': True, 'message': 'A mailbox nem létezett a Hestia rendszerben.'}
+                    return {'success': False, 'error': f'Hestia REST hiba: {payload or response.status_code}'}
+
+                return {'success': True, 'message': 'Mailbox törölve Hestia REST API-val.'}
+            except requests.RequestException as exc:
+                return {'success': False, 'error': f'Hestia REST kapcsolat hiba: {str(exc)}'}
+
+        if hestia_config.ssh_enabled and (not hestia_config.ssh_host or not hestia_config.ssh_user):
+            return {'success': False, 'error': 'SSH módhoz kötelező a host és user mező.'}
+
+        delete_cmd = [
+            f"{hestia_bin}/v-delete-mail-account",
+            hestia_user,
+            domain,
+            local_part,
+            'yes',
+        ]
+        result = self._hestia_cli_run(delete_cmd, hestia_config, timeout=40)
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout or '').strip()
+            lower_err = err.lower()
+            if 'not exist' in lower_err or 'does not exist' in lower_err:
+                return {'success': True, 'skipped': True, 'message': 'A mailbox nem létezett a Hestia rendszerben.'}
+
+            sudo_user = (hestia_config.ssh_user or 'ceze').strip() or 'ceze'
+            sudoers_file = f"/etc/sudoers.d/{sudo_user}-hestia"
+            sudoers_cmds = (
+                f"sudo visudo -f {sudoers_file}\n"
+                f"{sudo_user} ALL=(root) NOPASSWD: /usr/local/hestia/bin/v-list-sys-info, /usr/local/hestia/bin/v-list-mail-domain, /usr/local/hestia/bin/v-list-mail-accounts, /usr/local/hestia/bin/v-add-mail-account, /usr/local/hestia/bin/v-delete-mail-account\n"
+                f"sudo chmod 440 {sudoers_file}\n"
+                f"sudo -l -U {sudo_user}"
+            )
+
+            if 'sudo' in lower_err and ('password is required' in lower_err or 'jelszó szükséges' in lower_err or 'not allowed to execute' in lower_err):
+                return {
+                    'success': False,
+                    'error': f'Sudo jogosultsági hiba: {err}',
+                    'hint': sudoers_cmds,
+                }
+
+            return {'success': False, 'error': f'Hestia hiba: {err or "ismeretlen hiba"}'}
+
+        return {'success': True, 'message': 'Mailbox és tartalma törölve Hestia CLI-vel.'}
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        delete_mailbox_raw = request.query_params.get('delete_mailbox', '0')
+        delete_mailbox = str(delete_mailbox_raw).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        if delete_mailbox:
+            email_address = (getattr(instance.user, 'email', '') or '').strip()
+            mailbox_result = self._delete_hestia_mailbox(email_address)
+            if not mailbox_result.get('success'):
+                payload = {'error': mailbox_result.get('error', 'Mailbox törlés sikertelen.')}
+                if mailbox_result.get('hint'):
+                    payload['hint'] = mailbox_result.get('hint')
+                return Response(payload, status=status.HTTP_400_BAD_REQUEST)
+
+        self.perform_destroy(instance)
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     # ELTÁVOLÍTVA: Egyéni jogosultságok már nem használtak
     # Csak osztály-alapú szerepkörök vannak használva (Department.roles)
@@ -151,6 +298,373 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
             return Response(
                 {'message': f'Jelszó generálva, de e-mail küldése sikertelen: {str(e)}'},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=False, methods=['post'])
+    def generate_email_account(self, request):
+        """E-mail cím generálása és Hestia postafiók létrehozása."""
+        from apps.core.models import EmailServerConfig, HestiaConfig, EmailTemplate
+        from django.core.mail import get_connection, EmailMultiAlternatives
+
+        first_name = (request.data.get('first_name') or '').strip()
+        last_name = (request.data.get('last_name') or '').strip()
+        create_account = request.data.get('create_account', True)
+
+        if not first_name or not last_name:
+            return Response(
+                {'error': 'A keresztnév és vezetéknév megadása kötelező.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def normalize_part(value: str) -> str:
+            normalized = unicodedata.normalize('NFKD', value)
+            ascii_value = normalized.encode('ascii', 'ignore').decode('ascii')
+            cleaned = re.sub(r'[^a-zA-Z0-9]+', '.', ascii_value).strip('.')
+            cleaned = re.sub(r'\.+', '.', cleaned)
+            return cleaned.lower()
+
+        local_part = f"{normalize_part(first_name)}.{normalize_part(last_name)}"
+        local_part = re.sub(r'\.+', '.', local_part).strip('.')
+        if not local_part:
+            return Response(
+                {'error': 'Nem sikerült e-mail előtagot képezni a névből.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        def resolve_department_domain() -> str:
+            department_ids = request.data.get('department_ids')
+            employee_id = request.data.get('employee_id')
+            selected_departments = Department.objects.none()
+
+            if isinstance(department_ids, list) and department_ids:
+                selected_departments = Department.objects.filter(id__in=department_ids)
+            elif employee_id:
+                employee = Employee.objects.filter(id=employee_id).prefetch_related('departments').first()
+                if employee:
+                    selected_departments = employee.departments.all()
+
+            prioritized = selected_departments.exclude(email_domain__isnull=True).exclude(email_domain='').order_by('sort_order', 'name').first()
+            if prioritized:
+                return prioritized.email_domain.strip().lower()
+            return ''
+
+        hestia_config = HestiaConfig.objects.filter(is_active=True).first()
+        department_domain = resolve_department_domain()
+        domain = (
+            request.data.get('domain')
+            or department_domain
+            or (hestia_config.default_domain if hestia_config else '')
+            or getattr(settings, 'HESTIA_EMAIL_DOMAIN', '')
+            or ''
+        ).strip().lower()
+
+        if not domain:
+            email_config = EmailServerConfig.objects.filter(is_active=True).first()
+            if email_config and email_config.from_email and '@' in email_config.from_email:
+                domain = email_config.from_email.split('@', 1)[1].lower()
+
+        if not domain:
+            return Response(
+                {'error': 'Nincs beállítva HESTIA_EMAIL_DOMAIN és nem található aktív feladó domain sem.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        email_address = f"{local_part}@{domain}"
+
+        if not create_account:
+            return Response({'email': email_address, 'account_created': False})
+
+        hestia_mode = (hestia_config.mode if hestia_config else 'cli').strip().lower()
+        hestia_user = ((hestia_config.hestia_user if hestia_config else '') or getattr(settings, 'HESTIA_CLI_USER', '') or '').strip()
+        hestia_bin = ((hestia_config.cli_bin_path if hestia_config else '') or getattr(settings, 'HESTIA_CLI_BIN', '') or '/usr/local/hestia/bin').rstrip('/')
+        cli_use_sudo = bool(hestia_config.cli_use_sudo) if hestia_config else False
+        cli_sudo_runner = (hestia_config.cli_sudo_runner if hestia_config else '').strip()
+        ssh_enabled = bool(hestia_config.ssh_enabled) if hestia_config else False
+        ssh_host = (hestia_config.ssh_host if hestia_config else '').strip()
+        ssh_port = int(hestia_config.ssh_port) if hestia_config and hestia_config.ssh_port else 22
+        ssh_user = (hestia_config.ssh_user if hestia_config else '').strip()
+        ssh_key_path = (hestia_config.ssh_private_key_path if hestia_config else '').strip()
+        ssh_strict_host_key = bool(hestia_config.ssh_strict_host_key) if hestia_config else True
+
+        if not hestia_user:
+            return Response(
+                {'error': 'HESTIA_CLI_USER nincs beállítva a szerveren.'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        mailbox_password = get_random_string(16)
+
+        def notify_creator_with_credentials(created_email: str, created_password: str):
+            notify_error = None
+            creator_user = request.user if request.user and request.user.is_authenticated else None
+
+            if creator_user:
+                try:
+                    send_notification(
+                        user=creator_user,
+                        title='Új alkalmazotti e-mail fiók létrehozva',
+                        message=f'E-mail: {created_email} | Jelszó: {created_password}',
+                        link='/hr/employees',
+                        type='success'
+                    )
+                except Exception as exc:
+                    notify_error = f'In-app értesítés hiba: {str(exc)}'
+                    logger.warning(notify_error)
+
+            creator_email = (getattr(creator_user, 'email', '') or '').strip() if creator_user else ''
+            if not creator_email:
+                return notify_error or 'A létrehozó felhasználónak nincs e-mail címe, ezért e-mail értesítés nem ment ki.'
+
+            email_config = EmailServerConfig.objects.filter(is_active=True).first()
+            if not email_config:
+                return notify_error or 'Nincs aktív email szerver konfiguráció, ezért e-mail értesítés nem ment ki.'
+
+            try:
+                template, _ = EmailTemplate.objects.get_or_create(
+                    key='hr_employee_mailbox_credentials',
+                    defaults={
+                        'name': 'HR - Postafiók belépési adatok',
+                        'subject_template': 'Új postafiók beállítások - {VezetékNév} {KeresztNév}',
+                        'body_template': (
+                            '<p>Kedves Kolléga!</p>'
+                            '<p>A postafiók létrehozása sikeresen megtörtént. Az alábbi adatokkal tudtok belépni:</p>'
+                            '<p><strong>Név:</strong> {VezetékNév} {KeresztNév}<br/>'
+                            '<strong>Domain:</strong> {domain}<br/>'
+                            '<strong>E-mail cím:</strong> {e-mail cím}<br/>'
+                            '<strong>Jelszó:</strong> {jelszó}</p>'
+                            '<p>Kérlek, az első belépés után változtassátok meg a jelszót.</p>'
+                            '<p>Üdvözlettel,<br/>PixiERP</p>'
+                        ),
+                        'is_html': True,
+                        'description': 'Alkalmazotti postafiók létrehozásakor küldött belépési adatok.',
+                    }
+                )
+
+                context_values = {
+                    'KeresztNév': first_name,
+                    'VezetékNév': last_name,
+                    'domain': domain,
+                    'e-mail cím': created_email,
+                    'jelszó': created_password,
+                    'email': created_email,
+                    'password': created_password,
+                    'first_name': first_name,
+                    'last_name': last_name,
+                }
+
+                def render_template(content: str) -> str:
+                    rendered = content or ''
+                    for key, value in context_values.items():
+                        rendered = rendered.replace(f'{{{key}}}', str(value or ''))
+                    return rendered
+
+                connection = get_connection(
+                    backend='django.core.mail.backends.smtp.EmailBackend',
+                    host=email_config.smtp_host,
+                    port=email_config.smtp_port,
+                    username=email_config.smtp_username,
+                    password=email_config.smtp_password,
+                    use_tls=email_config.smtp_use_tls,
+                    use_ssl=email_config.smtp_use_ssl,
+                    fail_silently=False,
+                    timeout=10,
+                )
+
+                from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+                subject = render_template(template.subject_template) or 'Új alkalmazott e-mail belépési adatai - PixiERP'
+                html_content = render_template(template.body_template)
+                text_content = re.sub(r'<[^>]+>', '', html_content)
+
+                msg = EmailMultiAlternatives(
+                    subject=subject,
+                    body=text_content,
+                    from_email=from_email,
+                    to=[creator_email],
+                    connection=connection,
+                )
+                msg.attach_alternative(html_content, 'text/html')
+                msg.send()
+                return notify_error
+            except Exception as exc:
+                email_err = f'Belépési adatok e-mail küldése sikertelen: {str(exc)}'
+                logger.warning(email_err)
+                return notify_error or email_err
+
+        if hestia_mode == 'rest':
+            rest_api_url = (hestia_config.rest_api_url if hestia_config else '').strip()
+            rest_api_user = (hestia_config.rest_api_user if hestia_config else '').strip()
+            rest_api_password = (hestia_config.rest_api_password if hestia_config else '').strip()
+
+            if not rest_api_url or not rest_api_user or not rest_api_password:
+                return Response(
+                    {'error': 'A Hestia REST módhoz hiányzik az API URL/felhasználó/jelszó.'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            try:
+                response = requests.post(
+                    rest_api_url,
+                    data={
+                        'user': rest_api_user,
+                        'password': rest_api_password,
+                        'returncode': 'yes',
+                        'cmd': 'v-add-mail-account',
+                        'arg1': hestia_user,
+                        'arg2': domain,
+                        'arg3': local_part,
+                        'arg4': mailbox_password,
+                    },
+                    timeout=25,
+                )
+                payload = (response.text or '').strip()
+                if response.status_code >= 400 or payload not in ('0', 'OK', 'ok', ''):
+                    lower_payload = payload.lower()
+                    if 'exist' in lower_payload or 'already' in lower_payload:
+                        return Response(
+                            {
+                                'email': email_address,
+                                'account_created': False,
+                                'message': 'Az e-mail fiók már létezik, a mező kitöltve.',
+                            }
+                        )
+                    return Response(
+                        {'error': f'Hestia REST hiba: {payload or response.status_code}'},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+                return Response(
+                    {
+                        'email': email_address,
+                        'account_created': True,
+                        'mailbox_password': mailbox_password,
+                        'message': 'E-mail cím generálva és postafiók létrehozva Hestia REST API-val.',
+                        'creator_notification_warning': notify_creator_with_credentials(email_address, mailbox_password),
+                    }
+                )
+            except requests.RequestException as exc:
+                return Response(
+                    {'error': f'Hestia REST kapcsolat hiba: {str(exc)}'},
+                    status=status.HTTP_502_BAD_GATEWAY,
+                )
+
+        base_cmd = [
+            f"{hestia_bin}/v-add-mail-account",
+            hestia_user,
+            domain,
+            local_part,
+            mailbox_password,
+        ]
+        cmd = list(base_cmd)
+        if cli_use_sudo:
+            sudo_cmd = ['sudo', '-n']
+            if cli_sudo_runner and cli_sudo_runner != ssh_user:
+                sudo_cmd.extend(['-u', cli_sudo_runner])
+            cmd = sudo_cmd + cmd
+
+        if ssh_enabled:
+            if not ssh_host or not ssh_user:
+                return Response(
+                    {'error': 'SSH módhoz kötelező a host és user mező.'},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            remote_cmd = ' '.join(shlex.quote(part) for part in cmd)
+            ssh_cmd = [
+                'ssh',
+                '-p', str(ssh_port),
+                '-o', 'BatchMode=yes',
+                '-o', 'ConnectTimeout=10',
+                '-o', f"StrictHostKeyChecking={'yes' if ssh_strict_host_key else 'no'}",
+            ]
+            if not ssh_strict_host_key:
+                ssh_cmd.extend(['-o', 'UserKnownHostsFile=/dev/null'])
+            if ssh_key_path:
+                ssh_cmd.extend(['-i', ssh_key_path])
+            ssh_cmd.append(f"{ssh_user}@{ssh_host}")
+            ssh_cmd.append(remote_cmd)
+            cmd = ssh_cmd
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=25,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                error_output = (result.stderr or result.stdout or '').strip()
+                lower_error = error_output.lower()
+                sudo_user = (ssh_user or 'ceze').strip() or 'ceze'
+                sudoers_file = f"/etc/sudoers.d/{sudo_user}-hestia"
+                sudoers_cmds = (
+                    f"sudo visudo -f {sudoers_file}\n"
+                    f"{sudo_user} ALL=(root) NOPASSWD: /usr/local/hestia/bin/v-list-sys-info, /usr/local/hestia/bin/v-list-mail-domain, /usr/local/hestia/bin/v-list-mail-accounts, /usr/local/hestia/bin/v-add-mail-account\n"
+                    f"sudo chmod 440 {sudoers_file}\n"
+                    f"sudo -l -U {sudo_user}"
+                )
+                if 'exist' in lower_error or 'already' in lower_error:
+                    return Response(
+                        {
+                            'email': email_address,
+                            'account_created': False,
+                            'message': 'Az e-mail fiók már létezik, a mező kitöltve.',
+                        }
+                    )
+
+                if (
+                    'hestia.conf' in lower_error and 'permission denied' in lower_error
+                ) or (
+                    '/usr/local/hestia/log/error.log' in lower_error and 'permission denied' in lower_error
+                ):
+                    hint = f'A Hestia CLI futtatásához engedélyezd a "CLI futtatás sudo-val" opciót a Hestia beállításokban, és adj jelszó nélküli sudo jogot a szükséges Hestia parancsokra.\n\n{sudoers_cmds}'
+                    return Response(
+                        {'error': f'Hestia jogosultsági hiba: {error_output}', 'hint': hint},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if 'sudo' in lower_error and (
+                    'password is required' in lower_error
+                    or 'jelszó szükséges' in lower_error
+                    or 'not allowed to execute' in lower_error
+                ):
+                    return Response(
+                        {'error': f'Sudo jogosultsági hiba: {error_output}', 'hint': sudoers_cmds},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                logger.error(f"Hestia mailbox create failed: {error_output}")
+                return Response(
+                    {'error': f'Hestia hiba: {error_output or "ismeretlen hiba"}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            return Response(
+                {
+                    'email': email_address,
+                    'account_created': True,
+                    'mailbox_password': mailbox_password,
+                    'message': 'E-mail cím generálva és postafiók létrehozva Hestia-ban.',
+                    'creator_notification_warning': notify_creator_with_credentials(email_address, mailbox_password),
+                }
+            )
+
+        except FileNotFoundError:
+            return Response(
+                {'error': f'Hestia CLI nem található: {hestia_bin}/v-add-mail-account'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except subprocess.TimeoutExpired:
+            return Response(
+                {'error': 'Hestia művelet timeout.'},
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.exception('Unexpected Hestia mailbox error')
+            return Response(
+                {'error': f'Váratlan hiba: {str(exc)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
 

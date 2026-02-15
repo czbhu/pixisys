@@ -23,6 +23,7 @@ import PixinvoiceSettingsPage from './pages/PixinvoiceSettingsPage';
 import AttendanceKioskSettingsPage from './pages/AttendanceKioskSettingsPage';
 import CurrenciesPage from './pages/CurrenciesPage';
 import RolesPage from './pages/RolesPage';
+import HestiaPage from './pages/HestiaPage';
 import CompanySettings from './CompanySettings';
 import Backup from './Backup';
 import Zones from './Zones';
@@ -41,6 +42,7 @@ const SettingsModule: React.FC = () => {
       { key: '/settings/zones', label: 'Zónák', icon: <EnvironmentOutlined /> },
       { key: '/settings/integrations', label: 'Integrációk', icon: <ApiOutlined /> },
       { key: '/settings/pixinvoice', label: 'PIXINVOICE', icon: <CloudServerOutlined /> },
+      { key: '/settings/hestia', label: 'Hestia', icon: <CloudServerOutlined /> },
       { key: '/settings/backup', label: 'Backup', icon: <HddOutlined /> },
   ];
 
@@ -57,6 +59,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/zones" element={<Zones />} />
       <Route path="/integrations" element={<IntegrationsPage />} />
       <Route path="/pixinvoice" element={<PixinvoiceSettingsPage />} />
+      <Route path="/hestia" element={<HestiaPage />} />
       <Route path="/attendance-kiosk" element={<AttendanceKioskSettingsPage />} />
       <Route path="/backup" element={<Backup />} />
     </Routes>

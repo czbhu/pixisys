@@ -65,6 +65,35 @@ export const settingsService = {
     const r = await api.patch(`/core/pixinvoice-configs/${id}/`, data);
     return r.data;
   },
+  async getHestiaConfigs() {
+    const r = await api.get('/core/hestia-configs/');
+    const d = r.data;
+    return Array.isArray(d) ? d : (d?.results ?? []);
+  },
+  async createHestiaConfig(data: any) {
+    const r = await api.post('/core/hestia-configs/', data);
+    return r.data;
+  },
+  async updateHestiaConfig(id: number, data: any) {
+    const r = await api.put(`/core/hestia-configs/${id}/`, data);
+    return r.data;
+  },
+  async testHestiaConfig(id: number) {
+    const r = await api.post(`/core/hestia-configs/${id}/test_connection/`, {}, { timeout: 45000 });
+    return r.data;
+  },
+  async generateHestiaSshKey(id: number, overwrite: boolean = false) {
+    const r = await api.post(`/core/hestia-configs/${id}/generate_ssh_key/`, { overwrite }, { timeout: 45000 });
+    return r.data;
+  },
+  async getHestiaPublicKey(id: number) {
+    const r = await api.get(`/core/hestia-configs/${id}/public_key/`);
+    return r.data;
+  },
+  async trustHestiaHostKey(id: number) {
+    const r = await api.post(`/core/hestia-configs/${id}/trust_host_key/`, {}, { timeout: 45000 });
+    return r.data;
+  },
   async testPixinvoiceConnection(id: number) {
     const r = await api.post('/pixinvoice/test-connection/', { id });
     return r.data;

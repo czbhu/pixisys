@@ -4,6 +4,7 @@ from . import views
 from .views_emergency import emergency_login_view
 
 router = DefaultRouter()
+router.register(r'users', views.UserViewSet, basename='user')
 router.register(r'companies', views.CompanyViewSet, basename='company')
 router.register(r'bank-accounts', views.BankAccountViewSet, basename='bank-account')
 router.register(r'pixinvoice-configs', views.PixinvoiceConfigViewSet, basename='pixinvoice-config')
@@ -14,6 +15,7 @@ router.register(r'roles', views.RoleViewSet, basename='role')
 router.register(r'permissions', views.PermissionViewSet, basename='permission')
 router.register(r'user-roles', views.UserRoleViewSet, basename='user-role')
 router.register(r'notifications', views.NotificationViewSet, basename='notification')
+router.register(r'hestia-configs', views.HestiaConfigViewSet, basename='hestia-config')
 router.register(r'email-templates', views.EmailTemplateViewSet, basename='email-template')
 router.register(r'signature-templates', views.SignatureTemplateViewSet, basename='signature-template')
 router.register(r'zones', views.ZoneViewSet, basename='zone')

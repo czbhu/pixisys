@@ -6,7 +6,9 @@ import {
     PieChartOutlined,
     BarChartOutlined,
     BankOutlined,
-    RocketOutlined
+    RocketOutlined,
+    WalletOutlined,
+    SettingOutlined
 } from '@ant-design/icons';
 import { message } from 'antd';
 import api from '../../services/api';
@@ -15,6 +17,8 @@ import Payments from './Payments';
 import Budgets from './Budgets';
 import Reports from './Reports';
 import Accounts from './Accounts';
+import CashRegisters from './CashRegisters';
+import CashRegisterSetup from './CashRegisterSetup';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const FinanceModule = () => {
@@ -34,6 +38,8 @@ const FinanceModule = () => {
     const dashboardItems = [
         { key: '/finance/invoices', label: 'Számlák', icon: <FilePdfOutlined /> },
         { key: '/finance/payments', label: 'Fizetések', icon: <CreditCardOutlined /> },
+        { key: '/finance/cash-registers', label: 'Kasszák', icon: <WalletOutlined /> },
+        { key: '/finance/cash-register-setup', label: 'Kassza Regisztráció', icon: <SettingOutlined /> },
         { key: '/finance/budgets', label: 'Költségvetések', icon: <PieChartOutlined /> },
         { key: '/finance/reports', label: 'Jelentések', icon: <BarChartOutlined /> },
         { key: '/finance/accounts', label: 'Számlák (Fiókok)', icon: <BankOutlined /> },
@@ -45,6 +51,8 @@ const FinanceModule = () => {
             <Route path="/" element={<ModuleDashboard title="Pénzügy" items={dashboardItems} />} />
             <Route path="/invoices" element={<Invoices />} />
             <Route path="/payments" element={<Payments />} />
+            <Route path="/cash-registers" element={<CashRegisters />} />
+            <Route path="/cash-register-setup" element={<CashRegisterSetup />} />
             <Route path="/budgets" element={<Budgets />} />
             <Route path="/reports" element={<Reports />} />
             <Route path="/accounts" element={<Accounts />} />

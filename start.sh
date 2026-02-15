@@ -8,7 +8,7 @@ SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 cd "$SCRIPT_DIR"
 
 # Production mode flag (default: true for production)
-PRODUCTION_MODE=${PRODUCTION_MODE:-false}
+PRODUCTION_MODE=${PRODUCTION_MODE:-true}
 BUILD_ONLY=false
 
 # Check for --build-only argument
@@ -190,7 +190,7 @@ else
         exit 1
     fi
     
-    PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=http://localhost:${ERP_BACKEND_PORT}/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
+    PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
     ERP_FRONTEND_PID=$!
     echo -e "${GREEN}✅ ERP Frontend started (PID: $ERP_FRONTEND_PID)${NC}"
     

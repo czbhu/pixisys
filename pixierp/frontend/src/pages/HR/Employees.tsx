@@ -28,6 +28,7 @@ import {
     IdcardOutlined,
     SearchOutlined,
     SafetyOutlined,
+    MailOutlined,
     ExclamationCircleOutlined
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -105,10 +106,13 @@ const Employees: React.FC = () => {
     const [isCredentialsModalVisible, setIsCredentialsModalVisible] = useState(false);
     const [isPermissionsModalVisible, setIsPermissionsModalVisible] = useState(false);
     const [permissionsEmployee, setPermissionsEmployee] = useState<Employee | null>(null);
+    const [deleteEmailPromptEmployee, setDeleteEmailPromptEmployee] = useState<Employee | null>(null);
+    const [deleteEmailPromptVisible, setDeleteEmailPromptVisible] = useState(false);
     const [showInactive, setShowInactive] = useState(settings.showInactiveEmployees);
     const [form] = Form.useForm();
     const [formKey, setFormKey] = useState(0);
     const usernameInputRef = useRef<any>(null);
+    const [generatingEmail, setGeneratingEmail] = useState(false);
 
     useEffect(() => {
         loadEmployees();
@@ -282,6 +286,50 @@ const Employees: React.FC = () => {
             setRoles(data);
         } catch (err) {
             console.error('Error loading roles:', err);
+        }
+    };
+
+    const handleGenerateEmail = async () => {
+        const firstName = (form.getFieldValue('user_first_name') || '').trim();
+        const lastName = (form.getFieldValue('user_last_name') || '').trim();
+        const departmentIds = form.getFieldValue('departments');
+
+        if (!firstName || !lastName) {
+            message.warning('Előbb adja meg a keresztnevet és vezetéknevet.');
+            return;
+        }
+
+        try {
+            setGeneratingEmail(true);
+            const response = await hrService.generateEmployeeEmailAccount({
+                first_name: firstName,
+                last_name: lastName,
+                department_ids: Array.isArray(departmentIds) ? departmentIds : [],
+                create_account: true,
+            });
+
+            if (response?.email) {
+                form.setFieldsValue({ user_email: response.email });
+            }
+
+            if (response?.account_created && response?.mailbox_password) {
+                Modal.success({
+                    title: 'E-mail fiók létrehozva',
+                    content: (
+                        <div>
+                            <p><strong>E-mail:</strong> {response.email}</p>
+                            <p><strong>Postafiók jelszó:</strong> {response.mailbox_password}</p>
+                            <p style={{ marginTop: 8 }}>Mentse el ezt a jelszót, később nem lesz újra lekérhető.</p>
+                        </div>
+                    ),
+                });
+            } else {
+                message.success(response?.message || 'E-mail cím generálva.');
+            }
+        } catch (error: any) {
+            message.error(error?.response?.data?.error || 'Nem sikerült e-mail fiókot generálni.');
+        } finally {
+            setGeneratingEmail(false);
         }
     };
 
@@ -540,15 +588,63 @@ const Employees: React.FC = () => {
         }
     };
 
-    const handleDelete = async (id: number) => {
+    const handleDelete = async (id: number, deleteMailbox: boolean = false) => {
         try {
-            await hrService.deleteEmployee(id);
-            message.success('Alkalmazott sikeresen törölve!');
+            await hrService.deleteEmployee(id, deleteMailbox);
+            if (deleteMailbox) {
+                message.success('Alkalmazott és e-mail fiók sikeresen törölve!');
+            } else {
+                message.success('Alkalmazott sikeresen törölve!');
+            }
             loadEmployees();
-        } catch (err) {
+        } catch (err: any) {
             console.error('Error deleting employee:', err);
-            message.error('Hiba történt az alkalmazott törlése során');
+            const backendError = err?.response?.data?.error;
+            const backendHint = err?.response?.data?.hint;
+            if (backendHint) {
+                Modal.error({
+                    title: 'Törlés sikertelen',
+                    content: (
+                        <div>
+                            <p>{backendError || 'Hiba történt az alkalmazott törlése során'}</p>
+                            <pre style={{ whiteSpace: 'pre-wrap', marginTop: 8 }}>{backendHint}</pre>
+                        </div>
+                    ),
+                    width: 760,
+                });
+                return;
+            }
+            message.error(backendError || 'Hiba történt az alkalmazott törlése során');
         }
+    };
+
+    const confirmDeleteEmployee = (record: Employee) => {
+        if (record.user_email && record.user_email.includes('@')) {
+            setDeleteEmailPromptEmployee(record);
+            setDeleteEmailPromptVisible(true);
+            return;
+        }
+
+        handleDelete(record.id, false);
+    };
+
+    const closeDeleteEmailPrompt = () => {
+        setDeleteEmailPromptVisible(false);
+        setDeleteEmailPromptEmployee(null);
+    };
+
+    const handleDeleteEmployeeOnly = async () => {
+        if (!deleteEmailPromptEmployee) return;
+        const targetId = deleteEmailPromptEmployee.id;
+        closeDeleteEmailPrompt();
+        await handleDelete(targetId, false);
+    };
+
+    const handleDeleteEmployeeAndMailbox = async () => {
+        if (!deleteEmailPromptEmployee) return;
+        const targetId = deleteEmailPromptEmployee.id;
+        closeDeleteEmailPrompt();
+        await handleDelete(targetId, true);
     };
 
     const handleGeneratePassword = async () => {
@@ -666,7 +762,7 @@ const Employees: React.FC = () => {
                     <Tooltip title="Törlés">
                         <Popconfirm
                             title="Biztosan törölni szeretné ezt az alkalmazottat?"
-                            onConfirm={() => handleDelete(record.id)}
+                            onConfirm={() => confirmDeleteEmployee(record)}
                             okText="Igen"
                             cancelText="Mégse"
                         >
@@ -921,7 +1017,18 @@ const Employees: React.FC = () => {
                                     { type: 'email', message: 'Kérjük, adjon meg érvényes e-mail címet!' }
                                 ]}
                             >
-                                <Input placeholder="E-mail" />
+                                <Input
+                                    placeholder="E-mail"
+                                    addonAfter={
+                                        <Button
+                                            type="text"
+                                            loading={generatingEmail}
+                                            onClick={handleGenerateEmail}
+                                            title="E-mail generálása"
+                                            icon={<MailOutlined />}
+                                        />
+                                    }
+                                />
                             </Form.Item>
                         </Col>
                         <Col span={8}>
@@ -1312,6 +1419,29 @@ const Employees: React.FC = () => {
                         </Descriptions.Item>
                     </Descriptions>
                 )}
+            </Modal>
+
+            {/* Jelszó generálás Modal */}
+            <Modal
+                title="E-mail fiók törlése is?"
+                open={deleteEmailPromptVisible}
+                onCancel={closeDeleteEmailPrompt}
+                footer={[
+                    <Button key="cancel" onClick={closeDeleteEmailPrompt}>
+                        Mégse
+                    </Button>,
+                    <Tooltip key="no-tooltip" title="alkalmazott törlése e-mail fiók törlés nélkül.">
+                        <Button key="no" onClick={handleDeleteEmployeeOnly}>
+                            Nem
+                        </Button>
+                    </Tooltip>,
+                    <Button key="yes" type="primary" danger onClick={handleDeleteEmployeeAndMailbox}>
+                        Igen
+                    </Button>,
+                ]}
+            >
+                <p>Az alkalmazott törlése mellett töröljük a Hestia e-mail fiókot és annak tartalmát is?</p>
+                <p><strong>{deleteEmailPromptEmployee?.user_email}</strong></p>
             </Modal>
 
             {/* Jelszó generálás Modal */}

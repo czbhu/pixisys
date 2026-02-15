@@ -11,6 +11,8 @@ class Department(models.Model):
     """Department model"""
     name = models.CharField(max_length=100)
     description = models.TextField(blank=True, null=True)
+    email_domain = models.CharField(max_length=255, blank=True, default='', verbose_name='E-mail domain')
+    sort_order = models.IntegerField(default=100, verbose_name='Sorrend')
     managers = models.ManyToManyField(User, blank=True, related_name='managed_departments')
     budget = models.DecimalField(max_digits=12, decimal_places=2, default=0)
     inactivity_timeout = models.IntegerField(default=60, verbose_name='Inaktivitási időkorlát (perc)')
@@ -24,7 +26,7 @@ class Department(models.Model):
 
     class Meta:
         db_table = 'departments'
-        ordering = ['name']
+        ordering = ['sort_order', 'name']
 
     def __str__(self):
         return self.name

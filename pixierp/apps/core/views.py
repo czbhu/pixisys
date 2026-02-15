@@ -29,6 +29,7 @@ from .serializers import (
     CompanySerializer,
     BankAccountSerializer,
     EmailServerConfigSerializer,
+    HestiaConfigSerializer,
     EmailTemplateSerializer,
     SignatureTemplateSerializer,
     PixinvoiceConfigSerializer,
@@ -42,7 +43,7 @@ from .serializers import (
 )
 from rest_framework import viewsets
 from .models import (
-    Company, BankAccount, EmailServerConfig, EmailTemplate, 
+    Company, BankAccount, EmailServerConfig, HestiaConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
     BackupFile, UserPreference, Role, Permission, UserRole, ActivityLog
 )
@@ -52,6 +53,9 @@ import requests
 import json
 import tempfile
 from io import StringIO
+import subprocess
+import shlex
+import os
 
 
 User = get_user_model()
@@ -801,6 +805,580 @@ class EmailTemplateViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated]
 
 
+class HestiaConfigViewSet(viewsets.ModelViewSet):
+    queryset = HestiaConfig.objects.all()
+    serializer_class = HestiaConfigSerializer
+    permission_classes = [IsAuthenticated]
+
+    def _resolve_private_key_path(self, cfg: HestiaConfig) -> str:
+        raw_path = (cfg.ssh_private_key_path or '').strip()
+        if raw_path:
+            return os.path.abspath(os.path.expanduser(raw_path))
+        return os.path.abspath(os.path.expanduser('~/.ssh/hestia_erp'))
+
+    @action(detail=True, methods=['post'])
+    def generate_ssh_key(self, request, pk=None):
+        cfg = self.get_object()
+        overwrite = bool(request.data.get('overwrite', False))
+        private_key_path = self._resolve_private_key_path(cfg)
+        public_key_path = f"{private_key_path}.pub"
+
+        if os.path.exists(private_key_path) and not overwrite:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'A privát kulcs már létezik. Ha felül akarod írni, küldj overwrite=true értéket.',
+                    'private_key_path': private_key_path,
+                    'public_key_path': public_key_path,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            os.makedirs(os.path.dirname(private_key_path), exist_ok=True)
+
+            if overwrite:
+                if os.path.exists(private_key_path):
+                    os.remove(private_key_path)
+                if os.path.exists(public_key_path):
+                    os.remove(public_key_path)
+
+            result = subprocess.run(
+                [
+                    'ssh-keygen',
+                    '-q',
+                    '-t', 'ed25519',
+                    '-f', private_key_path,
+                    '-N', '',
+                    '-C', 'pixierp-hestia',
+                ],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                check=False,
+            )
+
+            if result.returncode != 0:
+                err = (result.stderr or result.stdout or '').strip()
+                return Response(
+                    {
+                        'success': False,
+                        'message': 'SSH kulcs generálás sikertelen.',
+                        'details': err or f'Kilépési kód: {result.returncode}',
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            os.chmod(private_key_path, 0o600)
+            if os.path.exists(public_key_path):
+                os.chmod(public_key_path, 0o644)
+
+            cfg.ssh_private_key_path = private_key_path
+            cfg.save(update_fields=['ssh_private_key_path', 'updated_at'])
+
+            public_key = ''
+            if os.path.exists(public_key_path):
+                with open(public_key_path, 'r', encoding='utf-8') as fh:
+                    public_key = fh.read().strip()
+
+            return Response(
+                {
+                    'success': True,
+                    'message': 'SSH kulcspár sikeresen legenerálva.',
+                    'private_key_path': private_key_path,
+                    'public_key_path': public_key_path,
+                    'public_key': public_key,
+                }
+            )
+        except FileNotFoundError:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'ssh-keygen parancs nem található a szerveren.',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except subprocess.TimeoutExpired:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'SSH kulcsgenerálás timeout.',
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.exception('Hestia SSH key generation failed')
+            return Response(
+                {
+                    'success': False,
+                    'message': f'Váratlan hiba: {str(exc)}',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['post'])
+    def trust_host_key(self, request, pk=None):
+        cfg = self.get_object()
+
+        if not cfg.ssh_host:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'SSH host nincs beállítva.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            ssh_dir = os.path.abspath(os.path.expanduser('~/.ssh'))
+            known_hosts_path = os.path.join(ssh_dir, 'known_hosts')
+            os.makedirs(ssh_dir, exist_ok=True)
+            if not os.path.exists(known_hosts_path):
+                open(known_hosts_path, 'a', encoding='utf-8').close()
+                os.chmod(known_hosts_path, 0o644)
+
+            remove_cmd = [
+                'ssh-keygen',
+                '-R',
+                f'[{cfg.ssh_host}]:{cfg.ssh_port or 22}',
+                '-f',
+                known_hosts_path,
+            ]
+            subprocess.run(remove_cmd, capture_output=True, text=True, timeout=10, check=False)
+
+            scan_cmd = [
+                'ssh-keyscan',
+                '-p',
+                str(cfg.ssh_port or 22),
+                '-t',
+                'ed25519',
+                cfg.ssh_host,
+            ]
+            scan_result = subprocess.run(
+                scan_cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            if scan_result.returncode != 0:
+                err = (scan_result.stderr or scan_result.stdout or '').strip()
+                return Response(
+                    {
+                        'success': False,
+                        'message': 'SSH host kulcs lekérdezése sikertelen.',
+                        'details': err or f'Kilépési kód: {scan_result.returncode}',
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            key_line = (scan_result.stdout or '').strip()
+            if not key_line:
+                return Response(
+                    {
+                        'success': False,
+                        'message': 'Nem érkezett host kulcs az ssh-keyscan parancsból.',
+                    },
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                )
+
+            with open(known_hosts_path, 'a', encoding='utf-8') as known_hosts:
+                known_hosts.write(f"{key_line}\n")
+
+            return Response(
+                {
+                    'success': True,
+                    'message': 'SSH host kulcs sikeresen mentve a known_hosts fájlba.',
+                    'known_hosts_path': known_hosts_path,
+                }
+            )
+        except FileNotFoundError as exc:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'ssh-keyscan vagy ssh-keygen parancs nem található a szerveren.',
+                    'details': str(exc),
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except subprocess.TimeoutExpired:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'SSH host kulcs mentés timeout.',
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.exception('Hestia SSH host key trust failed')
+            return Response(
+                {
+                    'success': False,
+                    'message': f'Váratlan hiba: {str(exc)}',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @action(detail=True, methods=['get'])
+    def public_key(self, request, pk=None):
+        cfg = self.get_object()
+        private_key_path = self._resolve_private_key_path(cfg)
+        public_key_path = f"{private_key_path}.pub"
+
+        if not os.path.exists(public_key_path):
+            return Response(
+                {
+                    'success': False,
+                    'message': 'Publikus kulcs nem található. Előbb generáld le a kulcspárt.',
+                    'public_key_path': public_key_path,
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        with open(public_key_path, 'r', encoding='utf-8') as fh:
+            content = fh.read().strip()
+
+        return Response(
+            {
+                'success': True,
+                'public_key': content,
+                'public_key_path': public_key_path,
+                'private_key_path': private_key_path,
+            }
+        )
+
+    @action(detail=True, methods=['post'])
+    def test_connection(self, request, pk=None):
+        cfg = self.get_object()
+
+        try:
+            if cfg.mode == 'cli':
+                bin_path = (cfg.cli_bin_path or '/usr/local/hestia/bin').rstrip('/')
+                test_log = []
+
+                if not cfg.hestia_user:
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'cli',
+                            'message': 'Hiányzó Hestia user.',
+                            'details': 'A mailbox létrehozáshoz kötelező a Hestia user mező.',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if cfg.ssh_enabled and not cfg.ssh_host:
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'cli',
+                            'message': 'SSH módhoz kötelező a host mező.',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if cfg.ssh_enabled and not cfg.ssh_user:
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'cli',
+                            'message': 'SSH módhoz kötelező a user mező.',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                if cfg.ssh_enabled and cfg.ssh_private_key_path:
+                    key_path = os.path.abspath(os.path.expanduser(cfg.ssh_private_key_path))
+                    if not os.path.exists(key_path):
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'cli',
+                                'message': 'A beállított SSH private key fájl nem található.',
+                                'details': key_path,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                def run_cli_command(parts, timeout=35):
+                    cmd = list(parts)
+                    if cfg.cli_use_sudo:
+                        sudo_cmd = ['sudo', '-n']
+                        sudo_runner = (cfg.cli_sudo_runner or '').strip()
+                        if sudo_runner and sudo_runner != (cfg.ssh_user or '').strip():
+                            sudo_cmd.extend(['-u', sudo_runner])
+                        cmd = sudo_cmd + cmd
+
+                    if cfg.ssh_enabled:
+                        remote_cmd = ' '.join(shlex.quote(part) for part in cmd)
+                        ssh_cmd = [
+                            'ssh',
+                            '-p', str(cfg.ssh_port or 22),
+                            '-o', 'BatchMode=yes',
+                            '-o', 'ConnectTimeout=10',
+                            '-o', f"StrictHostKeyChecking={'yes' if cfg.ssh_strict_host_key else 'no'}",
+                        ]
+                        if not cfg.ssh_strict_host_key:
+                            ssh_cmd.extend(['-o', 'UserKnownHostsFile=/dev/null'])
+                        if cfg.ssh_private_key_path:
+                            ssh_cmd.extend(['-i', cfg.ssh_private_key_path])
+                        ssh_cmd.append(f"{cfg.ssh_user}@{cfg.ssh_host}")
+                        ssh_cmd.append(remote_cmd)
+                        cmd = ssh_cmd
+
+                    return subprocess.run(
+                        cmd,
+                        capture_output=True,
+                        text=True,
+                        timeout=timeout,
+                        check=False,
+                    )
+
+                def handle_cli_failure(result, generic_message):
+                    err = (result.stderr or result.stdout or '').strip()
+                    err_lower = err.lower()
+                    sudo_user = (cfg.ssh_user or 'ceze').strip() or 'ceze'
+                    sudoers_file = f"/etc/sudoers.d/{sudo_user}-hestia"
+                    sudoers_cmds = (
+                        f"sudo visudo -f {sudoers_file}\n"
+                        f"{sudo_user} ALL=(root) NOPASSWD: /usr/local/hestia/bin/v-list-sys-info, /usr/local/hestia/bin/v-list-mail-domain, /usr/local/hestia/bin/v-list-mail-accounts, /usr/local/hestia/bin/v-add-mail-account, /usr/local/hestia/bin/v-delete-mail-account\n"
+                        f"sudo chmod 440 {sudoers_file}\n"
+                        f"sudo -l -U {sudo_user}"
+                    )
+
+                    if cfg.ssh_enabled and (
+                        'host key verification failed' in err_lower
+                        or 'strict checking' in err_lower
+                        or 'no ed25519 host key is known' in err_lower
+                    ):
+                        known_hosts_cmd = f"ssh-keyscan -p {cfg.ssh_port or 22} -t ed25519 {cfg.ssh_host} >> ~/.ssh/known_hosts"
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'cli',
+                                'message': 'SSH host kulcs nincs megbízhatónak jelölve. Add hozzá a known_hosts fájlhoz, vagy kapcsold ki a StrictHostKeyChecking-et.',
+                                'details': err or f'Kilépési kód: {result.returncode}',
+                                'hint': known_hosts_cmd,
+                                'log': test_log,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    if cfg.ssh_enabled and 'permission denied' in err_lower:
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'cli',
+                                'message': 'SSH hitelesítés sikertelen. A távoli szerver nem fogadta el a megadott felhasználóhoz tartozó kulcsot/jelszót.',
+                                'details': err or f'Kilépési kód: {result.returncode}',
+                                'hint': f'Add hozzá a publikus kulcsot a távoli "{cfg.ssh_user}" user ~/.ssh/authorized_keys fájljához (vagy Hestia GUI-ban ennek a usernek), majd teszteld újra.',
+                                'log': test_log,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    if ('hestia.conf' in err_lower and 'permission denied' in err_lower) or ('/usr/local/hestia/log/error.log' in err_lower and 'permission denied' in err_lower):
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'cli',
+                                'message': 'Hestia jogosultsági hiba. A CLI user nem fér hozzá a Hestia fájlokhoz.',
+                                'details': err or f'Kilépési kód: {result.returncode}',
+                                'hint': f'Kapcsold be a CLI futtatás sudo-val opciót, és adj jelszó nélküli sudo jogot a Hestia parancsokra.\n\n{sudoers_cmds}',
+                                'log': test_log,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    if 'sudo' in err_lower and (
+                        'password is required' in err_lower
+                        or 'jelszó szükséges' in err_lower
+                        or 'not allowed to execute' in err_lower
+                    ):
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'cli',
+                                'message': 'A sudo jogosultság hiányzik vagy jelszót kér.',
+                                'details': err or f'Kilépési kód: {result.returncode}',
+                                'hint': sudoers_cmds,
+                                'log': test_log,
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
+
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'cli',
+                            'message': generic_message,
+                            'details': err or f'Kilépési kód: {result.returncode}',
+                            'log': test_log,
+                        },
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+                test_log.append('1) Hestia rendszerinformáció ellenőrzése (v-list-sys-info)')
+                sys_info_result = run_cli_command([f"{bin_path}/v-list-sys-info"])
+                if sys_info_result.returncode != 0:
+                    return handle_cli_failure(sys_info_result, 'Hestia CLI teszt sikertelen a rendszerinformáció ellenőrzésnél.')
+                test_log.append('✔ v-list-sys-info sikeres')
+
+                if cfg.default_domain:
+                    test_log.append(f'2) Domain ellenőrzés (v-list-mail-domain {cfg.hestia_user} {cfg.default_domain})')
+                    domain_result = run_cli_command([
+                        f"{bin_path}/v-list-mail-domain",
+                        cfg.hestia_user,
+                        cfg.default_domain,
+                        'json',
+                    ])
+                    if domain_result.returncode != 0:
+                        return handle_cli_failure(domain_result, 'Hestia domain ellenőrzés sikertelen.')
+                    test_log.append('✔ v-list-mail-domain sikeres')
+
+                    test_log.append(f'3) Mailbox lista ellenőrzés (v-list-mail-accounts {cfg.hestia_user} {cfg.default_domain})')
+                    accounts_result = run_cli_command([
+                        f"{bin_path}/v-list-mail-accounts",
+                        cfg.hestia_user,
+                        cfg.default_domain,
+                        'json',
+                    ])
+                    if accounts_result.returncode != 0:
+                        return handle_cli_failure(accounts_result, 'Hestia mailbox lista ellenőrzés sikertelen.')
+                    test_log.append('✔ v-list-mail-accounts sikeres')
+                else:
+                    test_log.append('2) Domain ellenőrzés kihagyva: nincs beállított default_domain')
+
+                return Response(
+                    {
+                        'success': True,
+                        'mode': 'cli',
+                        'message': 'Hestia CLI teljes előfeltétel teszt sikeres.',
+                        'details': '\n'.join(test_log),
+                        'log': test_log,
+                    }
+                )
+
+            if cfg.mode == 'rest':
+                if not cfg.rest_api_url or not cfg.rest_api_user or not cfg.rest_api_password:
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'rest',
+                            'message': 'Hiányzó REST API adatok.',
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+                test_log = []
+
+                def run_rest_cmd(cmd_name, arg1='', arg2='', arg3=''):
+                    resp = requests.post(
+                        cfg.rest_api_url,
+                        data={
+                            'user': cfg.rest_api_user,
+                            'password': cfg.rest_api_password,
+                            'returncode': 'yes',
+                            'cmd': cmd_name,
+                            'arg1': arg1,
+                            'arg2': arg2,
+                            'arg3': arg3,
+                        },
+                        timeout=25,
+                    )
+                    payload = (resp.text or '').strip()
+                    if resp.status_code >= 400 or payload not in ('0', 'OK', 'ok', ''):
+                        return False, payload or f'HTTP {resp.status_code}'
+                    return True, payload
+
+                test_log.append('1) Hestia rendszerinformáció ellenőrzése (v-list-sys-info)')
+                ok, payload = run_rest_cmd('v-list-sys-info')
+                if not ok:
+                    return Response(
+                        {
+                            'success': False,
+                            'mode': 'rest',
+                            'message': 'Hestia REST teszt sikertelen a rendszerinformáció ellenőrzésnél.',
+                            'details': payload,
+                            'log': test_log,
+                        },
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+                test_log.append('✔ v-list-sys-info sikeres')
+
+                if cfg.hestia_user and cfg.default_domain:
+                    test_log.append(f'2) Domain ellenőrzés (v-list-mail-domain {cfg.hestia_user} {cfg.default_domain})')
+                    ok, payload = run_rest_cmd('v-list-mail-domain', cfg.hestia_user, cfg.default_domain, 'json')
+                    if not ok:
+                        return Response(
+                            {
+                                'success': False,
+                                'mode': 'rest',
+                                'message': 'Hestia REST domain ellenőrzés sikertelen.',
+                                'details': payload,
+                                'log': test_log,
+                            },
+                            status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        )
+                    test_log.append('✔ v-list-mail-domain sikeres')
+                else:
+                    test_log.append('2) Domain ellenőrzés kihagyva: nincs beállított hestia_user vagy default_domain')
+
+                return Response(
+                    {
+                        'success': True,
+                        'mode': 'rest',
+                        'message': 'Hestia REST teljes előfeltétel teszt sikeres.',
+                        'details': '\n'.join(test_log),
+                        'log': test_log,
+                    }
+                )
+
+            return Response(
+                {
+                    'success': False,
+                    'message': 'Ismeretlen Hestia mód.',
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except FileNotFoundError:
+            return Response(
+                {
+                    'success': False,
+                    'message': f'Hestia CLI nem található: {(cfg.cli_bin_path or "/usr/local/hestia/bin").rstrip("/")}/v-list-sys-info',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        except requests.RequestException as exc:
+            return Response(
+                {
+                    'success': False,
+                    'message': f'Hestia REST kapcsolat hiba: {str(exc)}',
+                },
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        except subprocess.TimeoutExpired:
+            return Response(
+                {
+                    'success': False,
+                    'message': 'Hestia CLI timeout.',
+                    'details': 'SSH kapcsolat timeout. Ellenőrizd az SSH host/port elérhetőséget, a felhasználót és a kulcs jogosultságokat.',
+                },
+                status=status.HTTP_504_GATEWAY_TIMEOUT,
+            )
+        except Exception as exc:
+            logger.exception('Hestia test connection failed')
+            return Response(
+                {
+                    'success': False,
+                    'message': f'Váratlan hiba: {str(exc)}',
+                },
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
 class SignatureTemplateViewSet(viewsets.ModelViewSet):
     queryset = SignatureTemplate.objects.all()
     serializer_class = SignatureTemplateSerializer
@@ -1495,3 +2073,15 @@ class ActivityLogViewSet(viewsets.ReadOnlyModelViewSet):
         
         return queryset.select_related('user', 'content_type')
 
+
+User = get_user_model()
+
+
+class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    """Simple user list for dropdowns and selections"""
+    queryset = User.objects.filter(is_active=True)
+    serializer_class = UserSerializer
+    permission_classes = [AllowAny]
+    
+    def get_queryset(self):
+        return User.objects.filter(is_active=True).order_by('username')

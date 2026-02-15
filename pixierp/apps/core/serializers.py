@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db.models import Q
 from .models import (
-    Company, BankAccount, EmailServerConfig, EmailTemplate, 
+    Company, BankAccount, EmailServerConfig, HestiaConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
     BackupFile, UserPreference, Role, Permission, UserRole, Notification,
     ActivityLog
@@ -114,6 +114,12 @@ class CompanySerializer(serializers.ModelSerializer):
 class EmailServerConfigSerializer(serializers.ModelSerializer):
     class Meta:
         model = EmailServerConfig
+        fields = '__all__'
+
+
+class HestiaConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = HestiaConfig
         fields = '__all__'
 
 

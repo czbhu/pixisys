@@ -173,6 +173,47 @@ class EmailServerConfig(models.Model):
         return f"{self.name} <{self.from_email}>"
 
 
+class HestiaConfig(models.Model):
+    """Hestia integrációs beállítások (CLI/REST)."""
+    MODE_CHOICES = [
+        ('cli', 'CLI'),
+        ('rest', 'REST API'),
+    ]
+
+    name = models.CharField(max_length=100, default='Alapértelmezett')
+    is_active = models.BooleanField(default=True)
+
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default='cli')
+    default_domain = models.CharField(max_length=255, help_text='Az e-mail címek domain része (pl. pixisys.eu)')
+
+    hestia_user = models.CharField(max_length=255, help_text='Hestia user, amelyhez a domain tartozik')
+
+    cli_bin_path = models.CharField(max_length=255, default='/usr/local/hestia/bin')
+    cli_use_sudo = models.BooleanField(default=False)
+    cli_sudo_runner = models.CharField(max_length=255, blank=True, default='')
+    ssh_enabled = models.BooleanField(default=False)
+    ssh_host = models.CharField(max_length=255, blank=True, default='')
+    ssh_port = models.PositiveIntegerField(default=22)
+    ssh_user = models.CharField(max_length=255, blank=True, default='')
+    ssh_private_key_path = models.CharField(max_length=500, blank=True, default='')
+    ssh_strict_host_key = models.BooleanField(default=True)
+
+    rest_api_url = models.CharField(max_length=500, blank=True, default='')
+    rest_api_user = models.CharField(max_length=255, blank=True, default='')
+    rest_api_password = models.CharField(max_length=255, blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Hestia beállítás'
+        verbose_name_plural = 'Hestia beállítások'
+        ordering = ['-is_active', 'name']
+
+    def __str__(self):
+        return f"{self.name} ({self.default_domain})"
+
+
 class EmailTemplate(models.Model):
     """E-mail sablon (pl. ajánlat kiküldés)"""
     key = models.SlugField(max_length=100, unique=True)
@@ -373,6 +414,8 @@ class Permission(models.Model):
         ('finance.invoices', 'Pénzügy - Számlák'),
         ('finance.payments', 'Pénzügy - Kifizetések'),
         ('finance.expenses', 'Pénzügy - Kiadások'),
+        ('finance.cash_registers', 'Pénzügy - Kasszák'),
+        ('finance.cash_transactions', 'Pénzügy - Kassza tranzakciók'),
         
         # Warehouse
         ('warehouse.materials', 'Raktár - Anyagok'),

@@ -17,6 +17,11 @@ export const hrService = {
         return response.data;
     },
 
+    async patchDepartment(id: number, data: any) {
+        const response = await api.patch(`/hr/departments/${id}/`, data);
+        return response.data;
+    },
+
     async deleteDepartment(id: number) {
         const response = await api.delete(`/hr/departments/${id}/`);
         return response.data;
@@ -64,13 +69,20 @@ export const hrService = {
         return response.data;
     },
 
-    async deleteEmployee(id: number) {
-        const response = await api.delete(`/hr/employees/${id}/`);
+    async deleteEmployee(id: number, deleteMailbox: boolean = false) {
+        const response = await api.delete(`/hr/employees/${id}/`, {
+            params: { delete_mailbox: deleteMailbox ? '1' : '0' }
+        });
         return response.data;
     },
 
     async generatePassword(id: number) {
         const response = await api.post(`/hr/employees/${id}/generate_password/`);
+        return response.data;
+    },
+
+    async generateEmployeeEmailAccount(data: { first_name: string; last_name: string; domain?: string; department_ids?: number[]; employee_id?: number; create_account?: boolean }) {
+        const response = await api.post('/hr/employees/generate_email_account/', data);
         return response.data;
     },
 

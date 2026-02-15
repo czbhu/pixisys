@@ -25,8 +25,12 @@ import {
     EyeOutlined,
     UserOutlined,
     SearchOutlined,
-    ExclamationCircleOutlined
+    ExclamationCircleOutlined,
+    MenuOutlined
 } from '@ant-design/icons';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
 import { hrService } from '../../services/hrService';
 import { rolesService } from '../../services/rolesService';
 
@@ -37,6 +41,8 @@ interface Department {
     id: number;
     name: string;
     description?: string;
+    email_domain?: string;
+    sort_order?: number;
     managers?: number[];
     manager_names?: string[];
     roles?: number[];
@@ -62,6 +68,53 @@ interface Role {
     name: string;
 }
 
+interface RowContextProps {
+    setActivatorNodeRef?: (element: HTMLElement | null) => void;
+    listeners?: any;
+}
+
+const RowContext = React.createContext<RowContextProps>({});
+
+const DragHandle = () => {
+    const { setActivatorNodeRef, listeners } = React.useContext(RowContext);
+    return (
+        <Button
+            type="text"
+            size="small"
+            icon={<MenuOutlined style={{ cursor: 'grab', color: '#999' }} />}
+            ref={setActivatorNodeRef}
+            {...listeners}
+        />
+    );
+};
+
+const DraggableRow = ({ children, ...props }: any) => {
+    const {
+        attributes,
+        listeners,
+        setNodeRef,
+        setActivatorNodeRef,
+        transform,
+        transition,
+        isDragging,
+    } = useSortable({ id: props['data-row-key'] });
+
+    const style: React.CSSProperties = {
+        ...props.style,
+        transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }),
+        transition,
+        ...(isDragging ? { position: 'relative', zIndex: 9999, background: '#e6f7ff' } : {}),
+    };
+
+    return (
+        <RowContext.Provider value={{ setActivatorNodeRef, listeners }}>
+            <tr {...props} ref={setNodeRef} style={style} {...attributes}>
+                {children}
+            </tr>
+        </RowContext.Provider>
+    );
+};
+
 const Departments: React.FC = () => {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
@@ -75,7 +128,15 @@ const Departments: React.FC = () => {
     const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
     const [viewingDepartment, setViewingDepartment] = useState<Department | null>(null);
     const [departmentEmployees, setDepartmentEmployees] = useState<Employee[]>([]);
+    const [savingOrder, setSavingOrder] = useState(false);
     const [form] = Form.useForm();
+
+    const sensors = useSensors(
+        useSensor(PointerSensor),
+        useSensor(KeyboardSensor, {
+            coordinateGetter: sortableKeyboardCoordinates,
+        })
+    );
 
     useEffect(() => {
         loadData();
@@ -90,6 +151,7 @@ const Departments: React.FC = () => {
             const hay = [
                 dept.name || '',
                 dept.description || '',
+                dept.email_domain || '',
                 (dept.manager_names || []).join(' ') || ''
             ].join(' \u0001 ');
             return normalize(hay).includes(q);
@@ -156,6 +218,8 @@ const Departments: React.FC = () => {
         form.setFieldsValue({
             name: department.name,
             description: department.description || '',
+            email_domain: department.email_domain || '',
+            sort_order: department.sort_order !== undefined ? department.sort_order : 100,
             managers: department.managers || [],
             roles: department.roles || [],
             budget: department.budget !== undefined ? department.budget : 0,
@@ -210,13 +274,89 @@ const Departments: React.FC = () => {
         }
     };
 
+    const persistSortOrder = async (orderedDepartments: Department[]) => {
+        const updates = orderedDepartments.map((dept, index) => ({
+            id: dept.id,
+            sort_order: index + 1,
+        }));
+
+        setSavingOrder(true);
+        try {
+            await Promise.all(
+                updates.map((item) => hrService.patchDepartment(item.id, { sort_order: item.sort_order }))
+            );
+            const remapped = orderedDepartments.map((dept, index) => ({
+                ...dept,
+                sort_order: index + 1,
+            }));
+            setDepartments(remapped);
+            setFiltered(remapped);
+            message.success('Sorrend mentve.');
+        } catch (err) {
+            console.error('Error saving order:', err);
+            message.error('A sorrend mentése sikertelen.');
+            loadData();
+        } finally {
+            setSavingOrder(false);
+        }
+    };
+
+    const onDragEnd = (event: DragEndEvent) => {
+        if (query.trim()) {
+            message.warning('Drag rendezéshez töröld a keresést.');
+            return;
+        }
+
+        const { active, over } = event;
+        if (!over || active.id === over.id) {
+            return;
+        }
+
+        const oldIndex = departments.findIndex((dept) => dept.id === active.id);
+        const newIndex = departments.findIndex((dept) => dept.id === over.id);
+
+        if (oldIndex < 0 || newIndex < 0) {
+            return;
+        }
+
+        const newOrder = arrayMove(departments, oldIndex, newIndex);
+        const remapped = newOrder.map((dept, index) => ({
+            ...dept,
+            sort_order: index + 1,
+        }));
+        setDepartments(remapped);
+        setFiltered(remapped);
+        persistSortOrder(newOrder);
+    };
+
     const columns = [
+        {
+            title: '',
+            key: 'drag',
+            width: 48,
+            render: () => <DragHandle />,
+        },
         {
             title: 'Név',
             dataIndex: 'name',
             key: 'name',
             sorter: (a: Department, b: Department) => a.name.localeCompare(b.name),
             width: 200,
+        },
+        {
+            title: 'Sorrend',
+            dataIndex: 'sort_order',
+            key: 'sort_order',
+            render: (value: number) => value ?? 100,
+            sorter: (a: Department, b: Department) => (a.sort_order ?? 100) - (b.sort_order ?? 100),
+            width: 90,
+        },
+        {
+            title: 'Domain',
+            dataIndex: 'email_domain',
+            key: 'email_domain',
+            render: (value: string) => value || '-',
+            width: 180,
         },
         {
             title: 'Leírás',
@@ -356,7 +496,7 @@ const Departments: React.FC = () => {
                 )}
 
                 <Input
-                    placeholder="Keresés (név, leírás, vezető)..."
+                    placeholder="Keresés (név, domain, leírás, vezető)..."
                     prefix={<SearchOutlined />}
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -364,24 +504,34 @@ const Departments: React.FC = () => {
                     allowClear
                 />
 
-                <Table
-                    columns={columns}
-                    dataSource={filtered}
-                    rowKey="id"
-                    pagination={{
-                        pageSize: 10,
-                        showSizeChanger: true,
-                        pageSizeOptions: ['10', '20', '50'],
-                        showQuickJumper: true,
-                        showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} osztály`,
-                    }}
-                    scroll={{ x: 1000 }}
-                    size="small"
-                    onRow={(record) => ({
-                        onDoubleClick: () => showEditModal(record),
-                        style: { cursor: 'pointer' }
-                    })}
-                />
+                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+                    <SortableContext items={filtered.map((dept) => dept.id)} strategy={verticalListSortingStrategy}>
+                        <Table
+                            columns={columns}
+                            dataSource={filtered}
+                            rowKey="id"
+                            loading={savingOrder}
+                            pagination={{
+                                pageSize: 10,
+                                showSizeChanger: true,
+                                pageSizeOptions: ['10', '20', '50'],
+                                showQuickJumper: true,
+                                showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} osztály`,
+                            }}
+                            scroll={{ x: 1000 }}
+                            size="small"
+                            components={{
+                                body: {
+                                    row: DraggableRow,
+                                },
+                            }}
+                            onRow={(record) => ({
+                                onDoubleClick: () => showEditModal(record),
+                                style: { cursor: 'pointer' }
+                            })}
+                        />
+                    </SortableContext>
+                </DndContext>
             </Card>
 
             {/* Létrehozás/Szerkesztés Modal */}
@@ -414,6 +564,28 @@ const Departments: React.FC = () => {
                             placeholder="Osztály leírása, feladatai..."
                         />
                     </Form.Item>
+
+                    <Row gutter={12}>
+                        <Col span={12}>
+                            <Form.Item
+                                name="email_domain"
+                                label="E-mail domain"
+                                tooltip="Pl.: pixisys.eu"
+                            >
+                                <Input placeholder="pl. pixisys.eu" />
+                            </Form.Item>
+                        </Col>
+                        <Col span={12}>
+                            <Form.Item
+                                name="sort_order"
+                                label="Sorrend"
+                                tooltip="Kisebb szám = magasabb prioritás"
+                                initialValue={100}
+                            >
+                                <Input type="number" min={0} placeholder="100" />
+                            </Form.Item>
+                        </Col>
+                    </Row>
 
                     <Form.Item
                         name="managers"
@@ -517,6 +689,12 @@ const Departments: React.FC = () => {
                             </Descriptions.Item>
                             <Descriptions.Item label="Leírás">
                                 {viewingDepartment.description || '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="E-mail domain">
+                                {viewingDepartment.email_domain || '-'}
+                            </Descriptions.Item>
+                            <Descriptions.Item label="Sorrend">
+                                {viewingDepartment.sort_order ?? 100}
                             </Descriptions.Item>
                             <Descriptions.Item label="Vezető(k)">
                                 {viewingDepartment.manager_names && viewingDepartment.manager_names.length > 0 ? (

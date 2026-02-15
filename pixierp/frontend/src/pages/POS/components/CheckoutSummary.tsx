@@ -28,6 +28,7 @@ import {
   SyncOutlined
 } from '@ant-design/icons';
 import api from '../../../services/api';
+import { famApi, getFamSystemId } from '../../../services/famApi';
 import CustomerSelection from './CustomerSelection';
 
 const { Header, Content } = Layout;
@@ -339,6 +340,25 @@ const CheckoutSummary: React.FC<Props> = ({
       );
 
       if (paymentResponse.data.success) {
+        try {
+          await famApi.submitDocument(getFamSystemId(), {
+            documentType: transactionType === 'invoice' ? 'invoice' : 'receipt',
+            source: 'pos',
+            externalId: `POS-${transaction.id}`,
+            payload: {
+              transactionId: transaction.id,
+              transactionType,
+              totalGross: totals.totalGross,
+              paymentMethod,
+              customer: customerData,
+              items,
+            },
+          });
+        } catch (famError) {
+          console.warn('FAM queue submit failed:', famError);
+          message.warning('FAM beküldés sorba állítása sikertelen (fizetés rögzítve)');
+        }
+
         setPaymentStatus('success');
         setPaymentMessage(paymentResponse.data.message);
         message.success('Fizetés sikeres!');
