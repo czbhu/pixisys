@@ -16,36 +16,39 @@ interface InvoiceableOrder {
   contact_names: string;
   order_date: string;
   invoice_number: string | null;
-  quote_request: {
-    company?: {
-      id: number;
-      name: string;
-      tax_number: string;
-      city?: string;
-      postal_code?: string;
-      address?: string;
-    };
-    customer?: {
-      id: number;
-      name: string;
-      company?: string;
-      email?: string;
-      phone?: string;
-      address?: string;
-      tax_number?: string;
-    };
-  };
+  net_total: number;
+  company?: {
+    id: number;
+    name: string;
+    tax_number: string;
+    city?: string;
+    postal_code?: string;
+    address?: string;
+  } | null;
+  customer?: {
+    id: number;
+    name: string;
+    company?: string;
+    email?: string;
+    phone?: string;
+    address?: string;
+    tax_number?: string;
+  } | null;
   items: Array<{
     id: number;
     quantity: number;
+    unit?: string;
     net_unit_price: number;
     discount_percent: number;
     vat_rate: number;
-    quote_item?: {
-      product?: { name: string };
-      material?: { name: string };
-      service?: { name: string };
-    };
+    product_name?: string;
+    product_code?: string;
+    material_name?: string;
+    material_code?: string;
+    manufacturing_product_name?: string;
+    manufacturing_product_code?: string;
+    service_name?: string;
+    service_code?: string;
   }>;
 }
 
@@ -58,23 +61,19 @@ const Invoicing: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus>('to_invoice');
 
   const calculateNetTotal = (order: InvoiceableOrder): number => {
-    let total = 0;
-    order.items.forEach(item => {
-      const net = item.quantity * item.net_unit_price;
-      const discount = net * (item.discount_percent / 100);
-      total += net - discount;
-    });
-    return total;
+    return Number(order.net_total || 0);
   };
 
   useEffect(() => {
-    fetchOrders();
-  }, []);
+    fetchOrders(statusFilter);
+  }, [statusFilter]);
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (invoiceStatus: InvoiceStatus) => {
     try {
       setLoading(true);
-      const response = await api.get('/sales/customer-orders/invoiceable/');
+      const response = await api.get('/sales/customer-orders/invoiceable/', {
+        params: { invoice_status: invoiceStatus }
+      });
       setOrders(response.data);
     } catch (error: any) {
       message.error('Hiba a megrendelések betöltése során');
@@ -138,7 +137,7 @@ const Invoicing: React.FC = () => {
       // Group by company
       const groupedByCompany: { [key: string]: typeof selectedOrders } = {};
       selectedOrders.forEach(order => {
-        const companyName = order.quote_request?.company?.name || 'Magánszemély';
+        const companyName = order.company?.name || order.customer?.name || order.customer_name || 'Magánszemély';
         if (!groupedByCompany[companyName]) {
           groupedByCompany[companyName] = [];
         }
@@ -148,8 +147,8 @@ const Invoicing: React.FC = () => {
       // For each company, prepare invoice data and open PixInvoice in new tab
       for (const [companyName, companyOrders] of Object.entries(groupedByCompany)) {
         const firstOrder = companyOrders[0];
-        const company = firstOrder.quote_request?.company;
-        const customer = firstOrder.quote_request?.customer;
+        const company = firstOrder.company;
+        const customer = firstOrder.customer;
         
         // Prepare customer data - use company if available, otherwise customer, otherwise leave empty
         let customerData: any = {};
@@ -235,7 +234,7 @@ const Invoicing: React.FC = () => {
         { invoice_number: invoiceNumber }
       );
       message.success('Számla szám frissítve');
-      fetchOrders();
+      fetchOrders(statusFilter);
     } catch (error: any) {
       message.error('Hiba a számla szám frissítése során');
     }
@@ -329,14 +328,6 @@ const Invoicing: React.FC = () => {
     },
   ];
 
-  // Filter orders based on status
-  const filteredOrders = orders.filter(order => {
-    if (statusFilter === 'all') return true;
-    if (statusFilter === 'invoiced') return !!order.invoice_number;
-    if (statusFilter === 'to_invoice') return !order.invoice_number;
-    return true;
-  });
-
   return (
     <div style={{ padding: 24 }}>
       <Card
@@ -367,7 +358,7 @@ const Invoicing: React.FC = () => {
         }
       >
         <Table
-          dataSource={filteredOrders}
+          dataSource={orders}
           columns={columns}
           rowKey="id"
           loading={loading}

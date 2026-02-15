@@ -87,52 +87,47 @@ const RFQDetail: React.FC = () => {
     if (!id) return;
     setLoading(true);
     try {
-      const [rfqRes, projRes, compRes, currRes] = await Promise.all([
+      const [rfqRes, projRes, currRes] = await Promise.all([
         salesService.getQuoteRequest(Number(id)),
         manufacturingService.getProjects(),
-        crmService.getCompanies(),
         manufacturingService.getCurrencies(),
       ]);
       setRfq(rfqRes);
-      let allCompanies = (compRes as any).results ?? compRes;
-      // Filter for customers locally or use what we got
-      let filteredCompanies = (allCompanies as any[]).filter((c: any) => c.is_customer);
-      // Ensure the currently assigned company is in the list
-      if (rfqRes?.company?.id && !filteredCompanies.find((c: any) => c.id === rfqRes.company.id)) {
-        filteredCompanies.push(rfqRes.company);
+      // Do not block initial render with full companies list.
+      // Keep current company (if any) so selected label can render immediately.
+      if (rfqRes?.company?.id) {
+        setCompanies([rfqRes.company]);
+      } else {
+        setCompanies([]);
       }
-      setCompanies(filteredCompanies);
 
       setCurrencyList(currRes as any);
-      if (rfqRes?.company?.id) {
+      const assignedContacts = Array.isArray(rfqRes?.contacts) ? [...rfqRes.contacts] : [];
+      setContacts(assignedContacts);
+
+      // Hydrate full contacts list in background (do not block page open)
+      (async () => {
         try {
-          const cl = await crmService.getContactsByCompany(rfqRes.company.id);
-          const loadedContacts = ((cl as any).results ?? cl) || [];
-          // Ensure assigned contacts are in the list
-          if (rfqRes.contacts && rfqRes.contacts.length > 0) {
-            rfqRes.contacts.forEach((rc: any) => {
-              if (!loadedContacts.find((c: any) => c.id === rc.id)) {
-                loadedContacts.push(rc);
-              }
-            });
+          let baseContacts: any[] = [];
+          if (rfqRes?.company?.id) {
+            const cl = await crmService.getContactsByCompany(rfqRes.company.id);
+            baseContacts = ((cl as any).results ?? cl) || [];
+          } else if (assignedContacts.length > 0) {
+            const cl = await crmService.getPrivateContacts();
+            baseContacts = ((cl as any).results ?? cl) || [];
           }
-          setContacts(loadedContacts);
-        } catch {}
-      } else if (rfqRes?.contacts && rfqRes.contacts.length > 0) {
-        // Ha nincs cég, de vannak kapcsolattartók, akkor magánszemélyek
-        try {
-          const cl = await crmService.getPrivateContacts();
-          const loadedContacts = ((cl as any).results ?? cl) || [];
-          rfqRes.contacts.forEach((rc: any) => {
-            if (!loadedContacts.find((c: any) => c.id === rc.id)) {
-              loadedContacts.push(rc);
+
+          const merged = Array.isArray(baseContacts) ? [...baseContacts] : [];
+          assignedContacts.forEach((rc: any) => {
+            if (!merged.find((c: any) => c.id === rc.id)) {
+              merged.push(rc);
             }
           });
-          setContacts(loadedContacts);
-        } catch {}
-      } else {
-        setContacts([]);
-      }
+          setContacts(merged);
+        } catch {
+          // keep assigned contacts as fallback
+        }
+      })();
       try {
         const computedDemandTitle = (!rfqRes.title && (rfqRes.items || []).length === 0)
           ? `Ajánlat ${rfqRes.number || rfqRes.request_number}`
@@ -217,9 +212,18 @@ const RFQDetail: React.FC = () => {
       setIsCompanyModalVisible(false);
       companyForm.resetFields();
       // Reload companies
-      const compRes = await crmService.getCompanies();
+      const compRes = await crmService.getCompanies({ is_customer: true, compact: true });
       const companiesList = (compRes as any).results ?? compRes;
-      setCompanies(companiesList);
+      const merged = Array.isArray(companiesList) ? [...companiesList] : [];
+      if (!merged.find((c: any) => c.id === newCompany.id)) {
+        merged.unshift({
+          id: newCompany.id,
+          name: newCompany.name,
+          is_customer: true,
+          is_supplier: !!newCompany.is_supplier,
+        });
+      }
+      setCompanies(merged);
       
       // Set the newly created company as selected
       formBasic.setFieldsValue({ company_id: newCompany.id });
@@ -542,8 +546,18 @@ const RFQDetail: React.FC = () => {
                       placeholder="Válassz céget"
                       onFocus={async () => {
                         // Frissítjük a cégek listáját amikor rákattintanak
-                        const list = await crmService.getCompanies();
-                        setCompanies((list as any).results ?? list);
+                        const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                        const loaded = ((list as any).results ?? list) || [];
+                        const merged = Array.isArray(loaded) ? [...loaded] : [];
+                        if (rfq?.company?.id && !merged.find((c: any) => c.id === rfq.company.id)) {
+                          merged.unshift({
+                            id: rfq.company.id,
+                            name: rfq.company.name,
+                            is_customer: true,
+                            is_supplier: !!rfq.company.is_supplier,
+                          });
+                        }
+                        setCompanies(merged);
                       }}
                       onChange={async (val) => {
                         try {

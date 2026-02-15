@@ -31,6 +31,7 @@ import duration from 'dayjs/plugin/duration';
 import ClockPicker from '../../components/ClockPicker';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { useSearchParams } from 'react-router-dom';
 
 dayjs.locale('hu');
 dayjs.extend(customParseFormat);
@@ -82,6 +83,7 @@ interface AttendanceReportProps {
 
 const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false }) => {
     const { user } = useAuth();
+    const [searchParams] = useSearchParams();
     const [loading, setLoading] = useState(false);
     const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -143,8 +145,15 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
              }
         } else {
             fetchEmployees();
+            const employeeIdParam = searchParams.get('employee_id');
+            if (employeeIdParam) {
+                const parsed = Number(employeeIdParam);
+                if (!Number.isNaN(parsed)) {
+                    setSelectedEmployee(parsed);
+                }
+            }
         }
-    }, [isPersonal, user]);
+    }, [isPersonal, user, searchParams]);
 
     useEffect(() => {
         if (!isPersonal || (isPersonal && selectedEmployee)) {

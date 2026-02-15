@@ -67,17 +67,14 @@ const RFQs: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-    const [rfqRes, compRes, projRes] = await Promise.all([
+    const [rfqRes, projRes] = await Promise.all([
         salesService.getQuoteRequests(),
-        crmService.getCompanies(),
         manufacturingService.getProjects(),
       ]);
     const rfqRaw = (rfqRes.results ?? rfqRes) as any[];
     const rfqList = (rfqRaw || []);
-      const compList = ((compRes.results ?? compRes) as any[]).filter((c: any) => c.is_customer);
     setRfqs(rfqList);
     setFiltered(rfqList);
-      setCompanies(compList);
     setProjects(projRes as any);
     } catch (e) {
       console.error(e);
@@ -613,7 +610,7 @@ const RFQs: React.FC = () => {
     if (searchParams.get('create') === 'true' && !loading) {
        openCreate();
        // Clear params to avoid loop? Or keep them until closed?
-       // Ideally we should wait for rfqs/companies/projects to load first. 
+       // Ideally we should wait for rfqs/projects to load first. 
        // 'loading' flag handles that.
     }
   }, [searchParams, loading]); // Trigger when params change or loading finishes
@@ -1036,7 +1033,7 @@ const RFQs: React.FC = () => {
                       // Top 10 saját cég + többi
                       try {
                         const [list, topList] = await Promise.all([
-                          crmService.getCompanies(),
+                          crmService.getCompanies({ is_customer: true, compact: true }),
                           salesService.getTopCompanies().catch(() => [])
                         ]);
                         
@@ -1049,7 +1046,7 @@ const RFQs: React.FC = () => {
                         setCompanies([...top, ...rest]);
                       } catch (err) {
                         console.error(err);
-                        const list = await crmService.getCompanies();
+                        const list = await crmService.getCompanies({ is_customer: true, compact: true });
                         setCompanies(list.results ?? list);
                       }
                     }}

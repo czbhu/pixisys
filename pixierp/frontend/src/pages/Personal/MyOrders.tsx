@@ -38,8 +38,8 @@ const MyOrders: React.FC = () => {
 
     const columns = [
         { title: 'Rendelésszám', dataIndex: 'order_number' },
-        { title: 'Ügyfél', dataIndex: 'customer_name', render: (_: any, r: any) => r.quote_request?.customer?.name || r.quote_request?.company?.name || '-' },
-        { title: 'Cím', render: (_:any, r:any) => r.quote_request?.title || '-' },
+        { title: 'Ügyfél', dataIndex: 'customer_name', render: (v: any) => v || '-' },
+        { title: 'Cím', dataIndex: 'quote_request_title', render: (v: any) => v || '-' },
         { title: 'Státusz', dataIndex: 'status', render: (s:string) => <span>{statusMap[s] || s}</span> },
         { title: 'Műveletek', render: (_: any, r: any) => (
             <Space>

@@ -555,6 +555,288 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
         """Get deadline from quote_request"""
         return obj.quote_request.deadline if obj.quote_request else None
 
+
+class CustomerOrderListItemSerializer(serializers.ModelSerializer):
+    quote_item_id = serializers.IntegerField(source='quote_item.id', read_only=True)
+    product_name = serializers.CharField(source='quote_item.product.name', read_only=True)
+    product_code = serializers.CharField(source='quote_item.product.code', read_only=True)
+    material_name = serializers.CharField(source='quote_item.material.name', read_only=True)
+    material_code = serializers.CharField(source='quote_item.material.code', read_only=True)
+    manufacturing_product_name = serializers.CharField(source='quote_item.manufacturing_product.name', read_only=True)
+    manufacturing_product_code = serializers.CharField(source='quote_item.manufacturing_product.code', read_only=True)
+    service_name = serializers.CharField(source='quote_item.service.name', read_only=True)
+    service_code = serializers.CharField(source='quote_item.service.code', read_only=True)
+    product_description = serializers.SerializerMethodField()
+    internal_description = serializers.SerializerMethodField()
+    net_total = serializers.SerializerMethodField()
+    supplier_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerOrderItem
+        fields = [
+            'id', 'quote_item_id', 'quantity', 'unit', 'net_unit_price', 'vat_rate', 'discount_percent',
+            'description', 'status', 'product_name', 'product_code', 'material_name', 'material_code',
+            'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code',
+            'product_description', 'internal_description', 'net_total', 'supplier_name'
+        ]
+
+    def get_product_description(self, obj):
+        qi = getattr(obj, 'quote_item', None)
+        if not qi:
+            return ""
+        if getattr(qi, 'product', None):
+            return qi.product.description or ""
+        if getattr(qi, 'manufacturing_product', None):
+            return qi.manufacturing_product.description or ""
+        if getattr(qi, 'service', None):
+            return qi.service.description or ""
+        return ""
+
+    def get_internal_description(self, obj):
+        qi = getattr(obj, 'quote_item', None)
+        if qi and getattr(qi, 'manufacturing_product', None):
+            return qi.manufacturing_product.internal_description or ""
+        return ""
+
+    def get_net_total(self, obj):
+        try:
+            return float(obj.quantity * obj.net_unit_price)
+        except Exception:
+            return 0.0
+
+    def get_supplier_name(self, obj):
+        try:
+            qi = getattr(obj, 'quote_item', None)
+            if qi and getattr(qi, 'supplier_name', None):
+                return qi.supplier_name
+        except Exception:
+            pass
+        return None
+
+
+class CustomerOrderListSerializer(serializers.ModelSerializer):
+    quote_request_id = serializers.SerializerMethodField()
+    total_amount = serializers.SerializerMethodField()
+    total_net_amount = serializers.SerializerMethodField()
+    customer_name = serializers.SerializerMethodField()
+    quote_request_title = serializers.SerializerMethodField()
+    project_id = serializers.SerializerMethodField()
+    project_name = serializers.SerializerMethodField()
+    created_by_name = serializers.SerializerMethodField()
+    contact_names = serializers.SerializerMethodField()
+    contact_email = serializers.SerializerMethodField()
+    deadline = serializers.SerializerMethodField()
+    pending_approval = serializers.SerializerMethodField()
+    last_rejection = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerOrder
+        fields = [
+            'id', 'quote_request_id', 'quote_request_title', 'customer_name',
+            'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount', 'total_net_amount',
+            'project_id', 'project_name', 'created_by_name',
+            'contact_names', 'contact_email', 'deadline',
+            'confirmed_at', 'production_started_at', 'ready_at',
+            'delivery_started_at', 'delivered_at',
+            'notes', 'created_by', 'created_at', 'updated_at',
+            'invoice_number', 'pending_approval', 'last_rejection'
+        ]
+
+    def _iter_items(self, obj):
+        return obj.items.all()
+
+    def get_pending_approval(self, obj):
+        req = obj.approval_requests.filter(status='pending').first()
+        if req:
+            return {
+                'id': req.id,
+                'requested_status': req.requested_status,
+                'previous_status': req.previous_status,
+                'requester': req.requester.get_full_name() or req.requester.username
+            }
+        return None
+
+    def get_last_rejection(self, obj):
+        req = obj.approval_requests.order_by('-created_at').first()
+        if req and req.status == 'rejected':
+            return {'note': req.rejection_details, 'date': req.updated_at}
+        return None
+
+    def get_total_amount(self, obj):
+        total = 0
+        for item in self._iter_items(obj):
+            net = item.net_unit_price * item.quantity
+            discount = net * (item.discount_percent / 100)
+            net_discounted = net - discount
+            gross = net_discounted * (1 + item.vat_rate / 100)
+            total += gross
+        return round(total, 2)
+
+    def get_total_net_amount(self, obj):
+        total = 0
+        for item in self._iter_items(obj):
+            net = item.net_unit_price * item.quantity
+            discount = net * (item.discount_percent / 100)
+            total += (net - discount)
+        return round(total, 2)
+
+    def get_customer_name(self, obj):
+        if not obj.quote_request:
+            return ''
+        if obj.quote_request.company:
+            return obj.quote_request.company.name
+        if obj.quote_request.customer:
+            return obj.quote_request.customer.name
+        return ''
+
+    def get_quote_request_id(self, obj):
+        return obj.quote_request.id if obj.quote_request else None
+
+    def get_quote_request_title(self, obj):
+        return obj.quote_request.title if obj.quote_request else ''
+
+    def get_project_id(self, obj):
+        return obj.quote_request.project_id if obj.quote_request else None
+
+    def get_project_name(self, obj):
+        if obj.quote_request and obj.quote_request.project:
+            return obj.quote_request.project.name
+        return None
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        if obj.quote_request:
+            if obj.quote_request.created_by:
+                return obj.quote_request.created_by.get_full_name() or obj.quote_request.created_by.username
+            if obj.quote_request.requested_by:
+                return obj.quote_request.requested_by.get_full_name() or obj.quote_request.requested_by.username
+        return ''
+
+    def get_contact_names(self, obj):
+        if obj.quote_request:
+            try:
+                return ", ".join([c.name for c in obj.quote_request.contacts.all()])
+            except Exception:
+                return ''
+        return ''
+
+    def get_contact_email(self, obj):
+        if obj.quote_request:
+            try:
+                first_contact = obj.quote_request.contacts.first()
+                return first_contact.email if first_contact else ''
+            except Exception:
+                return ''
+        return ''
+
+    def get_deadline(self, obj):
+        return obj.quote_request.deadline if obj.quote_request else None
+
+
+class CustomerOrderListWithItemsSerializer(CustomerOrderListSerializer):
+    items = CustomerOrderListItemSerializer(many=True, read_only=True)
+
+    class Meta(CustomerOrderListSerializer.Meta):
+        fields = CustomerOrderListSerializer.Meta.fields + ['items']
+
+
+class InvoiceableOrderItemSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='quote_item.product.name', read_only=True)
+    product_code = serializers.CharField(source='quote_item.product.code', read_only=True)
+    material_name = serializers.CharField(source='quote_item.material.name', read_only=True)
+    material_code = serializers.CharField(source='quote_item.material.code', read_only=True)
+    manufacturing_product_name = serializers.CharField(source='quote_item.manufacturing_product.name', read_only=True)
+    manufacturing_product_code = serializers.CharField(source='quote_item.manufacturing_product.code', read_only=True)
+    service_name = serializers.CharField(source='quote_item.service.name', read_only=True)
+    service_code = serializers.CharField(source='quote_item.service.code', read_only=True)
+
+    class Meta:
+        model = CustomerOrderItem
+        fields = [
+            'id', 'quantity', 'unit', 'net_unit_price', 'discount_percent', 'vat_rate',
+            'product_name', 'product_code', 'material_name', 'material_code',
+            'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code'
+        ]
+
+
+class InvoiceableOrderSerializer(serializers.ModelSerializer):
+    customer_name = serializers.SerializerMethodField()
+    contact_names = serializers.SerializerMethodField()
+    company = serializers.SerializerMethodField()
+    customer = serializers.SerializerMethodField()
+    net_total = serializers.SerializerMethodField()
+    items = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerOrder
+        fields = [
+            'id', 'order_number', 'order_date', 'invoice_number',
+            'customer_name', 'contact_names', 'company', 'customer', 'net_total', 'items'
+        ]
+
+    def get_customer_name(self, obj):
+        qr = getattr(obj, 'quote_request', None)
+        if not qr:
+            return ''
+        if getattr(qr, 'company', None):
+            return qr.company.name or ''
+        if getattr(qr, 'customer', None):
+            return qr.customer.name or qr.customer.company or ''
+        return ''
+
+    def get_contact_names(self, obj):
+        qr = getattr(obj, 'quote_request', None)
+        if not qr:
+            return ''
+        try:
+            return ', '.join([c.name for c in qr.contacts.all()])
+        except Exception:
+            return ''
+
+    def get_company(self, obj):
+        qr = getattr(obj, 'quote_request', None)
+        comp = getattr(qr, 'company', None) if qr else None
+        if not comp:
+            return None
+        return {
+            'id': comp.id,
+            'name': comp.name,
+            'tax_number': comp.tax_number,
+            'city': comp.city,
+            'postal_code': comp.postal_code,
+            'address': comp.address,
+        }
+
+    def get_customer(self, obj):
+        qr = getattr(obj, 'quote_request', None)
+        cust = getattr(qr, 'customer', None) if qr else None
+        if not cust:
+            return None
+        return {
+            'id': cust.id,
+            'name': getattr(cust, 'name', ''),
+            'company': getattr(cust, 'company', ''),
+            'email': getattr(cust, 'email', ''),
+            'phone': getattr(cust, 'phone', ''),
+            'address': getattr(cust, 'address', ''),
+            'tax_number': getattr(cust, 'tax_number', ''),
+        }
+
+    def get_net_total(self, obj):
+        total = 0
+        for item in obj.items.all():
+            net = item.quantity * item.net_unit_price
+            discount = net * (item.discount_percent / 100)
+            total += (net - discount)
+        return round(total, 2)
+
+    def get_items(self, obj):
+        # Already invoiced orders don't need item payload on list page.
+        if obj.invoice_number:
+            return []
+        return InvoiceableOrderItemSerializer(obj.items.all(), many=True).data
+
 class QuoteRequestCostSerializer(serializers.ModelSerializer):
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     material_name = serializers.CharField(source='material.name', read_only=True)

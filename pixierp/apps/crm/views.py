@@ -86,8 +86,12 @@ class CompanyViewSet(viewsets.ViewSet):
             items = client.list_customers(company_id=company_id)
             items = _filter_by_query(items, request.query_params.get('q'))
 
+              is_supplier_filter = request.query_params.get('is_supplier') == 'true'
+              is_customer_filter = request.query_params.get('is_customer') == 'true'
+              compact_mode = request.query_params.get('compact') in ('1', 'true', 'True')
+
             # Handle Supplier filtering and Sync
-            if request.query_params.get('is_supplier') == 'true':
+              if is_supplier_filter:
                  # Filter strictly based on the source data
                  items = [i for i in items if i.get('is_supplier') is True]
                  
@@ -102,6 +106,20 @@ class CompanyViewSet(viewsets.ViewSet):
                          synced_items.append(item)
                  
                  items = synced_items
+
+            if is_customer_filter:
+                items = [i for i in items if i.get('is_customer') is True]
+
+            if compact_mode:
+                items = [
+                    {
+                        'id': item.get('id'),
+                        'name': item.get('name') or item.get('full_name') or '',
+                        'is_customer': bool(item.get('is_customer')),
+                        'is_supplier': bool(item.get('is_supplier')),
+                    }
+                    for item in items
+                ]
 
             return Response(items)
         except Exception as e:

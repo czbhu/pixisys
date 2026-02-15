@@ -114,7 +114,28 @@ interface CustomerOrder {
   const fetchOrders = async () => {
     setLoading(true);
     try {
-      const response = await api.get('/sales/customer-orders/');
+      const activeStatuses = Array.isArray(statusFilter) ? statusFilter : [];
+      const hasInvoiced = activeStatuses.includes('invoiced');
+      const nonInvoicedStatuses = activeStatuses.filter((s) => s !== 'invoiced');
+
+      let invoicedMode: 'exclude' | 'only' | 'include' | undefined;
+      if (activeStatuses.length > 0) {
+        if (hasInvoiced && nonInvoicedStatuses.length > 0) {
+          invoicedMode = 'include';
+        } else if (hasInvoiced) {
+          invoicedMode = 'only';
+        } else {
+          invoicedMode = 'exclude';
+        }
+      }
+
+      const response = await api.get('/sales/customer-orders/', {
+        params: {
+          include_items: isItemsView ? 'true' : undefined,
+          status: nonInvoicedStatuses.length > 0 ? nonInvoicedStatuses.join(',') : undefined,
+          invoiced: invoicedMode,
+        },
+      });
       const data = response.data.results || response.data;
       setOrders(Array.isArray(data) ? data : []);
     } catch (error) {
@@ -128,7 +149,7 @@ interface CustomerOrder {
 
   useEffect(() => {
     fetchOrders();
-  }, []);
+  }, [isItemsView, statusFilter]);
 
   const handleWorkflowStatusChange = async (orderId: number, newStatus: string, record?: CustomerOrder) => {
     const doUpdate = async (sendEmail: boolean = false) => {
@@ -711,7 +732,7 @@ interface CustomerOrder {
                 // record.quote_item.id if exists, else record.id might be CustomerOrderItem ID.
                 // The backend currently expects QuoteRequestItem.id 
                 // Let's rely on record.quote_item object if coming from CustomerOrderItemSerializer
-                const qriId = record.quote_item ? record.quote_item.id : record.id;
+                const qriId = record.quote_item_id || record.id;
                 
                 const response = await api.get(
                   `/sales/customer-orders/${record.originalOrder.id}/item_work_sheet/?item_id=${qriId}`,

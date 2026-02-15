@@ -39,6 +39,7 @@ import { getCountries } from '../../services/countryService';
 import { useSettings } from '../../contexts/SettingsContext';
 import HungarianDatePicker from '../../components/HungarianDatePicker';
 import AccessCredentialsModal from '../../components/AccessCredentialsModal';
+import { useNavigate } from 'react-router-dom';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -87,6 +88,7 @@ interface Employee {
 }
 
 const Employees: React.FC = () => {
+    const navigate = useNavigate();
     const { settings, updateSettings, getTablePageSize, setTablePageSize } = useSettings();
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [filtered, setFiltered] = useState<Employee[]>([]);
@@ -913,7 +915,7 @@ const Employees: React.FC = () => {
                     size="small"
                     loading={loading}
                     onRow={(record) => ({
-                        onDoubleClick: () => showModal(record),
+                        onDoubleClick: () => navigate(`/hr/attendance?employee_id=${record.id}`),
                         style: { cursor: 'pointer' }
                     })}
                 />

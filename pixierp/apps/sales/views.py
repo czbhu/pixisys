@@ -1,6 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from django.db import models
-from django.db.models import Q
+from django.db.models import Q, Prefetch
 from django.template import Template, Context
 import datetime
 from rest_framework.decorators import action, api_view, permission_classes
@@ -20,7 +20,9 @@ from .serializers import (
     CustomerSerializer, ProductSerializer, QuoteRequestSerializer, QuoteRequestItemSerializer,
     QuoteSerializer, QuoteItemSerializer, OrderSerializer, OrderItemSerializer,
     LeadSerializer, OpportunitySerializer, ForecastSerializer,
-    CustomerOrderSerializer, CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
+    CustomerOrderSerializer, CustomerOrderListSerializer, CustomerOrderListWithItemsSerializer,
+    InvoiceableOrderSerializer,
+    CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
     ChatThreadSerializer, ChatMessageSerializer,
     DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
     POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
@@ -80,7 +82,24 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         # Először alkalmazzuk az OwnDataFilterMixin szűrést
         queryset = super().get_queryset()
         # Majd szűrjük a törölt elemeket
-        return queryset.filter(is_deleted=False)
+        queryset = queryset.filter(is_deleted=False)
+        return queryset.select_related(
+            'customer', 'company', 'requested_by', 'created_by', 'project', 'currency', 'owner'
+        ).prefetch_related(
+            'contacts',
+            'assignees',
+            Prefetch(
+                'items',
+                queryset=QuoteRequestItem.objects.select_related(
+                    'product', 'material', 'manufacturing_product', 'service'
+                ).prefetch_related('attachments')
+            ),
+            Prefetch('attachments', queryset=QuoteRequestAttachment.objects.all()),
+            Prefetch(
+                'invitations',
+                queryset=QuoteRequestInvitation.objects.filter(status='pending').select_related('invitee')
+            ),
+        )
 
     def list(self, request, *args, **kwargs):
         """List árajánlatok, automatikusan frissítve az archív státuszt"""
@@ -2109,14 +2128,20 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerOrderSerializer
     permission_classes = [IsAuthenticated]
 
+    def get_serializer_class(self):
+        if self.action == 'list':
+            include_items = self.request.query_params.get('include_items') in ('1', 'true', 'True')
+            return CustomerOrderListWithItemsSerializer if include_items else CustomerOrderListSerializer
+        return CustomerOrderSerializer
+
     def get_queryset(self):
         qs = super().get_queryset()
-        
+
         # Status filtering (comma separated or multiple params)
         status_param = self.request.query_params.get('status')
+        statuses = []
         if status_param:
-            statuses = status_param.split(',')
-            qs = qs.filter(status__in=statuses)
+            statuses = [s for s in status_param.split(',') if s]
 
         # Filter for "My Orders" - invited and accepted
         if self.request.query_params.get('my_orders') == 'true':
@@ -2125,6 +2150,55 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                  Q(created_by=self.request.user) |
                  Q(quote_request__assignees=self.request.user)
             ).distinct()
+
+        # Invoice number filtering:
+        # - exclude: only orders without invoice number
+        # - only: only invoiced orders
+        # - include: invoiced orders + (non-invoiced filtered by statuses if statuses are provided)
+        invoiced_mode = self.request.query_params.get('invoiced')
+        invoice_missing_q = Q(invoice_number__isnull=True) | Q(invoice_number='')
+
+        if invoiced_mode == 'include' and statuses:
+            qs = qs.filter((~invoice_missing_q) | (invoice_missing_q & Q(status__in=statuses)))
+        else:
+            if statuses:
+                qs = qs.filter(status__in=statuses)
+
+            if invoiced_mode == 'exclude':
+                qs = qs.filter(invoice_missing_q)
+            elif invoiced_mode == 'only':
+                qs = qs.exclude(invoice_missing_q)
+
+        include_items = self.request.query_params.get('include_items') in ('1', 'true', 'True')
+        if include_items:
+            item_queryset = CustomerOrderItem.objects.select_related(
+                'quote_item',
+                'quote_item__product',
+                'quote_item__material',
+                'quote_item__manufacturing_product',
+                'quote_item__service',
+            )
+        else:
+            item_queryset = CustomerOrderItem.objects.only(
+                'id', 'customer_order_id', 'quantity', 'net_unit_price', 'vat_rate', 'discount_percent'
+            )
+
+        qs = qs.select_related(
+            'created_by',
+            'quote_request',
+            'quote_request__company',
+            'quote_request__customer',
+            'quote_request__project',
+            'quote_request__created_by',
+            'quote_request__requested_by',
+        ).prefetch_related(
+            'quote_request__contacts',
+            Prefetch('items', queryset=item_queryset),
+            Prefetch(
+                'approval_requests',
+                queryset=ApprovalRequest.objects.select_related('requester').order_by('-created_at')
+            ),
+        )
             
         return qs
     
@@ -3233,7 +3307,30 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
     def invoiceable(self, request):
         """Get orders ready for invoicing (ready, in_delivery, delivered status)"""
         orders = self.queryset.filter(status__in=['ready', 'in_delivery', 'delivered'])
-        serializer = self.get_serializer(orders, many=True)
+
+        invoice_status = request.query_params.get('invoice_status', 'all')
+        if invoice_status == 'to_invoice':
+            orders = orders.filter(invoice_number__isnull=True)
+        elif invoice_status == 'invoiced':
+            orders = orders.exclude(invoice_number__isnull=True).exclude(invoice_number='')
+
+        orders = orders.select_related(
+            'quote_request', 'quote_request__company', 'quote_request__customer'
+        ).prefetch_related(
+            'quote_request__contacts',
+            Prefetch(
+                'items',
+                queryset=CustomerOrderItem.objects.select_related(
+                    'quote_item',
+                    'quote_item__product',
+                    'quote_item__material',
+                    'quote_item__manufacturing_product',
+                    'quote_item__service',
+                )
+            )
+        ).order_by('-order_date', '-id')
+
+        serializer = InvoiceableOrderSerializer(orders, many=True)
         return Response(serializer.data)
     
     @action(detail=True, methods=['patch', 'post'], permission_classes=[permissions.AllowAny])
