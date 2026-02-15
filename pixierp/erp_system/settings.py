@@ -118,6 +118,8 @@ DATABASES = {
         'PASSWORD': config('DB_PASSWORD', default='pixierp2026'),
         'HOST': config('DB_HOST', default='localhost'),
         'PORT': config('DB_PORT', default='5432'),
+        'CONN_MAX_AGE': config('DB_CONN_MAX_AGE', default=300, cast=int),
+        'CONN_HEALTH_CHECKS': config('DB_CONN_HEALTH_CHECKS', default=True, cast=bool),
     }
 }
 
