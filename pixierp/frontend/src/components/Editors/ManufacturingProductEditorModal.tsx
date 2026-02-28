@@ -85,6 +85,32 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [dimensionsPerUnit, setDimensionsPerUnit] = useState(true);
   const [calculatedVolumes, setCalculatedVolumes] = useState({ unit: 0, total: 0 });
   const [isFixedQuantity, setIsFixedQuantity] = useState(false);
+    const [initialEditorSnapshot, setInitialEditorSnapshot] = useState('');
+
+    const normalizeForCompare = (value: any): any => {
+        if (value === null || value === undefined) return undefined;
+        if (typeof value === 'string') return value.trim();
+        if (Array.isArray(value)) return value.map(normalizeForCompare);
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+        if (typeof value === 'object') {
+            return Object.keys(value)
+                .sort()
+                .reduce((acc: any, key: string) => {
+                    const normalized = normalizeForCompare(value[key]);
+                    if (normalized !== undefined) acc[key] = normalized;
+                    return acc;
+                }, {} as any);
+        }
+        return value;
+    };
+
+    const getEditorSnapshot = () => JSON.stringify(normalizeForCompare({
+        form: form.getFieldsValue(true),
+        costItems,
+    }));
+
+    const hasEditorChanges = () => getEditorSnapshot() !== initialEditorSnapshot;
 
   useEffect(() => {
     if (open) {
@@ -155,6 +181,14 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       }
     }
   }, [open, customer, editingProduct]);
+
+    useEffect(() => {
+        if (!open) return;
+        const timer = setTimeout(() => {
+            setInitialEditorSnapshot(getEditorSnapshot());
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [open, editingProduct]);
 
   useEffect(() => {
     // Auto-generate code for calculator-created products once products are loaded
@@ -956,7 +990,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const totalProfit = totalSelling - totalCost;
 
   const handleInternalCancel = () => {
-    if (form.isFieldsTouched()) {
+        if (hasEditorChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,

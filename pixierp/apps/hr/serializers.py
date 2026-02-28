@@ -2,7 +2,7 @@ from rest_framework import serializers
 from django.contrib.auth import get_user_model
 from django.db.models import Max
 from django.core.cache import cache
-from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials, AttendanceKioskConfig
+from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, TimeLog, AccessLog, ProjectParticipation, AccessControlConfig, EmployeeAccessCredentials, AttendanceKioskConfig, TaskConfiguration, TaskExecution
 
 User = get_user_model()
 
@@ -309,6 +309,139 @@ class PayrollSerializer(serializers.ModelSerializer):
     
     def get_employee_name(self, obj):
         return obj.employee.user.get_full_name()
+
+
+class TaskConfigurationSerializer(serializers.ModelSerializer):
+    employee_ids = serializers.PrimaryKeyRelatedField(many=True, source='employees', queryset=Employee.objects.all(), required=False)
+    department_ids = serializers.PrimaryKeyRelatedField(many=True, source='departments', queryset=Department.objects.all(), required=False)
+    employee_names = serializers.SerializerMethodField()
+    department_names = serializers.SerializerMethodField()
+    schedule_summary = serializers.SerializerMethodField()
+    target_level_display = serializers.CharField(source='get_target_level_display', read_only=True)
+
+    class Meta:
+        model = TaskConfiguration
+        fields = [
+            'id', 'name', 'description',
+            'schedule_type', 'frequency_type', 'interval_minutes', 'required_count', 'days_of_week', 'due_day_of_month', 'due_month_of_year', 'flexibility_minutes', 'schedule_summary',
+            'target_level', 'target_level_display',
+            'employee_ids', 'department_ids', 'employee_names', 'department_names',
+            'qr_code', 'qr_required', 'kiosk_required',
+            'is_active', 'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_by', 'created_at', 'updated_at', 'employee_names', 'department_names', 'schedule_summary']
+
+    def get_employee_names(self, obj):
+        names = []
+        for employee in obj.employees.all():
+            names.append(employee.user.get_full_name() or employee.user.username)
+        return names
+
+    def get_department_names(self, obj):
+        return [department.name for department in obj.departments.all()]
+
+    def get_schedule_summary(self, obj):
+        parts = []
+
+        if obj.frequency_type == 'once':
+            parts.append('Egyszeri')
+        elif obj.frequency_type == 'login':
+            parts.append('Belépés után')
+        elif obj.frequency_type == 'daily':
+            parts.append('Napi')
+        elif obj.frequency_type == 'weekly':
+            if obj.days_of_week:
+                day_map = ['Hétfő', 'Kedd', 'Szerda', 'Csütörtök', 'Péntek', 'Szombat', 'Vasárnap']
+                labels = [day_map[d] for d in obj.days_of_week if isinstance(d, int) and 0 <= d <= 6]
+                parts.append('Heti: ' + ', '.join(labels) if labels else 'Heti')
+            else:
+                parts.append('Heti')
+        elif obj.frequency_type == 'monthly':
+            if obj.due_day_of_month:
+                parts.append(f"Havi: minden hónap {obj.due_day_of_month}. napjáig")
+            else:
+                parts.append('Havi')
+        elif obj.frequency_type == 'yearly':
+            if obj.due_month_of_year and obj.due_day_of_month:
+                parts.append(f"Éves: minden év {obj.due_month_of_year}. hó {obj.due_day_of_month}. napjáig")
+            else:
+                parts.append('Éves')
+
+        if obj.schedule_type in ('time', 'time_and_count') and obj.interval_minutes:
+            parts.append(f"{obj.interval_minutes} percenként")
+
+        if obj.schedule_type in ('count', 'time_and_count') and obj.required_count:
+            parts.append(f"{obj.required_count}x")
+
+        if obj.flexibility_minutes:
+            parts.append(f"±{obj.flexibility_minutes} perc rugalmasság")
+
+        return ' | '.join(parts) if parts else '-'
+
+    def create(self, validated_data):
+        employees = validated_data.pop('employees', [])
+        departments = validated_data.pop('departments', [])
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            validated_data['created_by'] = request.user
+
+        instance = TaskConfiguration.objects.create(**validated_data)
+        if employees:
+            instance.employees.set(employees)
+        if departments:
+            instance.departments.set(departments)
+        return instance
+
+    def update(self, instance, validated_data):
+        employees = validated_data.pop('employees', None)
+        departments = validated_data.pop('departments', None)
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+
+        if employees is not None:
+            instance.employees.set(employees)
+        if departments is not None:
+            instance.departments.set(departments)
+        return instance
+
+
+class TaskExecutionSerializer(serializers.ModelSerializer):
+    task_name = serializers.CharField(source='task_configuration.name', read_only=True)
+    started_by_name = serializers.SerializerMethodField()
+    completed_by_name = serializers.SerializerMethodField()
+    duration_minutes = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TaskExecution
+        fields = [
+            'id', 'task_configuration', 'task_name', 'employee',
+            'started_by', 'started_by_name', 'completed_by', 'completed_by_name',
+            'status', 'started_at', 'last_resumed_at', 'paused_at', 'completed_at',
+            'total_duration_seconds', 'duration_minutes',
+            'notes', 'period_key', 'qr_verified_code', 'kiosk_verified',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'started_by', 'completed_by', 'started_at', 'last_resumed_at', 'paused_at', 'completed_at',
+            'total_duration_seconds', 'period_key', 'qr_verified_code', 'kiosk_verified',
+            'created_at', 'updated_at'
+        ]
+
+    def get_started_by_name(self, obj):
+        if not obj.started_by:
+            return None
+        return obj.started_by.get_full_name() or obj.started_by.username
+
+    def get_completed_by_name(self, obj):
+        if not obj.completed_by:
+            return None
+        return obj.completed_by.get_full_name() or obj.completed_by.username
+
+    def get_duration_minutes(self, obj):
+        seconds = obj.get_total_duration_seconds()
+        return round(seconds / 60, 2)
 
 
 class TimeLogSerializer(serializers.ModelSerializer):

@@ -59,7 +59,7 @@ export default function EmailModal({
         setContacts([]);
       }
     }
-  }, [isOpen, defaultFrom, defaultTo, defaultCc, defaultBcc, defaultSubject, defaultBody, customerId]);
+  }, [isOpen, defaultFrom, defaultReplyTo, defaultTo, defaultCc, defaultBcc, defaultSubject, defaultBody, customerId]);
 
   if (!isOpen) return null;
 

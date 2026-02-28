@@ -37,6 +37,12 @@ RED='\033[0;31m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
+# PID files
+ERP_BACKEND_PIDFILE="/tmp/pixierp_backend.pid"
+INVOICE_BACKEND_PIDFILE="/tmp/pixinvoice_backend.pid"
+ERP_FRONTEND_PIDFILE="/tmp/pixierp_frontend.pid"
+INVOICE_FRONTEND_PIDFILE="/tmp/pixinvoice_frontend.pid"
+
 # Function to check if port is in use and kill the process
 kill_port() {
     local port=$1
@@ -48,17 +54,65 @@ kill_port() {
     fi
 }
 
+kill_by_pidfile() {
+    local pidfile=$1
+    local name=$2
+    if [ -f "$pidfile" ]; then
+        local pid
+        pid=$(cat "$pidfile" 2>/dev/null)
+        if [ ! -z "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo -e "${YELLOW}Stopping $name from PID file (PID: $pid)...${NC}"
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 1
+            if kill -0 "$pid" 2>/dev/null; then
+                echo -e "${RED}$name did not stop gracefully, force killing PID: $pid${NC}"
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$pidfile"
+    fi
+}
+
+kill_by_pattern() {
+    local pattern=$1
+    local name=$2
+    local pids
+    pids=$(pgrep -f "$pattern" 2>/dev/null || true)
+    if [ ! -z "$pids" ]; then
+        echo -e "${YELLOW}Stopping stale $name process(es) by pattern...${NC}"
+        echo "$pids" | xargs -r kill -TERM 2>/dev/null || true
+        sleep 1
+        pids=$(pgrep -f "$pattern" 2>/dev/null || true)
+        if [ ! -z "$pids" ]; then
+            echo -e "${RED}Force killing stale $name process(es)...${NC}"
+            echo "$pids" | xargs -r kill -9 2>/dev/null || true
+        fi
+    fi
+}
+
 if [ "$BUILD_ONLY" = "false" ]; then
     # Kill any existing processes on our ports
     echo "🧹 Cleaning up existing processes..."
-kill_port 8003  # ERP backend (Daphne)
-kill_port 4001  # Invoice backend
+    kill_by_pidfile "$ERP_BACKEND_PIDFILE" "ERP Backend"
+    kill_by_pidfile "$INVOICE_BACKEND_PIDFILE" "Invoice Backend"
+    kill_by_pidfile "$ERP_FRONTEND_PIDFILE" "ERP Frontend"
+    kill_by_pidfile "$INVOICE_FRONTEND_PIDFILE" "Invoice Frontend"
 
-# Only kill frontend ports in dev mode (production uses nginx)
-if [ "$PRODUCTION_MODE" != "true" ]; then
-    kill_port 3000  # ERP frontend (dev server)
-    kill_port 4000  # Invoice frontend (dev server)
-fi
+    kill_by_pattern "gunicorn erp_system\\.asgi:application --bind 0\\.0\\.0\\.0:${ERP_BACKEND_PORT}" "ERP Backend gunicorn"
+    kill_by_pattern "gunicorn invoice_system\\.wsgi:application --bind 0\\.0\\.0\\.0:${INV_BACKEND_PORT}" "Invoice Backend gunicorn"
+    kill_by_pattern "gunicorn .*erp_system\\.asgi:application" "ERP Backend gunicorn (broad match)"
+    kill_by_pattern "gunicorn .*invoice_system\\.wsgi:application" "Invoice Backend gunicorn (broad match)"
+    kill_by_pattern "daphne -b 0\\.0\\.0\\.0 -p ${ERP_BACKEND_PORT} erp_system\\.asgi:application" "ERP Backend daphne"
+    kill_by_pattern "manage.py runserver 0\\.0\\.0\\.0:${INV_BACKEND_PORT}" "Invoice Backend runserver"
+
+    kill_port ${ERP_BACKEND_PORT}  # ERP backend
+    kill_port ${INV_BACKEND_PORT}  # Invoice backend
+
+    # Only kill frontend ports in dev mode (production uses nginx)
+    if [ "$PRODUCTION_MODE" != "true" ]; then
+        kill_port ${ERP_FRONTEND_PORT}  # ERP frontend (dev server)
+        kill_port ${INV_FRONTEND_PORT}  # Invoice frontend (dev server)
+    fi
 
 # Start ERP Backend (Daphne)
 echo -e "${BLUE}📡 Starting ERP Backend (Daphne on port ${ERP_BACKEND_PORT})...${NC}"
@@ -82,6 +136,7 @@ else
     daphne -b 0.0.0.0 -p ${ERP_BACKEND_PORT} erp_system.asgi:application > /tmp/pixierp_backend.log 2>&1 &
 fi
 ERP_BACKEND_PID=$!
+echo "$ERP_BACKEND_PID" > "$ERP_BACKEND_PIDFILE"
 echo -e "${GREEN}✅ ERP Backend started (PID: $ERP_BACKEND_PID)${NC}"
 deactivate
 
@@ -108,6 +163,7 @@ else
     python manage.py runserver 0.0.0.0:${INV_BACKEND_PORT} > /tmp/pixinvoice_backend.log 2>&1 &
 fi
 INVOICE_BACKEND_PID=$!
+echo "$INVOICE_BACKEND_PID" > "$INVOICE_BACKEND_PIDFILE"
 echo -e "${GREEN}✅ Invoice Backend started (PID: $INVOICE_BACKEND_PID)${NC}"
 deactivate
 
@@ -192,6 +248,7 @@ else
     
     PORT=${ERP_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL=/api/v1 npm start > /tmp/pixierp_frontend.log 2>&1 &
     ERP_FRONTEND_PID=$!
+    echo "$ERP_FRONTEND_PID" > "$ERP_FRONTEND_PIDFILE"
     echo -e "${GREEN}✅ ERP Frontend started (PID: $ERP_FRONTEND_PID)${NC}"
     
     # Start Invoice Frontend
@@ -209,6 +266,7 @@ else
     
     PORT=${INV_FRONTEND_PORT} BROWSER=none DANGEROUSLY_DISABLE_HOST_CHECK=true REACT_APP_API_URL= npm start > /tmp/pixinvoice_frontend.log 2>&1 &
     INVOICE_FRONTEND_PID=$!
+    echo "$INVOICE_FRONTEND_PID" > "$INVOICE_FRONTEND_PIDFILE"
     echo -e "${GREEN}✅ Invoice Frontend started (PID: $INVOICE_FRONTEND_PID)${NC}"
 fi
 
@@ -248,6 +306,7 @@ cleanup() {
     echo ""
     echo -e "${RED}🛑 Stopping all services...${NC}"
     kill $ERP_BACKEND_PID $INVOICE_BACKEND_PID $ERP_FRONTEND_PID $INVOICE_FRONTEND_PID 2>/dev/null
+    rm -f "$ERP_BACKEND_PIDFILE" "$INVOICE_BACKEND_PIDFILE" "$ERP_FRONTEND_PIDFILE" "$INVOICE_FRONTEND_PIDFILE"
     kill_port ${ERP_BACKEND_PORT}
     kill_port ${INV_BACKEND_PORT}
     kill_port ${ERP_FRONTEND_PORT}

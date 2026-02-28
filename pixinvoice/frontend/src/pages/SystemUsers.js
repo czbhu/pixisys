@@ -4,19 +4,16 @@ import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { 
   Plus, 
-  Search, 
-  Filter, 
   Edit, 
   Trash2, 
   Users,
   ArrowLeft,
   Eye,
   EyeOff,
-  Key,
-  Building2
+  Key
 } from 'lucide-react';
 import styled from 'styled-components';
-import { systemUserAPI, companyAPI } from '../services/api';
+import { systemUserAPI } from '../services/api';
 
 const Container = styled.div`
   background: white;

@@ -44,9 +44,15 @@ interface Material {
   vat_rate: number;
   current_stock: number;
   discount_price?: number;
+  material_group?: number | null;
 }
 
-const POS: React.FC = () => {
+interface POSProps {
+  showAllCategories?: boolean;
+  allowedMaterialGroupIds?: number[];
+}
+
+const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGroupIds = [] }) => {
   const [showCheckout, setShowCheckout] = useState(false);
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
@@ -109,7 +115,7 @@ const POS: React.FC = () => {
 
   useEffect(() => {
     filterMaterials();
-  }, [searchText, materials]);
+  }, [searchText, materials, showAllCategories, allowedMaterialGroupIds]);
 
   useEffect(() => {
     const handleGlobalTyping = (event: KeyboardEvent) => {
@@ -214,13 +220,20 @@ const POS: React.FC = () => {
   };
 
   const filterMaterials = () => {
+    const categoryFiltered = showAllCategories
+      ? materials
+      : materials.filter((mat) => {
+          if (!allowedMaterialGroupIds.length) return false;
+          return !!mat.material_group && allowedMaterialGroupIds.includes(mat.material_group);
+        });
+
     if (!searchText) {
-      setFilteredMaterials(materials);
+      setFilteredMaterials(categoryFiltered);
       return;
     }
 
     const search = searchText.toLowerCase();
-    const filtered = materials.filter(mat =>
+    const filtered = categoryFiltered.filter(mat =>
       mat.code?.toLowerCase().includes(search) ||
       mat.name?.toLowerCase().includes(search) ||
       mat.description?.toLowerCase().includes(search)

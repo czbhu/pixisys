@@ -326,4 +326,35 @@ export const hrService = {
         const response = await api.patch(`/hr/attendance-reports/${id}/`, data);
         return response.data;
     },
+
+    // Personal Tasks
+    async getMyTasks() {
+        const response = await api.get('/hr/task-configurations/my-tasks/');
+        return response.data;
+    },
+
+    async requestKioskToken(taskId: number) {
+        const response = await api.post(`/hr/task-configurations/${taskId}/request-kiosk-token/`);
+        return response.data;
+    },
+
+    async startTaskExecution(taskId: number, data?: any) {
+        const response = await api.post(`/hr/task-configurations/${taskId}/start-execution/`, data || {});
+        return response.data;
+    },
+
+    async pauseTaskExecution(taskId: number, data?: any) {
+        const response = await api.post(`/hr/task-configurations/${taskId}/pause-execution/`, data || {});
+        return response.data;
+    },
+
+    async resumeTaskExecution(taskId: number, data?: any) {
+        const response = await api.post(`/hr/task-configurations/${taskId}/resume-execution/`, data || {});
+        return response.data;
+    },
+
+    async completeTaskExecution(taskId: number, data?: any) {
+        const response = await api.post(`/hr/task-configurations/${taskId}/complete-execution/`, data || {});
+        return response.data;
+    },
 };

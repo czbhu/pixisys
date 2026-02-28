@@ -29,7 +29,7 @@ const KioskPage: React.FC = () => {
     const [logoUrl, setLogoUrl] = useState<string | null>(null);
     const [wsStatus, setWsStatus] = useState<string>('nincs WS kapcsolat');
     const [requestUser, setRequestUser] = useState<string | null>(null);
-    const [requestMode, setRequestMode] = useState<'check_in' | 'check_out' | null>(null);
+    const [requestMode, setRequestMode] = useState<'check_in' | 'check_out' | 'challenge' | 'task_kiosk' | null>(null);
     const [successDuration, setSuccessDuration] = useState<number>(3); // seconds
 
     // Identify Mode
@@ -397,6 +397,15 @@ const KioskPage: React.FC = () => {
                     <>
                     {status === 'SHOW_QR' && (
                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                             {requestMode === 'task_kiosk' ? (
+                                <div style={{ marginBottom: 12, fontWeight: 'bold', fontSize: 28, textAlign: 'center', color: '#1890ff' }}>
+                                    Feladat jóváhagyás
+                                </div>
+                             ) : (
+                                <div style={{ marginBottom: 12, fontWeight: 'bold', fontSize: 24, textAlign: 'center', color: '#555' }}>
+                                    Jelenléti azonosítás
+                                </div>
+                             )}
                              {requestUser && (
                                  <div style={{ marginBottom: 24, fontWeight: 'bold', fontSize: 64, textAlign: 'center', lineHeight: 1.2 }}>
                                     {requestUser}

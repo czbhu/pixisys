@@ -5,8 +5,11 @@ from .models import (
     Company, BankAccount, EmailServerConfig, HestiaConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
     BackupFile, UserPreference, Role, Permission, UserRole, Notification,
-    ActivityLog
+    ActivityLog, TicketTopic, TicketType, Ticket, TicketMessage, TicketAttachment,
+    PublicSiteConfig, ClientPortalUser, ClientPortalSession, SiteFeature, SalesSite
 )
+from apps.manufacturing.models import ProductClass, CalculatorTemplate
+from apps.hr.models import Department
 
 User = get_user_model()
 
@@ -332,3 +335,236 @@ class ActivityLogSerializer(serializers.ModelSerializer):
     def get_timestamp_formatted(self, obj):
         """Format timestamp as Hungarian datetime string"""
         return obj.timestamp.strftime('%Y.%m.%d %H:%M:%S')
+
+
+class TicketAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    file_name = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TicketAttachment
+        fields = ['id', 'file', 'file_url', 'file_name', 'uploaded_by', 'uploaded_by_name', 'created_at']
+        read_only_fields = ['id', 'created_at']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if not obj.file:
+            return None
+        url = obj.file.url
+        return request.build_absolute_uri(url) if request else url
+
+    def get_file_name(self, obj):
+        return obj.file.name.split('/')[-1] if obj.file else ''
+
+    def get_uploaded_by_name(self, obj):
+        if obj.uploaded_by:
+            return obj.uploaded_by.get_full_name() or obj.uploaded_by.username
+        return ''
+
+
+class TicketMessageSerializer(serializers.ModelSerializer):
+    attachments = TicketAttachmentSerializer(many=True, read_only=True)
+    author_name_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TicketMessage
+        fields = [
+            'id', 'ticket', 'author', 'author_name', 'author_email', 'author_name_display',
+            'body_html', 'attachments', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+    def get_author_name_display(self, obj):
+        if obj.author:
+            return obj.author.get_full_name() or obj.author.username
+        return obj.author_name or 'Külsős'
+
+
+class TicketTopicSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketTopic
+        fields = '__all__'
+
+
+class TicketTypeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TicketType
+        fields = '__all__'
+
+
+class TicketSerializer(serializers.ModelSerializer):
+    departments = serializers.PrimaryKeyRelatedField(many=True, queryset=Department.objects.all(), required=False)
+    assigned_users = serializers.PrimaryKeyRelatedField(many=True, queryset=User.objects.filter(is_active=True), required=False)
+    topic_name = serializers.CharField(source='topic.name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    department_names = serializers.SerializerMethodField()
+    assigned_user_names = serializers.SerializerMethodField()
+    messages = TicketMessageSerializer(many=True, read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    ticket_type_display = serializers.SerializerMethodField()
+    audience_display = serializers.CharField(source='get_audience_display', read_only=True)
+    priority_display = serializers.CharField(source='get_priority_display', read_only=True)
+    is_first_response_overdue = serializers.SerializerMethodField()
+    is_resolution_overdue = serializers.SerializerMethodField()
+    can_manage_status = serializers.SerializerMethodField()
+    public_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Ticket
+        fields = [
+            'id', 'ticket_number', 'title', 'ticket_type', 'ticket_type_display',
+            'status', 'status_display', 'priority', 'priority_display',
+            'audience', 'audience_display', 'topic', 'topic_name',
+            'departments', 'department_names', 'assigned_users', 'assigned_user_names',
+            'requester_name', 'requester_email', 'public_reply_enabled', 'public_url',
+            'created_by', 'created_by_name',
+            'first_response_due_at', 'resolution_due_at', 'first_responded_at', 'resolved_at', 'closed_at',
+            'is_first_response_overdue', 'is_resolution_overdue', 'can_manage_status',
+            'created_at', 'updated_at', 'messages'
+        ]
+        read_only_fields = ['id', 'ticket_number', 'created_at', 'updated_at', 'created_by']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return ''
+
+    def get_department_names(self, obj):
+        return list(obj.departments.values_list('name', flat=True))
+
+    def get_assigned_user_names(self, obj):
+        names = []
+        for user in obj.assigned_users.all():
+            names.append(user.get_full_name() or user.username)
+        return names
+
+    def get_is_first_response_overdue(self, obj):
+        from django.utils import timezone
+        if obj.first_responded_at:
+            return False
+        if not obj.first_response_due_at:
+            return False
+        return timezone.now() > obj.first_response_due_at
+
+    def get_is_resolution_overdue(self, obj):
+        from django.utils import timezone
+        if obj.resolved_at:
+            return False
+        if not obj.resolution_due_at:
+            return False
+        return timezone.now() > obj.resolution_due_at
+
+    def get_can_manage_status(self, obj):
+        request = self.context.get('request')
+        user = getattr(request, 'user', None)
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or user.is_staff:
+            return True
+        if obj.created_by_id == user.id:
+            return True
+        return obj.assigned_users.filter(id=user.id).exists()
+
+    def get_ticket_type_display(self, obj):
+        ticket_type = TicketType.objects.filter(code=obj.ticket_type).first()
+        return ticket_type.name if ticket_type else obj.ticket_type
+
+    def get_public_url(self, obj):
+        request = self.context.get('request')
+        base_path = f"/public/ticket/{obj.public_token}"
+        cfg = PublicSiteConfig.objects.filter(is_active=True).first()
+        domain_base = ((cfg.public_domain if cfg and cfg.public_domain else '') or '').strip().rstrip('/')
+        if domain_base:
+            if not domain_base.startswith('http://') and not domain_base.startswith('https://'):
+                domain_base = f"https://{domain_base}"
+            return f"{domain_base}{base_path}"
+        if request:
+            return request.build_absolute_uri(base_path)
+        return base_path
+
+
+class PublicSiteConfigSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PublicSiteConfig
+        fields = '__all__'
+
+
+class ClientPortalUserSerializer(serializers.ModelSerializer):
+    company_name = serializers.CharField(source='company.name', read_only=True)
+    contact_name = serializers.CharField(source='contact.name', read_only=True)
+
+    class Meta:
+        model = ClientPortalUser
+        fields = [
+            'id', 'email', 'full_name', 'company', 'company_name', 'contact', 'contact_name',
+            'is_active', 'last_login', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'last_login', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        password = self.initial_data.get('password')
+        if not password:
+            raise serializers.ValidationError({'password': 'Kötelező mező'})
+        instance = ClientPortalUser(**validated_data)
+        instance.set_password(password)
+        instance.save()
+        return instance
+
+    def update(self, instance, validated_data):
+        password = self.initial_data.get('password')
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        if password:
+            instance.set_password(password)
+        instance.save()
+        return instance
+
+
+class ClientPortalSessionSerializer(serializers.ModelSerializer):
+    user = ClientPortalUserSerializer(read_only=True)
+
+    class Meta:
+        model = ClientPortalSession
+        fields = ['id', 'user', 'token', 'expires_at', 'revoked_at', 'created_at']
+
+
+class SiteFeatureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SiteFeature
+        fields = '__all__'
+
+
+class SalesSiteSerializer(serializers.ModelSerializer):
+    product_classes = serializers.PrimaryKeyRelatedField(many=True, queryset=ProductClass.objects.all(), required=False)
+    calculators = serializers.PrimaryKeyRelatedField(many=True, queryset=CalculatorTemplate.objects.all(), required=False)
+    features = serializers.PrimaryKeyRelatedField(many=True, queryset=SiteFeature.objects.all(), required=False)
+    product_class_names = serializers.SerializerMethodField()
+    calculator_names = serializers.SerializerMethodField()
+    feature_names = serializers.SerializerMethodField()
+    primary_domain = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SalesSite
+        fields = [
+            'id', 'name', 'slug', 'domains', 'primary_domain', 'site_type',
+            'site_title', 'hero_title', 'hero_subtitle', 'calculators_enabled',
+            'portal_enabled', 'is_active',
+            'product_classes', 'product_class_names',
+            'calculators', 'calculator_names',
+            'features', 'feature_names',
+            'created_at', 'updated_at'
+        ]
+
+    def get_product_class_names(self, obj):
+        return list(obj.product_classes.values_list('name', flat=True))
+
+    def get_calculator_names(self, obj):
+        return list(obj.calculators.values_list('name', flat=True))
+
+    def get_feature_names(self, obj):
+        return list(obj.features.values_list('name', flat=True))
+
+    def get_primary_domain(self, obj):
+        domains = obj.domains if isinstance(obj.domains, list) else []
+        return domains[0] if domains else ''

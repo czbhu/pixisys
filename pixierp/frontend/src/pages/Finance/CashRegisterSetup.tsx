@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import {
     Card, Table, Button, Modal, Form, Input, Select, message, Space, Popconfirm
 } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, MenuOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import { manufacturingService } from '../../services/manufacturingService';
@@ -36,6 +36,8 @@ interface CashRegister {
     initial_balance: number | string;
     current_balance: number | string;
     is_active: boolean;
+    is_pos_default?: boolean;
+    pos_name?: string | null;
     email_notify_on_deposit: boolean;
     email_notify_on_withdrawal: boolean;
     notify_user_ids: number[];
@@ -82,6 +84,8 @@ const CashRegisterSetup: React.FC = () => {
     const [employees, setEmployees] = useState<Employee[]>([]);
     const [modalVisible, setModalVisible] = useState(false);
     const [reasonModalVisible, setReasonModalVisible] = useState(false);
+    const [savingReasonOrder, setSavingReasonOrder] = useState(false);
+    const [draggedReasonId, setDraggedReasonId] = useState<number | null>(null);
     const [editingRegister, setEditingRegister] = useState<CashRegister | null>(null);
     const [editingReason, setEditingReason] = useState<TransactionReason | null>(null);
     const [form] = Form.useForm();
@@ -266,6 +270,50 @@ const CashRegisterSetup: React.FC = () => {
         }
     };
 
+    const persistReasonOrder = async (orderedReasons: TransactionReason[]) => {
+        setSavingReasonOrder(true);
+        try {
+            await Promise.all(
+                orderedReasons.map((reason, index) =>
+                    api.patch(`/finance/cash-transaction-reasons/${reason.id}/`, { order: index + 1 })
+                )
+            );
+            message.success('Műveleti okok sorrendje mentve');
+        } catch (error) {
+            message.error('Nem sikerült menteni a műveleti okok sorrendjét');
+            fetchReasons();
+        } finally {
+            setSavingReasonOrder(false);
+            setDraggedReasonId(null);
+        }
+    };
+
+    const handleReasonDrop = async (targetReasonId: number) => {
+        if (!draggedReasonId || draggedReasonId === targetReasonId) {
+            setDraggedReasonId(null);
+            return;
+        }
+
+        const fromIndex = reasons.findIndex((reason) => reason.id === draggedReasonId);
+        const toIndex = reasons.findIndex((reason) => reason.id === targetReasonId);
+        if (fromIndex < 0 || toIndex < 0) {
+            setDraggedReasonId(null);
+            return;
+        }
+
+        const reordered = [...reasons];
+        const [movedReason] = reordered.splice(fromIndex, 1);
+        reordered.splice(toIndex, 0, movedReason);
+
+        const normalized = reordered.map((reason, index) => ({
+            ...reason,
+            order: index + 1,
+        }));
+
+        setReasons(normalized);
+        await persistReasonOrder(normalized);
+    };
+
     const cashRegisterColumns: ColumnsType<CashRegister> = [
         {
             title: 'Kassza neve',
@@ -289,6 +337,11 @@ const CashRegisterSetup: React.FC = () => {
             title: 'Kassza devizaneme',
             dataIndex: 'currency_code',
             key: 'currency_code',
+        },
+        {
+            title: 'POS kassza',
+            key: 'pos_name',
+            render: (_: any, record: CashRegister) => record.pos_name || '-',
         },
         {
             title: 'Műveletek',
@@ -324,6 +377,12 @@ const CashRegisterSetup: React.FC = () => {
     ];
 
     const reasonColumns: ColumnsType<TransactionReason> = [
+        {
+            title: '',
+            key: 'drag',
+            width: 40,
+            render: () => <MenuOutlined style={{ color: '#999', cursor: 'grab' }} />,
+        },
         {
             title: 'Megnevezés',
             dataIndex: 'name',
@@ -397,16 +456,37 @@ const CashRegisterSetup: React.FC = () => {
             <Card
                 title="Művelet okok konfigurálása"
                 extra={
-                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddReason}>
-                        Új művelet ok
-                    </Button>
+                    <Space>
+                        <span style={{ color: '#666', fontSize: 12 }}>Fogd meg és húzd a sorokat a sorrendhez</span>
+                        <Button type="primary" icon={<PlusOutlined />} onClick={handleAddReason}>
+                            Új művelet ok
+                        </Button>
+                    </Space>
                 }
             >
                 <Table
                     columns={reasonColumns}
                     dataSource={reasons}
                     rowKey="id"
-                    pagination={{ pageSize: 10 }}
+                    loading={savingReasonOrder}
+                    pagination={false}
+                    onRow={(record) => ({
+                        draggable: true,
+                        onDragStart: () => setDraggedReasonId(record.id),
+                        onDragOver: (event) => {
+                            event.preventDefault();
+                            event.dataTransfer.dropEffect = 'move';
+                        },
+                        onDrop: (event) => {
+                            event.preventDefault();
+                            handleReasonDrop(record.id);
+                        },
+                        onDragEnd: () => setDraggedReasonId(null),
+                        style: {
+                            cursor: 'move',
+                            opacity: draggedReasonId === record.id ? 0.5 : 1,
+                        },
+                    })}
                 />
             </Card>
 

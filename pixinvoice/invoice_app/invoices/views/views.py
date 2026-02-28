@@ -1,4 +1,5 @@
 from django.http import HttpResponseForbidden
+from django.http import FileResponse
 from functools import wraps
 def require_api_key(view_func):
     """Require a valid API key via `X-Api-Key` and bind company automatically.
@@ -56,16 +57,17 @@ from django.shortcuts import get_object_or_404
 from django.db import models
 from django.db.models import Q, Sum, Max
 from django.utils import timezone
-from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile, Currency
+from django.core.exceptions import ValidationError
+from invoices.models import Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role, InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType, BankStatement, BankStatementItem, ProformaInvoice, AdvanceAllocation, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingInvoiceDigest, IncomingInvoiceData, APIAccessRule, APIClient, APIClientAccessRule, IncomingDocument, BackupConfiguration, BackupFile, Currency, EmailTemplate, EmailSignature, CashRegister, CashRegisterTransaction, ScheduledInvoice, ScheduledInvoiceRun, CronJobConfiguration
 from django.contrib.auth.hashers import make_password
 from invoices.serializers import (
     CustomerSerializer, InvoiceSerializer, InvoiceCreateSerializer,
     InvoiceItemSerializer, NAVConfigurationSerializer, ContactSerializer, ContactCreateSerializer,
     CompanySerializer, SystemUserSerializer, SystemUserCreateSerializer, RoleSerializer, InvoiceBlockSerializer, CompanyNAVConfigurationSerializer,
     CustomerBankAccountSerializer, CompanyBankAccountSerializer, VATTypeSerializer, BankStatementSerializer,
-    ProformaSerializer, ProformaCreateSerializer, CurrencySerializer
+    ProformaSerializer, ProformaCreateSerializer, CurrencySerializer, CashRegisterSerializer, CashRegisterTransactionSerializer
 )
-from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer
+from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer, EmailTemplateSerializer, EmailSignatureSerializer, CronJobConfigurationSerializer
 from invoices.nav_service import NAVService
 from invoices.mnb_api import MNBApiClient
 from invoices.supplier_auto_register import auto_register_or_update_supplier, get_supplier_bank_account_for_invoice
@@ -73,9 +75,10 @@ import logging
 import time
 import os
 import re
+import calendar
 import decimal
 from django.http import HttpResponse
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import xml.etree.ElementTree as ET
 import json
 from django.forms.models import model_to_dict
@@ -85,11 +88,13 @@ from django.db import transaction
 ROLE_MENU_OPTIONS = [
     {'key': 'dashboard', 'label': 'Dashboard'},
     {'key': 'invoices', 'label': 'Számlák'},
+    {'key': 'scheduled_invoices', 'label': 'Időzített számlák'},
     {'key': 'incoming_invoices', 'label': 'Bejövő számlák'},
     {'key': 'incoming_invoices_approve', 'label': 'Bejövő számlák jóváhagyás'},
     {'key': 'payment_batch_without_approval', 'label': 'Fizetési csomag jóváhagyás nélkül'},
     {'key': 'proformas', 'label': 'Díjbekérők'},
     {'key': 'bank_statements', 'label': 'Bank'},
+    {'key': 'arrears', 'label': 'Kintlévőség'},
     {'key': 'customers', 'label': 'Ügyfelek'},
     {'key': 'contacts', 'label': 'Kapcsolattartók'},
     {'key': 'reports', 'label': 'Jelentések'},
@@ -107,6 +112,141 @@ ROLE_MENU_OPTIONS = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+DEFAULT_EMAIL_TEMPLATE_MAP = {
+    EmailTemplate.TEMPLATE_INVOICE_SEND: {
+        'name': 'Számlaküldés',
+        'subject_template': 'Számla {invoice_number}',
+        'body_template': 'Tisztelt {customer_name}!\n\nKüldjük a(z) {invoice_number} számú számlát PDF csatolmányként.\n\nÜdvözlettel,\n{company_name}\n{signature_html}',
+    },
+    EmailTemplate.TEMPLATE_ARREARS: {
+        'name': 'Kintlévőségi',
+        'subject_template': 'Kintlévőség értesítő - lejárt számlák',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint {as_of_date} napjáig még nem egyenlítették ki az alábbi számlákat, amelynek hátraléka összesen {total_outstanding}.</p>{invoices_table}<p>Amennyiben az összeg az Önök nyilvántartásában szereplőtől eltér, kérem egyeztessenek velünk az elérhetőségeink egyikén.</p><p>Ha a számlák kiegyenlítése időközben már megtörtént, kérjük jelen levelünket tekintse tárgytalannak!</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_REMINDER_1: {
+        'name': '1. felszólítás',
+        'subject_template': '1. fizetési felszólítás - lejárt számlák',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Ezúton küldjük az 1. fizetési felszólítást a lejárt számlákról.</p>{invoices_table}<p>Kérjük a tartozás mielőbbi rendezését.</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_REMINDER_2: {
+        'name': '2. felszólítás',
+        'subject_template': '2. fizetési felszólítás - lejárt számlák',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Ez a 2. fizetési felszólítás a lejárt számlákra vonatkozóan.</p>{invoices_table}<p>Kérjük haladéktalanul rendezze tartozását.</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_LEGAL: {
+        'name': 'Ügyvédi',
+        'subject_template': 'Ügyvédi felszólítás előkészítése',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Tájékoztatjuk, hogy amennyiben a lejárt tartozások rendezése nem történik meg, ügyvédi úton érvényesítjük követelésünket.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_PAYMENT_ORDER: {
+        'name': 'Fizetési meghagyás',
+        'subject_template': 'Fizetési meghagyás előkészítése - lejárt számlák',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Tájékoztatjuk, hogy a lejárt követelések miatt fizetési meghagyásos eljárást indítunk.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_LITIGATION: {
+        'name': 'Peresítés',
+        'subject_template': 'Peres eljárás indítása - lejárt számlák',
+        'body_template': '<p>Tisztelt Ügyfél!</p><p>Tájékoztatjuk, hogy a követelés érvényesítését peres úton folytatjuk.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+}
+
+DEFAULT_EMAIL_TEMPLATE_MAP_EN = {
+    EmailTemplate.TEMPLATE_INVOICE_SEND: {
+        'name': 'Invoice Sending',
+        'subject_template': 'Invoice {invoice_number}',
+        'body_template': 'Dear {customer_name},<br><br>Please find attached invoice {invoice_number}.<br><br>Best regards,<br>{company_name}<br>{signature_html}',
+    },
+    EmailTemplate.TEMPLATE_ARREARS: {
+        'name': 'Arrears Notice',
+        'subject_template': 'Outstanding invoices notice',
+        'body_template': '<p>Dear Customer,</p><p>According to our records, as of {as_of_date} the following invoices remain unpaid, totaling {total_outstanding}.</p>{invoices_table}<p>If you have already settled these invoices, please disregard this message.</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_REMINDER_1: {
+        'name': '1st Reminder',
+        'subject_template': '1st payment reminder - overdue invoices',
+        'body_template': '<p>Dear Customer,</p><p>This is the 1st payment reminder regarding overdue invoices.</p>{invoices_table}<p>Please settle the outstanding amount as soon as possible.</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_REMINDER_2: {
+        'name': '2nd Reminder',
+        'subject_template': '2nd payment reminder - overdue invoices',
+        'body_template': '<p>Dear Customer,</p><p>This is the 2nd payment reminder regarding overdue invoices.</p>{invoices_table}<p>Please arrange payment immediately.</p><p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_LEGAL: {
+        'name': 'Legal Notice',
+        'subject_template': 'Preparation of legal notice - overdue invoices',
+        'body_template': '<p>Dear Customer,</p><p>Please note that if overdue balances are not settled, we will enforce our claim through legal channels.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_PAYMENT_ORDER: {
+        'name': 'Payment Order',
+        'subject_template': 'Preparation of payment order - overdue invoices',
+        'body_template': '<p>Dear Customer,</p><p>Please be informed that due to overdue receivables we will initiate a payment order procedure.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+    EmailTemplate.TEMPLATE_LITIGATION: {
+        'name': 'Litigation',
+        'subject_template': 'Initiation of litigation - overdue invoices',
+        'body_template': '<p>Dear Customer,</p><p>Please be informed that we will pursue legal action to enforce this claim.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>',
+    },
+}
+
+
+def get_default_signature_html(company):
+    sig = EmailSignature.objects.filter(company=company, is_active=True, is_default=True).first()
+    if not sig:
+        sig = EmailSignature.objects.filter(company=company, is_active=True).order_by('name').first()
+    return (getattr(sig, 'content_html', None) or '').strip()
+
+
+def get_company_email_template(company, template_type, language='hu'):
+    lang = (language or 'hu').lower()
+    tpl = EmailTemplate.objects.filter(
+        company=company,
+        template_type=template_type,
+        language=lang,
+        is_active=True
+    ).first()
+    if not tpl and lang != 'hu':
+        tpl = EmailTemplate.objects.filter(
+            company=company,
+            template_type=template_type,
+            language='hu',
+            is_active=True
+        ).first()
+
+    defaults_map = DEFAULT_EMAIL_TEMPLATE_MAP_EN if lang == 'en' else DEFAULT_EMAIL_TEMPLATE_MAP
+    defaults = defaults_map.get(template_type, {})
+
+    if template_type == EmailTemplate.TEMPLATE_INVOICE_SEND:
+        if tpl:
+            return {
+                'subject_template': (getattr(tpl, 'subject_template', None) or '').strip(),
+                'body_template': (getattr(tpl, 'body_template', None) or '').strip(),
+            }
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+        if ces:
+            if lang == 'en':
+                defaults = {
+                    **defaults,
+                    'subject_template': (getattr(ces, 'subject_template_en', None) or defaults.get('subject_template') or ''),
+                    'body_template': (getattr(ces, 'body_template_en', None) or defaults.get('body_template') or ''),
+                }
+            else:
+                defaults = {
+                    **defaults,
+                    'subject_template': (getattr(ces, 'default_subject_template', None) or defaults.get('subject_template') or ''),
+                    'body_template': (getattr(ces, 'default_body_template', None) or defaults.get('body_template') or ''),
+                }
+            return {
+                'subject_template': defaults.get('subject_template') or '',
+                'body_template': defaults.get('body_template') or '',
+            }
+
+    return {
+        'subject_template': (getattr(tpl, 'subject_template', None) if tpl else None) or defaults.get('subject_template') or '',
+        'body_template': (getattr(tpl, 'body_template', None) if tpl else None) or defaults.get('body_template') or '',
+    }
 
 
 def get_fuzzy_search_regex(search_term):
@@ -133,6 +273,34 @@ def get_fuzzy_search_regex(search_term):
         else:
             pattern.append(re.escape(char))
     return "".join(pattern)
+
+
+def _get_system_user_allowed_company_ids(request):
+    user = getattr(request, 'user', None)
+    if not user or not getattr(user, 'is_authenticated', False):
+        return []
+    email = (getattr(user, 'email', None) or '').strip()
+    if not email:
+        return []
+    try:
+        system_user = SystemUser.objects.filter(email__iexact=email, is_active=True).first()
+        if not system_user:
+            return []
+        return list(system_user.companies.filter(is_active=True).values_list('id', flat=True))
+    except Exception:
+        return []
+
+
+def _filter_customers_by_companies(queryset, company_ids):
+    ids = [cid for cid in (company_ids or []) if cid]
+    if not ids:
+        return queryset
+    return queryset.filter(
+        Q(invoice__company_id__in=ids) |
+        Q(proformas__company_id__in=ids) |
+        Q(scheduled_invoices__company_id__in=ids) |
+        Q(bank_statement_items__bank_statement__company_id__in=ids)
+    ).distinct()
 
 
 class CurrencyViewSet(viewsets.ModelViewSet):
@@ -177,6 +345,17 @@ class CustomerViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Customer.objects.all()
+        allowed_company_ids = _get_system_user_allowed_company_ids(self.request)
+        company_id = self.request.query_params.get('company_id')
+
+        if company_id:
+            # If user has company restrictions, company_id must be within allowed set.
+            if allowed_company_ids and str(company_id) not in {str(x) for x in allowed_company_ids}:
+                return Customer.objects.none()
+            queryset = _filter_customers_by_companies(queryset, [company_id])
+        elif allowed_company_ids:
+            queryset = _filter_customers_by_companies(queryset, allowed_company_ids)
+
         search = self.request.query_params.get('search', None)
         if search:
             search_regex = get_fuzzy_search_regex(search)
@@ -635,9 +814,10 @@ def _generate_pdf_bytes_v2(inv):
     amount_words = get_amount_words_hu(payable_amount, inv.currency or 'HUF')
 
     try:
+        bilingual = _resolve_invoice_bilingual(inv)
         ctx = { 
             'invoice': inv, 
-            'bilingual': (inv.currency or '').upper() != 'HUF',
+            'bilingual': bilingual,
             'block': inv.invoice_block,
             'vat_summary': vat_summary,
             'huf_totals': huf_totals,
@@ -654,6 +834,21 @@ def _generate_pdf_bytes_v2(inv):
     except Exception as e:
         print(f"WeasyPrint PDF generation error: {e}")
     return None
+
+
+def _resolve_invoice_bilingual(inv):
+    snapshot = getattr(inv, 'print_snapshot', None) or {}
+    if isinstance(snapshot, dict) and 'bilingual' in snapshot:
+        return bool(snapshot.get('bilingual'))
+
+    is_bilingual = (inv.currency or '').upper() != 'HUF'
+    try:
+        block = getattr(inv, 'invoice_block', None)
+        if block and getattr(block, 'second_language', None):
+            is_bilingual = True
+    except Exception:
+        pass
+    return is_bilingual
 
 def _send_bulk_email_thread(invoice_ids, subject, body, from_addr, to, cc, bcc, smtp_config, imap_config, sig_lines=None):
     from invoices.models import Invoice
@@ -825,13 +1020,682 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         return queryset
 
+    def _scheduled_bool(self, value, default=False):
+        if value is None:
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return bool(value)
+        return str(value).strip().lower() in ('1', 'true', 'igen', 'yes', 'on')
+
+    def _scheduled_frequency_label(self, schedule):
+        if schedule.schedule_mode == ScheduledInvoice.MODE_INTERVAL:
+            unit_map = {
+                ScheduledInvoice.INTERVAL_DAY: 'naponta',
+                ScheduledInvoice.INTERVAL_WEEK: 'hetente',
+                ScheduledInvoice.INTERVAL_MONTH: 'havonta',
+                ScheduledInvoice.INTERVAL_YEAR: 'évente',
+            }
+            val = max(int(schedule.interval_value or 1), 1)
+            if val == 1:
+                return f"Minden {unit_map.get(schedule.interval_unit, 'időszakban')}"
+            return f"{val} {unit_map.get(schedule.interval_unit, 'időszakonként')}"
+        if schedule.schedule_mode == ScheduledInvoice.MODE_WEEKDAY:
+            days = ['hétfő', 'kedd', 'szerda', 'csütörtök', 'péntek', 'szombat', 'vasárnap']
+            idx = int(schedule.weekday or 0)
+            idx = max(0, min(6, idx))
+            return f"Minden hét {days[idx]}"
+        if schedule.schedule_mode == ScheduledInvoice.MODE_MONTHDAY:
+            if schedule.month_last_day:
+                return 'Minden hónap utolsó napja'
+            return f"Minden hónap {int(schedule.month_day or 1)}. napja"
+        return 'Ismeretlen'
+
+    def _scheduled_add_months(self, base_date, months_to_add):
+        month_index = (base_date.month - 1) + months_to_add
+        year = base_date.year + (month_index // 12)
+        month = (month_index % 12) + 1
+        last_day = calendar.monthrange(year, month)[1]
+        day = min(base_date.day, last_day)
+        return date(year, month, day)
+
+    def _scheduled_next_issue_date(self, schedule, from_date):
+        if schedule.schedule_mode == ScheduledInvoice.MODE_INTERVAL:
+            value = max(int(schedule.interval_value or 1), 1)
+            if schedule.interval_unit == ScheduledInvoice.INTERVAL_DAY:
+                return from_date + timedelta(days=value)
+            if schedule.interval_unit == ScheduledInvoice.INTERVAL_WEEK:
+                return from_date + timedelta(weeks=value)
+            if schedule.interval_unit == ScheduledInvoice.INTERVAL_MONTH:
+                return self._scheduled_add_months(from_date, value)
+            if schedule.interval_unit == ScheduledInvoice.INTERVAL_YEAR:
+                return self._scheduled_add_months(from_date, 12 * value)
+            return from_date + timedelta(days=value)
+
+        if schedule.schedule_mode == ScheduledInvoice.MODE_WEEKDAY:
+            target = int(schedule.weekday or 0)
+            target = max(0, min(6, target))
+            current = from_date.weekday()
+            delta = (target - current) % 7
+            if delta == 0:
+                delta = 7
+            return from_date + timedelta(days=delta)
+
+        if schedule.schedule_mode == ScheduledInvoice.MODE_MONTHDAY:
+            next_month_base = self._scheduled_add_months(from_date.replace(day=1), 1)
+            year = next_month_base.year
+            month = next_month_base.month
+            last_day = calendar.monthrange(year, month)[1]
+            if schedule.month_last_day:
+                day = last_day
+            else:
+                day = max(1, min(int(schedule.month_day or 1), last_day))
+            return date(year, month, day)
+
+        return from_date + timedelta(days=30)
+
+    def _scheduled_amount_from_payload(self, payload):
+        total = decimal.Decimal('0')
+        for row in (payload or {}).get('items', []) or []:
+            try:
+                qty = decimal.Decimal(str(row.get('quantity') or 0))
+                unit = decimal.Decimal(str(row.get('unit_price') or 0))
+                vat = decimal.Decimal(str(row.get('vat_rate') or 0))
+                net = qty * unit
+                gross = net * (decimal.Decimal('1') + (vat / decimal.Decimal('100')))
+                total += gross
+            except Exception:
+                continue
+        return total
+
+    def _scheduled_resolve_note_template(self, schedule, issue_date, template_text):
+        base_text = str(template_text or '')
+        if not base_text:
+            return base_text
+
+        month_names_hu = [
+            'január', 'február', 'március', 'április', 'május', 'június',
+            'július', 'augusztus', 'szeptember', 'október', 'november', 'december'
+        ]
+        current_year_month = issue_date.strftime('%Y.%m')
+        next_month = self._scheduled_add_months(issue_date.replace(day=1), 1)
+        next_year_month = next_month.strftime('%Y.%m')
+        current_year = issue_date.strftime('%Y')
+        month_name = month_names_hu[issue_date.month - 1] if 1 <= issue_date.month <= 12 else ''
+        next_issue_date_str = issue_date.strftime('%Y.%m.%d')
+        current_month_last_day = calendar.monthrange(issue_date.year, issue_date.month)[1]
+        current_month_last_day_str = issue_date.replace(day=current_month_last_day).strftime('%Y.%m.%d')
+        next_month_last_day = calendar.monthrange(next_month.year, next_month.month)[1]
+        next_month_last_day_str = next_month.replace(day=next_month_last_day).strftime('%Y.%m.%d')
+        frequency = self._scheduled_frequency_label(schedule)
+
+        return (
+            base_text
+            .replace('{év_hónap}', current_year_month)
+            .replace('{év_hónap]', current_year_month)
+            .replace('{év_következő hónap}', next_year_month)
+            .replace('{év}', current_year)
+            .replace('{hónap_nev}', month_name)
+            .replace('{következő_keltezés}', next_issue_date_str)
+            .replace('{hónap_utolsó_napja}', current_month_last_day_str)
+            .replace('{hónap utolsó napja}', current_month_last_day_str)
+            .replace('{következő_hónap_utolsó_napja}', next_month_last_day_str)
+            .replace('{következő hónap utolsó napja}', next_month_last_day_str)
+            .replace('{gyakoriság}', frequency)
+        )
+
+    def _scheduled_delivery_date(self, schedule, issue_date, payload):
+        if not self._scheduled_bool(payload.get('use_delivery_date'), default=False):
+            return None
+
+        mode = str(payload.get('delivery_mode') or 'issue_offset').strip().lower()
+        if mode == 'next_month_day':
+            month_day = max(1, min(int(payload.get('delivery_month_day') or 1), 31))
+            next_month = self._scheduled_add_months(issue_date.replace(day=1), 1)
+            last_day = calendar.monthrange(next_month.year, next_month.month)[1]
+            return date(next_month.year, next_month.month, min(month_day, last_day))
+
+        if mode == 'next_year_day':
+            year_day = max(1, min(int(payload.get('delivery_year_day') or 1), 366))
+            next_year_start = date(issue_date.year + 1, 1, 1)
+            return next_year_start + timedelta(days=year_day - 1)
+
+        return issue_date + timedelta(days=int(schedule.delivery_offset_days or 0))
+
+    def _scheduled_resolve_recipients(self, schedule):
+        recipients = []
+        try:
+            if schedule.customer and schedule.customer.email:
+                recipients.append(schedule.customer.email.strip())
+        except Exception:
+            pass
+        try:
+            contact_qs = Contact.objects.filter(customer=schedule.customer, is_active=True).exclude(email__isnull=True).exclude(email='')
+            for email_val in contact_qs.values_list('email', flat=True):
+                if email_val:
+                    recipients.append(str(email_val).strip())
+        except Exception:
+            pass
+        for extra in (schedule.extra_emails or []):
+            if extra:
+                recipients.append(str(extra).strip())
+        uniq = []
+        seen = set()
+        for value in recipients:
+            key = value.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            uniq.append(value)
+        return uniq
+
+    def _scheduled_send_invoice_email(self, schedule, invoice):
+        if not schedule.auto_send_email:
+            return None
+
+        company = schedule.company
+        recipients = self._scheduled_resolve_recipients(schedule)
+        if not recipients:
+            return 'E-mail küldés kimaradt: nincs címzett.'
+
+        template_type = schedule.email_template_type or EmailTemplate.TEMPLATE_INVOICE_SEND
+        template = get_company_email_template(company, template_type)
+        default_signature_html = get_default_signature_html(company)
+
+        context = {
+            'invoice_number': invoice.invoice_number or '',
+            'customer_name': getattr(invoice.customer, 'name', '') or '',
+            'company_name': getattr(company, 'name', '') or '',
+            'signature_html': default_signature_html,
+        }
+
+        subject = str(template.get('subject_template') or 'Számla {invoice_number}')
+        body = str(template.get('body_template') or 'Tisztelt {customer_name}!')
+        for key, value in context.items():
+            subject = subject.replace('{' + key + '}', str(value if value is not None else ''))
+            body = body.replace('{' + key + '}', str(value if value is not None else ''))
+
+        ces = getattr(company, 'email_settings', None)
+        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
+        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
+        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+        use_tls = bool(ces.smtp_use_tls) if ces and ces.smtp_use_tls is not None else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+        if not host or not user or not pwd:
+            return 'E-mail küldés kimaradt: SMTP beállítások hiányoznak.'
+
+        imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
+        imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or user
+        imap_pwd = (ces.imap_password if ces and ces.imap_password else None) or os.environ.get('IMAP_PASSWORD') or pwd
+        imap_port = int((ces.imap_port if ces and getattr(ces, 'imap_port', None) else None) or os.environ.get('IMAP_PORT') or 993)
+        sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
+        from_addr = (ces.smtp_from if ces and ces.smtp_from else None) or os.environ.get('SMTP_FROM') or user
+
+        smtp_config = (host, port, user, pwd, use_tls)
+        imap_config = (imap_host, imap_user, imap_pwd, imap_port, sent_folder)
+
+        import threading
+        thread = threading.Thread(
+            target=_send_bulk_email_thread,
+            args=([str(invoice.id)], subject, body, from_addr, recipients, [], [], smtp_config, imap_config, [])
+        )
+        thread.start()
+        return None
+
+    def _scheduled_generate_invoice(self, request, schedule, issue_date):
+        payload = dict(schedule.template_payload or {})
+        payload['customer_id'] = str(schedule.customer_id)
+        payload['company_id'] = str(schedule.company_id)
+        if schedule.invoice_block_id:
+            payload['invoice_block_id'] = str(schedule.invoice_block_id)
+
+        payload['issue_date'] = issue_date.isoformat()
+        payload['due_date'] = (issue_date + timedelta(days=int(schedule.due_offset_days or 0))).isoformat()
+        delivery_date = self._scheduled_delivery_date(schedule, issue_date, payload)
+        payload['delivery_date'] = delivery_date.isoformat() if delivery_date else None
+        payload['notes'] = self._scheduled_resolve_note_template(schedule, issue_date, payload.get('notes'))
+
+        currency = str(payload.get('currency') or 'HUF').upper()
+        if currency != 'HUF':
+            try:
+                fx = MNBApiClient().get_exchange_rate_for_date(currency, payload['issue_date'])
+                if fx:
+                    payload['exchange_rate'] = float(fx)
+            except Exception:
+                pass
+        elif not payload.get('exchange_rate'):
+            payload['exchange_rate'] = 1
+
+        serializer = InvoiceCreateSerializer(data=payload, context={'request': request})
+        if not serializer.is_valid():
+            return None, serializer.errors
+
+        invoice = serializer.save()
+        try:
+            user = request.user if getattr(request.user, 'is_authenticated', False) else None
+            if user:
+                invoice.created_by = user
+                invoice.save(update_fields=['created_by', 'updated_at'])
+        except Exception:
+            pass
+        return invoice, None
+
+    def _scheduled_process_due(self, request, company):
+        today = timezone.localdate()
+        processed = 0
+        blocked = 0
+        failed = 0
+
+        schedules = ScheduledInvoice.objects.filter(
+            company=company,
+            is_active=True,
+            next_issue_date__isnull=False,
+            next_issue_date__lte=today,
+        ).select_related('customer', 'invoice_block', 'company').order_by('next_issue_date')
+
+        for schedule in schedules:
+            guard = 0
+            while schedule.next_issue_date and schedule.next_issue_date <= today and guard < 24:
+                guard += 1
+
+                if schedule.approval_required and not schedule.is_approved:
+                    schedule.last_error = 'Kiállítás sikertelen: nincs jóváhagyva.'
+                    schedule.save(update_fields=['last_error', 'updated_at'])
+                    blocked += 1
+                    break
+
+                issue_for = schedule.next_issue_date
+                invoice, error = self._scheduled_generate_invoice(request, schedule, issue_for)
+                if error:
+                    schedule.last_error = f'Kiállítás sikertelen: {error}'
+                    schedule.save(update_fields=['last_error', 'updated_at'])
+                    failed += 1
+                    break
+
+                ScheduledInvoiceRun.objects.create(
+                    scheduled_invoice=schedule,
+                    invoice=invoice,
+                    issued_for_date=issue_for,
+                )
+
+                schedule.last_issue_date = issue_for
+                schedule.last_generated_invoice = invoice
+                schedule.next_issue_date = self._scheduled_next_issue_date(schedule, issue_for)
+                schedule.last_error = None
+                if schedule.approval_required:
+                    schedule.is_approved = False
+                    schedule.approved_at = None
+                    schedule.approved_by = None
+                schedule.save(update_fields=[
+                    'last_issue_date',
+                    'last_generated_invoice',
+                    'next_issue_date',
+                    'last_error',
+                    'is_approved',
+                    'approved_at',
+                    'approved_by',
+                    'updated_at',
+                ])
+
+                email_error = self._scheduled_send_invoice_email(schedule, invoice)
+                if email_error:
+                    schedule.last_error = email_error
+                    schedule.save(update_fields=['last_error', 'updated_at'])
+
+                processed += 1
+
+        return {'processed': processed, 'blocked': blocked, 'failed': failed}
+
+    @action(detail=False, methods=['post'], url_path='scheduled-invoices/process')
+    def scheduled_invoices_process(self, request):
+        company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_404_NOT_FOUND)
+        result = self._scheduled_process_due(request, company)
+        return Response(result)
+
+    @action(detail=False, methods=['post'], url_path='scheduled-invoices/create')
+    def scheduled_invoices_create(self, request):
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        customer_id = data.get('customer_id')
+        start_issue_date = data.get('start_issue_date')
+        template_payload = data.get('template_payload') or {}
+
+        if not company_id or not customer_id or not start_issue_date:
+            return Response({'error': 'company_id, customer_id, start_issue_date kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+            customer = Customer.objects.get(id=customer_id)
+        except (Company.DoesNotExist, Customer.DoesNotExist):
+            return Response({'error': 'Cég vagy ügyfél nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        try:
+            start_date = datetime.strptime(str(start_issue_date), '%Y-%m-%d').date()
+        except Exception:
+            return Response({'error': 'Hibás start_issue_date formátum (YYYY-MM-DD)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_block = None
+        invoice_block_id = data.get('invoice_block_id')
+        if invoice_block_id:
+            try:
+                invoice_block = InvoiceBlock.objects.get(id=invoice_block_id)
+            except InvoiceBlock.DoesNotExist:
+                return Response({'error': 'Számlatömb nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        approval_required = self._scheduled_bool(data.get('approval_required'), default=False)
+        first_invoice = self._scheduled_bool(data.get('first_invoice'), default=False)
+
+        schedule = ScheduledInvoice.objects.create(
+            company=company,
+            customer=customer,
+            invoice_block=invoice_block,
+            schedule_mode=(data.get('schedule_mode') or ScheduledInvoice.MODE_INTERVAL),
+            interval_unit=(data.get('interval_unit') or ScheduledInvoice.INTERVAL_MONTH),
+            interval_value=max(int(data.get('interval_value') or 1), 1),
+            weekday=(int(data.get('weekday')) if str(data.get('weekday') or '').strip() != '' else None),
+            month_day=(int(data.get('month_day')) if str(data.get('month_day') or '').strip() != '' else None),
+            month_last_day=self._scheduled_bool(data.get('month_last_day'), default=False),
+            next_issue_date=start_date,
+            due_offset_days=int(data.get('due_offset_days') or 0),
+            delivery_offset_days=int(data.get('delivery_offset_days') or 0),
+            approval_required=approval_required,
+            is_approved=(not approval_required),
+            auto_send_email=self._scheduled_bool(data.get('auto_send_email'), default=False),
+            email_template_type=(data.get('email_template_type') or EmailTemplate.TEMPLATE_INVOICE_SEND),
+            extra_emails=data.get('extra_emails') or [],
+            template_payload=template_payload,
+            is_active=self._scheduled_bool(data.get('is_active'), default=True),
+            created_by=(request.user if getattr(request.user, 'is_authenticated', False) else None),
+        )
+
+        created_invoice_number = None
+        if first_invoice:
+            invoice, error = self._scheduled_generate_invoice(request, schedule, start_date)
+            if error:
+                schedule.last_error = f'Kezdő számla kiállítása sikertelen: {error}'
+                schedule.save(update_fields=['last_error', 'updated_at'])
+            else:
+                created_invoice_number = invoice.invoice_number
+                ScheduledInvoiceRun.objects.create(
+                    scheduled_invoice=schedule,
+                    invoice=invoice,
+                    issued_for_date=start_date,
+                )
+                schedule.last_issue_date = start_date
+                schedule.last_generated_invoice = invoice
+                schedule.next_issue_date = self._scheduled_next_issue_date(schedule, start_date)
+                schedule.last_error = None
+                if schedule.approval_required:
+                    schedule.is_approved = False
+                    schedule.approved_at = None
+                    schedule.approved_by = None
+                schedule.save(update_fields=[
+                    'last_issue_date',
+                    'last_generated_invoice',
+                    'next_issue_date',
+                    'last_error',
+                    'is_approved',
+                    'approved_at',
+                    'approved_by',
+                    'updated_at',
+                ])
+                email_error = self._scheduled_send_invoice_email(schedule, invoice)
+                if email_error:
+                    schedule.last_error = email_error
+                    schedule.save(update_fields=['last_error', 'updated_at'])
+
+        return Response({
+            'id': str(schedule.id),
+            'created_invoice_number': created_invoice_number,
+            'next_issue_date': str(schedule.next_issue_date),
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['get'], url_path='scheduled-invoices/list')
+    def scheduled_invoices_list(self, request):
+        company_id = request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        process_result = self._scheduled_process_due(request, company)
+
+        approval_filter = (request.query_params.get('approval_filter') or 'all').strip().lower()
+        active_filter = (request.query_params.get('active_filter') or 'active').strip().lower()
+        search = (request.query_params.get('search') or '').strip().lower()
+        sort_by = (request.query_params.get('sort_by') or 'next').strip().lower()
+        sort_dir = (request.query_params.get('sort_dir') or 'asc').strip().lower()
+
+        qs = ScheduledInvoice.objects.filter(company=company).select_related('customer', 'last_generated_invoice').order_by('created_at')
+        if active_filter == 'active':
+            qs = qs.filter(is_active=True)
+        elif active_filter == 'inactive':
+            qs = qs.filter(is_active=False)
+
+        rows = []
+        for schedule in qs:
+            if search and search not in (schedule.customer.name or '').lower():
+                continue
+
+            if approval_filter == 'automatic' and schedule.approval_required:
+                continue
+            if approval_filter == 'approved' and (not schedule.approval_required or not schedule.is_approved):
+                continue
+            if approval_filter == 'unapproved' and (not schedule.approval_required or schedule.is_approved):
+                continue
+
+            amount_gross = self._scheduled_amount_from_payload(schedule.template_payload)
+            currency = str((schedule.template_payload or {}).get('currency') or 'HUF').upper()
+
+            approval_value = 2 if not schedule.approval_required else (1 if schedule.is_approved else 0)
+            rows.append({
+                'id': str(schedule.id),
+                'customer_id': str(schedule.customer_id),
+                'customer_name': schedule.customer.name,
+                'frequency_label': self._scheduled_frequency_label(schedule),
+                'last_issue_date': str(schedule.last_issue_date) if schedule.last_issue_date else None,
+                'next_issue_date': str(schedule.next_issue_date) if schedule.next_issue_date else None,
+                'gross_amount': float(amount_gross),
+                'currency': currency,
+                'approval_required': schedule.approval_required,
+                'is_approved': schedule.is_approved,
+                'approval_label': ('Automatikus' if not schedule.approval_required else ('Jóváhagyva' if schedule.is_approved else 'Nincs jóváhagyva')),
+                'approval_sort_value': approval_value,
+                'is_active': schedule.is_active,
+                'last_error': schedule.last_error,
+                'last_generated_invoice_id': str(schedule.last_generated_invoice_id) if schedule.last_generated_invoice_id else None,
+                'last_generated_invoice_number': (schedule.last_generated_invoice.invoice_number if schedule.last_generated_invoice else None),
+            })
+
+        reverse = sort_dir == 'desc'
+        if sort_by == 'customer':
+            rows.sort(key=lambda r: (r['customer_name'] or '').lower(), reverse=reverse)
+        elif sort_by == 'last':
+            rows.sort(key=lambda r: (r['last_issue_date'] or ''), reverse=reverse)
+        elif sort_by == 'next':
+            rows.sort(key=lambda r: (r['next_issue_date'] or ''), reverse=reverse)
+        elif sort_by == 'amount':
+            rows.sort(key=lambda r: r['gross_amount'] or 0, reverse=reverse)
+        elif sort_by == 'approval':
+            rows.sort(key=lambda r: r['approval_sort_value'], reverse=reverse)
+
+        return Response({'results': rows, 'process': process_result})
+
+    @action(detail=False, methods=['post'], url_path='scheduled-invoices/approve')
+    def scheduled_invoices_approve(self, request):
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        schedule_ids = data.get('schedule_ids') or []
+        if not company_id or not isinstance(schedule_ids, list) or not schedule_ids:
+            return Response({'error': 'company_id és schedule_ids kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        qs = ScheduledInvoice.objects.filter(company_id=company_id, id__in=schedule_ids, approval_required=True)
+        now_ts = timezone.now()
+        user = request.user if getattr(request.user, 'is_authenticated', False) else None
+        updated = 0
+        for row in qs:
+            row.is_approved = True
+            row.approved_at = now_ts
+            row.approved_by = user
+            row.last_error = None
+            row.save(update_fields=['is_approved', 'approved_at', 'approved_by', 'last_error', 'updated_at'])
+            updated += 1
+        return Response({'approved': updated})
+
+    @action(detail=False, methods=['get'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/template')
+    def scheduled_invoices_template(self, request, schedule_id=None):
+        schedule = get_object_or_404(ScheduledInvoice, id=schedule_id)
+        payload = dict(schedule.template_payload or {})
+        payload['customer_id'] = str(schedule.customer_id)
+        payload['company_id'] = str(schedule.company_id)
+        if schedule.invoice_block_id:
+            payload['invoice_block_id'] = str(schedule.invoice_block_id)
+
+        return Response({
+            'id': str(schedule.id),
+            'template_payload': payload,
+            'schedule_mode': schedule.schedule_mode,
+            'interval_unit': schedule.interval_unit,
+            'interval_value': schedule.interval_value,
+            'weekday': schedule.weekday,
+            'month_day': schedule.month_day,
+            'month_last_day': schedule.month_last_day,
+            'next_issue_date': str(schedule.next_issue_date),
+            'due_offset_days': schedule.due_offset_days,
+            'delivery_offset_days': schedule.delivery_offset_days,
+            'approval_required': schedule.approval_required,
+            'is_approved': schedule.is_approved,
+            'auto_send_email': schedule.auto_send_email,
+            'email_template_type': schedule.email_template_type,
+            'extra_emails': schedule.extra_emails or [],
+            'is_active': schedule.is_active,
+        })
+
+    @action(detail=False, methods=['put'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/update')
+    def scheduled_invoices_update(self, request, schedule_id=None):
+        schedule = get_object_or_404(ScheduledInvoice, id=schedule_id)
+        data = request.data or {}
+
+        if str(data.get('company_id') or schedule.company_id) != str(schedule.company_id):
+            return Response({'error': 'A schedule másik céghez tartozik'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if data.get('customer_id'):
+            try:
+                schedule.customer = Customer.objects.get(id=data.get('customer_id'))
+            except Customer.DoesNotExist:
+                return Response({'error': 'Ügyfél nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        if 'invoice_block_id' in data:
+            invoice_block_id = data.get('invoice_block_id')
+            if invoice_block_id:
+                try:
+                    schedule.invoice_block = InvoiceBlock.objects.get(id=invoice_block_id)
+                except InvoiceBlock.DoesNotExist:
+                    return Response({'error': 'Számlatömb nem található'}, status=status.HTTP_404_NOT_FOUND)
+            else:
+                schedule.invoice_block = None
+
+        for field_name in ['schedule_mode', 'interval_unit', 'email_template_type']:
+            if field_name in data and data.get(field_name) is not None:
+                setattr(schedule, field_name, data.get(field_name))
+
+        if 'interval_value' in data:
+            schedule.interval_value = max(int(data.get('interval_value') or 1), 1)
+        if 'weekday' in data:
+            schedule.weekday = (int(data.get('weekday')) if str(data.get('weekday') or '').strip() != '' else None)
+        if 'month_day' in data:
+            schedule.month_day = (int(data.get('month_day')) if str(data.get('month_day') or '').strip() != '' else None)
+        if 'month_last_day' in data:
+            schedule.month_last_day = self._scheduled_bool(data.get('month_last_day'), default=False)
+        if 'next_issue_date' in data and data.get('next_issue_date'):
+            try:
+                schedule.next_issue_date = datetime.strptime(str(data.get('next_issue_date')), '%Y-%m-%d').date()
+            except Exception:
+                return Response({'error': 'Hibás next_issue_date formátum'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if 'due_offset_days' in data:
+            schedule.due_offset_days = int(data.get('due_offset_days') or 0)
+        if 'delivery_offset_days' in data:
+            schedule.delivery_offset_days = int(data.get('delivery_offset_days') or 0)
+        if 'approval_required' in data:
+            prev = schedule.approval_required
+            schedule.approval_required = self._scheduled_bool(data.get('approval_required'), default=False)
+            if schedule.approval_required and not prev:
+                schedule.is_approved = False
+                schedule.approved_at = None
+                schedule.approved_by = None
+            if not schedule.approval_required:
+                schedule.is_approved = True
+                schedule.approved_at = None
+                schedule.approved_by = None
+        if 'auto_send_email' in data:
+            schedule.auto_send_email = self._scheduled_bool(data.get('auto_send_email'), default=False)
+        if 'extra_emails' in data:
+            schedule.extra_emails = data.get('extra_emails') or []
+        if 'template_payload' in data and isinstance(data.get('template_payload'), dict):
+            schedule.template_payload = data.get('template_payload')
+        if 'is_active' in data:
+            schedule.is_active = self._scheduled_bool(data.get('is_active'), default=True)
+
+        schedule.save()
+        return Response({'success': True, 'id': str(schedule.id)})
+
+    @action(detail=False, methods=['delete'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/delete')
+    def scheduled_invoices_delete(self, request, schedule_id=None):
+        schedule = get_object_or_404(ScheduledInvoice, id=schedule_id)
+        schedule.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    @action(detail=False, methods=['post'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/toggle-active')
+    def scheduled_invoices_toggle_active(self, request, schedule_id=None):
+        schedule = get_object_or_404(ScheduledInvoice, id=schedule_id)
+        if 'is_active' in request.data:
+            schedule.is_active = self._scheduled_bool(request.data.get('is_active'), default=schedule.is_active)
+        else:
+            schedule.is_active = not schedule.is_active
+        schedule.save(update_fields=['is_active', 'updated_at'])
+        return Response({'id': str(schedule.id), 'is_active': schedule.is_active})
+
+    @action(detail=False, methods=['get'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/invoices')
+    def scheduled_invoices_invoices(self, request, schedule_id=None):
+        schedule = get_object_or_404(ScheduledInvoice, id=schedule_id)
+        rows = []
+        for run in schedule.runs.select_related('invoice').order_by('-created_at')[:200]:
+            inv = run.invoice
+            rows.append({
+                'run_id': str(run.id),
+                'invoice_id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'issue_date': str(inv.issue_date) if inv.issue_date else None,
+                'due_date': str(inv.due_date) if inv.due_date else None,
+                'status': inv.status,
+                'gross_amount': float(inv.total_gross_amount or 0),
+                'currency': inv.currency,
+                'created_at': str(run.created_at),
+            })
+        return Response({'results': rows})
+
     @action(detail=False, methods=['get'])
     def unpaid(self, request):
         """List invoices considered unpaid (status not 'paid' or 'cancelled').
         Only 'transfer' and 'cod' payment methods are considered.
         Excludes storno invoices and their originals.
         """
-        queryset = Invoice.objects.exclude(status='paid').exclude(status='cancelled').filter(payment_method__in=['transfer', 'cod'])
+        queryset = (
+            Invoice.objects
+            .exclude(status='paid')
+            .exclude(status='cancelled')
+            .filter(Q(payment_method__iexact='transfer') | Q(payment_method__iexact='cod'))
+        )
         # Exclude storno invoices (heuristics: notes contains 'sztornó' or 'storno')
         queryset = queryset.exclude(Q(notes__icontains='sztornó') | Q(notes__icontains='sztorno'))
         # Exclude originals of storno invoices by original_invoice_number or order_reference
@@ -842,7 +1706,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if exclude_set:
             queryset = queryset.exclude(invoice_number__in=exclude_set)
         search = request.query_params.get('search')
+        company_id = request.query_params.get('company_id') or request.query_params.get('company')
+        if company_id in (None, '', 'null', 'undefined'):
+            company_id = None
         customer_id = request.query_params.get('customer_id')
+        if company_id:
+            queryset = queryset.filter(company_id=company_id)
         if customer_id:
             queryset = queryset.filter(customer_id=customer_id)
         if search:
@@ -854,21 +1723,39 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
         if payment_method_filter and payment_method_filter != 'all':
             queryset = queryset.filter(payment_method__iexact=payment_method_filter.upper())
-        data = [
-            {
+        data = []
+        for inv in queryset.select_related('customer').order_by('-issue_date')[:500]:
+            gross = inv.total_gross_amount
+            paid = inv.amount_paid or 0
+            outstanding_val = float((gross - paid) if gross is not None else 0)
+            exc_rate = getattr(inv, 'exchange_rate', None)
+            inv_currency = (str(inv.currency or '') or 'HUF').strip().upper()
+            gross_huf = None
+            if gross is not None and exc_rate is not None and inv_currency != 'HUF':
+                try:
+                    import decimal as _dec
+                    _rate = _dec.Decimal(str(exc_rate))
+                    if _rate > _dec.Decimal('1.01'):
+                        gross_huf = float((_dec.Decimal(str(gross)) * _rate).quantize(_dec.Decimal('0.01')))
+                except Exception:
+                    pass
+            data.append({
                 'id': str(inv.id),
                 'invoice_number': inv.invoice_number,
+                'company_id': str(inv.company_id),
+                'company': str(inv.company_id),
                 'customer_id': str(inv.customer.id),
                 'customer_name': inv.customer.name,
-                'gross_amount': float(inv.total_gross_amount),
-                'amount_paid': float(inv.amount_paid or 0),
-                'outstanding': float((inv.total_gross_amount - (inv.amount_paid or 0)) if inv.total_gross_amount is not None else 0),
+                'currency': inv_currency,
+                'gross_amount': float(gross) if gross is not None else 0,
+                'gross_amount_huf': gross_huf,
+                'exchange_rate': float(exc_rate) if exc_rate is not None else None,
+                'amount_paid': float(paid),
+                'outstanding': outstanding_val,
                 'issue_date': str(inv.issue_date),
                 'due_date': str(inv.due_date),
                 'status': inv.status,
-            }
-            for inv in queryset.select_related('customer').order_by('-issue_date')[:200]
-        ]
+            })
         return Response({'results': data})
 
     @action(detail=False, methods=['get'])
@@ -1204,9 +2091,34 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         cc = data.get('cc') or []
         bcc = data.get('bcc') or []
         reply_to = data.get('reply_to') or None
-        subject = data.get('subject') or f"Számla {inv.invoice_number}"
+        requested_language = (data.get('language') or getattr(getattr(inv, 'invoice_block', None), 'language', None) or 'hu').lower()
+        template_language = 'en' if requested_language.startswith('en') else 'hu'
+        subject = data.get('subject') or ''
         body = data.get('body')
         body_from_request = bool(body)
+        if not subject or not body:
+            company = inv.company
+            default_signature_html = get_default_signature_html(company)
+            invoice_template = get_company_email_template(company, EmailTemplate.TEMPLATE_INVOICE_SEND, template_language)
+
+            def render_curly(tpl_str, ctx_dict):
+                out = str(tpl_str or '')
+                for key, value in (ctx_dict or {}).items():
+                    out = out.replace('{' + str(key) + '}', str(value if value is not None else ''))
+                return out
+
+            invoice_ctx = {
+                'invoice_number': inv.invoice_number or '',
+                'customer_name': getattr(inv.customer, 'name', '') or '',
+                'company_name': getattr(inv.company, 'name', '') or '',
+                'signature_html': default_signature_html,
+            }
+
+            if not subject:
+                subject = render_curly(invoice_template.get('subject_template') or '', invoice_ctx).strip()
+            if not body:
+                body = render_curly(invoice_template.get('body_template') or '', invoice_ctx).strip()
+
         if not body:
             try:
                 company = inv.company
@@ -1237,6 +2149,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 body = "\n".join(lines)
             except Exception:
                 body = "Küldjük a számlát PDF csatolmányként."
+        if not subject:
+            subject = f"Számla {inv.invoice_number}"
 
         if not to:
             try:
@@ -1652,12 +2566,14 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         
         amount_words = get_amount_words_hu(payable_amount, inv.currency or 'HUF')
 
+        bilingual = _resolve_invoice_bilingual(inv)
+
         pdf_buf = io.BytesIO()
         if HTML:
             try:
                 ctx = { 
                     'invoice': inv, 
-                    'bilingual': (inv.currency or '').upper() != 'HUF',
+                    'bilingual': bilingual,
                     'block': inv.invoice_block,
                     'vat_summary': vat_summary,
                     'huf_totals': huf_totals,
@@ -1727,7 +2643,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if HTML:
             html = render_to_string('invoices/print_invoice_v2.html', {
                 'invoice': inv,
-                'bilingual': (inv.currency or '').upper() != 'HUF',
+                'bilingual': _resolve_invoice_bilingual(inv),
             })
             HTML(string=html).write_pdf(target=pdf_buf)
         else:
@@ -1791,7 +2707,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if HTML:
                     html = render_to_string('invoices/print_invoice.html', {
                         'invoice': inv,
-                        'bilingual': (inv.currency or '').upper() != 'HUF',
+                        'bilingual': _resolve_invoice_bilingual(inv),
                     })
                     HTML(string=html).write_pdf(target=pdf_buf)
                 else:
@@ -1869,6 +2785,26 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                  return Template(tpl_str).render(Context(ctx_dict))
              except: return tpl_str
 
+        def render_curly(tpl_str, ctx_dict):
+            out = str(tpl_str or '')
+            for key, value in (ctx_dict or {}).items():
+                out = out.replace('{' + str(key) + '}', str(value if value is not None else ''))
+            return out
+
+        requested_language = (data.get('language') or getattr(getattr(invoices[0], 'invoice_block', None), 'language', None) or 'hu').lower()
+        template_language = 'en' if requested_language.startswith('en') else 'hu'
+        invoice_template = get_company_email_template(company, EmailTemplate.TEMPLATE_INVOICE_SEND, template_language)
+        default_signature_html = get_default_signature_html(company)
+        invoice_ctx = {
+            'invoice_number': invoices[0].invoice_number or '',
+            'customer_name': getattr(invoices[0].customer, 'name', '') or '',
+            'company_name': getattr(company, 'name', '') or '',
+            'signature_html': default_signature_html,
+        }
+
+        if not subject:
+            subject = render_curly(invoice_template.get('subject_template') or '', invoice_ctx).strip()
+
         if not body:
              try:
                 rows = []
@@ -1897,6 +2833,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
              except Exception:
                  body = None
         
+        if not body and invoice_template.get('body_template'):
+            body = render_curly(invoice_template.get('body_template'), invoice_ctx)
+
         if not body and ces and getattr(ces, 'default_body_template', None):
             body = fill(ces.default_body_template, {'invoice': invoices[0], 'customer': invoices[0].customer})
             
@@ -1979,6 +2918,572 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         t.start()
         
         return Response({'success': True, 'message': 'E-mail küldése folyamatban...'})
+
+    def _outgoing_payable_and_remaining(self, invoice):
+        gross = decimal.Decimal(str(invoice.total_gross_amount or 0))
+        paid = decimal.Decimal(str(invoice.amount_paid or 0))
+        currency = str(getattr(invoice, 'currency', '') or 'HUF').upper()
+        payment_method = str(getattr(invoice, 'payment_method', '') or '').lower()
+
+        payable = gross
+        if currency == 'HUF' and payment_method in ('cash', 'cod'):
+            payable = (gross / decimal.Decimal('5')).quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP) * decimal.Decimal('5')
+
+        remaining = payable - paid
+        if remaining < 0:
+            remaining = decimal.Decimal('0')
+
+        tolerance = decimal.Decimal('5.0') if currency == 'HUF' else decimal.Decimal('0.01')
+        is_settled = payable > 0 and remaining < tolerance
+        return payable, remaining, is_settled
+
+    def _arrears_status_label_map(self):
+        return {
+            Invoice.ARREARS_STATUS_OVERDUE: 'Lejárt',
+            Invoice.ARREARS_STATUS_NOTICE: 'Kintlévőségi értesítő kiküldése',
+            Invoice.ARREARS_STATUS_REMINDER_1: '1. Felszólítás',
+            Invoice.ARREARS_STATUS_REMINDER_2: '2. Felszólítás',
+            Invoice.ARREARS_STATUS_LEGAL: 'Ügyvédi levél',
+            Invoice.ARREARS_STATUS_PAYMENT_ORDER: 'Fizetési meghagyás',
+            Invoice.ARREARS_STATUS_LITIGATION: 'Peresítés',
+            Invoice.ARREARS_STATUS_WON: 'Pert nyert',
+            Invoice.ARREARS_STATUS_LOST: 'Pert vesztett',
+        }
+
+    def _arrears_next_status_map(self):
+        return {
+            Invoice.ARREARS_STATUS_OVERDUE: Invoice.ARREARS_STATUS_NOTICE,
+            Invoice.ARREARS_STATUS_NOTICE: Invoice.ARREARS_STATUS_REMINDER_1,
+            Invoice.ARREARS_STATUS_REMINDER_1: Invoice.ARREARS_STATUS_REMINDER_2,
+            Invoice.ARREARS_STATUS_REMINDER_2: Invoice.ARREARS_STATUS_LEGAL,
+            Invoice.ARREARS_STATUS_LEGAL: Invoice.ARREARS_STATUS_PAYMENT_ORDER,
+            Invoice.ARREARS_STATUS_PAYMENT_ORDER: Invoice.ARREARS_STATUS_LITIGATION,
+        }
+
+    def _arrears_template_for_target_status(self, target_status):
+        return {
+            Invoice.ARREARS_STATUS_NOTICE: EmailTemplate.TEMPLATE_ARREARS,
+            Invoice.ARREARS_STATUS_REMINDER_1: EmailTemplate.TEMPLATE_REMINDER_1,
+            Invoice.ARREARS_STATUS_REMINDER_2: EmailTemplate.TEMPLATE_REMINDER_2,
+            Invoice.ARREARS_STATUS_LEGAL: EmailTemplate.TEMPLATE_LEGAL,
+            Invoice.ARREARS_STATUS_PAYMENT_ORDER: EmailTemplate.TEMPLATE_PAYMENT_ORDER,
+            Invoice.ARREARS_STATUS_LITIGATION: EmailTemplate.TEMPLATE_LITIGATION,
+        }.get(target_status)
+
+    def _resolve_invoice_arrears_status(self, invoice):
+        return (invoice.arrears_status or Invoice.ARREARS_STATUS_OVERDUE)
+
+    def _collect_overdue_entries(self, company, invoice_ids=None):
+        today = timezone.localdate()
+        qs = Invoice.objects.filter(company=company).exclude(status='cancelled').select_related('customer')
+        if invoice_ids:
+            qs = qs.filter(id__in=invoice_ids)
+
+        status_labels = self._arrears_status_label_map()
+        next_map = self._arrears_next_status_map()
+        entries = []
+        for inv in qs:
+            if not inv.due_date or inv.due_date >= today:
+                continue
+            payable, remaining, is_settled = self._outgoing_payable_and_remaining(inv)
+            if is_settled:
+                continue
+            arrears_status = self._resolve_invoice_arrears_status(inv)
+            next_status = next_map.get(arrears_status)
+            if arrears_status == Invoice.ARREARS_STATUS_OVERDUE:
+                days_in_status = max((today - inv.due_date).days, 0)
+            elif inv.arrears_status_changed_at:
+                days_in_status = max((today - timezone.localtime(inv.arrears_status_changed_at).date()).days, 0)
+            else:
+                days_in_status = max((today - inv.due_date).days, 0)
+            entries.append({
+                'invoice': inv,
+                'payable': payable,
+                'remaining': remaining,
+                'days_overdue': (today - inv.due_date).days,
+                'arrears_status': arrears_status,
+                'arrears_status_label': status_labels.get(arrears_status, arrears_status),
+                'days_in_status': days_in_status,
+                'next_status': next_status,
+                'next_status_label': status_labels.get(next_status) if next_status else None,
+            })
+        return entries
+
+    def _set_arrears_status(self, invoices, new_status):
+        if not invoices:
+            return 0
+        now_ts = timezone.now()
+        changed = 0
+        for inv in invoices:
+            inv.arrears_status = new_status
+            inv.arrears_status_changed_at = now_ts
+            inv.save(update_fields=['arrears_status', 'arrears_status_changed_at', 'updated_at'])
+            changed += 1
+        return changed
+
+    def _send_arrears_emails_by_template(self, company, entries, template_type):
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
+
+        if not entries:
+            return {'sent': 0, 'skipped': 0, 'details': [], 'failed_customer_ids': []}
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+        host = (getattr(ces, 'smtp_host', None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST'))
+        port = int((getattr(ces, 'smtp_port', None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587))
+        user = (getattr(ces, 'smtp_user', None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER'))
+        pwd = (getattr(ces, 'smtp_password', None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD'))
+        use_tls = bool(getattr(ces, 'smtp_use_tls', True)) if ces else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+        from_addr = ((getattr(ces, 'smtp_from', None) if ces else None) or os.environ.get('SMTP_FROM') or user)
+        if not host or not user or not pwd or not from_addr:
+            raise ValueError('SMTP beállítások hiányoznak (host/user/password/from)')
+
+        grouped = {}
+        for item in entries:
+            inv = item['invoice']
+            cust = inv.customer
+            key = str(cust.id)
+            row = grouped.setdefault(key, {'customer': cust, 'items': []})
+            row['items'].append(item)
+
+        def fmt_money(amount, currency):
+            try:
+                d = decimal.Decimal(str(amount or 0))
+            except Exception:
+                d = decimal.Decimal('0')
+            if (currency or '').upper() == 'HUF':
+                return f"{int(d):,}".replace(',', ' ') + ' Ft'
+            return f"{d:.2f} {currency}"
+
+        def render_tpl(tpl, ctx):
+            out = str(tpl or '')
+            for k, v in ctx.items():
+                out = out.replace('{' + k + '}', str(v if v is not None else ''))
+            return out
+
+        today = timezone.localdate()
+        city = (getattr(company, 'city', None) or '').strip()
+        today_city_date = f"{city}, {today.strftime('%Y.%m.%d')}" if city else today.strftime('%Y.%m.%d')
+
+        tpl_data = get_company_email_template(company, template_type)
+        default_signature_html = get_default_signature_html(company)
+        subject_tpl = tpl_data.get('subject_template') or 'Kintlévőség értesítő - lejárt számlák'
+        body_tpl = tpl_data.get('body_template') or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint lejárt tartozásuk van.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>'
+
+        details = []
+        sent_count = 0
+        skipped_count = 0
+        sent_customer_ids = set()
+        failed_customer_ids = []
+        for row in grouped.values():
+            customer = row['customer']
+            items = row['items']
+            recipient = (getattr(customer, 'email', None) or '').strip()
+            if not recipient:
+                skipped_count += 1
+                details.append({'customer_id': str(customer.id), 'customer_name': customer.name, 'status': 'skipped', 'reason': 'Nincs ügyfél e-mail cím'})
+                continue
+
+            currency = (items[0]['invoice'].currency or 'HUF').upper()
+            total_outstanding = sum((it['remaining'] for it in items), decimal.Decimal('0'))
+            table_rows = []
+            for it in sorted(items, key=lambda x: (x['invoice'].due_date or timezone.localdate())):
+                inv = it['invoice']
+                table_rows.append(
+                    f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td>{inv.due_date or ''}</td><td style='text-align:right'>{fmt_money(it['remaining'], currency)}</td></tr>"
+                )
+            invoices_table = (
+                "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
+                "<thead><tr><th>Számla sorszám</th><th>Kelt</th><th>Esedékesség</th><th>Tartozás</th></tr></thead>"
+                f"<tbody>{''.join(table_rows)}</tbody></table>"
+            )
+
+            ctx = {
+                'customer_name': customer.name,
+                'company_name': company.name,
+                'as_of_date': today.isoformat(),
+                'today_date': today.strftime('%Y.%m.%d'),
+                'today_city_date': today_city_date,
+                'company_city': city,
+                'total_outstanding': fmt_money(total_outstanding, currency),
+                'invoice_count': len(items),
+                'currency': currency,
+                'invoices_table': invoices_table,
+                'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
+                'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
+                'signature_html': default_signature_html,
+            }
+            subject = render_tpl(subject_tpl, ctx)
+            body = render_tpl(body_tpl, ctx)
+
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            msg['From'] = from_addr
+            msg['To'] = recipient
+            if '<' in body and '>' in body:
+                msg.set_content('HTML levél')
+                msg.add_alternative(body, subtype='html')
+            else:
+                msg.set_content(body)
+            try:
+                if port == 465:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP_SSL(host, port, context=context) as server:
+                        server.login(user, pwd)
+                        server.send_message(msg)
+                elif use_tls:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP(host, port) as server:
+                        server.starttls(context=context)
+                        server.login(user, pwd)
+                        server.send_message(msg)
+                else:
+                    with smtplib.SMTP(host, port) as server:
+                        server.login(user, pwd)
+                        server.send_message(msg)
+                sent_count += 1
+                details.append({'customer_id': str(customer.id), 'customer_name': customer.name, 'to': recipient, 'status': 'sent', 'invoice_count': len(items)})
+            except Exception as e:
+                skipped_count += 1
+                failed_customer_ids.append(str(customer.id))
+                details.append({'customer_id': str(customer.id), 'customer_name': customer.name, 'to': recipient, 'status': 'failed', 'reason': str(e)})
+
+        return {
+            'sent': sent_count,
+            'skipped': skipped_count,
+            'details': details,
+            'failed_customer_ids': failed_customer_ids,
+        }
+
+    @action(detail=False, methods=['get'], url_path='arrears-list')
+    def arrears_list(self, request):
+        company = getattr(request, 'company', None)
+        company_id = request.query_params.get('company_id') or request.query_params.get('company')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        status_filter = (request.query_params.get('arrears_status') or '').strip()
+        invoice_ids_raw = request.query_params.get('invoice_ids') or ''
+        invoice_ids = [s.strip() for s in invoice_ids_raw.split(',') if s.strip()] if invoice_ids_raw else None
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_ids)
+        if status_filter:
+            entries = [e for e in entries if e.get('arrears_status') == status_filter]
+        entries.sort(key=lambda e: ((e['invoice'].due_date or timezone.localdate()), e['invoice'].invoice_number or ''))
+
+        items = []
+        for e in entries:
+            inv = e['invoice']
+            items.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'issue_date': str(inv.issue_date) if inv.issue_date else None,
+                'delivery_date': str(inv.delivery_date) if inv.delivery_date else None,
+                'due_date': str(inv.due_date) if inv.due_date else None,
+                'payment_method': inv.payment_method,
+                'status': inv.status,
+                'currency': (inv.currency or 'HUF').upper(),
+                'total_net_amount': float(inv.total_net_amount or 0),
+                'total_vat_amount': float(inv.total_vat_amount or 0),
+                'total_gross_amount': float(inv.total_gross_amount or 0),
+                'remaining_amount': float(e['remaining']),
+                'days_overdue': e['days_overdue'],
+                'customer': {
+                    'id': str(inv.customer.id),
+                    'name': inv.customer.name,
+                    'email': inv.customer.email or '',
+                },
+                'arrears_status': e['arrears_status'],
+                'arrears_status_label': e['arrears_status_label'],
+                'days_in_status': e['days_in_status'],
+                'next_status': e['next_status'],
+                'next_status_label': e['next_status_label'],
+            })
+
+        return Response({'count': len(items), 'results': items, 'as_of_date': str(timezone.localdate())})
+
+    @action(detail=False, methods=['post'], url_path='arrears-advance-status')
+    def arrears_advance_status(self, request):
+        data = request.data or {}
+        company = getattr(request, 'company', None)
+        company_id = data.get('company_id') or data.get('company')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_ids = data.get('invoice_ids') or []
+        if not isinstance(invoice_ids, list) or not invoice_ids:
+            return Response({'error': 'invoice_ids lista kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        target_status = (data.get('target_status') or '').strip()
+        if not target_status:
+            return Response({'error': 'target_status kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        valid_statuses = set(self._arrears_status_label_map().keys())
+        if target_status not in valid_statuses:
+            return Response({'error': 'Érvénytelen target_status'}, status=status.HTTP_400_BAD_REQUEST)
+
+        send_email = bool(data.get('send_email'))
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_ids)
+        entry_by_id = {str(e['invoice'].id): e for e in entries}
+        selected_entries = [entry_by_id.get(str(iid)) for iid in invoice_ids]
+        selected_entries = [e for e in selected_entries if e]
+        if not selected_entries:
+            return Response({'error': 'Nincs léptethető lejárt számla a kiválasztásban'}, status=status.HTTP_400_BAD_REQUEST)
+
+        changed_invoices = [e['invoice'] for e in selected_entries]
+        send_result = {'sent': 0, 'skipped': 0, 'details': []}
+        if send_email:
+            template_type = self._arrears_template_for_target_status(target_status)
+            if not template_type:
+                return Response({'error': 'Ehhez a státuszhoz nincs e-mail sablon küldés.'}, status=status.HTTP_400_BAD_REQUEST)
+            send_result = self._send_arrears_emails_by_template(company, selected_entries, template_type)
+            failed_customer_ids = set(send_result.get('failed_customer_ids') or [])
+            changed_invoices = [
+                e['invoice'] for e in selected_entries
+                if str(e['invoice'].customer_id) not in failed_customer_ids
+            ]
+
+        changed_count = self._set_arrears_status(changed_invoices, target_status)
+        labels = self._arrears_status_label_map()
+        return Response({
+            'success': True,
+            'target_status': target_status,
+            'target_status_label': labels.get(target_status, target_status),
+            'changed': changed_count,
+            'email': send_result,
+        })
+
+    @action(detail=False, methods=['get'])
+    def arrears_preview(self, request):
+        company = getattr(request, 'company', None)
+        company_id = request.query_params.get('company_id') or request.query_params.get('company')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_ids_raw = request.query_params.get('invoice_ids') or ''
+        invoice_ids = [s.strip() for s in invoice_ids_raw.split(',') if s.strip()] if invoice_ids_raw else None
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_ids)
+
+        grouped = {}
+        for item in entries:
+            inv = item['invoice']
+            cust = inv.customer
+            key = str(cust.id)
+            block = grouped.setdefault(key, {
+                'customer_id': key,
+                'customer_name': cust.name,
+                'customer_email': cust.email or '',
+                'totals_by_currency': {},
+                'invoices': [],
+            })
+            curr = (inv.currency or 'HUF').upper()
+            block['totals_by_currency'][curr] = float(decimal.Decimal(str(block['totals_by_currency'].get(curr, 0))) + item['remaining'])
+            block['invoices'].append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'issue_date': str(inv.issue_date) if inv.issue_date else None,
+                'due_date': str(inv.due_date) if inv.due_date else None,
+                'total_net_amount': float(inv.total_net_amount or 0),
+                'total_vat_amount': float(inv.total_vat_amount or 0),
+                'total_gross_amount': float(inv.total_gross_amount or 0),
+                'remaining_amount': float(item['remaining']),
+                'currency': curr,
+                'days_overdue': item['days_overdue'],
+            })
+
+        customers = sorted(grouped.values(), key=lambda x: (x['customer_name'] or '').lower())
+        total_invoice_count = sum(len(c['invoices']) for c in customers)
+        total_by_currency = {}
+        for c in customers:
+            for curr, val in (c.get('totals_by_currency') or {}).items():
+                total_by_currency[curr] = float(decimal.Decimal(str(total_by_currency.get(curr, 0))) + decimal.Decimal(str(val or 0)))
+
+        return Response({
+            'customers': customers,
+            'summary': {
+                'customer_count': len(customers),
+                'invoice_count': total_invoice_count,
+                'total_by_currency': total_by_currency,
+                'as_of_date': str(timezone.localdate()),
+            }
+        })
+
+    @action(detail=False, methods=['post'])
+    def send_arrears_emails(self, request):
+        import smtplib
+        import ssl
+        from email.message import EmailMessage
+
+        data = request.data or {}
+        company = getattr(request, 'company', None)
+        company_id = data.get('company_id') or data.get('company')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_ids = data.get('invoice_ids')
+        if invoice_ids and not isinstance(invoice_ids, list):
+            return Response({'error': 'invoice_ids lista kell legyen'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = self._collect_overdue_entries(company, invoice_ids=invoice_ids)
+        if not entries:
+            return Response({'success': True, 'sent': 0, 'skipped': 0, 'details': [], 'message': 'Nincs kiküldhető lejárt kintlévőség.'})
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+        host = (getattr(ces, 'smtp_host', None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST'))
+        port = int((getattr(ces, 'smtp_port', None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587))
+        user = (getattr(ces, 'smtp_user', None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER'))
+        pwd = (getattr(ces, 'smtp_password', None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD'))
+        use_tls = bool(getattr(ces, 'smtp_use_tls', True)) if ces else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+        from_addr = (data.get('from') or (getattr(ces, 'smtp_from', None) if ces else None) or os.environ.get('SMTP_FROM') or user)
+
+        if not host or not user or not pwd or not from_addr:
+            return Response({'error': 'SMTP beállítások hiányoznak (host/user/password/from)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        grouped = {}
+        for item in entries:
+            inv = item['invoice']
+            cust = inv.customer
+            key = str(cust.id)
+            row = grouped.setdefault(key, {'customer': cust, 'items': []})
+            row['items'].append(item)
+
+        def fmt_money(amount, currency):
+            try:
+                d = decimal.Decimal(str(amount or 0))
+            except Exception:
+                d = decimal.Decimal('0')
+            if (currency or '').upper() == 'HUF':
+                return f"{int(d):,}".replace(',', ' ') + ' Ft'
+            return f"{d:.2f} {currency}"
+
+        def render_tpl(tpl, ctx):
+            out = str(tpl or '')
+            for k, v in ctx.items():
+                out = out.replace('{' + k + '}', str(v if v is not None else ''))
+            return out
+
+        today = timezone.localdate()
+        city = (getattr(company, 'city', None) or '').strip()
+        today_city_date = f"{city}, {today.strftime('%Y.%m.%d')}" if city else today.strftime('%Y.%m.%d')
+
+        arrears_template = get_company_email_template(company, EmailTemplate.TEMPLATE_ARREARS)
+        default_signature_html = get_default_signature_html(company)
+
+        subject_tpl = arrears_template.get('subject_template') or (getattr(ces, 'arrears_subject_template', None) if ces else None) or 'Kintlévőség értesítő - lejárt számlák'
+        body_tpl = arrears_template.get('body_template') or (getattr(ces, 'arrears_body_template', None) if ces else None) or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint {as_of_date} napjáig még nem egyenlítették ki az alábbi számlákat, amelynek hátraléka összesen {total_outstanding}.</p>{invoices_table}<p>Amennyiben az összeg az Önök nyilvántartásában szereplőtől eltér, kérem egyeztessenek velünk az elérhetőségeink egyikén.</p><p>Ha a számlák kiegyenlítése időközben már megtörtént, kérjük jelen levelünket tekintse tárgytalannak!</p><p>{today_city_date}</p>'
+
+        details = []
+        sent_count = 0
+        skipped_count = 0
+
+        for row in grouped.values():
+            customer = row['customer']
+            items = row['items']
+            recipient = (getattr(customer, 'email', None) or '').strip()
+            if not recipient:
+                skipped_count += 1
+                details.append({'customer_id': str(customer.id), 'customer_name': customer.name, 'status': 'skipped', 'reason': 'Nincs ügyfél e-mail cím'})
+                continue
+
+            currency = (items[0]['invoice'].currency or 'HUF').upper()
+            total_outstanding = sum((it['remaining'] for it in items), decimal.Decimal('0'))
+
+            table_rows = []
+            for it in sorted(items, key=lambda x: (x['invoice'].due_date or timezone.localdate())):
+                inv = it['invoice']
+                table_rows.append(
+                    f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td style='text-align:right'>{fmt_money(inv.total_net_amount or 0, currency)}</td><td style='text-align:right'>{fmt_money(inv.total_vat_amount or 0, currency)}</td></tr>"
+                )
+            invoices_table = (
+                "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
+                "<thead><tr><th>Számla sorszám</th><th>Kelt</th><th>Nettó(HUF)</th><th>Áfa(HUF)</th></tr></thead>"
+                f"<tbody>{''.join(table_rows)}</tbody></table>"
+            )
+
+            ctx = {
+                'customer_name': customer.name,
+                'company_name': company.name,
+                'as_of_date': today.isoformat(),
+                'today_date': today.strftime('%Y.%m.%d'),
+                'today_city_date': today_city_date,
+                'company_city': city,
+                'total_outstanding': fmt_money(total_outstanding, currency),
+                'invoice_count': len(items),
+                'currency': currency,
+                'invoices_table': invoices_table,
+                'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
+                'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
+                'signature_html': default_signature_html,
+            }
+
+            subject = render_tpl(subject_tpl, ctx)
+            body = render_tpl(body_tpl, ctx)
+
+            msg = EmailMessage()
+            msg['Subject'] = subject
+            msg['From'] = from_addr
+            msg['To'] = recipient
+            if '<' in body and '>' in body:
+                msg.set_content('HTML levél')
+                msg.add_alternative(body, subtype='html')
+            else:
+                msg.set_content(body)
+
+            try:
+                if port == 465:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP_SSL(host, port, context=context) as server:
+                        server.login(user, pwd)
+                        server.send_message(msg)
+                elif use_tls:
+                    context = ssl.create_default_context()
+                    with smtplib.SMTP(host, port) as server:
+                        server.starttls(context=context)
+                        server.login(user, pwd)
+                        server.send_message(msg)
+                else:
+                    with smtplib.SMTP(host, port) as server:
+                        server.login(user, pwd)
+                        server.send_message(msg)
+
+                sent_count += 1
+                sent_customer_ids.add(str(customer.id))
+                details.append({
+                    'customer_id': str(customer.id),
+                    'customer_name': customer.name,
+                    'to': recipient,
+                    'status': 'sent',
+                    'invoice_count': len(items),
+                    'total_outstanding': fmt_money(total_outstanding, currency),
+                })
+            except Exception as e:
+                skipped_count += 1
+                details.append({
+                    'customer_id': str(customer.id),
+                    'customer_name': customer.name,
+                    'to': recipient,
+                    'status': 'failed',
+                    'reason': str(e),
+                })
+
+        invoices_to_advance = [
+            e['invoice'] for e in entries if str(e['invoice'].customer_id) in sent_customer_ids
+        ]
+        self._set_arrears_status(invoices_to_advance, Invoice.ARREARS_STATUS_NOTICE)
+
+        return Response({
+            'success': True,
+            'sent': sent_count,
+            'skipped': skipped_count,
+            'details': details,
+        })
 
 
     @action(detail=True, methods=['post'])
@@ -2086,13 +3591,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             'response': status_result.get('response'),
                             'polls': polls,
                         }
+                        latest_status_response = status_result.get('response')
+                        if latest_status_response:
+                            invoice.nav_response = latest_status_response
                         # Állapot frissítése a NAV feldolgozás alapján
                         if processing == 'DONE':
                             invoice.status = 'nav_processed'
-                            invoice.save(update_fields=['status'])
+                            invoice.save(update_fields=['status', 'nav_response'])
                         elif processing in ('ABORTED', 'REJECTED', 'NOT_FOUND'):
                             invoice.status = 'nav_rejected'
-                            invoice.save(update_fields=['status'])
+                            invoice.save(update_fields=['status', 'nav_response'])
+                        elif latest_status_response:
+                            invoice.save(update_fields=['nav_response'])
                 except Exception:
                     pass
 
@@ -2159,14 +3669,19 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             
             nav_service = NAVService(nav_config)
             result = nav_service.query_transaction_status(invoice.nav_transaction_id)
+            latest_status_response = result.get('response')
+            if latest_status_response:
+                invoice.nav_response = latest_status_response
             # Frissítsük a számla státuszt a NAV feldolgozás alapján (processing_status vagy invoice_status)
             processing = result.get('processing_status') or result.get('invoice_status')
             if processing == 'DONE':
                 invoice.status = 'nav_processed'
-                invoice.save(update_fields=['status'])
+                invoice.save(update_fields=['status', 'nav_response'])
             elif processing in ('ABORTED', 'REJECTED', 'NOT_FOUND'):
                 invoice.status = 'nav_rejected'
-                invoice.save(update_fields=['status'])
+                invoice.save(update_fields=['status', 'nav_response'])
+            elif latest_status_response:
+                invoice.save(update_fields=['nav_response'])
 
             return Response(result)
             
@@ -2179,31 +3694,673 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def statistics(self, request):
-        """Get invoice statistics"""
-        queryset = self.get_queryset()
-        
-        total_amount = sum((invoice.total_gross_amount for invoice in queryset), 0)
-        unpaid_amount = sum((invoice.total_gross_amount for invoice in queryset if invoice.status in ['draft', 'sent']), 0)
+        """Dashboard statisztikák (kimenő/bejövő összesítések, grafikon, top listák)."""
+        from collections import defaultdict
 
-        # Ensure JSON-serializable numbers
+        def _as_decimal(value):
+            try:
+                return decimal.Decimal(str(value or 0))
+            except Exception:
+                return decimal.Decimal('0')
+
+        def _as_float(value):
+            try:
+                return float(value)
+            except Exception:
+                return 0.0
+
+        def _currency(code):
+            cleaned = str(code or '').strip().upper()
+            return cleaned or 'HUF'
+
+        def _invoice_gross(inv):
+            try:
+                return _as_decimal(inv.total_gross_amount)
+            except Exception:
+                return decimal.Decimal('0')
+
+        def _incoming_gross(entry):
+            net = _as_decimal(getattr(entry, 'invoice_net_amount', 0))
+            vat = _as_decimal(getattr(entry, 'invoice_vat_amount', 0))
+            gross = net + vat
+            if gross > 0:
+                return gross
+            return net
+
+        def _norm_tax(value):
+            return ''.join(ch for ch in str(value or '') if ch.isdigit())
+
+        def _tax_base(value):
+            digits = ''.join(ch for ch in str(value or '') if ch.isdigit())
+            return digits[:8]
+
+        currency_rates = {'HUF': decimal.Decimal('1')}
+        for row in Currency.objects.filter(is_active=True).only('code', 'current_rate'):
+            code = _currency(row.code)
+            rate = _as_decimal(getattr(row, 'current_rate', None))
+            if rate > 0:
+                currency_rates[code] = rate
+
+        def _to_huf(amount, currency_code, exchange_rate=None):
+            amount_dec = _as_decimal(amount)
+            curr = _currency(currency_code)
+            if curr == 'HUF':
+                return amount_dec
+
+            rate = _as_decimal(exchange_rate)
+            if rate <= 0:
+                rate = _as_decimal(currency_rates.get(curr))
+            if rate <= 0:
+                return amount_dec
+            return amount_dec * rate
+
+        def _incoming_gross_huf(entry):
+            net_huf = _as_decimal(getattr(entry, 'invoice_net_amount_huf', 0))
+            vat_huf = _as_decimal(getattr(entry, 'invoice_vat_amount_huf', 0))
+            gross_huf = net_huf + vat_huf
+            if gross_huf > 0:
+                return gross_huf
+            return _to_huf(
+                _incoming_gross(entry),
+                getattr(entry, 'currency', None),
+                getattr(entry, 'exchange_rate', None),
+            )
+
+        def _is_external_outgoing_digest(entry):
+            company = getattr(entry, 'company', None)
+            company_tax_base = _tax_base(getattr(company, 'tax_number', None))
+            supplier_tax = _norm_tax(getattr(entry, 'supplier_tax_number', None))
+            customer_tax = _norm_tax(getattr(entry, 'customer_tax_number', None))
+            supplier_name = str(getattr(entry, 'supplier_name', '') or '').strip().upper()
+            company_name = str(getattr(company, 'name', '') or '').strip().upper()
+            op = str(getattr(entry, 'invoice_operation', '') or '').strip().upper()
+
+            if op in ('OUTBOUND', 'EXTERNAL_OUTGOING'):
+                return True
+            if op in ('INBOUND',):
+                return False
+
+            supplier_match = bool(company_tax_base and _tax_base(supplier_tax) == company_tax_base)
+            customer_match = bool(company_tax_base and _tax_base(customer_tax) == company_tax_base)
+            name_match = bool(company_name and supplier_name and company_name in supplier_name)
+
+            if supplier_match or name_match:
+                return True
+            if customer_match:
+                return False
+            if str(getattr(entry, 'invoice_category', '') or '').upper() == 'SIMPLIFIED':
+                return False
+            return False
+
+        def _aggregate_with_currency(items, amount_getter, currency_getter, amount_huf_getter=None):
+            by_currency = {}
+            total_count = 0
+            total_amount = decimal.Decimal('0')
+            total_amount_huf = decimal.Decimal('0')
+            for item in items:
+                amount = _as_decimal(amount_getter(item))
+                curr = _currency(currency_getter(item))
+                amount_huf = _as_decimal(amount_huf_getter(item)) if amount_huf_getter else _to_huf(
+                    amount,
+                    curr,
+                    getattr(item, 'exchange_rate', None),
+                )
+                if curr not in by_currency:
+                    by_currency[curr] = {
+                        'count': 0,
+                        'amount': decimal.Decimal('0'),
+                        'amount_huf': decimal.Decimal('0'),
+                    }
+                by_currency[curr]['count'] += 1
+                by_currency[curr]['amount'] += amount
+                by_currency[curr]['amount_huf'] += amount_huf
+                total_count += 1
+                total_amount += amount
+                total_amount_huf += amount_huf
+
+            return {
+                'count': total_count,
+                'amount': _as_float(total_amount),
+                'amount_huf': _as_float(total_amount_huf),
+                'currencies': {
+                    curr: {
+                        'count': values['count'],
+                        'amount': _as_float(values['amount']),
+                        'amount_huf': _as_float(values['amount_huf']),
+                    }
+                    for curr, values in sorted(by_currency.items(), key=lambda pair: pair[0])
+                }
+            }
+
+        base_queryset = self.get_queryset().select_related('customer', 'company').prefetch_related('items')
+        requested_company_id = request.query_params.get('company_id') or request.query_params.get('company')
+        allowed_company_ids = _get_system_user_allowed_company_ids(request)
+
+        if requested_company_id and allowed_company_ids:
+            allowed_set = {str(cid) for cid in allowed_company_ids}
+            if str(requested_company_id) not in allowed_set:
+                base_queryset = Invoice.objects.none()
+                incoming_base = IncomingInvoiceDigest.objects.none()
+            else:
+                base_queryset = base_queryset.filter(company_id=requested_company_id)
+                incoming_base = IncomingInvoiceDigest.objects.filter(company_id=requested_company_id)
+        elif requested_company_id:
+            base_queryset = base_queryset.filter(company_id=requested_company_id)
+            incoming_base = IncomingInvoiceDigest.objects.filter(company_id=requested_company_id)
+        elif allowed_company_ids:
+            base_queryset = base_queryset.filter(company_id__in=allowed_company_ids)
+            incoming_base = IncomingInvoiceDigest.objects.filter(company_id__in=allowed_company_ids)
+        else:
+            incoming_base = IncomingInvoiceDigest.objects.all()
+
+        today = timezone.localdate()
+        month_start = today.replace(day=1)
+        requested_year = request.query_params.get('year')
         try:
-            total_amount = float(total_amount)
+            selected_year = int(requested_year) if requested_year is not None else today.year
         except Exception:
-            total_amount = 0.0
-        try:
-            unpaid_amount = float(unpaid_amount)
-        except Exception:
-            unpaid_amount = 0.0
+            selected_year = today.year
+        if selected_year < 2000 or selected_year > 2100:
+            selected_year = today.year
+
+        month_end = today if selected_year == today.year else date(selected_year, 12, 31)
+        month_start = month_end.replace(day=1)
+        year_start = date(selected_year, 1, 1)
+        year_end = today if selected_year == today.year else date(selected_year, 12, 31)
+
+        outgoing_issued = base_queryset.exclude(status='cancelled')
+        own_invoice_numbers = set(str(n) for n in outgoing_issued.values_list('invoice_number', flat=True))
+
+        incoming_all_raw = list(incoming_base.select_related('company').order_by('-invoice_issue_date', '-created_at'))
+        external_outgoing_all = []
+        incoming_all = []
+        for inv in incoming_all_raw:
+            inv_no = str(getattr(inv, 'invoice_number', '') or '').strip()
+            if _is_external_outgoing_digest(inv):
+                if inv_no and inv_no in own_invoice_numbers:
+                    continue
+                if str(getattr(inv, 'invoice_category', '') or '').upper() == 'SIMPLIFIED':
+                    continue
+                external_outgoing_all.append(inv)
+            else:
+                incoming_all.append(inv)
+
+        outgoing_all = list(outgoing_issued) + external_outgoing_all
+
+        incoming_bank_paid_map = {}
+        incoming_ids = [inv.id for inv in incoming_all if getattr(inv, 'id', None)]
+        if incoming_ids:
+            bank_paid_rows = (
+                BankStatementItem.objects
+                .filter(incoming_invoice_id__in=incoming_ids)
+                .values('incoming_invoice_id')
+                .annotate(total=models.Sum('amount'))
+            )
+            for row in bank_paid_rows:
+                key = str(row.get('incoming_invoice_id') or '')
+                if key:
+                    incoming_bank_paid_map[key] = _as_decimal(row.get('total'))
+
+        def _incoming_effective_paid(inv):
+            paid_model = _as_decimal(getattr(inv, 'amount_paid', 0))
+            paid_bank = _as_decimal(incoming_bank_paid_map.get(str(getattr(inv, 'id', ''))))
+            return max(paid_model, paid_bank)
+
+        def _incoming_outstanding(inv):
+            return _incoming_gross(inv) - _incoming_effective_paid(inv)
+
+        def _item_issue_date(item):
+            if isinstance(item, Invoice):
+                return getattr(item, 'issue_date', None)
+            return getattr(item, 'invoice_issue_date', None) or (item.ins_date.date() if getattr(item, 'ins_date', None) else None)
+
+        def _outgoing_amount(item):
+            return _invoice_gross(item) if isinstance(item, Invoice) else _incoming_gross(item)
+
+        def _outgoing_amount_huf(item):
+            if isinstance(item, Invoice):
+                return _to_huf(_invoice_gross(item), item.currency, item.exchange_rate)
+            return _incoming_gross_huf(item)
+
+        outgoing_month = [inv for inv in outgoing_all if _item_issue_date(inv) and month_start <= _item_issue_date(inv) <= month_end]
+        outgoing_year = [inv for inv in outgoing_all if _item_issue_date(inv) and year_start <= _item_issue_date(inv) <= year_end]
+
+        incoming_month = [
+            inv for inv in incoming_all
+            if inv.invoice_issue_date and month_start <= inv.invoice_issue_date <= month_end
+        ]
+        incoming_year = [
+            inv for inv in incoming_all
+            if inv.invoice_issue_date and year_start <= inv.invoice_issue_date <= year_end
+        ]
+
+        incoming_unpaid_all = [
+            inv for inv in incoming_all
+            if _incoming_outstanding(inv) > decimal.Decimal('0.005')
+        ]
+        incoming_unpaid_month = [
+            inv for inv in incoming_unpaid_all
+            if inv.invoice_issue_date and month_start <= inv.invoice_issue_date <= month_end
+        ]
+        incoming_unpaid_year = [
+            inv for inv in incoming_unpaid_all
+            if inv.invoice_issue_date and year_start <= inv.invoice_issue_date <= year_end
+        ]
+
+        incoming_overdue_all = [
+            inv for inv in incoming_unpaid_all
+            if inv.due_date and inv.due_date < today
+        ]
+        incoming_overdue_month = [
+            inv for inv in incoming_overdue_all
+            if month_start <= inv.due_date <= month_end
+        ]
+        incoming_overdue_year = [
+            inv for inv in incoming_overdue_all
+            if year_start <= inv.due_date <= year_end
+        ]
+
+        def _incoming_due_row(inv):
+            outstanding = _incoming_outstanding(inv)
+            if outstanding <= 0:
+                return None
+            return {
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'partner_name': (inv.supplier_name or '').strip() or 'Ismeretlen beszállító',
+                'amount': _as_float(outstanding),
+                'currency': _currency(inv.currency),
+                'due_date': inv.due_date,
+            }
+
+        def _is_transfer_payment(inv):
+            return str(getattr(inv, 'payment_method', '') or '').strip().lower() == 'transfer'
+
+        def _sum_due_huf(rows):
+            total = decimal.Decimal('0')
+            for inv in rows:
+                outstanding = _incoming_outstanding(inv)
+                if outstanding <= 0:
+                    continue
+                total += _to_huf(outstanding, getattr(inv, 'currency', None), getattr(inv, 'exchange_rate', None))
+            return _as_float(total)
+
+        due_overdue_source = [
+            inv for inv in incoming_unpaid_all
+            if inv.due_date and inv.due_date < today and _is_transfer_payment(inv)
+        ]
+        due_today_source = [
+            inv for inv in incoming_unpaid_all
+            if inv.due_date and inv.due_date == today and _is_transfer_payment(inv)
+        ]
+        due_upcoming_source = [
+            inv for inv in incoming_unpaid_all
+            if inv.due_date and inv.due_date > today and _is_transfer_payment(inv)
+        ]
+
+        incoming_due_overdue_rows = [
+            _incoming_due_row(inv)
+            for inv in sorted(
+                due_overdue_source,
+                key=lambda item: item.due_date,
+                reverse=True,
+            )[:10]
+        ]
+        incoming_due_today_rows = [
+            _incoming_due_row(inv)
+            for inv in sorted(
+                due_today_source,
+                key=lambda item: item.invoice_issue_date or date.min,
+                reverse=True,
+            )[:10]
+        ]
+        incoming_due_next_rows = [
+            _incoming_due_row(inv)
+            for inv in sorted(
+                due_upcoming_source,
+                key=lambda item: item.due_date,
+            )[:10]
+        ]
+
+        incoming_due_overdue_rows = [row for row in incoming_due_overdue_rows if row]
+        incoming_due_today_rows = [row for row in incoming_due_today_rows if row]
+        incoming_due_next_rows = [row for row in incoming_due_next_rows if row]
+
+        total_amount = sum((_outgoing_amount(invoice) for invoice in outgoing_all), decimal.Decimal('0'))
+        unpaid_amount = decimal.Decimal('0')
+        unpaid_amount += sum(
+            (_invoice_gross(invoice) - _as_decimal(getattr(invoice, 'amount_paid', 0))
+             for invoice in outgoing_issued if invoice.status not in ['paid', 'cancelled']),
+            decimal.Decimal('0')
+        )
+        unpaid_amount += sum(
+            (_incoming_gross(invoice) - _as_decimal(getattr(invoice, 'amount_paid', 0))
+             for invoice in external_outgoing_all if str(getattr(invoice, 'payment_status', '')).lower() != 'paid'),
+            decimal.Decimal('0')
+        )
+
+        year_unpaid_amount = decimal.Decimal('0')
+        year_unpaid_amount += sum(
+            (_invoice_gross(invoice) - _as_decimal(getattr(invoice, 'amount_paid', 0))
+             for invoice in outgoing_issued
+             if invoice.status not in ['paid', 'cancelled'] and invoice.issue_date and year_start <= invoice.issue_date <= year_end),
+            decimal.Decimal('0')
+        )
+        year_unpaid_amount += sum(
+            (_incoming_gross(invoice) - _as_decimal(getattr(invoice, 'amount_paid', 0))
+             for invoice in external_outgoing_all
+             if str(getattr(invoice, 'payment_status', '')).lower() != 'paid'
+             and (invoice.invoice_issue_date and year_start <= invoice.invoice_issue_date <= year_end)),
+            decimal.Decimal('0')
+        )
+
+        # 14 hónapos bevétel-kiadás oszlop grafikon
+        month_labels = []
+        cursor = date(today.year, today.month, 1)
+        for _ in range(14):
+            month_labels.append(cursor)
+            cursor = (cursor.replace(day=1) - timedelta(days=1)).replace(day=1)
+        month_labels = list(reversed(month_labels))
+        month_keys = [d.strftime('%Y-%m') for d in month_labels]
+
+        revenue_by_month = defaultdict(lambda: decimal.Decimal('0'))
+        expense_by_month = defaultdict(lambda: decimal.Decimal('0'))
+
+        if month_labels:
+            min_month = month_labels[0]
+            max_month_end = (month_labels[-1].replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        else:
+            min_month = today.replace(day=1)
+            max_month_end = today
+
+        for inv in outgoing_all:
+            issue_dt = _item_issue_date(inv)
+            if not issue_dt or issue_dt < min_month or issue_dt > max_month_end:
+                continue
+            mk = issue_dt.strftime('%Y-%m')
+            revenue_by_month[mk] += _outgoing_amount_huf(inv)
+
+        for inv in incoming_all:
+            dt = inv.invoice_issue_date or (inv.ins_date.date() if getattr(inv, 'ins_date', None) else None)
+            if not dt or dt < min_month or dt > max_month_end:
+                continue
+            mk = dt.strftime('%Y-%m')
+            expense_by_month[mk] += _incoming_gross_huf(inv)
+
+        monthly_chart = [
+            {
+                'month': month_dt.strftime('%Y-%m'),
+                'label': month_dt.strftime('%Y.%m'),
+                'revenue': _as_float(revenue_by_month.get(key, decimal.Decimal('0'))),
+                'expense': _as_float(expense_by_month.get(key, decimal.Decimal('0'))),
+            }
+            for month_dt, key in zip(month_labels, month_keys)
+        ]
+
+        recent_outgoing_rows = []
+        for inv in outgoing_issued.order_by('-issue_date', '-created_at')[:50]:
+            created_dt = getattr(inv, 'created_at', None)
+            recent_outgoing_rows.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'partner_name': getattr(inv.customer, 'name', '') or '',
+                'issue_date': inv.issue_date,
+                'due_date': inv.due_date,
+                'status': inv.status,
+                'currency': _currency(inv.currency),
+                'amount': _as_float(_invoice_gross(inv)),
+                '_sort_date': (inv.issue_date.isoformat() if inv.issue_date else ''),
+                '_sort_created': (created_dt.isoformat() if created_dt else ''),
+            })
+        for inv in external_outgoing_all[:50]:
+            issue_dt = inv.invoice_issue_date or (inv.ins_date.date() if getattr(inv, 'ins_date', None) else None)
+            created_dt = getattr(inv, 'created_at', None)
+            recent_outgoing_rows.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'partner_name': (inv.customer_name or inv.supplier_name or ''),
+                'issue_date': issue_dt,
+                'due_date': inv.due_date,
+                'status': inv.payment_status,
+                'currency': _currency(inv.currency),
+                'amount': _as_float(_incoming_gross(inv)),
+                '_sort_date': (issue_dt.isoformat() if issue_dt else ''),
+                '_sort_created': (created_dt.isoformat() if created_dt else ''),
+            })
+        recent_outgoing_sorted = sorted(
+            recent_outgoing_rows,
+            key=lambda row: (row['_sort_date'], row['_sort_created']),
+            reverse=True,
+        )
+        seen_recent_outgoing = set()
+        recent_outgoing = []
+        for row in recent_outgoing_sorted:
+            dedupe_key = str(row.get('invoice_number') or row.get('id') or '').strip().upper()
+            if not dedupe_key or dedupe_key in seen_recent_outgoing:
+                continue
+            seen_recent_outgoing.add(dedupe_key)
+            recent_outgoing.append(row)
+            if len(recent_outgoing) >= 10:
+                break
+        for row in recent_outgoing:
+            row.pop('_sort_date', None)
+            row.pop('_sort_created', None)
+
+        recent_incoming = []
+        seen_recent_incoming = set()
+        for inv in incoming_all:
+            dedupe_key = str(getattr(inv, 'invoice_number', None) or getattr(inv, 'id', None) or '').strip().upper()
+            if not dedupe_key or dedupe_key in seen_recent_incoming:
+                continue
+            seen_recent_incoming.add(dedupe_key)
+            recent_incoming.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'partner_name': (inv.supplier_name or ''),
+                'issue_date': inv.invoice_issue_date,
+                'due_date': inv.due_date,
+                'status': inv.payment_status,
+                'currency': _currency(inv.currency),
+                'amount': _as_float(_incoming_gross(inv)),
+            })
+            if len(recent_incoming) >= 10:
+                break
+
+        debtors = defaultdict(lambda: {'partner_name': '', 'amount_huf': decimal.Decimal('0'), 'currency': defaultdict(lambda: decimal.Decimal('0'))})
+        for inv in outgoing_issued:
+            if not inv.issue_date or not (year_start <= inv.issue_date <= year_end):
+                continue
+            if inv.status in ['paid', 'cancelled']:
+                continue
+            outstanding = _invoice_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0))
+            if outstanding <= 0:
+                continue
+            pname = (getattr(inv.customer, 'name', None) or '').strip() or 'Ismeretlen ügyfél'
+            curr = _currency(inv.currency)
+            debtors[pname]['partner_name'] = pname
+            debtors[pname]['amount_huf'] += _to_huf(outstanding, curr, inv.exchange_rate)
+            debtors[pname]['currency'][curr] += outstanding
+        for inv in external_outgoing_all:
+            if not inv.invoice_issue_date or not (year_start <= inv.invoice_issue_date <= year_end):
+                continue
+            outstanding = _incoming_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0))
+            if outstanding <= 0 or str(getattr(inv, 'payment_status', '')).lower() == 'paid':
+                continue
+            pname = (inv.customer_name or inv.supplier_name or '').strip() or 'Ismeretlen ügyfél'
+            curr = _currency(inv.currency)
+            debtors[pname]['partner_name'] = pname
+            debtors[pname]['amount_huf'] += _to_huf(outstanding, curr, getattr(inv, 'exchange_rate', None))
+            debtors[pname]['currency'][curr] += outstanding
+
+        top_debtors = sorted(debtors.values(), key=lambda row: row['amount_huf'], reverse=True)[:10]
+        top_debtors = [
+            {
+                'partner_name': row['partner_name'],
+                'amount': _as_float(row['amount_huf']),
+                'amount_huf': _as_float(row['amount_huf']),
+                'currencies': {k: _as_float(v) for k, v in sorted(row['currency'].items(), key=lambda pair: pair[0])},
+            }
+            for row in top_debtors
+        ]
+
+        creditors = defaultdict(lambda: {'partner_name': '', 'amount_huf': decimal.Decimal('0'), 'currency': defaultdict(lambda: decimal.Decimal('0'))})
+        for inv in incoming_unpaid_year:
+            gross = _incoming_gross(inv)
+            outstanding = gross - _as_decimal(getattr(inv, 'amount_paid', 0))
+            if outstanding <= 0:
+                continue
+            pname = (inv.supplier_name or '').strip() or 'Ismeretlen beszállító'
+            curr = _currency(inv.currency)
+            creditors[pname]['partner_name'] = pname
+            creditors[pname]['amount_huf'] += _to_huf(outstanding, curr, getattr(inv, 'exchange_rate', None))
+            creditors[pname]['currency'][curr] += outstanding
+
+        top_creditors = sorted(creditors.values(), key=lambda row: row['amount_huf'], reverse=True)[:10]
+        top_creditors = [
+            {
+                'partner_name': row['partner_name'],
+                'amount': _as_float(row['amount_huf']),
+                'amount_huf': _as_float(row['amount_huf']),
+                'currencies': {k: _as_float(v) for k, v in sorted(row['currency'].items(), key=lambda pair: pair[0])},
+            }
+            for row in top_creditors
+        ]
+
+        customer_spend = defaultdict(lambda: decimal.Decimal('0'))
+        for inv in outgoing_year:
+            if isinstance(inv, Invoice):
+                pname = (getattr(inv.customer, 'name', None) or '').strip() or 'Ismeretlen ügyfél'
+                customer_spend[pname] += _to_huf(_invoice_gross(inv), inv.currency, inv.exchange_rate)
+            else:
+                pname = (inv.customer_name or inv.supplier_name or '').strip() or 'Ismeretlen ügyfél'
+                customer_spend[pname] += _incoming_gross_huf(inv)
+
+        top_customers_year = [
+            {'partner_name': name, 'amount': _as_float(amount), 'amount_huf': _as_float(amount)}
+            for name, amount in sorted(customer_spend.items(), key=lambda pair: pair[1], reverse=True)[:10]
+        ]
+
+        supplier_spend = defaultdict(lambda: decimal.Decimal('0'))
+        for inv in incoming_year:
+            pname = (inv.supplier_name or '').strip() or 'Ismeretlen beszállító'
+            supplier_spend[pname] += _incoming_gross_huf(inv)
+
+        top_suppliers_year = [
+            {'partner_name': name, 'amount': _as_float(amount), 'amount_huf': _as_float(amount)}
+            for name, amount in sorted(supplier_spend.items(), key=lambda pair: pair[1], reverse=True)[:10]
+        ]
 
         stats = {
-            'total_invoices': queryset.count(),
-            'draft_invoices': queryset.filter(status='draft').count(),
-            'sent_invoices': queryset.filter(status='sent').count(),
-            'paid_invoices': queryset.filter(status='paid').count(),
-            'total_amount': total_amount,
-            'unpaid_amount': unpaid_amount,
+            # Legacy mezők (kompatibilitás)
+            'total_invoices': len(outgoing_all),
+            'draft_invoices': base_queryset.filter(status='draft').count(),
+            'sent_invoices': base_queryset.filter(status='sent').count(),
+            'paid_invoices': base_queryset.filter(status='paid').count(),
+            'total_amount': _as_float(total_amount),
+            'unpaid_amount': _as_float(unpaid_amount),
+            'selected_year': selected_year,
+            'summary_year': {
+                'year': selected_year,
+                'total_invoices': len(outgoing_year),
+                'total_amount_huf': _aggregate_with_currency(outgoing_year, _outgoing_amount, lambda inv: inv.currency, _outgoing_amount_huf).get('amount_huf', 0),
+                'unpaid_amount_huf': _as_float(year_unpaid_amount),
+                'draft_invoices': base_queryset.filter(status='draft', issue_date__gte=year_start, issue_date__lte=year_end).count(),
+            },
+
+            # Új dashboard adatok
+            'outgoing': {
+                'month': _aggregate_with_currency(
+                    outgoing_month,
+                    _outgoing_amount,
+                    lambda inv: inv.currency,
+                    _outgoing_amount_huf,
+                ),
+                'year': _aggregate_with_currency(
+                    outgoing_year,
+                    _outgoing_amount,
+                    lambda inv: inv.currency,
+                    _outgoing_amount_huf,
+                ),
+            },
+            'incoming': {
+                'month': _aggregate_with_currency(
+                    incoming_month,
+                    _incoming_gross,
+                    lambda inv: inv.currency,
+                    _incoming_gross_huf,
+                ),
+                'year': _aggregate_with_currency(
+                    incoming_year,
+                    _incoming_gross,
+                    lambda inv: inv.currency,
+                    _incoming_gross_huf,
+                ),
+            },
+            'incoming_unpaid': {
+                'month': _aggregate_with_currency(
+                    incoming_unpaid_month,
+                    lambda inv: _incoming_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0)),
+                    lambda inv: inv.currency,
+                    lambda inv: _incoming_gross_huf(inv) - _to_huf(
+                        _as_decimal(getattr(inv, 'amount_paid', 0)),
+                        inv.currency,
+                        getattr(inv, 'exchange_rate', None),
+                    ),
+                ),
+                'year': _aggregate_with_currency(
+                    incoming_unpaid_year,
+                    lambda inv: _incoming_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0)),
+                    lambda inv: inv.currency,
+                    lambda inv: _incoming_gross_huf(inv) - _to_huf(
+                        _as_decimal(getattr(inv, 'amount_paid', 0)),
+                        inv.currency,
+                        getattr(inv, 'exchange_rate', None),
+                    ),
+                ),
+            },
+            'incoming_overdue': {
+                'month': _aggregate_with_currency(
+                    incoming_overdue_month,
+                    lambda inv: _incoming_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0)),
+                    lambda inv: inv.currency,
+                    lambda inv: _incoming_gross_huf(inv) - _to_huf(
+                        _as_decimal(getattr(inv, 'amount_paid', 0)),
+                        inv.currency,
+                        getattr(inv, 'exchange_rate', None),
+                    ),
+                ),
+                'year': _aggregate_with_currency(
+                    incoming_overdue_year,
+                    lambda inv: _incoming_gross(inv) - _as_decimal(getattr(inv, 'amount_paid', 0)),
+                    lambda inv: inv.currency,
+                    lambda inv: _incoming_gross_huf(inv) - _to_huf(
+                        _as_decimal(getattr(inv, 'amount_paid', 0)),
+                        inv.currency,
+                        getattr(inv, 'exchange_rate', None),
+                    ),
+                ),
+            },
+            'monthly_revenue_expense': monthly_chart,
+            'recent': {
+                'outgoing': recent_outgoing,
+                'incoming': recent_incoming,
+            },
+            'credit': {
+                'top_debtors': top_debtors,
+                'top_creditors': top_creditors,
+            },
+            'top_customers_year': top_customers_year,
+            'top_suppliers_year': top_suppliers_year,
+            'incoming_due_lists': {
+                'overdue': incoming_due_overdue_rows,
+                'due_today': incoming_due_today_rows,
+                'upcoming': incoming_due_next_rows,
+                'overdue_total_huf': _sum_due_huf(due_overdue_source),
+                'due_today_total_huf': _sum_due_huf(due_today_source),
+                'upcoming_total_huf': _sum_due_huf(due_upcoming_source),
+            },
         }
-        
+
         return Response(stats)
 
     @action(detail=False, methods=['get'], url_path='incoming/details')
@@ -2315,6 +4472,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         status_filter = (request.query_params.get('status') or '').strip().lower()
         payment_method_filter = (request.query_params.get('payment_method') or '').strip().lower()
         approval_filter = (request.query_params.get('approval') or '').strip().lower()
+        manual_only = (request.query_params.get('manual_only') or '').strip().lower() in ('1', 'true', 'yes')
+        external_outgoing = (request.query_params.get('external_outgoing') or '').strip().lower() in ('1', 'true', 'yes')
+        nav_direction = 'OUTBOUND' if external_outgoing else 'INBOUND'
         amount_from = request.query_params.get('amount_from')
         amount_to = request.query_params.get('amount_to')
         today_date = timezone.now().date()
@@ -2326,35 +4486,251 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             company = Company.objects.get(id=company_id)
         except Company.DoesNotExist:
             return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+        company_tax_base = ''.join(ch for ch in str(getattr(company, 'tax_number', '') or '') if ch.isdigit())[:8]
+        company_name_norm = str(getattr(company, 'name', '') or '').strip().upper()
+
+        def _parse_external_meta_basic(xml_text: str):
+            result = {'customer_tax_number': None, 'currency': None}
+            try:
+                root = ET.fromstring(xml_text)
+            except Exception:
+                return result
+
+            def _local(tag):
+                try:
+                    if isinstance(tag, str) and '}' in tag:
+                        return tag.split('}', 1)[-1].lower()
+                    return str(tag or '').lower()
+                except Exception:
+                    return ''
+
+            def _clean_tax(v):
+                val = str(v or '').strip().replace(' ', '')
+                return val or None
+
+            tax_buckets = {
+                'normal': [],
+                'group': [],
+                'eu': [],
+                'third': [],
+                'other': [],
+            }
+            currency_candidates = []
+
+            def _walk(node, path):
+                tag = _local(node.tag)
+                cur_path = path + [tag]
+                path_txt = '/'.join(cur_path)
+                txt = (node.text or '').strip()
+
+                in_customer = any('customer' in p or 'buyer' in p for p in cur_path)
+                in_supplier = any('supplier' in p or 'seller' in p for p in cur_path)
+
+                if txt and in_customer and not in_supplier:
+                    if tag in ('taxpayerid', 'taxnumber'):
+                        c = _clean_tax(txt)
+                        if c:
+                            if 'customertaxnumber' in cur_path:
+                                tax_buckets['normal'].append(c)
+                            else:
+                                tax_buckets['other'].append(c)
+                    elif tag in ('groupmembertaxnumber',):
+                        c = _clean_tax(txt)
+                        if c:
+                            tax_buckets['group'].append(c)
+                    elif tag in ('communityvatnumber', 'eutaxnumber', 'vatnumber'):
+                        c = _clean_tax(txt)
+                        if c:
+                            tax_buckets['eu'].append(c)
+                    elif tag in ('thirdstatetaxid',):
+                        c = _clean_tax(txt)
+                        if c:
+                            tax_buckets['third'].append(c)
+
+                if txt and tag in ('currencycode', 'currency', 'invoicecurrency', 'invoicenetamountcurrency'):
+                    cv = txt.upper()
+                    if cv and len(cv) <= 5 and 'huf' not in path_txt:
+                        currency_candidates.append(cv)
+
+                if tag in ('invoicenetamount', 'invoicegrossamount', 'linegrossamountnormal', 'linenetamounthuf', 'linegrossamounthuf'):
+                    if 'huf' not in path_txt:
+                        attr_cur = (
+                            (node.attrib.get('currency') if hasattr(node, 'attrib') else None)
+                            or (node.attrib.get('currencyCode') if hasattr(node, 'attrib') else None)
+                            or (node.attrib.get('currencycode') if hasattr(node, 'attrib') else None)
+                        )
+                        if attr_cur:
+                            cv = str(attr_cur).strip().upper()
+                            if cv and len(cv) <= 5:
+                                currency_candidates.append(cv)
+
+                for ch in list(node):
+                    _walk(ch, cur_path)
+
+            _walk(root, [])
+
+            for key in ('normal', 'group', 'eu', 'third', 'other'):
+                if tax_buckets[key]:
+                    result['customer_tax_number'] = tax_buckets[key][0]
+                    break
+
+            if currency_candidates:
+                uniq = []
+                for c in currency_candidates:
+                    if c not in uniq:
+                        uniq.append(c)
+                non_huf = [c for c in uniq if c != 'HUF']
+                result['currency'] = non_huf[0] if non_huf else uniq[0]
+
+            return result
+
+        def _decode_nav_invoice_data_response(response_text: str):
+            try:
+                import base64, gzip, io
+                root = ET.fromstring(response_text)
+            except Exception:
+                return ''
+
+            def _find_any(root_el, local):
+                for el in root_el.iter():
+                    tag = el.tag
+                    if tag == local or (isinstance(tag, str) and tag.endswith('}' + local)):
+                        return el
+                return None
+
+            try:
+                data_el = _find_any(root, 'invoiceDataResult') or root
+                inv_b64_el = _find_any(root, 'invoiceData') or (_find_any(data_el, 'invoiceData') if data_el is not None else None)
+                if inv_b64_el is not None and inv_b64_el.text:
+                    raw = base64.b64decode(inv_b64_el.text)
+                    try:
+                        with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                            decoded = gz.read()
+                    except OSError:
+                        decoded = raw
+                    return decoded.decode('utf-8', errors='replace')
+            except Exception:
+                return ''
+            return ''
+
+        def _get_external_meta_from_cache_basic(inv_number, supplier_tax_number=None):
+            try:
+                from invoices.models import IncomingInvoiceData
+                q = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number)
+                if supplier_tax_number:
+                    q = q.filter(supplier_tax_number=supplier_tax_number)
+                cached = q.order_by('-updated_at').first()
+                if (not cached or not cached.xml_text) and supplier_tax_number:
+                    cached = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number).order_by('-updated_at').first()
+                if not cached or not cached.xml_text:
+                    return None
+                return _parse_external_meta_basic(cached.xml_text)
+            except Exception:
+                return None
+
+        fetched_external_meta_cache = {}
+
+        def _fetch_external_meta_from_nav(inv_number, supplier_tax_number=None, digest_index=None, allow_network=True):
+            key = f"{inv_number}|{supplier_tax_number or ''}|{digest_index or ''}"
+            if key in fetched_external_meta_cache:
+                return fetched_external_meta_cache[key]
+            if not allow_network:
+                fetched_external_meta_cache[key] = None
+                return None
+            try:
+                from invoices.models import CompanyNAVConfiguration, IncomingInvoiceData
+                cfg = CompanyNAVConfiguration.objects.filter(company=company, is_active=True).order_by('-is_default').first()
+                if not cfg:
+                    fetched_external_meta_cache[key] = None
+                    return None
+                nav_service = NAVService(cfg)
+                variants = [
+                    (digest_index, None),
+                    (None, None),
+                    (digest_index, supplier_tax_number),
+                    (None, supplier_tax_number),
+                ]
+                for bi, stn in variants:
+                    try:
+                        res = nav_service.query_invoice_data('OUTBOUND', inv_number, None, bi)
+                        decoded_xml = _decode_nav_invoice_data_response(res.get('response') or '')
+                        if not decoded_xml:
+                            continue
+                        meta = _parse_external_meta_basic(decoded_xml)
+                        try:
+                            IncomingInvoiceData.objects.update_or_create(
+                                company=company,
+                                invoice_number=inv_number,
+                                supplier_tax_number=stn or supplier_tax_number,
+                                defaults={'xml_text': decoded_xml},
+                            )
+                        except Exception:
+                            pass
+                        if meta and (meta.get('customer_tax_number') or meta.get('currency')):
+                            fetched_external_meta_cache[key] = meta
+                            return meta
+                    except Exception:
+                        continue
+            except Exception:
+                pass
+            fetched_external_meta_cache[key] = None
+            return None
 
         # decide refresh
         import logging
         logger = logging.getLogger('invoices.incoming')
         sync, _ = IncomingSyncState.objects.get_or_create(company=company)
+        sync_last_refreshed = sync.external_last_refreshed_at if external_outgoing else sync.last_refreshed_at
+        external_full_synced = bool(getattr(sync, 'external_full_sync_at', None)) if external_outgoing else True
         # Perform refresh only if requested or stale: initial or older than 6h
         from datetime import timedelta
         refresh_param = (request.query_params.get('refresh') or '').strip().lower()
         force_refresh = refresh_param in ('1', 'true', 'yes')
         needs_refresh = False
-        if force_refresh or not sync.last_refreshed_at:
+        if force_refresh or not sync_last_refreshed:
             needs_refresh = True
         else:
             try:
-                if timezone.now() - sync.last_refreshed_at > timedelta(hours=6):
+                if timezone.now() - sync_last_refreshed > timedelta(hours=6):
                     needs_refresh = True
             except Exception:
                 needs_refresh = True
+        if external_outgoing and not external_full_synced:
+            needs_refresh = True
 
         # If we have no local data for the requested range, force a backfill for that range
         from django.db.models import Q, F, Value, DecimalField
-        from django.db.models.functions import Coalesce
+        from django.db.models.functions import Coalesce, Trim, Replace, Upper
+        has_any_qs = IncomingInvoiceDigest.objects.filter(company=company)
+        if external_outgoing:
+            own_invoice_numbers = Invoice.objects.filter(company=company).values_list('invoice_number', flat=True)
+            has_any_qs = has_any_qs.exclude(invoice_number__in=own_invoice_numbers)
+            has_any_qs = has_any_qs.exclude(invoice_category__iexact='SIMPLIFIED')
+            has_any_qs = has_any_qs.annotate(
+                _supplier_tax_norm=Replace(
+                    Replace(
+                        Replace(
+                            Trim(Coalesce(F('supplier_tax_number'), Value(''))),
+                            Value('-'),
+                            Value(''),
+                        ),
+                        Value(' '),
+                        Value(''),
+                    ),
+                    Value('/'),
+                    Value(''),
+                ),
+            )
+            if company_tax_base:
+                has_any_qs = has_any_qs.filter(Q(_supplier_tax_norm__startswith=company_tax_base) | Q(supplier_name__icontains=company.name))
+            elif company_name_norm:
+                has_any_qs = has_any_qs.filter(supplier_name__icontains=company.name)
         if date_from and date_to:
-            has_any = IncomingInvoiceDigest.objects.filter(company=company).filter(
+            has_any_qs = has_any_qs.filter(
                 Q(invoice_issue_date__gte=date_from, invoice_issue_date__lte=date_to) |
                 Q(ins_date__date__gte=date_from, ins_date__date__lte=date_to)
-            ).exists()
-        else:
-            has_any = IncomingInvoiceDigest.objects.filter(company=company).exists()
+            )
+        has_any = has_any_qs.exists()
 
         try:
             logger.info(f"Incoming: needs_refresh={needs_refresh} has_any={has_any} range={date_from}..{date_to}")
@@ -2373,7 +4749,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             nav_service = NAVService(cfg)
 
             # Determine fetch window: use explicit date range if provided, otherwise incremental by insDate from last refresh
-            fetch_by_insdate = sync.last_refreshed_at is not None and has_any
+            fetch_by_insdate = sync_last_refreshed is not None and has_any and not (external_outgoing and not external_full_synced)
             
             # If explicit date range provided, use it (by invoiceIssueDate)
             if date_from and date_to:
@@ -2383,7 +4759,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 # Automatic/Delta sync: use insDate (arrival date)
                 # Overlap: look back 5 days from the last fetch to catch delayed items
                 from datetime import timedelta
-                start_time = sync.last_refreshed_at - timedelta(days=5)
+                start_time = sync_last_refreshed - timedelta(days=5)
                 
                 df = start_time.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
                 dt = timezone.now().astimezone(timezone.utc).replace(microsecond=0).isoformat().replace('+00:00', 'Z')
@@ -2404,12 +4780,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     src_to = date_to
                     logger.info(f"Manual sync incoming invoices (issueDate): {src_from} -> {src_to} (with 5 days overlap)")
                 else:
-                    # Default backfill: last 90 days by invoiceIssueDate
                     from datetime import timedelta
                     today = timezone.now().date()
-                    df_date = (today - timedelta(days=90)).isoformat()
-                    dt_date = today.isoformat()
-                    src_from, src_to = df_date, dt_date
+                    if external_outgoing and not external_full_synced:
+                        src_from, src_to = '2010-01-01', today.isoformat()
+                        logger.info(f"External outgoing full historical sync: {src_from} -> {src_to}")
+                    elif external_outgoing:
+                        src_from, src_to = (today - timedelta(days=30)).isoformat(), today.isoformat()
+                    else:
+                        df_date = (today - timedelta(days=90)).isoformat()
+                        dt_date = today.isoformat()
+                        src_from, src_to = df_date, dt_date
 
             # NAV only allows max 35-day intervals; chunk the requested range
             from datetime import timedelta, datetime as dt
@@ -2447,7 +4828,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 window_new = 0
                 nav_page = 1
                 while True:
-                    res = nav_service.query_invoice_digest('INBOUND', span_from, span_to, page=nav_page)
+                    res = nav_service.query_invoice_digest(nav_direction, span_from, span_to, page=nav_page)
                     if not res.get('success'):
                         refresh_error = res.get('error_message') or res.get('error') or 'NAV lekérdezési hiba'
                         break
@@ -2489,6 +4870,36 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                 ti = stn.find(f'{ns_base}taxpayerId') or stn.find('taxpayerId')
                                 supplier_tax_id = (ti.text.strip() if (ti is not None and ti.text) else (stn.text.strip() if stn.text else None))
 
+                        customer_tax_id = child_map.get('customerTaxNumber')
+                        if not customer_tax_id:
+                            ctn = d.find(f'{ns_api}customerTaxNumber') or d.find('customerTaxNumber')
+                            if ctn is not None:
+                                ti = ctn.find(f'{ns_base}taxpayerId') or ctn.find('taxpayerId')
+                                customer_tax_id = (ti.text.strip() if (ti is not None and ti.text) else (ctn.text.strip() if ctn.text else None))
+
+                        currency_val = child_map.get('currency') or child_map.get('invoiceCurrency') or child_map.get('invoiceNetAmountCurrency')
+                        if not currency_val:
+                            c_el = d.find(f'.//{ns_api}currency') or d.find(f'.//{ns_base}currency') or d.find('.//currency')
+                            if c_el is not None and c_el.text:
+                                currency_val = c_el.text.strip()
+                        if not currency_val:
+                            n_el = d.find(f'.//{ns_api}invoiceNetAmount') or d.find(f'.//{ns_base}invoiceNetAmount') or d.find('.//invoiceNetAmount')
+                            if n_el is not None:
+                                currency_val = (
+                                    n_el.attrib.get('currency')
+                                    or n_el.attrib.get('currencyCode')
+                                    or n_el.attrib.get('currencycode')
+                                )
+
+                        if external_outgoing:
+                            meta = _get_external_meta_from_cache_basic(inv_number, supplier_tax_id) or {}
+                            meta_tax = meta.get('customer_tax_number')
+                            meta_currency = meta.get('currency')
+                            if meta_tax and (not customer_tax_id or customer_tax_id == supplier_tax_id or customer_tax_id != meta_tax):
+                                customer_tax_id = meta_tax
+                            if meta_currency and (not currency_val or str(currency_val).strip().upper() != str(meta_currency).strip().upper()):
+                                currency_val = meta_currency
+
                         fields = {
                             'invoice_operation': child_map.get('invoiceOperation'),
                             'invoice_category': child_map.get('invoiceCategory'),
@@ -2503,12 +4914,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             ),
                             'supplier_tax_number': supplier_tax_id,
                             'supplier_name': supplier_name,
-                            'customer_tax_number': child_map.get('customerTaxNumber'),
+                            'customer_tax_number': customer_tax_id,
                             'customer_name': child_map.get('customerName'),
                             'payment_method': child_map.get('paymentMethod'),
                             'payment_date': None,  # NAV digest paymentDate is due date; keep DB if any
                             'invoice_appearance': child_map.get('invoiceAppearance'),
-                            'currency': child_map.get('currency'),
+                            'currency': currency_val,
                             'invoice_net_amount': child_map.get('invoiceNetAmount'),
                             'invoice_vat_amount': child_map.get('invoiceVatAmount'),
                             'transaction_id': child_map.get('TransactionId') or child_map.get('transactionId'),
@@ -2518,6 +4929,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             'ins_date': child_map.get('insDate'),
                             'completeness_indicator': (child_map.get('completenessIndicator') == 'true'),
                         }
+
+                        if external_outgoing:
+                            if str(fields.get('invoice_category') or '').upper() == 'SIMPLIFIED':
+                                continue
+                            supplier_tax_base = ''.join(ch for ch in str(supplier_tax_id or '') if ch.isdigit())[:8]
+                            supplier_name_norm = str(supplier_name or '').strip().upper()
+                            if company_tax_base:
+                                if supplier_tax_base and supplier_tax_base != company_tax_base:
+                                    if not company_name_norm or company_name_norm not in supplier_name_norm:
+                                        continue
+                            elif company_name_norm and company_name_norm not in supplier_name_norm:
+                                continue
 
                         from django.utils.dateparse import parse_date, parse_datetime
                         if isinstance(fields['invoice_issue_date'], str):
@@ -2546,18 +4969,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                             transaction_id=fields['transaction_id'],
                             defaults=fields,
                         )
-                        if (not created) and fields.get('due_date') and getattr(obj, 'due_date', None) != fields['due_date']:
-                            obj.due_date = fields['due_date']
-                            try:
-                                obj.save(update_fields=['due_date'])
-                            except Exception:
-                                pass
+                        if not created:
+                            changed_fields = []
+                            refreshable = (
+                                'invoice_issue_date',
+                                'invoice_delivery_date',
+                                'supplier_tax_number',
+                                'supplier_name',
+                                'customer_tax_number',
+                                'customer_name',
+                                'currency',
+                                'invoice_net_amount',
+                                'invoice_vat_amount',
+                                'ins_date',
+                                'index',
+                            )
+                            for fname in refreshable:
+                                new_val = fields.get(fname)
+                                if new_val is None:
+                                    continue
+                                old_val = getattr(obj, fname, None)
+                                if old_val != new_val:
+                                    setattr(obj, fname, new_val)
+                                    changed_fields.append(fname)
+
+                            if fields.get('due_date') and getattr(obj, 'due_date', None) != fields['due_date']:
+                                obj.due_date = fields['due_date']
+                                changed_fields.append('due_date')
+
+                            if changed_fields:
+                                try:
+                                    obj.save(update_fields=list(dict.fromkeys(changed_fields + ['updated_at'])))
+                                except Exception:
+                                    pass
                         if created:
                             upsert_count += 1
                             window_new += 1
 
-                    cp = root.find(f'.//{ns_api}currentPage')
-                    pc = root.find(f'.//{ns_api}pageCount')
+                    cp = (
+                        root.find(f'.//{ns_api}currentPage')
+                        or root.find(f'.//{ns_base}currentPage')
+                        or root.find('.//currentPage')
+                    )
+                    pc = (
+                        root.find(f'.//{ns_api}pageCount')
+                        or root.find(f'.//{ns_api}availablePage')
+                        or root.find(f'.//{ns_base}pageCount')
+                        or root.find(f'.//{ns_base}availablePage')
+                        or root.find('.//pageCount')
+                        or root.find('.//availablePage')
+                    )
                     try:
                         cur = int(cp.text) if (cp is not None and cp.text) else nav_page
                         total = int(pc.text) if (pc is not None and pc.text) else cur
@@ -2628,18 +5089,124 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 # If we updated based on a manually filtered date range, we must NOT advance the global pointer,
                 # as that would cause the system to skip the period between the previous sync and this custom range.
                 if not (date_from and date_to):
-                    sync.last_refreshed_at = timezone.now()
-                    sync.save(update_fields=['last_refreshed_at'])
+                    now_ts = timezone.now()
+                    if external_outgoing:
+                        sync.external_last_refreshed_at = now_ts
+                        update_fields = ['external_last_refreshed_at']
+                        if not external_full_synced:
+                            sync.external_full_sync_at = now_ts
+                            update_fields.append('external_full_sync_at')
+                        sync.save(update_fields=update_fields)
+                    else:
+                        sync.last_refreshed_at = now_ts
+                        sync.save(update_fields=['last_refreshed_at'])
                 elif fetch_by_insdate:
                     # Should not be reachable if (date_from and date_to) forces fetch_by_insdate=False, 
                     # but kept for logical completeness.
-                    sync.last_refreshed_at = timezone.now()
-                    sync.save(update_fields=['last_refreshed_at'])
+                    now_ts = timezone.now()
+                    if external_outgoing:
+                        sync.external_last_refreshed_at = now_ts
+                        sync.save(update_fields=['external_last_refreshed_at'])
+                    else:
+                        sync.last_refreshed_at = now_ts
+                        sync.save(update_fields=['last_refreshed_at'])
 
                 did_refresh = True
 
+        if external_outgoing:
+            try:
+                missing_meta_qs = (
+                    IncomingInvoiceDigest.objects
+                    .filter(company=company)
+                    .filter(
+                        Q(customer_tax_number__isnull=True)
+                        | Q(customer_tax_number='')
+                        | Q(currency__isnull=True)
+                        | Q(currency='')
+                        | Q(customer_tax_number=F('supplier_tax_number'))
+                    )
+                    .exclude(invoice_category__iexact='SIMPLIFIED')
+                    .order_by('-updated_at')[:500]
+                )
+                for obj in missing_meta_qs:
+                    meta = _get_external_meta_from_cache_basic(obj.invoice_number, obj.supplier_tax_number) or {}
+                    updates = {}
+                    meta_tax = meta.get('customer_tax_number')
+                    meta_currency = meta.get('currency')
+                    if meta_tax and (
+                        not (obj.customer_tax_number or '').strip()
+                        or (obj.customer_tax_number == obj.supplier_tax_number)
+                        or (obj.customer_tax_number != meta_tax)
+                    ):
+                        updates['customer_tax_number'] = meta.get('customer_tax_number')
+                    if meta_currency and (
+                        not (obj.currency or '').strip()
+                        or str(obj.currency).strip().upper() != str(meta_currency).strip().upper()
+                    ):
+                        updates['currency'] = meta.get('currency')
+                    if updates:
+                        IncomingInvoiceDigest.objects.filter(id=obj.id).update(**updates)
+            except Exception:
+                pass
+
         # Serve from DB
         qs = IncomingInvoiceDigest.objects.filter(company=company).select_related('approved_by')
+        if company_tax_base:
+            qs = qs.annotate(
+                _supplier_tax_norm=Replace(
+                    Replace(
+                        Replace(
+                            Trim(Coalesce(F('supplier_tax_number'), Value(''))),
+                            Value('-'),
+                            Value(''),
+                        ),
+                        Value(' '),
+                        Value(''),
+                    ),
+                    Value('/'),
+                    Value(''),
+                ),
+                _customer_tax_norm=Replace(
+                    Replace(
+                        Replace(
+                            Trim(Coalesce(F('customer_tax_number'), Value(''))),
+                            Value('-'),
+                            Value(''),
+                        ),
+                        Value(' '),
+                        Value(''),
+                    ),
+                    Value('/'),
+                    Value(''),
+                ),
+            )
+            if external_outgoing:
+                qs = qs.filter(Q(_supplier_tax_norm__startswith=company_tax_base) | Q(supplier_name__icontains=company.name))
+            else:
+                qs = qs.filter(Q(_customer_tax_norm__startswith=company_tax_base) | Q(_customer_tax_norm=''))
+        elif external_outgoing and company_name_norm:
+            qs = qs.filter(supplier_name__icontains=company.name)
+
+        if external_outgoing:
+            own_invoice_numbers = Invoice.objects.filter(company=company).values_list('invoice_number', flat=True)
+            qs = qs.exclude(invoice_number__in=own_invoice_numbers)
+            qs = qs.exclude(invoice_category__iexact='SIMPLIFIED')
+            manual_tx_prefix = 'OUTBOUND_MANUAL::'
+            nav_external_invoice_numbers = (
+                IncomingInvoiceDigest.objects
+                .filter(company=company)
+                .exclude(transaction_id__startswith=manual_tx_prefix)
+                .exclude(invoice_number__isnull=True)
+                .exclude(invoice_number='')
+                .values_list('invoice_number', flat=True)
+                .distinct()
+            )
+            # If a NAV external outgoing record exists for the same invoice number,
+            # hide the manual fallback duplicate from list view.
+            qs = qs.exclude(
+                Q(transaction_id__startswith=manual_tx_prefix)
+                & Q(invoice_number__in=nav_external_invoice_numbers)
+            )
         if date_from and date_to:
             qs = qs.filter(
                 Q(invoice_issue_date__gte=date_from, invoice_issue_date__lte=date_to)
@@ -2652,13 +5219,20 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(invoice_issue_date__lte=date_to) | Q(ins_date__date__lte=date_to))
         # Search filter
         if search:
-            qs = qs.filter(
-                Q(invoice_number__icontains=search)
-                |
-                Q(supplier_name__icontains=search)
-                |
-                Q(supplier_tax_number__icontains=search)
-            )
+            if external_outgoing:
+                # In external outgoing mode: supplier = the company itself;
+                # the user searches by invoice number, customer name or customer tax number
+                qs = qs.filter(
+                    Q(invoice_number__icontains=search)
+                    | Q(customer_name__icontains=search)
+                    | Q(customer_tax_number__icontains=search)
+                )
+            else:
+                qs = qs.filter(
+                    Q(invoice_number__icontains=search)
+                    | Q(supplier_name__icontains=search)
+                    | Q(supplier_tax_number__icontains=search)
+                )
 
         # Amount filter
         if amount_from or amount_to:
@@ -2676,9 +5250,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 except Exception:
                     pass
 
-        # Payment method filter
-        if payment_method_filter and payment_method_filter != 'all':
-            qs = qs.filter(payment_method__iexact=payment_method_filter.upper())
+        # Payment method filter (single or multi: TRANSFER,CASH,...)
+        payment_method_values = [
+            v.strip().upper()
+            for v in str(payment_method_filter).split(',')
+            if v and v.strip()
+        ]
+        payment_method_values = [v for v in payment_method_values if v != 'ALL']
+        if payment_method_values:
+            include_unknown = 'UNKNOWN' in payment_method_values
+            normal_values = [v for v in payment_method_values if v != 'UNKNOWN']
+            payment_method_aliases = {
+                'TRANSFER': {'TRANSFER', 'ÁTUTALÁS', 'ATUTALAS'},
+                'CASH': {'CASH', 'KÉSZPÉNZ', 'KESZPENZ'},
+                'CARD': {'CARD', 'KÁRTYA', 'KARTYA'},
+                'UTANVET': {'UTANVET', 'UTÁNVÉT'},
+                'OTHER': {'OTHER', 'EGYÉB', 'EGYEB'},
+                'VOUCHER': {'VOUCHER', 'UTALVÁNY', 'UTALVANY'},
+            }
+            qs = qs.annotate(
+                _pm_normalized=Upper(Trim(Coalesce(F('payment_method'), Value(''))))
+            )
+            q_pm = Q()
+            if normal_values:
+                expanded_values = set()
+                for code in normal_values:
+                    expanded_values.update(payment_method_aliases.get(code, {code}))
+                q_pm |= Q(_pm_normalized__in=list(expanded_values))
+            if include_unknown:
+                qs = qs.annotate(
+                    _pm_unknown_normalized=Replace(
+                        Replace(
+                            Replace(
+                                Replace(
+                                    Trim(Coalesce(F('payment_method'), Value(''))),
+                                    Value('-'),
+                                    Value(''),
+                                ),
+                                Value('–'),
+                                Value(''),
+                            ),
+                            Value('—'),
+                            Value(''),
+                        ),
+                        Value(' '),
+                        Value(''),
+                    )
+                )
+                q_pm |= Q(_pm_unknown_normalized='')
+            if q_pm:
+                qs = qs.filter(q_pm)
 
         # Approval filter
         if approval_filter == 'approved':
@@ -2686,13 +5307,32 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         elif approval_filter == 'unapproved':
             qs = qs.filter(is_approved=False)
 
+        # Manual-only filter: invoices not coming from NAV sync (created in app manually)
+        if manual_only:
+            qs = qs.filter(Q(invoice_operation__iexact='MANUAL') | Q(transaction_id__startswith='MANUAL-'))
+
         # Paid/unpaid coarse filter in DB (due handled later)
         if status_filter == 'paid':
-            qs = qs.filter(Q(payment_date__isnull=False) | ~Q(payment_method__iexact='TRANSFER'))
+            qs = qs.filter(
+                Q(payment_date__isnull=False)
+                | (~Q(payment_method__iexact='TRANSFER') & ~Q(payment_method__iexact='COD'))
+            )
         elif status_filter in ('unpaid', 'due'):
-            qs = qs.filter(Q(payment_method__iexact='TRANSFER') & Q(payment_date__isnull=True))
+            qs = qs.filter(
+                (Q(payment_method__iexact='TRANSFER') | Q(payment_method__iexact='COD'))
+                & Q(payment_date__isnull=True)
+            )
 
-        ordered_qs = qs.order_by('-invoice_issue_date', '-ins_date')
+        ordered_qs = qs.order_by('-invoice_issue_date', '-invoice_number', '-ins_date')
+        storno_invoice_q = Q(invoice_operation__icontains='STORNO') | Q(invoice_operation__icontains='CANCEL')
+        storno_original_numbers = set(
+            ordered_qs
+            .filter(storno_invoice_q)
+            .exclude(original_invoice_number__isnull=True)
+            .exclude(original_invoice_number='')
+            .values_list('original_invoice_number', flat=True)
+            .distinct()
+        )
         paginator = Paginator(ordered_qs, page_size)
         page_obj = paginator.get_page(page)
         page_items_raw = list(page_obj.object_list)
@@ -2715,6 +5355,42 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'total': row.get('total'),
                 'last_payment': row.get('last_payment'),
             }
+
+        # Aggregate bank statement-based incoming payments per invoice (only current page items)
+        bank_sum_map = {}
+        bank_items_map = {}
+        if page_items_raw:
+            q_bank = Q()
+            for r in page_items_raw:
+                q_bank |= (
+                    Q(incoming_invoice__invoice_number=r.invoice_number)
+                    & (Q(incoming_invoice__supplier_tax_number=r.supplier_tax_number) | Q(incoming_invoice__supplier_tax_number__isnull=True))
+                )
+
+            bank_rows = (
+                BankStatementItem.objects
+                .filter(bank_statement__company=company, incoming_invoice__isnull=False)
+                .filter(q_bank)
+                .values(
+                    'incoming_invoice__invoice_number',
+                    'incoming_invoice__supplier_tax_number',
+                    'amount',
+                    'bank_statement_id',
+                    'bank_statement__sequence_number',
+                    'bank_statement__statement_date',
+                )
+            )
+
+            for row in bank_rows:
+                key = f"{row.get('incoming_invoice__invoice_number') or ''}|{row.get('incoming_invoice__supplier_tax_number') or ''}"
+                amt = row.get('amount') or decimal.Decimal('0')
+                bank_sum_map[key] = (bank_sum_map.get(key) or decimal.Decimal('0')) + amt
+                bank_items_map.setdefault(key, []).append({
+                    'statementId': str(row.get('bank_statement_id')) if row.get('bank_statement_id') else None,
+                    'sequenceNumber': row.get('bank_statement__sequence_number'),
+                    'statementDate': row.get('bank_statement__statement_date').isoformat() if row.get('bank_statement__statement_date') else None,
+                    'amount': str(amt),
+                })
 
         items_all = []
 
@@ -2766,6 +5442,24 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 return None
 
+        def _parse_external_meta_from_xml_text(xml_text: str):
+            return _parse_external_meta_basic(xml_text)
+
+        def extract_external_meta_from_cache(inv_number, supplier_tax_number=None):
+            try:
+                from invoices.models import IncomingInvoiceData
+                q = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number)
+                if supplier_tax_number:
+                    q = q.filter(supplier_tax_number=supplier_tax_number)
+                cached = q.order_by('-updated_at').first()
+                if (not cached or not cached.xml_text) and supplier_tax_number:
+                    cached = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number).order_by('-updated_at').first()
+                if not cached or not cached.xml_text:
+                    return None
+                return _parse_external_meta_from_xml_text(cached.xml_text)
+            except Exception:
+                return None
+
         def extract_due_date_from_cache(inv_number, supplier_tax_number=None):
             try:
                 from invoices.models import IncomingInvoiceData
@@ -2778,6 +5472,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if not cached or not cached.xml_text:
                     return None
                 return _parse_due_from_xml_text(cached.xml_text)
+            except Exception:
+                return None
+
+        def extract_huf_amounts_from_cache(inv_number, supplier_tax_number=None):
+            try:
+                from invoices.models import IncomingInvoiceData
+                q = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number)
+                if supplier_tax_number:
+                    q = q.filter(supplier_tax_number=supplier_tax_number)
+                cached = q.order_by('-updated_at').first()
+                if (not cached or not cached.xml_text) and supplier_tax_number:
+                    cached = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number).order_by('-updated_at').first()
+                if not cached or not cached.xml_text:
+                    return None
+                return _parse_huf_amounts_from_xml(cached.xml_text)
             except Exception:
                 return None
 
@@ -2904,6 +5613,91 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     date_val = r.ins_date.date()
                 except Exception:
                     date_val = None
+            resolved_customer_tax = getattr(r, 'customer_tax_number', None)
+            resolved_currency = getattr(r, 'currency', None)
+            if external_outgoing and (
+                not resolved_customer_tax
+                or resolved_customer_tax == getattr(r, 'supplier_tax_number', None)
+                or not resolved_currency
+                or str(resolved_currency).strip().upper() == 'HUF'
+            ):
+                ext_meta = extract_external_meta_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None)) or {}
+                if not (ext_meta.get('customer_tax_number') and ext_meta.get('currency')):
+                    nav_meta = _fetch_external_meta_from_nav(
+                        r.invoice_number,
+                        getattr(r, 'supplier_tax_number', None),
+                        getattr(r, 'index', None),
+                        allow_network=True,
+                    ) or {}
+                    if nav_meta.get('customer_tax_number'):
+                        ext_meta['customer_tax_number'] = nav_meta.get('customer_tax_number')
+                    if nav_meta.get('currency'):
+                        ext_meta['currency'] = nav_meta.get('currency')
+                meta_tax = ext_meta.get('customer_tax_number')
+                meta_currency = ext_meta.get('currency')
+                changed_fields = []
+                if meta_tax and (
+                    not resolved_customer_tax
+                    or resolved_customer_tax == getattr(r, 'supplier_tax_number', None)
+                    or resolved_customer_tax != meta_tax
+                ):
+                    resolved_customer_tax = meta_tax
+                    try:
+                        r.customer_tax_number = meta_tax
+                    except Exception:
+                        pass
+                    changed_fields.append('customer_tax_number')
+                if meta_currency and (
+                    not resolved_currency
+                    or str(resolved_currency).strip().upper() != str(meta_currency).strip().upper()
+                ):
+                    resolved_currency = meta_currency
+                    try:
+                        r.currency = meta_currency
+                    except Exception:
+                        pass
+                    changed_fields.append('currency')
+                if changed_fields:
+                    try:
+                        IncomingInvoiceDigest.objects.filter(id=r.id).update(**{f: getattr(r, f) for f in changed_fields})
+                    except Exception:
+                        pass
+
+            row_currency = (str(resolved_currency).strip().upper() if resolved_currency else str(getattr(r, 'currency', '') or '').strip().upper()) or 'HUF'
+            needs_huf_enrichment = (
+                row_currency != 'HUF' and (
+                    getattr(r, 'invoice_net_amount_huf', None) is None
+                    or getattr(r, 'invoice_vat_amount_huf', None) is None
+                    or getattr(r, 'exchange_rate', None) is None
+                )
+            )
+            if needs_huf_enrichment:
+                cached_huf = extract_huf_amounts_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None)) or {}
+                huf_updates = {}
+                if getattr(r, 'invoice_net_amount_huf', None) is None and cached_huf.get('invoice_net_amount_huf') is not None:
+                    try:
+                        r.invoice_net_amount_huf = cached_huf.get('invoice_net_amount_huf')
+                        huf_updates['invoice_net_amount_huf'] = r.invoice_net_amount_huf
+                    except Exception:
+                        pass
+                if getattr(r, 'invoice_vat_amount_huf', None) is None and cached_huf.get('invoice_vat_amount_huf') is not None:
+                    try:
+                        r.invoice_vat_amount_huf = cached_huf.get('invoice_vat_amount_huf')
+                        huf_updates['invoice_vat_amount_huf'] = r.invoice_vat_amount_huf
+                    except Exception:
+                        pass
+                if getattr(r, 'exchange_rate', None) is None and cached_huf.get('exchange_rate') is not None:
+                    try:
+                        r.exchange_rate = cached_huf.get('exchange_rate')
+                        huf_updates['exchange_rate'] = r.exchange_rate
+                    except Exception:
+                        pass
+                if huf_updates:
+                    try:
+                        IncomingInvoiceDigest.objects.filter(id=r.id).update(**huf_updates)
+                    except Exception:
+                        pass
+
             # Compute gross amount if possible
             gross_val = None
             try:
@@ -2939,6 +5733,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             payment_date = r.payment_date
             pay_key = f"{r.invoice_number or ''}|{r.supplier_tax_number or ''}"
             batch_paid_amount = pay_map.get(pay_key, {}).get('total') or decimal.Decimal('0')
+            bank_paid_amount = bank_sum_map.get(pay_key) or decimal.Decimal('0')
             reconciled_paid_amount = r.amount_paid or decimal.Decimal('0')
             paid_amount = max(batch_paid_amount, reconciled_paid_amount)
             last_payment_dt = pay_map.get(pay_key, {}).get('last_payment')
@@ -3014,24 +5809,60 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             # Only transfer invoices require explicit approval; others are treated as approved
             pm_val = (r.payment_method or '').upper()
             auto_approved = pm_val and pm_val != 'TRANSFER'
+            party_name = r.customer_name if external_outgoing else r.supplier_name
+            party_tax = (resolved_customer_tax or '') if external_outgoing else r.supplier_tax_number
+            row_currency = (str(resolved_currency).strip().upper() if resolved_currency else '') or 'HUF'
+            op_val = str(getattr(r, 'invoice_operation', '') or '').upper()
+            tx_val = str(getattr(r, 'transaction_id', '') or '')
+            is_manual = (op_val == 'MANUAL') or tx_val.startswith('MANUAL-')
+            is_storno_invoice = ('STORNO' in op_val) or ('CANCEL' in op_val)
+            is_storno_original = str(getattr(r, 'invoice_number', '') or '') in storno_original_numbers
 
             items_all.append({
+                'id': str(r.id),
                 'invoiceNumber': r.invoice_number,
+                'invoiceOperation': r.invoice_operation,
+                'transactionId': getattr(r, 'transaction_id', None),
+                'isManual': bool(is_manual),
+                'originalInvoiceNumber': r.original_invoice_number,
+                'isStornoInvoice': bool(is_storno_invoice),
+                'isStornoOriginal': bool(is_storno_original),
                 'invoiceIssueDate': date_val.isoformat() if date_val else None,
-                'supplierTaxNumber': r.supplier_tax_number,
-                'supplierName': r.supplier_name,
-                'currency': r.currency,
+                'supplierTaxNumber': party_tax,
+                'supplierName': party_name,
+                'currency': row_currency,
                 'exchangeRate': (str(r.exchange_rate) if getattr(r, 'exchange_rate', None) is not None else None),
                 'netAmount': (str(r.invoice_net_amount) if r.invoice_net_amount is not None else None),
                 'vatAmount': (str(r.invoice_vat_amount) if r.invoice_vat_amount is not None else None),
                 'grossAmount': (str(gross_val) if gross_val is not None else None),
                 'netAmountHUF': (str(r.invoice_net_amount_huf) if getattr(r, 'invoice_net_amount_huf', None) is not None else None),
                 'vatAmountHUF': (str(r.invoice_vat_amount_huf) if getattr(r, 'invoice_vat_amount_huf', None) is not None else None),
+                'grossAmountHUF': (
+                    str(
+                        (
+                            decimal.Decimal(str(getattr(r, 'invoice_net_amount_huf', None) or 0)) +
+                            decimal.Decimal(str(getattr(r, 'invoice_vat_amount_huf', None) or 0))
+                        )
+                    ) if (
+                        getattr(r, 'invoice_net_amount_huf', None) is not None or
+                        getattr(r, 'invoice_vat_amount_huf', None) is not None
+                    ) else (
+                        str(
+                            (gross_val * decimal.Decimal(str(r.exchange_rate))).quantize(decimal.Decimal('0.01'))
+                        ) if (
+                            gross_val is not None and
+                            getattr(r, 'exchange_rate', None) is not None and
+                            decimal.Decimal(str(r.exchange_rate)) > decimal.Decimal('1.01') and
+                            row_currency != 'HUF'
+                        ) else None
+                    )
+                ),
                 'deliveryDate': (r.invoice_delivery_date.isoformat() if r.invoice_delivery_date else None),
                 'paymentDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
                 'paymentMethod': r.payment_method,
                 'dueDate': due_date_str,
                 'paidAmount': (str(paid_amount) if paid_amount is not None else None),
+                'bankPaidAmount': (str(bank_paid_amount) if bank_paid_amount is not None else None),
                 'remainingAmount': (str(remaining_amount) if (remaining_amount is not None and remaining_amount > decimal.Decimal('0')) else None),
                 'overpaidAmount': (str(overpaid_amount) if overpaid_amount is not None else None),
                 'paymentDisplayDate': (payment_display_date.isoformat() if hasattr(payment_display_date, 'isoformat') and payment_display_date else None),
@@ -3039,6 +5870,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'isPaid': is_paid,
                 'isPartial': is_partial,
                 'inPaymentBatch': pay_key in pay_map,
+                'bankStatements': bank_items_map.get(pay_key, []),
                 'isApproved': bool(getattr(r, 'is_approved', False) or auto_approved),
                 'approvedBy': approver_name,
                 'approvedAt': (r.approved_at.isoformat() if getattr(r, 'approved_at', None) else None),
@@ -3059,6 +5891,871 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'refreshError': refresh_error,
         })
 
+    def _incoming_parse_decimal(self, raw_value):
+        try:
+            if raw_value is None:
+                return None
+            s = str(raw_value).strip()
+            if not s:
+                return None
+            s = s.replace('\u00A0', ' ').replace(' ', '')
+            if ',' in s and '.' in s:
+                if s.rfind(',') > s.rfind('.'):
+                    s = s.replace('.', '').replace(',', '.')
+                else:
+                    s = s.replace(',', '')
+            elif ',' in s:
+                s = s.replace('.', '').replace(',', '.')
+            return decimal.Decimal(s)
+        except Exception:
+            return None
+
+    def _incoming_parse_date(self, raw_value):
+        if not raw_value:
+            return None
+        v = str(raw_value).strip()
+        for fmt in ('%Y-%m-%d', '%Y.%m.%d', '%Y/%m/%d', '%d.%m.%Y', '%d-%m-%Y', '%d/%m/%Y'):
+            try:
+                d = datetime.strptime(v, fmt).date()
+                if d.year < 1990 or d.year > 2100:
+                    continue
+                return d.isoformat()
+            except Exception:
+                continue
+        return None
+
+    def _incoming_extract_text_from_document(self, upload):
+        errors = []
+        content_type = str(getattr(upload, 'content_type', '') or '').lower()
+        filename = str(getattr(upload, 'name', '') or '').lower()
+        try:
+            raw = upload.read()
+        finally:
+            try:
+                upload.seek(0)
+            except Exception:
+                pass
+
+        is_pdf = content_type == 'application/pdf' or filename.endswith('.pdf')
+        is_image = content_type.startswith('image/') or filename.endswith(('.jpg', '.jpeg', '.png', '.bmp', '.tif', '.tiff', '.webp'))
+
+        if is_pdf:
+            try:
+                from pypdf import PdfReader
+                import io
+                reader = PdfReader(io.BytesIO(raw))
+                pages = []
+                for p in reader.pages:
+                    pages.append((p.extract_text() or '').strip())
+                text = '\n'.join([t for t in pages if t])
+                if text:
+                    return text, errors
+            except Exception as ex:
+                errors.append(f'PDF szövegkinyerés hiba: {ex}')
+
+        if is_image:
+            try:
+                import io
+                from PIL import Image
+                import pytesseract
+                image = Image.open(io.BytesIO(raw))
+                text = (pytesseract.image_to_string(image, lang='hun+eng') or '').strip()
+                if text:
+                    return text, errors
+            except Exception as ex:
+                errors.append(f'Képi OCR hiba: {ex}')
+
+        return '', errors
+
+    def _incoming_extract_fields_from_text(self, text):
+        source = str(text or '')
+        one_line = re.sub(r'\s+', ' ', source)
+        lines = [ln.strip() for ln in source.splitlines() if str(ln or '').strip()]
+        date_re = r'([0-9]{1,4}[./-][0-9]{1,2}[./-][0-9]{1,4})'
+
+        def _find_in_lines(label_patterns):
+            for ln in lines:
+                for pat in label_patterns:
+                    m = re.search(pat, ln, flags=re.IGNORECASE)
+                    if m:
+                        return (m.group(1) or '').strip()
+            return None
+
+        def _find_labelled_date(label_patterns):
+            pats = [rf'{p}\s*[:#]?\s*{date_re}' for p in label_patterns]
+            direct = _find_in_lines(pats)
+            if direct:
+                return direct
+            for idx, ln in enumerate(lines):
+                for p in label_patterns:
+                    if not re.search(p, ln, flags=re.IGNORECASE):
+                        continue
+                    for offs in (0, 1, 2):
+                        pos = idx + offs
+                        if pos >= len(lines):
+                            break
+                        m = re.search(date_re, lines[pos])
+                        if m:
+                            return (m.group(1) or '').strip()
+            return None
+
+        def _parse_all_dates():
+            out = []
+            for ln in lines:
+                for m in re.finditer(date_re, ln):
+                    parsed = self._incoming_parse_date(m.group(1))
+                    if parsed:
+                        out.append(parsed)
+            # preserve order, unique
+            uniq = []
+            for d in out:
+                if d not in uniq:
+                    uniq.append(d)
+            return uniq
+
+        invoice_number = None
+        inv_label_patterns = [
+            r'(?:sz[aá]mla(?:\s*sz[aá]m[aá]?)?|invoice(?:\s*number)?|fakt[uú]ra|cislo\s*faktury|č[ií]slo\s*fakt[úu]ry)\s*[:#]?\s*([A-Z0-9](?=[A-Z0-9\/_\-.]*\d)[A-Z0-9\/_\-.]{3,40})',
+        ]
+        invoice_number = _find_in_lines(inv_label_patterns)
+        if not invoice_number:
+            for ln in lines:
+                if not re.search(r'(sz[aá]mla|invoice|fakt)', ln, flags=re.IGNORECASE):
+                    continue
+                candidates = re.findall(r'\b([A-Z0-9][A-Z0-9\/_\-.]{4,40})\b', ln.upper())
+                for cand in candidates:
+                    if re.fullmatch(r'[0-9\-]+', cand):
+                        continue
+                    if re.search(r'[0-9]', cand):
+                        invoice_number = cand
+                        break
+                if invoice_number:
+                    break
+
+        issue_raw = _find_labelled_date([
+            r'ki[aá]ll[ií]t[aá]s\s*d[aá]tuma', r'sz[aá]mla\s*kelte', r'kelt(?:ez[eé]s)?', r'invoice\s*date',
+            r'vystaven[eé]', r'd[aá]tum\s*vystavenia', r'datum\s*vystaveni'
+        ])
+        due_raw = _find_labelled_date([
+            r'esed[eé]kess[eé]g(?:\s*d[aá]tuma)?', r'fizet[eé]si\s*hat[aá]rid[őo]',
+            r'due\s*date', r'splatnos[ťt]', r'd[aá]tum\s*splatnosti'
+        ])
+        delivery_raw = _find_labelled_date([
+            r'teljes[ií]t[eé]s(?:\s*d[aá]tuma)?', r'sz[aá]ll[ií]t[aá]s\s*d[aá]tuma',
+            r'delivery\s*date', r'sale\s*date', r'd[aá]tum\s*dodania'
+        ])
+
+        all_dates = _parse_all_dates()
+        issue_date = self._incoming_parse_date(issue_raw)
+        due_date = self._incoming_parse_date(due_raw)
+        delivery_date = self._incoming_parse_date(delivery_raw)
+        if not issue_date and all_dates:
+            issue_date = all_dates[0]
+        if not due_date and len(all_dates) > 1:
+            due_date = all_dates[-1]
+        if not delivery_date and len(all_dates) > 2:
+            mid = [d for d in all_dates if d not in (issue_date, due_date)]
+            if mid:
+                delivery_date = mid[0]
+
+        if issue_date and due_date and due_date < issue_date:
+            issue_date, due_date = due_date, issue_date
+
+        supplier_marker = re.compile(r'(?:\bsz[aá]ll[ií]t[oó]\b|\bsupplier\b|\bseller\b|\bdod[aá]vate[ľl]\b|\bpred[aá]vaj[úu]ci\b|\belad[oó]\b)', re.IGNORECASE)
+        buyer_marker = re.compile(r'(vev[őo]|buyer|customer|odberate[ľl]|el[őo]fizet[őo])', re.IGNORECASE)
+        tax_pat = re.compile(r'\b([A-Z]{2}\s*[A-Z0-9]{8,14}|[0-9]{8}(?:-[0-9]{1,2}-[0-9]{1,2})?)\b', re.IGNORECASE)
+
+        supplier_windows = []
+        buyer_windows = []
+        for idx, ln in enumerate(lines):
+            if re.search(r'sz[aá]ll[ií]t[oó]lev[eé]l', ln, flags=re.IGNORECASE):
+                continue
+            if supplier_marker.search(ln):
+                supplier_windows.extend(range(idx, min(len(lines), idx + 7)))
+            if buyer_marker.search(ln):
+                buyer_windows.extend(range(idx, min(len(lines), idx + 7)))
+        supplier_windows = set(supplier_windows)
+        buyer_windows = set(buyer_windows)
+
+        supplier_tax_number = None
+        scored_taxes = []
+        for idx, ln in enumerate(lines):
+            has_supplier_marker = bool(supplier_marker.search(ln))
+            has_buyer_marker = bool(buyer_marker.search(ln))
+            if has_supplier_marker and has_buyer_marker:
+                continue
+            for m in tax_pat.finditer(ln):
+                tax = re.sub(r'\s+', '', (m.group(1) or '').strip()).upper()
+                score = 0
+                if idx in supplier_windows:
+                    score += 3
+                if idx in buyer_windows:
+                    score -= 5
+                if re.search(r'(ksh|ad[oó]sz[aá]m|tax|vat|nip|dic|i[čc]\s*dph)', ln, flags=re.IGNORECASE):
+                    score += 1
+                if re.search(r'(i[čc]\s*dph|dph|di[čc]|eu\s*vat|vat\s*number)', ln, flags=re.IGNORECASE):
+                    score += 2
+                if re.search(r'(ksh\s*[aá]fa|ksh-sz|el[őo]fizet[őo]|vev[őo]|buyer|customer)', ln, flags=re.IGNORECASE):
+                    score -= 3
+                scored_taxes.append((score, tax))
+        if scored_taxes:
+            scored_taxes.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
+            best_score, best_tax = scored_taxes[0]
+            if best_score > 0:
+                supplier_tax_number = best_tax
+
+        supplier_name = None
+        for idx, ln in enumerate(lines):
+            if idx not in supplier_windows:
+                continue
+            clean = ln.strip(' :;-')
+            if not clean:
+                continue
+            if supplier_marker.search(clean) and ':' in clean:
+                parts = clean.split(':', 1)
+                candidate = parts[1].strip()
+            else:
+                candidate = clean
+            if re.fullmatch(r'(seller|supplier|sz[aá]ll[ií]t[oó])\s*:?\s*', candidate, flags=re.IGNORECASE):
+                candidate = ''
+                for next_idx in range(idx + 1, min(len(lines), idx + 5)):
+                    nxt = lines[next_idx].strip(' :;-')
+                    if not nxt or buyer_marker.search(nxt) or supplier_marker.search(nxt):
+                        continue
+                    candidate = nxt
+                    break
+            if not candidate or len(candidate) < 3:
+                continue
+            if supplier_marker.search(candidate) and buyer_marker.search(candidate):
+                continue
+            if '/' in candidate and re.search(r'(customer|vev[őo]|odberate[ľl]|el[őo]fizet[őo]|info)', candidate, flags=re.IGNORECASE):
+                continue
+            if re.search(r'(ad[oó]sz[aá]m|tax|ksh|iban|swift|dic|i[čc] dph|telef[oó]n|fax|bank)', candidate, flags=re.IGNORECASE):
+                continue
+            if re.search(r'(customer\s*info|vev[őo]\s*adat|odberate[ľl]|supplier\s*info)', candidate, flags=re.IGNORECASE):
+                continue
+            if re.search(r'[0-9]{3,}', candidate):
+                continue
+            supplier_name = candidate.strip(' ,.;')
+            break
+
+        if supplier_name and re.search(r'(sz[aá]ml[aá]zunk|mennyis[eé]g|kedvezm[eé]ny|egys[eé]g[aá]r|[aá]r\s*[oö]sszesen)', supplier_name, flags=re.IGNORECASE):
+            supplier_name = None
+        if not supplier_name:
+            buyer_start_idx = None
+            for idx, ln in enumerate(lines):
+                if buyer_marker.search(ln):
+                    buyer_start_idx = idx
+                    break
+            company_hint = re.compile(r'(kft\.?|zrt\.?|bt\.?|s\.?r\.?o\.?|sp\.\s*z\s*o\.\s*o\.?|ltd\.?|llc|a\.s\.|s\.a\.)', re.IGNORECASE)
+            scan_until = buyer_start_idx if buyer_start_idx is not None else min(len(lines), 18)
+            for ln in lines[:scan_until]:
+                candidate = ln.strip(' ,.;:-')
+                if not candidate or len(candidate) < 3:
+                    continue
+                if re.search(r'(ksh|iban|swift|bank|rendelve|fizet[eé]si\s*m[oó]d|sz[aá]mla|sz[aá]ll[ií]t[aá]s|d[aá]tuma|ad[oó]sz[aá]m|kifizet[eé]s)', candidate, flags=re.IGNORECASE):
+                    continue
+                if company_hint.search(candidate):
+                    supplier_name = candidate
+                    break
+
+        currencies = ['HUF', 'EUR', 'USD', 'GBP', 'CZK', 'RON', 'PLN', 'CHF']
+        currency = None
+        for c in currencies:
+            if re.search(rf'\b{c}\b', one_line, flags=re.IGNORECASE):
+                currency = c
+                break
+
+        payment_method = 'transfer'
+        if re.search(r'\b(bank(?:ing)?\s*transfer|wire\s*transfer|transfer)\b', one_line, flags=re.IGNORECASE):
+            payment_method = 'transfer'
+        elif re.search(r'\b(k[eé]szp[eé]nz|cash|hotovos[ťt])\b', one_line, flags=re.IGNORECASE):
+            payment_method = 'cash'
+        elif re.search(r'\b(ut[aá]nv[eé]t|cod|nachnahme|dobierk)\b', one_line, flags=re.IGNORECASE):
+            payment_method = 'cod'
+        elif re.search(r'\b(k[aá]rtya|card)\b', one_line, flags=re.IGNORECASE):
+            payment_method = 'card'
+
+        amount_raw = _find_in_lines([
+            r'(?:fizetend[őo]|v[eé]g[oö]sszeg|megt[eé]r[ií]t[eé]snek|total(?:\s+due)?|k\s*[úu]hrad[eu]|celkom\s*k\s*[úu]hrade|spolu\s*na\s*[úu]hradu|brutt[oó]\s*(?:[oö]sszesen)?)\s*[:#]?\s*([0-9][0-9\s.,]{1,24})',
+            r'(?:[aá]r\s*[oö]sszesen)\s*[:#]?\s*([0-9][0-9\s.,]{1,24})',
+        ])
+
+        gross_total = self._incoming_parse_decimal(amount_raw)
+        if gross_total is None:
+            nums = []
+            for raw in re.findall(r'([0-9]{1,3}(?:[ .][0-9]{3})*(?:[,.][0-9]{2}))', one_line):
+                val = self._incoming_parse_decimal(raw)
+                if val is not None and val > decimal.Decimal('1'):
+                    nums.append(val)
+            if nums:
+                gross_total = max(nums)
+
+        net_raw = _find_in_lines([
+            r'(?:nett[oó](?:\s+[oö]sszeg)?|z[aá]klad\s*dane|z[aá]klad\s*dan[eě])\s*[:#]?\s*([0-9][0-9\s.,]{1,24})',
+            r'[aá]fa\s*alapon\s*([0-9][0-9\s.,]{1,24})',
+        ])
+        vat_raw = _find_in_lines([
+            r'(?:[aá]fa(?:\s+[eé]rt[eé]ke|\s+[oö]sszeg)?|dph|vat(?:\s+amount)?)\s*[:#]?\s*([0-9][0-9\s.,]{1,24})',
+        ])
+        net_total = self._incoming_parse_decimal(net_raw)
+        vat_total = self._incoming_parse_decimal(vat_raw)
+
+        suggested_vat_rate = None
+        tax_exempt_hint = bool(re.search(r'(áfa\s*mentes|afa\s*mentes|exempt|osloboden[eé]\s*od\s*dane|ford[ií]tott\s*ad[oó]z[aá]s|reverse\s*charge)', one_line, flags=re.IGNORECASE))
+        percents = []
+        for m in re.finditer(r'([0-9]{1,2}(?:[.,][0-9]{1,2})?)\s*%', one_line):
+            p = self._incoming_parse_decimal(m.group(1))
+            if p is None:
+                continue
+            pv = float(p)
+            if 0 <= pv <= 40:
+                percents.append(pv)
+        if tax_exempt_hint:
+            suggested_vat_rate = 0
+        elif percents:
+            common = [0, 5, 18, 20, 27]
+            best = max(percents, key=lambda v: sum(1 for x in percents if abs(x - v) < 0.2))
+            suggested_vat_rate = min(common, key=lambda c: abs(c - best))
+
+        extracted_items = []
+        item_start_re = re.compile(r'^\s*(\d{1,3})\.\s+([A-Z0-9\-_./]{3,40})\s+(.+?)\s*$', re.IGNORECASE)
+        qty_unit_re = re.compile(
+            r'^(?P<desc>.+?)\s+(?P<qty>[0-9]+(?:[.,][0-9]+)?)\s+(?P<unit>[0-9][0-9\s.,]{1,20})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?\s*$',
+            re.IGNORECASE,
+        )
+        row_totals_re = re.compile(
+            r'(?P<net>[0-9][0-9\s.,]{1,20})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?\s+'
+            r'(?P<vat>[0-9][0-9\s.,]{1,20})\s*[^0-9%\n]{0,8}\s*'
+            r'(?P<vat_rate>[0-9]{1,2}(?:[.,][0-9]{1,2})?)\s*%\s+'
+            r'(?P<gross>[0-9][0-9\s.,]{1,20})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?',
+            re.IGNORECASE,
+        )
+
+        item_blocks = []
+        i = 0
+        while i < len(lines):
+            ln = lines[i]
+            if item_start_re.match(ln):
+                block = [ln]
+                j = i + 1
+                while j < len(lines):
+                    nxt = lines[j]
+                    if item_start_re.match(nxt):
+                        break
+                    if re.search(r'^\s*TOTAL\s*:', nxt, flags=re.IGNORECASE):
+                        break
+                    block.append(nxt)
+                    j += 1
+                item_blocks.append(block)
+                i = j
+                continue
+            i += 1
+
+        for block in item_blocks:
+            if not block:
+                continue
+            m0 = item_start_re.match(block[0])
+            if not m0:
+                continue
+
+            item_code = (m0.group(2) or '').strip()
+            base_desc = (m0.group(3) or '').strip()
+            block_text = ' '.join(part.strip() for part in block if part and part.strip())
+
+            qty = None
+            unit_price = None
+            description = base_desc
+            gross_line = None
+            vat_rate_line = suggested_vat_rate if suggested_vat_rate is not None else 0
+
+            for row in block[1:4]:
+                mq = qty_unit_re.match(row.strip())
+                if not mq:
+                    continue
+                qty_val = self._incoming_parse_decimal(mq.group('qty'))
+                unit_val = self._incoming_parse_decimal(mq.group('unit'))
+                if qty_val is None or unit_val is None:
+                    continue
+                qty = qty_val
+                unit_price = unit_val
+                row_desc = str(mq.group('desc') or '').strip()
+                if row_desc and len(row_desc) >= len(description):
+                    description = row_desc
+                break
+
+            mt = row_totals_re.search(block_text)
+            if mt:
+                gross_line = self._incoming_parse_decimal(mt.group('gross'))
+                vat_val = self._incoming_parse_decimal(mt.group('vat_rate'))
+                if vat_val is not None:
+                    vat_rate_line = float(vat_val)
+
+            if qty is None or unit_price is None:
+                continue
+
+            if (gross_line is not None) and (qty > 0):
+                inferred_unit = (gross_line / qty) if qty else None
+                if inferred_unit is not None and abs(inferred_unit - unit_price) < decimal.Decimal('0.05'):
+                    pass
+
+            clean_desc = f"{item_code} {description}".strip()
+            extracted_items.append({
+                'description': clean_desc,
+                'quantity': float(qty),
+                'unit_price': float(unit_price),
+                'vat_rate': float((0 if tax_exempt_hint else (vat_rate_line or 0))),
+                'unit_of_measure': 'db',
+                'code': item_code,
+                'gross_total': (str(gross_line) if gross_line is not None else None),
+            })
+
+        if not extracted_items:
+            amount_token = r'[0-9]{1,3}(?:[\s\u00A0][0-9]{3})*(?:[.,][0-9]{2})'
+            dense_item_re = re.compile(
+                r'^(?P<desc>.+?)\s+(?:(?P<vat_rate>[0-9]{1,2}(?:[.,][0-9]{1,2})?)%\s*)?'
+                rf'(?P<unit>{amount_token})\s+(?P<line_total>{amount_token})'
+                r'(?P<uom>ks|db)\s*(?P<qty>[0-9]+(?:[.,][0-9]+)?)\s*$',
+                re.IGNORECASE,
+            )
+            for ln in lines:
+                row = ln.strip()
+                if not row or re.search(r'\b(total|megt[eé]r[ií]t[eé]snek|[aá]rengedm[eé]ny|[aá]fa\s*menetrend)\b', row, flags=re.IGNORECASE):
+                    continue
+                m = dense_item_re.match(row)
+                if not m:
+                    continue
+                desc = str(m.group('desc') or '').strip(' .;-')
+                if len(desc) < 3:
+                    continue
+                qty_val = self._incoming_parse_decimal(m.group('qty'))
+                unit_val = self._incoming_parse_decimal(m.group('unit'))
+                vat_rate_val = self._incoming_parse_decimal(m.group('vat_rate')) if m.group('vat_rate') else decimal.Decimal(str(suggested_vat_rate or 0))
+                if qty_val is None or unit_val is None or qty_val <= 0:
+                    continue
+                uom_raw = str(m.group('uom') or '').strip().lower()
+                unit_of_measure = 'db'
+                if uom_raw in ('kg', 'g', 'm', 'm2', 'm3', 'l', 'ks', 'db'):
+                    unit_of_measure = 'db' if uom_raw == 'ks' else uom_raw
+                extracted_items.append({
+                    'description': desc,
+                    'quantity': float(qty_val),
+                    'unit_price': float(unit_val),
+                    'vat_rate': float((0 if tax_exempt_hint else (vat_rate_val or 0))),
+                    'unit_of_measure': unit_of_measure,
+                    'code': None,
+                    'gross_total': (str(self._incoming_parse_decimal(m.group('line_total'))) if self._incoming_parse_decimal(m.group('line_total')) is not None else None),
+                })
+
+        return {
+            'invoice_number': invoice_number,
+            'issue_date': issue_date,
+            'due_date': due_date,
+            'delivery_date': delivery_date,
+            'supplier_name': supplier_name,
+            'supplier_tax_number': supplier_tax_number,
+            'currency': currency,
+            'payment_method': payment_method,
+            'gross_total': gross_total,
+            'net_total': net_total,
+            'vat_total': vat_total,
+            'suggested_vat_rate': suggested_vat_rate,
+            'items': extracted_items,
+        }
+
+    @action(detail=False, methods=['post'], url_path='incoming/parse-document')
+    def parse_incoming_document(self, request):
+        from invoices.models import Customer
+
+        upload = request.FILES.get('file')
+        if not upload:
+            return Response({'success': False, 'error': 'A fájl kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        extracted_text, extract_errors = self._incoming_extract_text_from_document(upload)
+        if not extracted_text:
+            return Response({
+                'success': False,
+                'error': 'Nem sikerült olvasható szöveget kinyerni a fájlból.',
+                'details': extract_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        parsed = self._incoming_extract_fields_from_text(extracted_text)
+
+        def _norm_tax(v):
+            return ''.join(ch for ch in str(v or '') if ch.isdigit())
+
+        matched_supplier = None
+        tax_norm = _norm_tax(parsed.get('supplier_tax_number'))
+        if tax_norm:
+            candidates = Customer.objects.filter(is_supplier=True) if hasattr(Customer, 'is_supplier') else Customer.objects.all()
+            if not candidates.exists():
+                candidates = Customer.objects.all()
+            for cand in candidates:
+                cand_nums = [
+                    _norm_tax(getattr(cand, 'tax_number', None)),
+                    _norm_tax(getattr(cand, 'full_tax_number', None)),
+                    _norm_tax(getattr(cand, 'eu_tax_number', None)),
+                    _norm_tax(getattr(cand, 'vat_group_member_tax_number', None)),
+                ]
+                cand_nums = [n for n in cand_nums if n]
+                if any((n == tax_norm) or (len(tax_norm) >= 8 and n.startswith(tax_norm[:8])) or (len(n) >= 8 and tax_norm.startswith(n[:8])) for n in cand_nums):
+                    matched_supplier = cand
+                    break
+
+        if not matched_supplier and parsed.get('supplier_name'):
+            sname = str(parsed.get('supplier_name') or '').strip()
+            sup_qs = Customer.objects.filter(is_supplier=True) if hasattr(Customer, 'is_supplier') else Customer.objects.all()
+            if not sup_qs.exists():
+                sup_qs = Customer.objects.all()
+            matched_supplier = sup_qs.filter(name__iexact=sname).first() or sup_qs.filter(name__icontains=sname).first()
+
+        payload = {
+            'invoice_number': parsed.get('invoice_number'),
+            'issue_date': parsed.get('issue_date'),
+            'due_date': parsed.get('due_date'),
+            'delivery_date': parsed.get('delivery_date'),
+            'supplier_name': parsed.get('supplier_name'),
+            'supplier_tax_number': parsed.get('supplier_tax_number'),
+            'currency': parsed.get('currency') or 'HUF',
+            'payment_method': parsed.get('payment_method') or 'transfer',
+            'gross_total': (str(parsed['gross_total']) if parsed.get('gross_total') is not None else None),
+            'net_total': (str(parsed['net_total']) if parsed.get('net_total') is not None else None),
+            'vat_total': (str(parsed['vat_total']) if parsed.get('vat_total') is not None else None),
+            'suggested_vat_rate': parsed.get('suggested_vat_rate'),
+            'items': parsed.get('items') or [],
+            'matched_supplier_id': (str(matched_supplier.id) if matched_supplier else None),
+            'matched_supplier_name': (matched_supplier.name if matched_supplier else None),
+        }
+
+        return Response({
+            'success': True,
+            'data': payload,
+            'extract_warnings': extract_errors,
+        })
+
+    @action(detail=False, methods=['post'], url_path='incoming/manual_create')
+    def create_manual_incoming(self, request):
+        """Create a manual incoming invoice digest for non-NAV invoices (e.g. foreign suppliers)."""
+        from decimal import Decimal, ROUND_HALF_UP
+        from invoices.models import Company, Customer, IncomingInvoiceDigest
+        import uuid
+
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        supplier_id = data.get('customer_id')
+        invoice_number = str(data.get('invoice_number') or '').strip()
+        issue_date = data.get('issue_date')
+        due_date = data.get('due_date')
+        delivery_date = data.get('delivery_date')
+        payment_method = str(data.get('payment_method') or 'TRANSFER').strip().upper()
+        currency = str(data.get('currency') or 'HUF').strip().upper()
+        exchange_rate = data.get('exchange_rate')
+        items = data.get('items') or []
+        invoice_category = str(data.get('invoice_category') or 'NORMAL').strip().upper()
+
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not supplier_id:
+            return Response({'error': 'Szállító (customer_id) kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not invoice_number:
+            return Response({'error': 'Számlaszám kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not issue_date:
+            return Response({'error': 'Kibocsátás dátuma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not due_date:
+            return Response({'error': 'Esedékesség dátuma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'Legalább egy tétel kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        supplier = Customer.objects.filter(id=supplier_id).first()
+        if not supplier:
+            return Response({'error': 'Szállító nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        supplier_tax_number = (supplier.tax_number or supplier.full_tax_number or supplier.eu_tax_number or '')
+
+        def _norm_invoice(v):
+            return re.sub(r'[\s\u00A0]+', '', str(v or '')).upper()
+
+        def _norm_tax(v):
+            return re.sub(r'[^A-Z0-9]+', '', str(v or '').upper())
+
+        inv_norm = _norm_invoice(invoice_number)
+        sup_tax_norm = _norm_tax(supplier_tax_number)
+        sup_name_norm = str(supplier.name or '').strip().lower()
+
+        possible_dupes = IncomingInvoiceDigest.objects.filter(company=company)
+        duplicate = None
+        for row in possible_dupes.only('id', 'invoice_number', 'supplier_tax_number', 'supplier_name'):
+            if _norm_invoice(row.invoice_number) != inv_norm:
+                continue
+
+            row_tax_norm = _norm_tax(getattr(row, 'supplier_tax_number', None))
+            row_name_norm = str(getattr(row, 'supplier_name', '') or '').strip().lower()
+
+            same_supplier = False
+            if sup_tax_norm:
+                same_supplier = (row_tax_norm == sup_tax_norm) or (sup_name_norm and row_name_norm == sup_name_norm)
+            else:
+                same_supplier = bool(sup_name_norm and row_name_norm == sup_name_norm)
+
+            if same_supplier:
+                duplicate = row
+                break
+
+        if duplicate:
+            return Response({
+                'error': 'Ez a bejövő számla már létezik a rendszerben ennél a szállítónál.',
+                'code': 'duplicate_incoming_invoice',
+                'existing_id': str(duplicate.id),
+                'invoice_number': duplicate.invoice_number,
+            }, status=status.HTTP_409_CONFLICT)
+
+        def d(v):
+            try:
+                return Decimal(str(v or 0))
+            except Exception:
+                return Decimal('0')
+
+        net_total = Decimal('0')
+        vat_total = Decimal('0')
+        for item in items:
+            qty = d(item.get('quantity') or 0)
+            unit_price = d(item.get('unit_price') or 0)
+            vat_rate = d(item.get('vat_rate') or 0)
+            line_net = qty * unit_price
+            line_vat = (line_net * vat_rate / Decimal('100'))
+            net_total += line_net
+            vat_total += line_vat
+
+        net_total = net_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        vat_total = vat_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        try:
+            ex_rate = d(exchange_rate or 1)
+            if ex_rate <= 0:
+                ex_rate = Decimal('1')
+        except Exception:
+            ex_rate = Decimal('1')
+
+        transaction_id = f"MANUAL-{uuid.uuid4()}"
+        digest = IncomingInvoiceDigest.objects.create(
+            company=company,
+            invoice_number=invoice_number,
+            invoice_operation='MANUAL',
+            invoice_category=invoice_category,
+            invoice_issue_date=issue_date,
+            invoice_delivery_date=delivery_date or None,
+            due_date=due_date,
+            supplier_tax_number=supplier_tax_number,
+            supplier_name=supplier.name,
+            customer_tax_number=(company.tax_number or company.full_tax_number or company.eu_tax_number or ''),
+            customer_name=company.name,
+            payment_method=payment_method,
+            payment_date=None,
+            invoice_appearance='PAPER',
+            currency=currency,
+            exchange_rate=ex_rate,
+            invoice_net_amount=net_total,
+            invoice_vat_amount=vat_total,
+            transaction_id=transaction_id,
+            index=1,
+            ins_date=timezone.now(),
+            completeness_indicator=True,
+            is_approved=False,
+            payment_status='unpaid',
+            amount_paid=Decimal('0'),
+        )
+
+        return Response({
+            'success': True,
+            'id': str(digest.id),
+            'invoice_number': digest.invoice_number,
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], url_path='incoming/manual_get')
+    def get_manual_incoming(self, request):
+        from invoices.models import Company, IncomingInvoiceDigest
+
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        digest_id = request.data.get('digest_id') or request.data.get('id')
+
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not digest_id:
+            return Response({'error': 'digest_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        digest = IncomingInvoiceDigest.objects.filter(
+            id=digest_id,
+            company=company,
+            invoice_operation='MANUAL',
+        ).first()
+        if not digest:
+            return Response({'error': 'Kézi bejövő számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({
+            'success': True,
+            'data': {
+                'id': str(digest.id),
+                'invoice_number': digest.invoice_number,
+                'issue_date': digest.invoice_issue_date.isoformat() if digest.invoice_issue_date else None,
+                'due_date': digest.due_date.isoformat() if digest.due_date else None,
+                'delivery_date': digest.invoice_delivery_date.isoformat() if digest.invoice_delivery_date else None,
+                'payment_method': (digest.payment_method or '').upper(),
+                'currency': (digest.currency or 'HUF').upper(),
+                'exchange_rate': str(digest.exchange_rate) if digest.exchange_rate is not None else '1',
+                'supplier_name': digest.supplier_name,
+                'supplier_tax_number': digest.supplier_tax_number,
+                'net_total': str(digest.invoice_net_amount) if digest.invoice_net_amount is not None else '0',
+                'vat_total': str(digest.invoice_vat_amount) if digest.invoice_vat_amount is not None else '0',
+                'invoice_category': digest.invoice_category or 'NORMAL',
+            }
+        })
+
+    @action(detail=False, methods=['post'], url_path='incoming/manual_update')
+    def update_manual_incoming(self, request):
+        from decimal import Decimal, ROUND_HALF_UP
+        from invoices.models import Company, Customer, IncomingInvoiceDigest
+
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        digest_id = data.get('digest_id') or data.get('id')
+        supplier_id = data.get('customer_id')
+        invoice_number = str(data.get('invoice_number') or '').strip()
+        issue_date = data.get('issue_date')
+        due_date = data.get('due_date')
+        delivery_date = data.get('delivery_date')
+        payment_method = str(data.get('payment_method') or 'TRANSFER').strip().upper()
+        currency = str(data.get('currency') or 'HUF').strip().upper()
+        exchange_rate = data.get('exchange_rate')
+        items = data.get('items') or []
+        invoice_category = str(data.get('invoice_category') or 'NORMAL').strip().upper()
+
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not digest_id:
+            return Response({'error': 'digest_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not supplier_id:
+            return Response({'error': 'Szállító (customer_id) kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not invoice_number:
+            return Response({'error': 'Számlaszám kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not issue_date:
+            return Response({'error': 'Kibocsátás dátuma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not due_date:
+            return Response({'error': 'Esedékesség dátuma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(items, list) or not items:
+            return Response({'error': 'Legalább egy tétel kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        digest = IncomingInvoiceDigest.objects.filter(
+            id=digest_id,
+            company=company,
+            invoice_operation='MANUAL',
+        ).first()
+        if not digest:
+            return Response({'error': 'Kézi bejövő számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        supplier = Customer.objects.filter(id=supplier_id).first()
+        if not supplier:
+            return Response({'error': 'Szállító nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        supplier_tax_number = (supplier.tax_number or supplier.full_tax_number or supplier.eu_tax_number or '')
+
+        def d(v):
+            try:
+                return Decimal(str(v or 0))
+            except Exception:
+                return Decimal('0')
+
+        net_total = Decimal('0')
+        vat_total = Decimal('0')
+        for item in items:
+            qty = d(item.get('quantity') or 0)
+            unit_price = d(item.get('unit_price') or 0)
+            vat_rate = d(item.get('vat_rate') or 0)
+            line_net = qty * unit_price
+            line_vat = (line_net * vat_rate / Decimal('100'))
+            net_total += line_net
+            vat_total += line_vat
+
+        net_total = net_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+        vat_total = vat_total.quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+
+        try:
+            ex_rate = d(exchange_rate or 1)
+            if ex_rate <= 0:
+                ex_rate = Decimal('1')
+        except Exception:
+            ex_rate = Decimal('1')
+
+        digest.invoice_number = invoice_number
+        digest.invoice_category = invoice_category
+        digest.invoice_issue_date = issue_date
+        digest.invoice_delivery_date = delivery_date or None
+        digest.due_date = due_date
+        digest.supplier_tax_number = supplier_tax_number
+        digest.supplier_name = supplier.name
+        digest.payment_method = payment_method
+        digest.currency = currency
+        digest.exchange_rate = ex_rate
+        digest.invoice_net_amount = net_total
+        digest.invoice_vat_amount = vat_total
+        digest.save(update_fields=[
+            'invoice_number', 'invoice_category', 'invoice_issue_date', 'invoice_delivery_date',
+            'due_date', 'supplier_tax_number', 'supplier_name', 'payment_method',
+            'currency', 'exchange_rate', 'invoice_net_amount', 'invoice_vat_amount'
+        ])
+
+        return Response({
+            'success': True,
+            'id': str(digest.id),
+            'invoice_number': digest.invoice_number,
+        })
+
+    @action(detail=False, methods=['post'], url_path='incoming/manual_delete')
+    def delete_manual_incoming(self, request):
+        from invoices.models import Company, IncomingInvoiceDigest
+
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        digest_id = request.data.get('digest_id') or request.data.get('id')
+
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not digest_id:
+            return Response({'error': 'digest_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        digest = IncomingInvoiceDigest.objects.filter(
+            id=digest_id,
+            company=company,
+            invoice_operation='MANUAL',
+        ).first()
+        if not digest:
+            return Response({'error': 'Kézi bejövő számla nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        digest.delete()
+        return Response({'success': True})
+
+    @action(detail=False, methods=['post'], url_path='incoming/manual-delete')
+    def delete_manual_incoming_alias(self, request):
+        return self.delete_manual_incoming(request)
+
     @action(detail=False, methods=['post'], url_path='incoming/download')
     def download_incoming(self, request):
         """Return full invoice XML for a given invoice using queryInvoiceData.
@@ -3070,7 +6767,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         invoice_number = request.data.get('invoice_number') or request.query_params.get('invoice_number')
         supplier_tax_number = request.data.get('supplier_tax_number') or request.query_params.get('supplier_tax_number')
-        force_refresh = (request.data.get('force') or request.query_params.get('force') or '').strip().lower() in ('1', 'true', 'yes')
+        external_outgoing = str(request.data.get('external_outgoing') or request.query_params.get('external_outgoing') or '').strip().lower() in ('1', 'true', 'yes')
+        nav_direction = 'OUTBOUND' if external_outgoing else 'INBOUND'
+        force_refresh = str(request.data.get('force') or request.query_params.get('force') or '').strip().lower() in ('1', 'true', 'yes')
         if not (company_id and invoice_number):
             return Response({'error': 'company_id és invoice_number kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -3097,12 +6796,18 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             from invoices.models import IncomingInvoiceDigest
             dqs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
             if supplier_tax_number:
-                dqs = dqs.filter(supplier_tax_number=supplier_tax_number)
+                if external_outgoing:
+                    dqs = dqs.filter(customer_tax_number=supplier_tax_number)
+                else:
+                    dqs = dqs.filter(supplier_tax_number=supplier_tax_number)
             digest = dqs.order_by('-ins_date').first()
             if digest and getattr(digest, 'index', None):
                 digest_index = int(digest.index)
-            if not supplier_tax_number and getattr(digest, 'supplier_tax_number', None):
-                supplier_tax_number_fallback = digest.supplier_tax_number
+            if not supplier_tax_number:
+                if external_outgoing and getattr(digest, 'customer_tax_number', None):
+                    supplier_tax_number_fallback = digest.customer_tax_number
+                elif getattr(digest, 'supplier_tax_number', None):
+                    supplier_tax_number_fallback = digest.supplier_tax_number
         except Exception:
             digest_index = None
 
@@ -3152,7 +6857,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                 ]
                                 for bi, stn in variants:
                                     try:
-                                        res = nav_service.query_invoice_data('INBOUND', invoice_number, stn, bi)
+                                        if external_outgoing:
+                                            res = nav_service.query_invoice_data(nav_direction, invoice_number, None, bi)
+                                        else:
+                                            res = nav_service.query_invoice_data(nav_direction, invoice_number, stn, bi)
                                         inner_xml = res.get('response') or ''
                                         root2 = ET.fromstring(inner_xml)
                                         data2 = _find_any(root2, 'invoiceDataResult') or root2
@@ -3205,7 +6913,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             nav_service = NAVService(cfg)
             # First attempt with provided params (or fallback supplier tax number if missing)
             stn_try = supplier_tax_number or supplier_tax_number_fallback
-            res = nav_service.query_invoice_data('INBOUND', invoice_number, stn_try, digest_index)
+            if external_outgoing:
+                res = nav_service.query_invoice_data(nav_direction, invoice_number, None, digest_index)
+            else:
+                res = nav_service.query_invoice_data(nav_direction, invoice_number, stn_try, digest_index)
             xml_text = res.get('response') or ''
             def _decode_inner(text: str) -> str:
                 try:
@@ -3249,7 +6960,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         variants.append((bi, stn))
                 for bi, stn in variants:
                     try:
-                        res2 = nav_service.query_invoice_data('INBOUND', invoice_number, stn, bi)
+                        if external_outgoing:
+                            res2 = nav_service.query_invoice_data(nav_direction, invoice_number, None, bi)
+                        else:
+                            res2 = nav_service.query_invoice_data(nav_direction, invoice_number, stn, bi)
                         decoded = _decode_inner(res2.get('response') or '')
                         if decoded:
                             supplier_tax_number = stn or supplier_tax_number
@@ -3318,6 +7032,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         invoice_number = request.data.get('invoice_number') or ''
         supplier_tax_number = request.data.get('supplier_tax_number') or None
+        external_outgoing = str(request.data.get('external_outgoing') or '').strip().lower() in ('1', 'true', 'yes')
         payment_method = (request.data.get('payment_method') or '').strip().upper()
         allowed = {'TRANSFER','CASH','CARD','VOUCHER','OTHER','UTANVET'}
         if payment_method not in allowed:
@@ -3331,7 +7046,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
         if supplier_tax_number:
-            qs = qs.filter(supplier_tax_number=supplier_tax_number)
+            if external_outgoing:
+                qs = qs.filter(customer_tax_number=supplier_tax_number)
+            else:
+                qs = qs.filter(supplier_tax_number=supplier_tax_number)
         obj = qs.order_by('-ins_date').first()
         if not obj:
             return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
@@ -3348,6 +7066,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         invoice_number = request.data.get('invoice_number') or ''
         supplier_tax_number = request.data.get('supplier_tax_number') or None
+        external_outgoing = str(request.data.get('external_outgoing') or '').strip().lower() in ('1', 'true', 'yes')
         approved_raw = request.data.get('approved')
         approved = str(approved_raw).strip().lower() in ('1', 'true', 'yes', 'on')
 
@@ -3412,7 +7131,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
         if supplier_tax_number:
-            qs = qs.filter(supplier_tax_number=supplier_tax_number)
+            if external_outgoing:
+                qs = qs.filter(customer_tax_number=supplier_tax_number)
+            else:
+                qs = qs.filter(supplier_tax_number=supplier_tax_number)
         obj = qs.order_by('-ins_date').first()
         if not obj:
             return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
@@ -3463,6 +7185,276 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'approved_at': obj.approved_at.isoformat() if obj.approved_at else None,
             'approved_by_id': str(obj.approved_by.id) if obj.approved_by else None,
             'approved_by_name': approver_name,
+        })
+
+    @action(detail=False, methods=['post'], url_path='incoming/external-cz-backfill')
+    def backfill_external_cz_series(self, request):
+        """Backfill CZ (or custom prefix) external OUTBOUND invoices by invoice number range.
+        Params:
+        - company_id: required
+        - year: required (e.g. 2025)
+        - from_seq: optional default 1
+        - to_seq: optional default 999
+        - prefix: optional default 'CZ'
+        """
+        from invoices.models import CompanyNAVConfiguration, Company, IncomingInvoiceDigest
+        import xml.etree.ElementTree as ET
+        import base64
+        import gzip
+        import io
+        import re
+        from decimal import Decimal
+        from datetime import datetime
+
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        year_raw = request.data.get('year')
+        prefix = str(request.data.get('prefix') or 'CZ').strip().upper()
+        from_seq_raw = request.data.get('from_seq') or 1
+        to_seq_raw = request.data.get('to_seq') or 999
+
+        if not company_id:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            year = int(year_raw)
+        except Exception:
+            return Response({'error': 'year kötelező és szám kell legyen'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            from_seq = int(from_seq_raw)
+            to_seq = int(to_seq_raw)
+        except Exception:
+            return Response({'error': 'from_seq/to_seq szám kell legyen'}, status=status.HTTP_400_BAD_REQUEST)
+        if from_seq < 1 or to_seq < from_seq:
+            return Response({'error': 'Hibás tartomány: from_seq <= to_seq és from_seq >= 1'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+        cfg = CompanyNAVConfiguration.objects.filter(company_id=company_id, is_active=True).order_by('-is_default').first()
+        if not cfg:
+            return Response({'error': 'Nincs aktív NAV konfiguráció a céghez'}, status=status.HTTP_400_BAD_REQUEST)
+
+        nav_service = NAVService(cfg)
+
+        def _find_any(root_el, local):
+            for el in root_el.iter():
+                tag = el.tag
+                if tag == local or (isinstance(tag, str) and tag.endswith('}' + local)):
+                    return el
+            return None
+
+        def _text_any(root_el, local):
+            el = _find_any(root_el, local)
+            return (el.text or '').strip() if el is not None and el.text else None
+
+        def _parse_date(val):
+            if not val:
+                return None
+            try:
+                if 'T' in val:
+                    return datetime.fromisoformat(val.replace('Z', '+00:00')).date()
+                return datetime.strptime(val[:10], '%Y-%m-%d').date()
+            except Exception:
+                return None
+
+        series_pattern = re.compile(r'^\s*' + re.escape(prefix) + r'\s*' + str(year) + r'\s*/\s*(\d{1,5})\s*$', flags=re.IGNORECASE)
+
+        def _extract_seq(invoice_no):
+            if not invoice_no:
+                return None
+            m = series_pattern.match(str(invoice_no))
+            if not m:
+                return None
+            try:
+                n = int(m.group(1))
+                return n if from_seq <= n <= to_seq else None
+            except Exception:
+                return None
+
+        def _existing_set():
+            nums = set()
+            marker = f"{prefix} {year}/"
+            qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number__icontains=marker)
+            for inv_no in qs.values_list('invoice_number', flat=True):
+                seq = _extract_seq(inv_no)
+                if seq is not None:
+                    nums.add(seq)
+            return nums
+
+        def _decode_invoice_xml(wrapper_xml):
+            root = ET.fromstring(wrapper_xml)
+            invoice_data_el = _find_any(root, 'invoiceData')
+            if invoice_data_el is None or not (invoice_data_el.text or '').strip():
+                return None
+            raw = base64.b64decode((invoice_data_el.text or '').strip())
+            compressed = str(_text_any(root, 'compressedContentIndicator') or '').lower() == 'true'
+            if compressed:
+                try:
+                    with gzip.GzipFile(fileobj=io.BytesIO(raw)) as gz:
+                        raw = gz.read()
+                except Exception:
+                    pass
+            return raw.decode('utf-8', errors='replace')
+
+        def _upsert_invoice(candidate_invoice_number):
+            try:
+                res = nav_service.query_invoice_data('OUTBOUND', candidate_invoice_number, None, None)
+            except Exception:
+                return False, 'query_exception'
+            if not res.get('success'):
+                return False, 'query_error'
+            wrapper = res.get('response') or ''
+            if not wrapper:
+                return False, 'empty_wrapper'
+            try:
+                decoded_xml = _decode_invoice_xml(wrapper)
+            except Exception:
+                return False, 'decode_error'
+            if not decoded_xml:
+                return False, 'no_invoice_data'
+            try:
+                root = ET.fromstring(decoded_xml)
+            except Exception:
+                return False, 'invoice_xml_parse_error'
+
+            invoice_number = _text_any(root, 'invoiceNumber') or candidate_invoice_number
+            seq = _extract_seq(invoice_number)
+            if seq is None:
+                return False, 'not_target_series'
+
+            issue_date = _parse_date(_text_any(root, 'invoiceIssueDate'))
+            delivery_date = _parse_date(_text_any(root, 'invoiceDeliveryDate'))
+            due_date = _parse_date(_text_any(root, 'paymentDueDate') or _text_any(root, 'dueDate') or _text_any(root, 'paymentDate'))
+            supplier_name = _text_any(root, 'supplierName')
+            customer_name = _text_any(root, 'customerName')
+            payment_method = _text_any(root, 'paymentMethod')
+            invoice_category = _text_any(root, 'invoiceCategory')
+            invoice_appearance = _text_any(root, 'invoiceAppearance')
+            currency = _text_any(root, 'invoiceCurrency') or _text_any(root, 'currency')
+            supplier_tax = _text_any(root, 'supplierTaxNumber') or _text_any(root, 'taxpayerId')
+            customer_tax = _text_any(root, 'customerTaxNumber')
+            transaction_id = _text_any(root, 'transactionId') or f'OUTBOUND_MANUAL::{invoice_number}'
+
+            net = _text_any(root, 'invoiceNetAmount')
+            vat = _text_any(root, 'invoiceVatAmount')
+            try:
+                net = Decimal(net) if net is not None else None
+            except Exception:
+                net = None
+            try:
+                vat = Decimal(vat) if vat is not None else None
+            except Exception:
+                vat = None
+
+            obj, created = IncomingInvoiceDigest.objects.get_or_create(
+                company=company,
+                invoice_number=invoice_number,
+                transaction_id=transaction_id,
+                defaults={
+                    'invoice_operation': _text_any(root, 'invoiceOperation') or 'CREATE',
+                    'invoice_category': invoice_category,
+                    'invoice_issue_date': issue_date,
+                    'invoice_delivery_date': delivery_date,
+                    'due_date': due_date,
+                    'supplier_tax_number': supplier_tax,
+                    'supplier_name': supplier_name,
+                    'customer_tax_number': customer_tax,
+                    'customer_name': customer_name,
+                    'payment_method': payment_method,
+                    'invoice_appearance': invoice_appearance,
+                    'currency': currency,
+                    'invoice_net_amount': net,
+                    'invoice_vat_amount': vat,
+                    'index': 1,
+                    'completeness_indicator': True,
+                }
+            )
+
+            if created:
+                return True, 'created'
+
+            changed = False
+            for k, v in {
+                'invoice_category': invoice_category,
+                'invoice_issue_date': issue_date,
+                'invoice_delivery_date': delivery_date,
+                'due_date': due_date,
+                'supplier_tax_number': supplier_tax,
+                'supplier_name': supplier_name,
+                'customer_tax_number': customer_tax,
+                'customer_name': customer_name,
+                'payment_method': payment_method,
+                'invoice_appearance': invoice_appearance,
+                'currency': currency,
+                'invoice_net_amount': net,
+                'invoice_vat_amount': vat,
+            }.items():
+                if v is not None and getattr(obj, k) != v:
+                    setattr(obj, k, v)
+                    changed = True
+            if changed:
+                obj.save()
+                return True, 'updated'
+            return True, 'existing'
+
+        existing_before = _existing_set()
+        missing_before = [n for n in range(from_seq, to_seq + 1) if n not in existing_before]
+
+        created_count = 0
+        updated_count = 0
+        existing_count = 0
+        failed = []
+
+        for seq in missing_before:
+            done = False
+            candidates = [
+                f'{prefix} {year}/{seq}',
+                f'{prefix} {year}/{seq:02d}',
+                f'{prefix}{year}/{seq}',
+                f'{prefix}{year}/{seq:02d}',
+            ]
+            seen = set()
+            unique_candidates = []
+            for c in candidates:
+                if c not in seen:
+                    seen.add(c)
+                    unique_candidates.append(c)
+
+            last_code = None
+            for candidate in unique_candidates:
+                ok, code = _upsert_invoice(candidate)
+                last_code = code
+                if ok:
+                    if code == 'created':
+                        created_count += 1
+                    elif code == 'updated':
+                        updated_count += 1
+                    else:
+                        existing_count += 1
+                    done = True
+                    break
+            if not done:
+                failed.append({'seq': seq, 'reason': last_code or 'unknown'})
+
+        existing_after = _existing_set()
+        missing_after = [n for n in range(from_seq, to_seq + 1) if n not in existing_after]
+
+        return Response({
+            'success': True,
+            'prefix': prefix,
+            'year': year,
+            'from_seq': from_seq,
+            'to_seq': to_seq,
+            'missing_before_count': len(missing_before),
+            'missing_before': missing_before,
+            'created_count': created_count,
+            'updated_count': updated_count,
+            'existing_count': existing_count,
+            'failed_count': len(failed),
+            'failed': failed,
+            'missing_after_count': len(missing_after),
+            'missing_after': missing_after,
         })
 
     @action(detail=False, methods=['post', 'get'], url_path='incoming/backfill')
@@ -3908,6 +7900,24 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
     serializer_class = CompanyEmailSettingsSerializer
     permission_classes = []
 
+    def _resolve_company_from_request(self, request):
+        company = getattr(request, 'company', None)
+        if company:
+            return company
+
+        cid = (
+            request.data.get('company')
+            or request.query_params.get('company')
+            or request.data.get('company_id')
+            or request.query_params.get('company_id')
+        )
+        if cid in (None, '', 'undefined', 'null', 'None'):
+            return None
+        try:
+            return Company.objects.filter(id=cid).first()
+        except (ValidationError, ValueError, TypeError):
+            return None
+
     def get_queryset(self):
         qs = CompanyEmailSettings.objects.select_related('company').all()
         company_id = (
@@ -3937,11 +7947,7 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
         import smtplib, ssl
         from email.message import EmailMessage
         data = request.data or {}
-        company = getattr(request, 'company', None)
-        if not company:
-            cid = request.data.get('company') or request.query_params.get('company') or request.data.get('company_id') or request.query_params.get('company_id')
-            if cid:
-                company = Company.objects.filter(id=cid).first()
+        company = self._resolve_company_from_request(request)
         settings_obj = None
         if company:
             settings_obj = CompanyEmailSettings.objects.filter(company=company).first()
@@ -3962,7 +7968,10 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
             return s in ('1', 'true', 'yes', 'on')
 
         smtp_host = val('smtp_host')
-        smtp_port = int(val('smtp_port', 587) or 587)
+        try:
+            smtp_port = int(val('smtp_port', 587) or 587)
+        except (TypeError, ValueError):
+            return Response({"success": False, "error": "Érvénytelen smtp_port"}, status=status.HTTP_400_BAD_REQUEST)
         smtp_user = val('smtp_user')
         smtp_password = val('smtp_password')
         smtp_use_tls = parse_bool(val('smtp_use_tls', True), default=True)
@@ -4000,6 +8009,58 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
 
             server.quit()
             return Response({"success": True, "message": "SMTP kapcsolat rendben", "details": details})
+        except ssl.SSLCertVerificationError as e:
+            try:
+                server.quit()
+            except Exception:
+                pass
+            return Response(
+                {
+                    "success": False,
+                    "error": "A levelezőszerver SSL tanúsítványa nem megbízható (önaláírt vagy hibás lánc).",
+                    "details": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except smtplib.SMTPAuthenticationError as e:
+            try:
+                server.quit()
+            except Exception:
+                pass
+            return Response(
+                {
+                    "success": False,
+                    "error": "SMTP hitelesítési hiba (felhasználónév/jelszó).",
+                    "details": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except (smtplib.SMTPConnectError, smtplib.SMTPServerDisconnected, smtplib.SMTPHeloError, smtplib.SMTPNotSupportedError, TimeoutError, OSError) as e:
+            try:
+                server.quit()
+            except Exception:
+                pass
+            return Response(
+                {
+                    "success": False,
+                    "error": "SMTP kapcsolódási vagy TLS hiba.",
+                    "details": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except smtplib.SMTPException as e:
+            try:
+                server.quit()
+            except Exception:
+                pass
+            return Response(
+                {
+                    "success": False,
+                    "error": "SMTP hiba.",
+                    "details": str(e),
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as e:
             try:
                 server.quit()
@@ -4021,11 +8082,7 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
         from email.message import EmailMessage
         from email.utils import formatdate
         data = request.data or {}
-        company = getattr(request, 'company', None)
-        if not company:
-            cid = request.data.get('company') or request.query_params.get('company') or request.data.get('company_id') or request.query_params.get('company_id')
-            if cid:
-                company = Company.objects.filter(id=cid).first()
+        company = self._resolve_company_from_request(request)
         settings_obj = None
         if company:
             settings_obj = CompanyEmailSettings.objects.filter(company=company).first()
@@ -4040,7 +8097,10 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
         imap_host = val('imap_host')
         imap_user = val('imap_user')
         imap_password = val('imap_password')
-        imap_port = int(val('imap_port', 993) or 993)
+        try:
+            imap_port = int(val('imap_port', 993) or 993)
+        except (TypeError, ValueError):
+            return Response({"success": False, "error": "Érvénytelen imap_port"}, status=status.HTTP_400_BAD_REQUEST)
         sent_folder = val('imap_sent_folder', 'Sent') or 'Sent'
         write_test = True
         try:
@@ -4208,7 +8268,6 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
             return Response({"success": False, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
-
     @action(detail=False, methods=['post'])
     def detect_imap_sent(self, request):
         """Listázza az IMAP mappákat és visszaad egy javasolt Sent mappát.
@@ -4217,11 +8276,7 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
         """
         import imaplib, ssl
         data = request.data or {}
-        company = getattr(request, 'company', None)
-        if not company:
-            cid = request.data.get('company') or request.query_params.get('company') or request.data.get('company_id') or request.query_params.get('company_id')
-            if cid:
-                company = Company.objects.filter(id=cid).first()
+        company = self._resolve_company_from_request(request)
         settings_obj = None
         if company:
             settings_obj = CompanyEmailSettings.objects.filter(company=company).first()
@@ -4236,7 +8291,10 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
         imap_host = val('imap_host')
         imap_user = val('imap_user')
         imap_password = val('imap_password')
-        imap_port = int(val('imap_port', 993) or 993)
+        try:
+            imap_port = int(val('imap_port', 993) or 993)
+        except (TypeError, ValueError):
+            return Response({"success": False, "error": "Érvénytelen imap_port"}, status=status.HTTP_400_BAD_REQUEST)
         if not imap_host or not imap_user:
             return Response({"success": False, "error": "imap_host és imap_user szükséges"}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -4453,6 +8511,181 @@ class CompanyEmailSettingsViewSet(viewsets.ModelViewSet):
             return Response({"success": False, "error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class EmailTemplateViewSet(viewsets.ModelViewSet):
+    queryset = EmailTemplate.objects.select_related('company').all()
+    serializer_class = EmailTemplateSerializer
+    permission_classes = []
+
+    def get_queryset(self):
+        qs = EmailTemplate.objects.select_related('company').all()
+        company_id = (
+            self.request.query_params.get('company_id')
+            or self.request.query_params.get('company')
+            or (getattr(self.request, 'company', None) and str(self.request.company.id))
+        )
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data.get('company')
+        if not company:
+            req_company = getattr(self.request, 'company', None)
+            if req_company:
+                serializer.save(company=req_company)
+                return
+        serializer.save()
+
+    def destroy(self, request, *args, **kwargs):
+        obj = self.get_object()
+        required_types = {
+            EmailTemplate.TEMPLATE_INVOICE_SEND,
+            EmailTemplate.TEMPLATE_ARREARS,
+            EmailTemplate.TEMPLATE_REMINDER_1,
+            EmailTemplate.TEMPLATE_REMINDER_2,
+            EmailTemplate.TEMPLATE_LEGAL,
+            EmailTemplate.TEMPLATE_PAYMENT_ORDER,
+            EmailTemplate.TEMPLATE_LITIGATION,
+        }
+        if obj.template_type in required_types:
+            return Response(
+                {'error': 'A kötelező sablon típusok nem törölhetők.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['post'])
+    def ensure_defaults(self, request):
+        company = getattr(request, 'company', None)
+        company_id = request.data.get('company_id') or request.data.get('company') or request.query_params.get('company_id')
+        if not company and company_id:
+            try:
+                company = Company.objects.filter(id=company_id).first()
+            except (ValidationError, ValueError, TypeError):
+                company = None
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+
+        created = []
+        language_maps = {
+            'hu': DEFAULT_EMAIL_TEMPLATE_MAP,
+            'en': DEFAULT_EMAIL_TEMPLATE_MAP_EN,
+        }
+
+        for language, defaults_map in language_maps.items():
+            for template_type, defaults in defaults_map.items():
+                subject_template = defaults.get('subject_template') or ''
+                body_template = defaults.get('body_template') or ''
+
+                if template_type == EmailTemplate.TEMPLATE_INVOICE_SEND and ces:
+                    if language == 'en':
+                        subject_template = (getattr(ces, 'subject_template_en', None) or subject_template or '').strip()
+                        body_template = (getattr(ces, 'body_template_en', None) or body_template or '').strip()
+                    else:
+                        subject_template = (getattr(ces, 'default_subject_template', None) or subject_template or '').strip()
+                        body_template = (getattr(ces, 'default_body_template', None) or body_template or '').strip()
+                elif template_type == EmailTemplate.TEMPLATE_ARREARS and ces and language == 'hu':
+                    subject_template = (getattr(ces, 'arrears_subject_template', None) or subject_template or '').strip()
+                    body_template = (getattr(ces, 'arrears_body_template', None) or body_template or '').strip()
+
+                obj, was_created = EmailTemplate.objects.get_or_create(
+                    company=company,
+                    template_type=template_type,
+                    language=language,
+                    defaults={
+                        'name': defaults.get('name') or template_type,
+                        'subject_template': subject_template,
+                        'body_template': body_template,
+                        'is_active': True,
+                    }
+                )
+                if was_created:
+                    created.append(str(obj.id))
+
+                expected_name = defaults.get('name') or template_type
+                update_fields = []
+                if obj.name != expected_name:
+                    obj.name = expected_name
+                    update_fields.append('name')
+                if not obj.subject_template:
+                    obj.subject_template = subject_template
+                    update_fields.append('subject_template')
+                if not obj.body_template:
+                    obj.body_template = body_template
+                    update_fields.append('body_template')
+                if update_fields:
+                    obj.save(update_fields=update_fields)
+        return Response({'success': True, 'created_count': len(created), 'created_ids': created})
+
+
+class EmailSignatureViewSet(viewsets.ModelViewSet):
+    queryset = EmailSignature.objects.select_related('company').all()
+    serializer_class = EmailSignatureSerializer
+    permission_classes = []
+
+    def get_queryset(self):
+        qs = EmailSignature.objects.select_related('company').all()
+        company_id = (
+            self.request.query_params.get('company_id')
+            or self.request.query_params.get('company')
+            or (getattr(self.request, 'company', None) and str(self.request.company.id))
+        )
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        company = serializer.validated_data.get('company')
+        if not company:
+            req_company = getattr(self.request, 'company', None)
+            if req_company:
+                obj = serializer.save(company=req_company)
+                if obj.is_default:
+                    EmailSignature.objects.filter(company=obj.company, is_default=True).exclude(id=obj.id).update(is_default=False)
+                return
+        obj = serializer.save()
+        if obj.is_default:
+            EmailSignature.objects.filter(company=obj.company, is_default=True).exclude(id=obj.id).update(is_default=False)
+
+    def perform_update(self, serializer):
+        obj = serializer.save()
+        if obj.is_default:
+            EmailSignature.objects.filter(company=obj.company, is_default=True).exclude(id=obj.id).update(is_default=False)
+
+    @action(detail=True, methods=['post'])
+    def set_default(self, request, pk=None):
+        obj = self.get_object()
+        EmailSignature.objects.filter(company=obj.company, is_default=True).exclude(id=obj.id).update(is_default=False)
+        if not obj.is_default:
+            obj.is_default = True
+            obj.save(update_fields=['is_default'])
+        return Response({'success': True})
+
+
+class CronJobConfigurationViewSet(viewsets.ModelViewSet):
+    queryset = CronJobConfiguration.objects.all()
+    serializer_class = CronJobConfigurationSerializer
+    permission_classes = []
+
+    def get_queryset(self):
+        return CronJobConfiguration.objects.all().order_by('name')
+
+    def create(self, request, *args, **kwargs):
+        return Response({'error': 'Új cron job itt nem hozható létre.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def destroy(self, request, *args, **kwargs):
+        return Response({'error': 'Cron job törlése nem engedélyezett.'}, status=status.HTTP_405_METHOD_NOT_ALLOWED)
+
+    def perform_update(self, serializer):
+        user = request_user = getattr(self.request, 'user', None)
+        if user is None or not getattr(request_user, 'is_authenticated', False):
+            serializer.save(updated_by=None)
+            return
+        serializer.save(updated_by=user)
+
+
 class ContactViewSet(viewsets.ModelViewSet):
     """ViewSet for managing customer contacts"""
     queryset = Contact.objects.all()
@@ -4531,6 +8764,9 @@ class CompanyViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Company.objects.all()
+        allowed_company_ids = _get_system_user_allowed_company_ids(self.request)
+        if allowed_company_ids:
+            queryset = queryset.filter(id__in=allowed_company_ids)
         search = self.request.query_params.get('search', None)
         is_active = self.request.query_params.get('is_active', None)
         
@@ -5369,7 +9605,7 @@ class InvoiceBlockViewSet(viewsets.ModelViewSet):
     permission_classes = []  # Nincs autentikáció szükséges
 
     def get_queryset(self):
-        queryset = InvoiceBlock.objects.select_related('company', 'nav_configuration').all()
+        queryset = InvoiceBlock.objects.select_related('company', 'nav_configuration', 'default_vat_type').all()
         company_id = self.request.query_params.get('company_id', None)
         is_active = self.request.query_params.get('is_active', None)
         
@@ -5565,6 +9801,44 @@ class CompanyBankAccountViewSet(viewsets.ModelViewSet):
         return Response({'message': 'Primary bank account set'})
 
 
+class CashRegisterViewSet(viewsets.ModelViewSet):
+    queryset = CashRegister.objects.select_related('company').all()
+    serializer_class = CashRegisterSerializer
+    permission_classes = []
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        company_id = self.request.query_params.get('company_id') or self.request.query_params.get('company')
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        return qs
+
+    def perform_create(self, serializer):
+        user = self.request.user if getattr(self.request, 'user', None) and self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+
+class CashRegisterTransactionViewSet(viewsets.ModelViewSet):
+    queryset = CashRegisterTransaction.objects.select_related('company', 'cash_register', 'invoice', 'incoming_invoice').all()
+    serializer_class = CashRegisterTransactionSerializer
+    permission_classes = []
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        company_id = self.request.query_params.get('company_id') or self.request.query_params.get('company')
+        cash_register_id = self.request.query_params.get('cash_register_id') or self.request.query_params.get('cash_register')
+        if company_id:
+            qs = qs.filter(company_id=company_id)
+        if cash_register_id:
+            qs = qs.filter(cash_register_id=cash_register_id)
+        return qs.order_by('-created_at')
+
+    def perform_create(self, serializer):
+        user = self.request.user if getattr(self.request, 'user', None) and self.request.user.is_authenticated else None
+        serializer.save(created_by=user)
+
+
 class VATTypeViewSet(viewsets.ModelViewSet):
     queryset = VATType.objects.all()
     serializer_class = VATTypeSerializer
@@ -5576,6 +9850,65 @@ class BankStatementViewSet(viewsets.ModelViewSet):
     serializer_class = BankStatementSerializer
     permission_classes = []
 
+    NAV_PROGRESS_STATUSES = {'submitted_to_nav', 'nav_processed', 'nav_rejected'}
+
+    def _is_effectively_paid_outgoing(self, invoice, paid_amount):
+        try:
+            gross = decimal.Decimal(str(invoice.total_gross_amount or 0))
+            paid = decimal.Decimal(str(paid_amount or 0))
+        except Exception:
+            return False
+        currency = str(getattr(invoice, 'currency', '')).upper()
+        payment_method = str(getattr(invoice, 'payment_method', '')).lower()
+        payable = gross
+        if currency == 'HUF' and payment_method in ('cash', 'cod'):
+            payable = (gross / decimal.Decimal('5')).quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP) * decimal.Decimal('5')
+        tolerance = decimal.Decimal('5.0') if currency == 'HUF' else decimal.Decimal('0.01')
+        return (payable - paid) < tolerance
+
+    def _normalize_bank_statement_item_signs(self, statement):
+        fixed = 0
+        if not statement:
+            return fixed
+
+        company = getattr(statement, 'company', None)
+        if not company:
+            return fixed
+
+        company_tax_base = re.sub(r'\D+', '', str(getattr(company, 'tax_number', None) or getattr(company, 'full_tax_number', None) or getattr(company, 'eu_tax_number', None) or ''))
+        company_name_norm = str(getattr(company, 'name', None) or '').strip().lower()
+
+        def _is_external_outgoing_incoming(inv):
+            if not inv:
+                return False
+            supplier_tax = re.sub(r'\D+', '', str(getattr(inv, 'supplier_tax_number', None) or ''))
+            supplier_name = str(getattr(inv, 'supplier_name', None) or '').strip().lower()
+            if company_tax_base and supplier_tax and supplier_tax.startswith(company_tax_base):
+                return True
+            if company_name_norm and supplier_name and company_name_norm in supplier_name:
+                return True
+            return False
+
+        for item in statement.items.select_related('invoice', 'incoming_invoice').all():
+            try:
+                amount = decimal.Decimal(str(item.amount or 0))
+            except Exception:
+                amount = decimal.Decimal('0')
+            amount_abs = abs(amount)
+            expected = amount
+
+            if item.invoice_id:
+                expected = amount_abs
+            elif item.incoming_invoice_id:
+                expected = amount_abs if _is_external_outgoing_incoming(item.incoming_invoice) else -amount_abs
+
+            if expected != amount:
+                item.amount = expected
+                item.save(update_fields=['amount'])
+                fixed += 1
+
+        return fixed
+
     def get_queryset(self):
         qs = super().get_queryset()
         company_id = self.request.query_params.get('company')
@@ -5585,6 +9918,380 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         if bank_account_id:
             qs = qs.filter(bank_account_id=bank_account_id)
         return qs.order_by('-statement_date', '-created_at')
+
+    def retrieve(self, request, *args, **kwargs):
+        instance = self.get_object()
+        try:
+            self._normalize_bank_statement_item_signs(instance)
+        except Exception:
+            pass
+        serializer = self.get_serializer(instance)
+        data = dict(serializer.data)
+
+        reopen_preview = str(request.query_params.get('reopen_preview', '0')).lower() in ('1', 'true', 'yes')
+        if not reopen_preview:
+            return Response(data)
+
+        preview_items = []
+        _reopen_source_file_token = None
+        _reopen_source_file_name = ''
+        try:
+            note = str(getattr(instance, 'note', '') or '')
+            match = re.search(r'\[\[IMPORT_META:(.*?)\]\]', note, flags=re.S)
+            if match:
+                meta = json.loads(match.group(1))
+                if isinstance(meta, dict) and isinstance(meta.get('preview_items'), list):
+                    preview_items = meta.get('preview_items')
+                if isinstance(meta, dict):
+                    _reopen_source_file_token = meta.get('xml_file_token') or None
+                    _reopen_source_file_name = str(meta.get('xml') or '')
+        except Exception:
+            preview_items = []
+
+        if not preview_items:
+            # Fallback for older statements without stored preview metadata.
+            preview_items = []
+            for bsi in instance.items.select_related('customer', 'invoice', 'incoming_invoice').order_by('created_at'):
+                inv = bsi.invoice
+                incoming = getattr(bsi, 'incoming_invoice', None)
+                proposed_invoice = None
+                if inv:
+                    proposed_invoice = {
+                        'id': str(inv.id),
+                        'invoice_number': inv.invoice_number,
+                        'type': 'outgoing',
+                        'amount': float(abs(bsi.amount or 0)),
+                    }
+                elif incoming:
+                    proposed_invoice = {
+                        'id': str(incoming.id),
+                        'invoice_number': incoming.invoice_number,
+                        'type': 'incoming',
+                        'amount': float(abs(bsi.amount or 0)),
+                    }
+
+                preview_items.append({
+                    'amount': float(bsi.amount or 0),
+                    'currency': instance.currency,
+                    'value_date': str(instance.statement_date),
+                    'remittance': bsi.note or '',
+                    'comment': bsi.note or '',
+                    'counterparty_account': '',
+                    'counterparty_name': bsi.customer.name if bsi.customer_id else '',
+                    'proposed_customer': {'id': str(bsi.customer_id), 'name': bsi.customer.name} if bsi.customer_id else None,
+                    'proposed_invoice': proposed_invoice,
+                    'allocations': [],
+                    'approved': True,
+                    'pairing_marked_at': bsi.created_at.isoformat() if bsi.created_at else None,
+                    'save_bank_account': False,
+                    'save_bank_account_marked_at': None,
+                    'remove_conflicting_bank_accounts': False,
+                })
+
+        # Attempt to recover counterparty_name from the original source file for statements
+        # where counterparty_name was not stored in the import metadata (e.g. older imports).
+        if _reopen_source_file_token:
+            try:
+                from django.conf import settings as _dj_settings_src
+                import os as _os_src
+                _media_root_src = getattr(_dj_settings_src, 'MEDIA_ROOT', None) or _os_src.path.join(_os_src.getcwd(), 'media')
+                _src_path = _os_src.path.join(_media_root_src, 'bank_statement_sources', _reopen_source_file_token)
+                if _os_src.path.isfile(_src_path):
+                    with open(_src_path, 'rb') as _fsrc:
+                        _src_content = _fsrc.read()
+                    _is_xml_src = (_reopen_source_file_name or '').lower().endswith('.xml') or (
+                        _src_content.strip().startswith(b'<') and b'camt.053' in _src_content
+                    )
+                    _raw_stmts_src = self._parse_camt053_xml(_src_content) if _is_xml_src else self._parse_stm_txt(_src_content)
+                    def _norm_acct_digits(s):
+                        return re.sub(r'\D+', '', str(s or ''))[:20]
+                    # Build multi-keyed lookup for counterparty name recovery:
+                    #   1. (acct_digits, value_date) — most precise
+                    #   2. acct_digits alone          — for stored items that lack value_date
+                    #   3. (rounded_amount, value_date) — when no account stored
+                    #   4. rounded_amount alone        — last resort (same-amount transactions
+                    #                                    within the statement might collide, but
+                    #                                    the first match is usually correct)
+                    _src_by_acct_date = {}  # (acct, date) -> name
+                    _src_by_acct      = {}  # acct -> name  (date-agnostic fallback)
+                    _src_by_amt_date  = {}  # (amt, date) -> name
+                    _src_by_amt       = {}  # amt -> name   (date-agnostic last resort)
+                    for _rs_src in _raw_stmts_src:
+                        for _ri_src in (_rs_src.get('items') or []):
+                            _cp = (_ri_src.get('counterparty_name') or '').strip()
+                            if not _cp:
+                                continue
+                            try:
+                                _ri_amt_k = str(round(float(_ri_src.get('amount') or 0)))
+                            except Exception:
+                                _ri_amt_k = '0'
+                            _ri_vd_k = str(_ri_src.get('value_date') or _ri_src.get('booking_date') or '').strip()[:10]
+                            _ri_acct_k = _norm_acct_digits(_ri_src.get('counterparty_account') or '')
+                            if _ri_acct_k:
+                                _key_ad = (_ri_acct_k, _ri_vd_k)
+                                if _key_ad not in _src_by_acct_date:
+                                    _src_by_acct_date[_key_ad] = _cp
+                                if _ri_acct_k not in _src_by_acct:
+                                    _src_by_acct[_ri_acct_k] = _cp
+                            _key_md = (_ri_amt_k, _ri_vd_k)
+                            if _key_md not in _src_by_amt_date:
+                                _src_by_amt_date[_key_md] = _cp
+                            if _ri_amt_k not in _src_by_amt:
+                                _src_by_amt[_ri_amt_k] = _cp
+                    # Fill missing counterparty_name in preview_items
+                    for _pi_src in (preview_items or []):
+                        if (_pi_src.get('counterparty_name') or '').strip():
+                            continue
+                        try:
+                            _pi_amt_k = str(round(float(_pi_src.get('amount') or 0)))
+                        except Exception:
+                            _pi_amt_k = '0'
+                        _pi_vd_k = str(_pi_src.get('value_date') or _pi_src.get('booking_date') or '').strip()[:10]
+                        _pi_acct_k = _norm_acct_digits(_pi_src.get('counterparty_account') or '')
+                        _found_cp = None
+                        if _pi_acct_k:
+                            # Try with date first, then without date
+                            _found_cp = _src_by_acct_date.get((_pi_acct_k, _pi_vd_k))
+                            if not _found_cp:
+                                _found_cp = _src_by_acct.get(_pi_acct_k)
+                        if not _found_cp:
+                            # Try amount with date, then without date
+                            _found_cp = _src_by_amt_date.get((_pi_amt_k, _pi_vd_k))
+                        if not _found_cp and _pi_vd_k == '':
+                            # Stored item has no date at all — use amount-only as last resort
+                            _found_cp = _src_by_amt.get(_pi_amt_k)
+                        if _found_cp:
+                            _pi_src['counterparty_name'] = _found_cp
+            except Exception:
+                pass
+
+        proposal_input = []
+        for it in (preview_items or []):
+            try:
+                amount_val = float(it.get('amount') or 0)
+            except Exception:
+                amount_val = 0.0
+            proposal_input.append({
+                'amount': amount_val,
+                'currency': it.get('currency') or instance.currency,
+                'booking_date': it.get('booking_date') or it.get('value_date') or instance.statement_date,
+                'value_date': it.get('value_date') or it.get('booking_date') or instance.statement_date,
+                'remittance': it.get('remittance') or it.get('comment') or '',
+                'counterparty_name': it.get('counterparty_name') or '',
+                'counterparty_account': it.get('counterparty_account') or '',
+            })
+
+        try:
+            proposals = self._propose_matches(instance.company, instance.currency or 'HUF', proposal_input)
+        except Exception:
+            proposals = []
+
+        customer_ids = set()
+        for _it in (preview_items or []):
+            pc = _it.get('proposed_customer') if isinstance(_it, dict) else None
+            if isinstance(pc, dict) and pc.get('id'):
+                customer_ids.add(str(pc.get('id')))
+        for _p in (proposals or []):
+            if not isinstance(_p, dict):
+                continue
+            pc = _p.get('proposed_customer')
+            if isinstance(pc, dict) and pc.get('id'):
+                customer_ids.add(str(pc.get('id')))
+
+        customer_name_map = {}
+        if customer_ids:
+            try:
+                for c in Customer.objects.filter(id__in=list(customer_ids)).only('id', 'name'):
+                    customer_name_map[str(c.id)] = c.name
+            except Exception:
+                customer_name_map = {}
+
+        outgoing_refs = set()
+        incoming_refs = set()
+
+        def _collect_invoice_ref(inv_type, inv_id):
+            ref = str(inv_id or '').strip()
+            if not ref:
+                return
+            if str(inv_type or 'outgoing') == 'incoming':
+                incoming_refs.add(ref)
+            else:
+                outgoing_refs.add(ref)
+
+        for _it in (preview_items or []):
+            if not isinstance(_it, dict):
+                continue
+            pi = _it.get('proposed_invoice')
+            if isinstance(pi, dict):
+                _collect_invoice_ref(pi.get('type'), pi.get('id') or pi.get('invoice_number'))
+            for alloc in (_it.get('allocations') or []):
+                if not isinstance(alloc, dict):
+                    continue
+                _collect_invoice_ref(alloc.get('invoice_type'), alloc.get('invoice_id') or alloc.get('invoice_number'))
+
+        for _p in (proposals or []):
+            if not isinstance(_p, dict):
+                continue
+            pi = _p.get('proposed_invoice')
+            if isinstance(pi, dict):
+                _collect_invoice_ref(pi.get('type'), pi.get('id') or pi.get('invoice_number'))
+
+        outgoing_lookup = {}
+        incoming_lookup = {}
+
+        def _split_uuid_refs(refs):
+            import uuid
+            as_uuid = []
+            as_text = []
+            for ref in refs:
+                sval = str(ref or '').strip()
+                if not sval:
+                    continue
+                try:
+                    uuid.UUID(sval)
+                    as_uuid.append(sval)
+                except Exception:
+                    as_text.append(sval)
+            return as_uuid, as_text
+
+        out_uuid, out_text = _split_uuid_refs(outgoing_refs)
+        if out_uuid or out_text:
+            out_q = Invoice.objects.filter(company=instance.company)
+            out_filter = Q()
+            if out_uuid:
+                out_filter |= Q(id__in=out_uuid)
+            if out_text:
+                out_filter |= Q(invoice_number__in=out_text)
+            for inv in out_q.filter(out_filter).select_related('customer').only('id', 'invoice_number', 'customer_id'):
+                cust_name = ''
+                try:
+                    if inv.customer_id and inv.customer:
+                        cust_name = inv.customer.name or ''
+                except Exception:
+                    cust_name = ''
+                payload = {
+                    'id': str(inv.id),
+                    'invoice_number': inv.invoice_number,
+                    'type': 'outgoing',
+                    'customer_name': cust_name,
+                }
+                outgoing_lookup[str(inv.id)] = payload
+                outgoing_lookup[str(inv.invoice_number or '').strip()] = payload
+
+        in_uuid, in_text = _split_uuid_refs(incoming_refs)
+        if in_uuid or in_text:
+            in_q = IncomingInvoiceDigest.objects.filter(company=instance.company)
+            in_filter = Q()
+            if in_uuid:
+                in_filter |= Q(id__in=in_uuid)
+            if in_text:
+                in_filter |= Q(invoice_number__in=in_text)
+            for inv in in_q.filter(in_filter).only('id', 'invoice_number', 'invoice_net_amount', 'invoice_vat_amount', 'amount_paid'):
+                gross = decimal.Decimal(str((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
+                paid = decimal.Decimal(str(inv.amount_paid or 0))
+                payload = {
+                    'id': str(inv.id),
+                    'invoice_number': inv.invoice_number,
+                    'type': 'incoming',
+                    'amount': float(max(gross - paid, decimal.Decimal('0'))),
+                }
+                incoming_lookup[str(inv.id)] = payload
+                incoming_lookup[str(inv.invoice_number or '').strip()] = payload
+
+        def _enrich_invoice(inv_data):
+            if not isinstance(inv_data, dict):
+                return inv_data
+            inv_type = str(inv_data.get('type') or 'outgoing')
+            ref = str(inv_data.get('id') or inv_data.get('invoice_number') or '').strip()
+            lookup = incoming_lookup if inv_type == 'incoming' else outgoing_lookup
+            found = lookup.get(ref)
+            enriched = dict(inv_data)
+            if found:
+                enriched.setdefault('type', found.get('type'))
+                enriched['id'] = enriched.get('id') or found.get('id')
+                enriched['invoice_number'] = enriched.get('invoice_number') or found.get('invoice_number')
+                if enriched.get('amount') in (None, '') and found.get('amount') is not None:
+                    enriched['amount'] = found.get('amount')
+                # Propagate customer_name from lookup if not already set
+                if not enriched.get('customer_name') and found.get('customer_name'):
+                    enriched['customer_name'] = found.get('customer_name')
+            return enriched
+
+        def _enrich_allocations(allocs):
+            result = []
+            for alloc in (allocs or []):
+                if not isinstance(alloc, dict):
+                    continue
+                inv_type = str(alloc.get('invoice_type') or 'outgoing')
+                ref = str(alloc.get('invoice_id') or alloc.get('invoice_number') or '').strip()
+                lookup = incoming_lookup if inv_type == 'incoming' else outgoing_lookup
+                found = lookup.get(ref)
+                row = dict(alloc)
+                if found:
+                    row['invoice_number'] = row.get('invoice_number') or found.get('invoice_number')
+                result.append(row)
+            return result
+
+        merged_items = []
+        for idx, base in enumerate(preview_items or []):
+            prop = proposals[idx] if idx < len(proposals) else {}
+            is_saved = bool(base.get('approved') or base.get('pairing_marked_at'))
+
+            base_customer = base.get('proposed_customer')
+            base_invoice = _enrich_invoice(base.get('proposed_invoice'))
+            base_allocations = _enrich_allocations(base.get('allocations') if isinstance(base.get('allocations'), list) else [])
+            prop_customer = prop.get('proposed_customer') if isinstance(prop, dict) else None
+            prop_invoice = _enrich_invoice(prop.get('proposed_invoice')) if isinstance(prop, dict) else None
+            prop_allocations = _enrich_allocations(prop.get('allocations') if isinstance(prop, dict) and isinstance(prop.get('allocations'), list) else [])
+
+            def _normalize_customer(pc):
+                if not isinstance(pc, dict):
+                    return None
+                cid = str(pc.get('id') or '').strip()
+                if not cid:
+                    return None
+                name = str(pc.get('name') or '').strip() or customer_name_map.get(cid, '')
+                return {'id': cid, 'name': name}
+
+            base_customer_norm = _normalize_customer(base_customer)
+            prop_customer_norm = _normalize_customer(prop_customer)
+
+            merged_items.append({
+                'amount': base.get('amount'),
+                'currency': base.get('currency') or instance.currency,
+                'value_date': base.get('value_date') or base.get('booking_date') or str(instance.statement_date),
+                'remittance': base.get('remittance') or base.get('comment') or '',
+                'comment': base.get('comment') or base.get('remittance') or '',
+                'counterparty_account': base.get('counterparty_account') or '',
+                'counterparty_name': base.get('counterparty_name') or '',
+                'proposed_customer': prop_customer_norm or base_customer_norm,
+                'proposed_invoice': prop_invoice or base_invoice,
+                'allocations': prop_allocations if prop_allocations else base_allocations,
+                'saved_customer': base_customer_norm,
+                'saved_invoice': base_invoice,
+                'saved_allocations': base_allocations,
+                'approved': bool(base.get('approved') or is_saved),
+                'pairing_marked_at': base.get('pairing_marked_at') or None,
+                'saved_pairing_marked_at': base.get('pairing_marked_at') or None,
+                'save_bank_account': bool(base.get('save_bank_account')),
+                'save_bank_account_marked_at': base.get('save_bank_account_marked_at') or None,
+                'remove_conflicting_bank_accounts': bool(base.get('remove_conflicting_bank_accounts')),
+                'candidates': prop.get('candidates') if isinstance(prop, dict) and isinstance(prop.get('candidates'), list) else [],
+                'customer_candidates': prop.get('customer_candidates') if isinstance(prop, dict) and isinstance(prop.get('customer_candidates'), list) else [],
+            })
+
+        data['reopen_preview'] = {
+            'source_statement_id': str(instance.id),
+            'account_id': str(instance.bank_account_id) if instance.bank_account_id else None,
+            'account_label': data.get('bank_account_name') or str(instance.bank_account_id or ''),
+            'statement_date': str(instance.statement_date),
+            'sequence_number': instance.sequence_number,
+            'currency': instance.currency,
+            'source_file_name': data.get('source_file_name') or None,
+            'items': merged_items,
+        }
+
+        return Response(data)
 
     @action(detail=False, methods=['post'], url_path='import-zip')
     def import_zip(self, request):
@@ -5620,6 +10327,19 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             if acc.account_number:
                 acct_map[normalize_acct(acc.account_number)] = acc
 
+        global_accounts = []
+        for acc in CompanyBankAccount.objects.select_related('company').all():
+            normalized_keys = set()
+            if acc.iban:
+                normalized_keys.add(normalize_acct(acc.iban))
+            if acc.account_number:
+                normalized_keys.add(normalize_acct(acc.account_number))
+            normalized_keys = {k for k in normalized_keys if k}
+            if normalized_keys:
+                global_accounts.append((acc, normalized_keys))
+
+        mismatch_companies = {}
+
         for f in files:
             try:
                 data = f.read()
@@ -5654,9 +10374,25 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                         bank_acc = acc
                         break
                 if not bank_acc:
+                    detected_company = None
+                    for g_acc, keys in global_accounts:
+                        if any((key and (key in k or k in key)) for k in keys):
+                            detected_company = g_acc.company
+                            break
+
+                    if detected_company and str(detected_company.id) != str(company.id):
+                        mismatch_companies[str(detected_company.id)] = detected_company.name
                     reason = 'Bankszámla nem található a cégnél'
                     skipped.append({'file': name, 'reason': reason})
-                    preview.append({'file': name, 'statement_date': str(stmt_date), 'currency': None, 'creatable': False, 'reason': reason})
+                    preview.append({
+                        'file': name,
+                        'statement_date': str(stmt_date),
+                        'currency': None,
+                        'creatable': False,
+                        'reason': reason,
+                        'detected_company_id': str(detected_company.id) if detected_company else None,
+                        'detected_company_name': detected_company.name if detected_company else None,
+                    })
                     continue
                 # Determine currency from filename parent dir or fallback to bank account currency
                 currency = getattr(bank_acc, 'currency', 'HUF')
@@ -5703,7 +10439,11 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 'existing': sum(1 for p in preview if p.get('exists')),
                 'skipped': len([s for s in skipped]),
             }
-            return Response({'success': True, 'preview': preview, 'counts': counts, 'errors': errors})
+            mismatches = [
+                {'company_id': cid, 'company_name': cname}
+                for cid, cname in mismatch_companies.items()
+            ]
+            return Response({'success': True, 'preview': preview, 'counts': counts, 'errors': errors, 'detected_company_mismatches': mismatches})
         return Response({'success': True, 'created': created, 'skipped': skipped, 'errors': errors})
 
     def _decode_bytes(self, data: bytes) -> str:
@@ -6017,6 +10757,13 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             el = find(node, path)
             return el.text.strip() if el is not None and el.text else None
 
+        def first_text(node, paths):
+            for path in paths:
+                val = get_text(node, path)
+                if val:
+                    return val
+            return None
+
         # Find BkToCstmrStmt
         bk_node = find(root, 'BkToCstmrStmt')
         if bk_node is None and 'BkToCstmrStmt' in root.tag:
@@ -6087,42 +10834,74 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 remittance_parts = []
                 cp_name = None
                 cp_acct = None
-                
+
+                def append_text(text_value):
+                    clean = str(text_value or '').strip()
+                    if clean and clean not in remittance_parts:
+                        remittance_parts.append(clean)
+
                 ntry_dtls = find(ntry, 'NtryDtls')
-                if ntry_dtls:
-                    tx_dtls = find(ntry_dtls, 'TxDtls')
-                    if tx_dtls:
-                        # Remittance
-                        rmt = find(tx_dtls, 'RmtInf')
-                        if rmt:
-                            for ustrd in findall(rmt, 'Ustrd'):
-                                if ustrd.text:
-                                    remittance_parts.append(ustrd.text)
-                        
-                        # Parties
-                        partner_tag = 'Cdtr' if ind == 'DBIT' else 'Dbtr'
-                        rltd = find(tx_dtls, 'RltdPties')
-                        if rltd:
-                            p_node = find(rltd, partner_tag)
-                            if p_node:
-                                cp_name = get_text(p_node, 'Nm')
-                            
-                            # Account
-                            acc_tag = partner_tag + 'Acct'
-                            acc_node = find(rltd, acc_tag)
-                            if acc_node:
-                                cp_acct = get_text(acc_node, 'Id/IBAN') or get_text(acc_node, 'Id/Othr/Id')
-                        
-                        add_tx_inf = get_text(tx_dtls, 'AddtlTxInf')
-                        if add_tx_inf:
-                              remittance_parts.append(add_tx_inf)
+                tx_detail_nodes = []
+                if ntry_dtls is not None:
+                    tx_detail_nodes = findall(ntry_dtls, 'TxDtls') or []
+
+                for tx_dtls in tx_detail_nodes:
+                    if tx_dtls is None:
+                        continue
+
+                    # Remittance text from all transaction detail rows
+                    rmt = find(tx_dtls, 'RmtInf')
+                    if rmt:
+                        for ustrd in findall(rmt, 'Ustrd'):
+                            if ustrd.text:
+                                append_text(ustrd.text)
+                        append_text(get_text(rmt, 'Strd/AddtlRmtInf'))
+
+                    add_tx_inf = get_text(tx_dtls, 'AddtlTxInf')
+                    if add_tx_inf:
+                        append_text(add_tx_inf)
+
+                    # Parties / account extraction with broad fallback paths
+                    if ind == 'DBIT':
+                        preferred_name_paths = [
+                            'RltdPties/Cdtr/Nm',
+                            'RltdPties/UltmtCdtr/Nm',
+                            'RltdPties/Dbtr/Nm',
+                            'RltdPties/UltmtDbtr/Nm',
+                            'RltdAgts/CdtrAgt/FinInstnId/Nm',
+                            'RltdAgts/DbtrAgt/FinInstnId/Nm',
+                        ]
+                        preferred_acct_paths = [
+                            'RltdPties/CdtrAcct/Id/IBAN',
+                            'RltdPties/CdtrAcct/Id/Othr/Id',
+                            'RltdPties/DbtrAcct/Id/IBAN',
+                            'RltdPties/DbtrAcct/Id/Othr/Id',
+                        ]
+                    else:
+                        preferred_name_paths = [
+                            'RltdPties/Dbtr/Nm',
+                            'RltdPties/UltmtDbtr/Nm',
+                            'RltdPties/Cdtr/Nm',
+                            'RltdPties/UltmtCdtr/Nm',
+                            'RltdAgts/DbtrAgt/FinInstnId/Nm',
+                            'RltdAgts/CdtrAgt/FinInstnId/Nm',
+                        ]
+                        preferred_acct_paths = [
+                            'RltdPties/DbtrAcct/Id/IBAN',
+                            'RltdPties/DbtrAcct/Id/Othr/Id',
+                            'RltdPties/CdtrAcct/Id/IBAN',
+                            'RltdPties/CdtrAcct/Id/Othr/Id',
+                        ]
+
+                    if not cp_name:
+                        cp_name = first_text(tx_dtls, preferred_name_paths)
+                    if not cp_acct:
+                        cp_acct = first_text(tx_dtls, preferred_acct_paths)
 
                 # Add AddtlNtryInf (Comment/Megjegyzés) if available
                 addtl_info = get_text(ntry, 'AddtlNtryInf')
                 if addtl_info and addtl_info not in remittance_parts:
-                     # For safety, if remittance is empty, we definitely want this
-                     # But user asked to see it if remittance is empty.
-                     pass 
+                    append_text(addtl_info)
 
                 # Combine everything into remittance for display if needed because
                 # sometimes 'Brutto Interest' is the ONLY text.
@@ -6259,6 +11038,9 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         def norm_digits(s):
             import re
             return re.sub(r'\D+', '', s or '')
+        def norm_alnum(s):
+            import re
+            return re.sub(r'[^A-Z0-9]+', '', str(s or '').upper())
         import unicodedata, difflib, re
         def strip_accents(s: str) -> str:
             if not s:
@@ -6266,20 +11048,67 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             return ''.join(ch for ch in unicodedata.normalize('NFKD', s) if not unicodedata.combining(ch))
         def norm_name(s: str) -> str:
             return strip_accents((s or '').lower())
+        def normalize_invoice_token(value: str) -> str:
+            return re.sub(r'[^A-Z0-9]+', '', str(value or '').upper())
+        def is_storno_like(op_value: str, explicit_flag=False) -> bool:
+            op = str(op_value or '').upper()
+            return bool(explicit_flag) or ('STORNO' in op) or ('STORN' in op) or ('CANCEL' in op)
+        def signed_digest_outstanding(inv):
+            gross = abs(float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
+            paid = float(inv.amount_paid or 0)
+            outstanding = max(gross - paid, 0.0)
+            storno_flag = bool(getattr(inv, 'is_storno_invoice', False) or getattr(inv, 'is_storno', False))
+            storno_like = is_storno_like(getattr(inv, 'invoice_operation', None), storno_flag)
+            return -abs(outstanding) if storno_like else outstanding
+
+        company_tax_base = re.sub(r'\D+', '', str(getattr(company, 'tax_number', None) or getattr(company, 'full_tax_number', None) or getattr(company, 'eu_tax_number', None) or ''))
+        company_name = str(getattr(company, 'name', None) or '').strip()
+        incoming_base_qs = IncomingInvoiceDigest.objects.filter(company=company)
+        if company_tax_base:
+            incoming_external_outgoing_qs = incoming_base_qs.filter(
+                Q(supplier_tax_number__icontains=company_tax_base) | Q(supplier_name__icontains=company_name)
+            )
+            incoming_supplier_qs = incoming_base_qs.filter(
+                Q(customer_tax_number__icontains=company_tax_base) | Q(customer_tax_number__isnull=True) | Q(customer_tax_number='')
+            )
+        elif company_name:
+            incoming_external_outgoing_qs = incoming_base_qs.filter(supplier_name__icontains=company_name)
+            incoming_supplier_qs = incoming_base_qs.exclude(supplier_name__icontains=company_name)
+        else:
+            incoming_external_outgoing_qs = incoming_base_qs.none()
+            incoming_supplier_qs = incoming_base_qs
         # Map accounts to customers
         acct_to_customer = {}
-        for acc in CustomerBankAccount.objects.filter(customer__in=Customer.objects.filter().only('id')):
-            if acc.iban:
-                acct_to_customer[acc.iban.replace(' ', '').upper()] = acc.customer
-            if acc.account_number:
-                acct_to_customer[norm_digits(acc.account_number)] = acc.customer
+        account_cache = []
+        account_qs = CustomerBankAccount.objects.select_related('customer')
+        for acc in account_qs:
+            iban_alnum = norm_alnum(acc.iban)
+            num_alnum = norm_alnum(acc.account_number)
+            iban_digits = norm_digits(iban_alnum)
+            num_digits = norm_digits(num_alnum)
+            if iban_alnum:
+                acct_to_customer[iban_alnum] = acc.customer
+            if num_alnum:
+                acct_to_customer[num_alnum] = acc.customer
+            if iban_digits:
+                acct_to_customer[iban_digits] = acc.customer
+            if num_digits:
+                acct_to_customer[num_digits] = acc.customer
+            account_cache.append((acc.customer, iban_alnum, num_alnum, iban_digits, num_digits))
 
         # Preload customers once for fuzzy matching
-        all_customers = list(Customer.objects.all().only('id', 'name'))
+        all_customers = list(Customer.objects.only('id', 'name'))
+        customer_by_id = {str(c.id): c for c in all_customers}
         for idx, it in enumerate(items):
-            cp_acct = (it.get('counterparty_account') or '').replace(' ', '').upper()
-            ndig = norm_digits(it.get('counterparty_account') or '')
+            cp_acct = norm_alnum(it.get('counterparty_account') or '')
+            ndig = norm_digits(cp_acct)
             customer = acct_to_customer.get(cp_acct) or acct_to_customer.get(ndig)
+            if not customer and ndig:
+                for c, iban_alnum, num_alnum, iban_digits, num_digits in account_cache:
+                    if (ndig and iban_digits and (ndig.endswith(iban_digits) or iban_digits.endswith(ndig))) or \
+                       (ndig and num_digits and (ndig.endswith(num_digits) or num_digits.endswith(ndig))):
+                        customer = c
+                        break
             # Try name-based if no account hit
             customer_candidates = []
             if not customer and it.get('counterparty_name'):
@@ -6312,20 +11141,56 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 else:
                     customer = None
             # Extract invoice token from remittance
-            rem = it.get('remittance') or ''
-            token = None
+            rem = str(it.get('remittance') or '')
+            tokens = []
+            # Pattern 0: PREFIX/NNNNN or PREFIX-NNNNN (e.g. G/00002024, G-00002051)
+            for m in re.findall(r'([A-Z]{1,4}[-/]\d{4,})', rem):
+                v = str(m or '').strip().upper()
+                if v:
+                    tokens.append(v)
             # Patterns: PREFIX YYYY/NN, PREFIXYYYYNNNN, bare numbers with slashes
-            m = re.search(r'([A-Z]{1,4}\s?\d{4}/\d{1,6})', rem)
-            if m:
-                token = m.group(1).replace(' ', '')
-            if not token:
-                m = re.search(r'([A-Z]{1,3}\d{4,10})', rem)
-                if m:
-                    token = m.group(1)
-            if not token:
-                m = re.search(r'(\d{4}/\d{1,6})', rem)
-                if m:
-                    token = m.group(1)
+            for m in re.findall(r'([A-Z]{1,4}\s?\d{4}/\d{1,6})', rem):
+                v = str(m or '').strip().upper()
+                if v:
+                    tokens.append(v)
+            for m in re.findall(r'([A-Z]{1,3}\d{4,10})', rem):
+                v = str(m or '').strip().upper()
+                if v:
+                    tokens.append(v)
+            for m in re.findall(r'(\d{4}/\d{1,6})', rem):
+                v = str(m or '').strip().upper()
+                if v:
+                    tokens.append(v)
+            seen_tokens = set()
+            unique_tokens = []
+            for tok in tokens:
+                k = tok.upper()
+                if k in seen_tokens:
+                    continue
+                seen_tokens.add(k)
+                unique_tokens.append(tok)
+
+            expanded_tokens = []
+            seen_expanded = set()
+            for tok in unique_tokens:
+                raw = str(tok or '').strip().upper()
+                if raw and raw not in seen_expanded:
+                    seen_expanded.add(raw)
+                    expanded_tokens.append(raw)
+                compact = re.sub(r'[^A-Z0-9]+', '', raw)
+                if compact and compact not in seen_expanded:
+                    seen_expanded.add(compact)
+                    expanded_tokens.append(compact)
+                m_compact = re.match(r'^([A-Z]{1,6})(\d{4})(\d{1,8})$', compact)
+                if m_compact:
+                    slash_variant = f"{m_compact.group(1)}{m_compact.group(2)}/{m_compact.group(3)}"
+                    if slash_variant not in seen_expanded:
+                        seen_expanded.add(slash_variant)
+                        expanded_tokens.append(slash_variant)
+                    spaced_variant = f"{m_compact.group(1)} {m_compact.group(2)}/{m_compact.group(3)}"
+                    if spaced_variant not in seen_expanded:
+                        seen_expanded.add(spaced_variant)
+                        expanded_tokens.append(spaced_variant)
             
             candidates = []
             best_candidate = None
@@ -6336,72 +11201,239 @@ class BankStatementViewSet(viewsets.ModelViewSet):
             except:
                 amt_val = 0
             
-            # Search by token (both incoming and outgoing)
-            if token:
-                # Outgoing
-                qs = Invoice.objects.filter(company=company, invoice_number__icontains=token).order_by('-issue_date')[:5]
-                for inv in qs:
-                    candidates.append({
-                        'id': str(inv.id), 
-                        'invoice_number': inv.invoice_number, 
-                        'customer_id': str(inv.customer_id), 
-                        'amount': float(inv.total_gross_amount),
-                        'type': 'outgoing'
-                    })
-                # Incoming
-                qs_in = IncomingInvoiceDigest.objects.filter(company=company, invoice_number__icontains=token).order_by('-invoice_issue_date')[:5]
-                for inv in qs_in:
-                    gross = float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0))
-                    candidates.append({
-                        'id': str(inv.id),
-                        'invoice_number': inv.invoice_number,
-                        'supplier_name': inv.supplier_name,
-                        'amount': gross,
-                        'type': 'incoming'
-                    })
+            # Search by token
+            if expanded_tokens:
+                seen_cands = set()
+                for token_idx, token in enumerate(expanded_tokens[:12]):
+                    token_norm = normalize_invoice_token(token)
+                    # Positive bank transaction: prioritize own outgoing invoices, then external outgoing NAV invoices
+                    if amt_val >= 0:
+                        qs = Invoice.objects.filter(company=company, invoice_number__icontains=token).order_by('-issue_date')[:10]
+                        for inv in qs:
+                            ckey = f"out:{inv.id}"
+                            if ckey in seen_cands:
+                                continue
+                            seen_cands.add(ckey)
+                            outstanding = float((inv.total_gross_amount or 0) - (inv.amount_paid or 0))
+                            storno_like = is_storno_like(getattr(inv, 'invoice_operation', None), bool(getattr(inv, 'is_storno_invoice', False)))
+                            signed_outstanding = -abs(outstanding) if storno_like else max(outstanding, 0.0)
+                            _out_cust = customer_by_id.get(str(inv.customer_id or ''))
+                            candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'customer_id': str(inv.customer_id),
+                                'customer_name': _out_cust.name if _out_cust else '',
+                                'amount': signed_outstanding,
+                                'type': 'outgoing',
+                                '_token_matched': True,
+                                '_token_rank': token_idx,
+                                '_token_norm': token_norm,
+                                'is_storno_invoice': bool(storno_like),
+                            })
 
-            # Search by Amount (if no token match or to supplement)
-            # Prioritize based on sign
-            if not candidates and amt_val != 0:
+                        qs_ext = incoming_external_outgoing_qs.filter(
+                            invoice_number__icontains=token,
+                        ).order_by('-invoice_issue_date')[:10]
+                        for inv in qs_ext:
+                            ckey = f"ext:{inv.id}"
+                            if ckey in seen_cands:
+                                continue
+                            seen_cands.add(ckey)
+                            outstanding = signed_digest_outstanding(inv)
+                            candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'supplier_name': inv.supplier_name,
+                                'customer_name': getattr(inv, 'customer_name', None),
+                                'customer_tax_number': getattr(inv, 'customer_tax_number', None),
+                                'amount': outstanding,
+                                'type': 'incoming',
+                                'external_outgoing': True,
+                                '_token_matched': True,
+                                '_token_rank': token_idx,
+                                '_token_norm': token_norm,
+                                'is_storno_invoice': bool(outstanding < 0),
+                            })
+
+                    # Negative bank transaction: incoming supplier invoices
+                    if amt_val <= 0:
+                        qs_in = incoming_supplier_qs.filter(
+                            invoice_number__icontains=token,
+                        ).order_by('-invoice_issue_date')[:10]
+                        for inv in qs_in:
+                            ckey = f"in:{inv.id}"
+                            if ckey in seen_cands:
+                                continue
+                            seen_cands.add(ckey)
+                            outstanding = signed_digest_outstanding(inv)
+                            candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'supplier_name': inv.supplier_name,
+                                'amount': outstanding,
+                                'type': 'incoming',
+                                '_token_matched': True,
+                                '_token_rank': token_idx,
+                                '_token_norm': token_norm,
+                                'is_storno_invoice': bool(outstanding < 0),
+                            })
+
+            has_token_candidates = any(bool(c.get('_token_matched')) for c in candidates)
+
+            # Search by Amount only when remittance token did not hit any invoice
+            # (remittance match is primary, amount match is secondary fallback)
+            # Skip amount-based matching for very small amounts (bank fees, interest, rounding cents)
+            # to avoid accidental matches on invoices with tiny outstanding balances.
+            if amt_val != 0 and not has_token_candidates and abs(amt_val) >= 5.0:
                 abs_amt = abs(amt_val)
+                seen_amount_cands = {
+                    f"{str(c.get('type') or '')}:{str(c.get('id') or c.get('invoice_number') or '')}"
+                    for c in candidates
+                }
                 # If negative (payment out) -> IncomingInvoice (Supplier bill)
                 # If positive (payment in) -> Invoice (Customer bill)
                 
+                # Dynamic tolerance: 0.5% of amount, minimum 1.0, maximum 100.0
+                # This prevents tiny-amount "false positives" while still catching rounding differences.
+                _amt_tol = min(100.0, max(1.0, abs_amt * 0.005))
                 if amt_val > 0: # Payment IN -> Invoice
                     qs = Invoice.objects.filter(company=company).order_by('-issue_date')[:100]
                     # Filter for amount match
                     for inv in qs:
-                        if abs(float(inv.total_gross_amount) - abs_amt) <= 1.0:
+                        outstanding = float((inv.total_gross_amount or 0) - (inv.amount_paid or 0))
+                        rounded_outstanding = round(outstanding)
+                        rounded_paid = round(abs_amt)
+                        if abs(outstanding - abs_amt) <= _amt_tol or abs(rounded_outstanding - rounded_paid) <= _amt_tol:
+                             key = f"outgoing:{inv.id}"
+                             if key in seen_amount_cands:
+                                 continue
+                             seen_amount_cands.add(key)
+                             _out_cust_a = customer_by_id.get(str(inv.customer_id or ''))
                              candidates.append({
                                 'id': str(inv.id),
                                 'invoice_number': inv.invoice_number,
                                 'customer_id': str(inv.customer_id),
-                                'amount': float(inv.total_gross_amount),
-                                'type': 'outgoing'
+                                'customer_name': _out_cust_a.name if _out_cust_a else '',
+                                'amount': max(outstanding, 0.0),
+                                          'type': 'outgoing',
+                                          '_token_matched': False,
+                                          '_token_rank': 999,
+                                          '_token_norm': '',
+                                          'is_storno_invoice': False,
                              })
+                    qs_ext = incoming_external_outgoing_qs.order_by('-invoice_issue_date')[:200]
+                    for inv in qs_ext:
+                        gross = abs(float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
+                        paid = float(inv.amount_paid or 0)
+                        outstanding = max(gross - paid, 0.0)
+                        rounded_outstanding = round(outstanding)
+                        rounded_paid = round(abs_amt)
+                        if abs(outstanding - abs_amt) <= _amt_tol or abs(rounded_outstanding - rounded_paid) <= _amt_tol:
+                            key = f"incoming:{inv.id}"
+                            if key in seen_amount_cands:
+                                continue
+                            seen_amount_cands.add(key)
+                            candidates.append({
+                                'id': str(inv.id),
+                                'invoice_number': inv.invoice_number,
+                                'supplier_name': inv.supplier_name,
+                                'customer_name': getattr(inv, 'customer_name', None),
+                                'customer_tax_number': getattr(inv, 'customer_tax_number', None),
+                                'amount': outstanding,
+                                'type': 'incoming',
+                                'external_outgoing': True,
+                                '_token_matched': False,
+                                '_token_rank': 999,
+                                '_token_norm': '',
+                                'is_storno_invoice': bool(outstanding < 0),
+                            })
                 elif amt_val < 0: # Payment OUT -> IncomingInvoice
-                    qs_in = IncomingInvoiceDigest.objects.filter(company=company).order_by('-invoice_issue_date')[:100]
+                    qs_in = incoming_supplier_qs.order_by('-invoice_issue_date')[:100]
                     for inv in qs_in:
-                        gross = float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0))
-                        if abs(gross - abs_amt) <= 1.0:
+                        gross = abs(float((inv.invoice_net_amount or 0) + (inv.invoice_vat_amount or 0)))
+                        paid = float(inv.amount_paid or 0)
+                        outstanding = max(gross - paid, 0.0)
+                        if abs(outstanding - abs_amt) <= _amt_tol:
+                             key = f"incoming:{inv.id}"
+                             if key in seen_amount_cands:
+                                 continue
+                             seen_amount_cands.add(key)
                              candidates.append({
                                 'id': str(inv.id),
                                 'invoice_number': inv.invoice_number,
                                 'supplier_name': inv.supplier_name,
-                                'amount': gross,
-                                'type': 'incoming'
+                                'amount': outstanding,
+                                          'type': 'incoming',
+                                          '_token_matched': False,
+                                          '_token_rank': 999,
+                                          '_token_norm': '',
+                                          'is_storno_invoice': bool(outstanding < 0),
                              })
             
-            # Select best candidate
+            # Select best candidate with direction-aware priority
             if candidates:
-                # Prefer exact amount match
-                exact_matches = [c for c in candidates if abs(c['amount'] - abs(amt_val)) < 1.0]
-                if exact_matches:
-                    best_candidate = exact_matches[0]
-                else:
-                    best_candidate = candidates[0]
+                abs_amt = abs(amt_val)
+                rem_norm = normalize_invoice_token(rem)
 
-            can_auto = bool(best_candidate and (customer or best_candidate.get('type')=='incoming')) # Incoming doesn't require customer match strictly
+                def _pick(preferred_type):
+                    pool = [c for c in candidates if c.get('type') == preferred_type]
+                    if not pool:
+                        return None
+
+                    def _score(c):
+                        token_matched = bool(c.get('_token_matched'))
+                        token_rank = int(c.get('_token_rank') or 999)
+                        token_norm = str(c.get('_token_norm') or '')
+                        rem_exact = 0 if (token_norm and rem_norm and token_norm in rem_norm) else 1
+                        amount_diff = abs(abs(float(c.get('amount') or 0)) - abs_amt)
+                        storno_penalty = 0 if bool(c.get('is_storno_invoice')) else 1
+                        return (
+                            0 if token_matched else 1,
+                            token_rank,
+                            rem_exact,
+                            amount_diff,
+                            storno_penalty,
+                        )
+
+                    return sorted(pool, key=_score)[0]
+
+                if amt_val > 0:
+                    # Primary: external outgoing NAV invoices (stored as incoming digests). Secondary: own outgoing invoices.
+                    best_candidate = _pick('incoming') or _pick('outgoing')
+                elif amt_val < 0:
+                    best_candidate = _pick('incoming') or _pick('outgoing')
+                else:
+                    exact_matches = [c for c in candidates if abs((c.get('amount') or 0) - abs_amt) < 1.0]
+                    best_candidate = exact_matches[0] if exact_matches else candidates[0]
+
+            # If no direct customer hit, but we found an outgoing invoice candidate,
+            # derive customer from that invoice candidate.
+            if not customer and best_candidate and best_candidate.get('type') == 'outgoing':
+                cid = str(best_candidate.get('customer_id') or '')
+                if cid and cid in customer_by_id:
+                    customer = customer_by_id[cid]
+
+            # For incoming candidates that actually represent external outgoing invoices,
+            # derive customer from candidate customer_name/customer_tax_number.
+            if not customer and best_candidate and best_candidate.get('type') == 'incoming' and bool(best_candidate.get('external_outgoing')):
+                cand_tax = re.sub(r'\D+', '', str(best_candidate.get('customer_tax_number') or ''))
+                if cand_tax:
+                    by_tax = next((c for c in all_customers if re.sub(r'\D+', '', str(getattr(c, 'tax_number', '') or '')) == cand_tax), None)
+                    if by_tax:
+                        customer = by_tax
+                if not customer:
+                    cand_name = str(best_candidate.get('customer_name') or '').strip()
+                    cand_name_norm = norm_name(cand_name)
+                    if cand_name_norm:
+                        by_exact_name = next((c for c in all_customers if norm_name(c.name) == cand_name_norm), None)
+                        if by_exact_name:
+                            customer = by_exact_name
+                        else:
+                            by_contains = next((c for c in all_customers if cand_name_norm in norm_name(c.name) or norm_name(c.name) in cand_name_norm), None)
+                            if by_contains:
+                                customer = by_contains
+
+            can_auto = bool(best_candidate and (customer or (best_candidate.get('type') == 'incoming' and amt_val < 0)))
 
             proposals.append({
                 'index': idx,
@@ -6425,6 +11457,7 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         files = request.FILES.getlist('files') or request.FILES.getlist('file')
         company_id = request.data.get('company') or request.data.get('company_id')
         dry_run = str(request.data.get('dry_run', '1')) in ('1','true','True')
+        skip_existing = str(request.data.get('skip_existing', '0')).strip().lower() in ('1', 'true', 'yes')
         if not files:
             return Response({'error': 'Nem kaptam fájlokat (files)'}, status=status.HTTP_400_BAD_REQUEST)
         if not company_id:
@@ -6432,13 +11465,41 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         company = get_object_or_404(Company, id=company_id)
 
         import re
+        import uuid
+        from django.conf import settings
         results = []
+        skipped_duplicate_statements = []
+        mismatch_companies = {}
         from invoices.models import CompanyBankAccount, CustomerBankAccount, BankStatement, BankStatementItem, Customer, Invoice
+
+        all_company_accounts = []
+        for acc in CompanyBankAccount.objects.select_related('company').all():
+            keys = []
+            if acc.account_number:
+                keys.append(re.sub(r'\D+', '', (acc.account_number or '')))
+            if acc.iban:
+                keys.append(re.sub(r'\D+', '', (acc.iban or '')))
+            keys = [k for k in keys if k]
+            if keys:
+                all_company_accounts.append((acc, keys))
+
         for f in files:
             try:
                 content = f.read()
             except Exception as e:
                 return Response({'error': f'Fájl olvasási hiba: {getattr(f, "name", "?")} - {e}'}, status=status.HTTP_400_BAD_REQUEST)
+
+            source_file_name = os.path.basename(getattr(f, 'name', '') or 'statement.xml')
+            source_file_token = None
+            try:
+                media_root = getattr(settings, 'MEDIA_ROOT', None) or os.path.join(os.getcwd(), 'media')
+                store_dir = os.path.join(media_root, 'bank_statement_sources')
+                os.makedirs(store_dir, exist_ok=True)
+                source_file_token = f"{uuid.uuid4().hex}_{source_file_name}"
+                with open(os.path.join(store_dir, source_file_token), 'wb') as _fw:
+                    _fw.write(content)
+            except Exception:
+                source_file_token = None
             
             is_xml = getattr(f, 'name', '').lower().endswith('.xml')
             if not is_xml:
@@ -6458,13 +11519,58 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 acct_raw = st.get('account_raw') or ''
                 # Try map to Company's bank account
                 acct_clean = re.sub(r'\D+', '', acct_raw)
-                bank_acc = CompanyBankAccount.objects.filter(company=company).first()
+                bank_acc = None
                 # Better matching: find by digits substring
                 for acc in CompanyBankAccount.objects.filter(company=company):
                     key = re.sub(r'\D+', '', (acc.account_number or acc.iban or ''))
-                    if acct_clean and key and acct_clean in key:
+                    if acct_clean and key and (acct_clean in key or key in acct_clean):
                         bank_acc = acc
                         break
+
+                detected_company = None
+                if not bank_acc and acct_clean:
+                    for acc, keys in all_company_accounts:
+                        if any((acct_clean in key or key in acct_clean) for key in keys):
+                            detected_company = acc.company
+                            break
+                    if detected_company and str(detected_company.id) != str(company.id):
+                        mismatch_companies[str(detected_company.id)] = detected_company.name
+
+                stmt_date = st.get('statement_date')
+                seq_num = str(st.get('sequence_number') or '').strip()
+                if bank_acc and stmt_date and seq_num:
+                    exists_dup = BankStatement.objects.filter(
+                        company=company,
+                        bank_account=bank_acc,
+                        statement_date=stmt_date,
+                        sequence_number=seq_num,
+                    ).exists()
+                    if exists_dup:
+                        bank_label = (f"{bank_acc.bank_name or ''} {bank_acc.iban or bank_acc.account_number or ''}").strip()
+                        if skip_existing:
+                            skipped_duplicate_statements.append({
+                                'account_id': str(bank_acc.id),
+                                'account_label': bank_label or acct_raw,
+                                'statement_date': stmt_date,
+                                'sequence_number': seq_num,
+                            })
+                            continue
+                        return Response(
+                            {
+                                'error': (
+                                    f'Már létezik ilyen bankkivonat: Számla: {bank_label or acct_raw} | '
+                                    f'Dátum: {stmt_date} | Sorszám: {seq_num}. '
+                                    'Előbb töröld a meglévő kivonatot.'
+                                ),
+                                'duplicate_statement': {
+                                    'account_id': str(bank_acc.id),
+                                    'account_label': bank_label or acct_raw,
+                                    'statement_date': stmt_date,
+                                    'sequence_number': seq_num,
+                                },
+                            },
+                            status=status.HTTP_400_BAD_REQUEST,
+                        )
 
                 proposals = self._propose_matches(company, st.get('currency') or 'HUF', st.get('items') or [])
                 header = {
@@ -6473,12 +11579,26 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                     'statement_date': st.get('statement_date'),
                     'sequence_number': st.get('sequence_number'),
                     'currency': st.get('currency') or 'HUF',
+                    'source_file_name': source_file_name,
+                    'source_file_token': source_file_token,
                     'items': proposals,
+                    'detected_company_id': str(detected_company.id) if detected_company else None,
+                    'detected_company_name': detected_company.name if detected_company else None,
                 }
                 results.append(header)
 
         if dry_run:
-            return Response({'success': True, 'preview': results})
+            mismatches = [
+                {'company_id': cid, 'company_name': cname}
+                for cid, cname in mismatch_companies.items()
+            ]
+            return Response({
+                'success': True,
+                'preview': results,
+                'detected_company_mismatches': mismatches,
+                'skipped_duplicate_statements': skipped_duplicate_statements,
+                'skipped_duplicates_count': len(skipped_duplicate_statements),
+            })
 
         # Commit not supported in this endpoint without explicit mapping
         return Response({'error': 'Használd az import-stm-commit végpontot a mentéshez'}, status=status.HTTP_400_BAD_REQUEST)
@@ -6497,6 +11617,215 @@ class BankStatementViewSet(viewsets.ModelViewSet):
         created_headers = 0
         created_items = 0
         saved_accounts = 0
+        saved_account_updates = 0
+        saved_account_creates = 0
+        moved_accounts = []
+        skipped_conflicts = 0
+        skipped_duplicate_statements = []
+        touched_outgoing_ids = set()
+        touched_incoming_ids = set()
+
+        company_tax_base = re.sub(r'\D+', '', str(getattr(company, 'tax_number', None) or getattr(company, 'full_tax_number', None) or getattr(company, 'eu_tax_number', None) or ''))
+        company_name_norm = str(getattr(company, 'name', None) or '').strip().lower()
+
+        def is_external_outgoing_incoming(inv):
+            if not inv:
+                return False
+            supplier_tax = re.sub(r'\D+', '', str(getattr(inv, 'supplier_tax_number', None) or ''))
+            supplier_name = str(getattr(inv, 'supplier_name', None) or '').strip().lower()
+            if company_tax_base and supplier_tax:
+                if supplier_tax.startswith(company_tax_base):
+                    return True
+            if company_name_norm and supplier_name and company_name_norm in supplier_name:
+                return True
+            return False
+
+        def resolve_incoming_invoice(ref):
+            if ref in (None, ''):
+                return None
+            # Try by primary key first (uuid/int depending on DB schema), then fall back to invoice_number
+            try:
+                obj = IncomingInvoiceDigest.objects.filter(id=ref, company=company).first()
+                if obj:
+                    return obj
+            except Exception:
+                pass
+            try:
+                return IncomingInvoiceDigest.objects.filter(invoice_number=str(ref).strip(), company=company).order_by('-invoice_issue_date', '-ins_date').first()
+            except Exception:
+                return None
+
+        def resolve_outgoing_invoice(ref):
+            if ref in (None, ''):
+                return None
+            # Try by primary key first (uuid/int depending on DB schema), then fall back to invoice_number
+            try:
+                obj = Invoice.objects.filter(id=ref, company=company).first()
+                if obj:
+                    return obj
+            except Exception:
+                pass
+            try:
+                return Invoice.objects.filter(invoice_number=str(ref).strip(), company=company).order_by('-issue_date').first()
+            except Exception:
+                return None
+
+        def persist_customer_bank_account(it, customer, currency):
+            nonlocal saved_accounts, saved_account_updates, saved_account_creates, moved_accounts, skipped_conflicts
+            customer_obj = customer if isinstance(customer, Customer) else None
+            if customer_obj is None and isinstance(customer, dict):
+                cid = customer.get('id')
+                if cid:
+                    customer_obj = Customer.objects.filter(id=cid).first()
+            if customer_obj is None and customer not in (None, ''):
+                try:
+                    customer_obj = Customer.objects.filter(id=str(customer)).first()
+                except Exception:
+                    customer_obj = None
+
+            logger.warning(
+                f"[bank_acct] save_flag={it.get('save_bank_account')} "
+                f"customer={'%s(%s)' % (customer_obj.name, customer_obj.id) if customer_obj else None} "
+                f"acct={it.get('counterparty_account')} "
+                f"remove_conflicts={it.get('remove_conflicting_bank_accounts')}"
+            )
+            if not (it.get('save_bank_account') and customer_obj and it.get('counterparty_account')):
+                return True
+
+            acct = str(it.get('counterparty_account') or '').strip().upper()
+            import re
+            acct_compact = re.sub(r'\s+', '', acct)
+            acct_alnum = re.sub(r'[^A-Z0-9]', '', acct_compact)
+            is_iban = bool(re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', acct_alnum))
+            iban_clean = acct_alnum if is_iban else None
+            normalized_account = acct_alnum if not is_iban else None
+            existing_acc = None
+            allow_conflict_delete = bool(it.get('remove_conflicting_bank_accounts'))
+            acct_digits = re.sub(r'\D', '', acct_alnum)
+
+            def _clean_alnum(val):
+                return re.sub(r'[^A-Z0-9]', '', str(val or '').upper())
+
+            def _digits(val):
+                return re.sub(r'\D', '', str(val or ''))
+
+            def _is_same_account_for_target(c_iban, c_num):
+                c_iban_clean = _clean_alnum(c_iban)
+                c_num_clean = _clean_alnum(c_num)
+                c_iban_digits = _digits(c_iban_clean)
+                c_num_digits = _digits(c_num_clean)
+
+                if is_iban:
+                    if c_iban_clean and iban_clean and c_iban_clean == iban_clean:
+                        return True
+                    if acct_digits and c_num_digits and acct_digits.endswith(c_num_digits):
+                        return True
+                    if acct_digits and c_iban_digits and acct_digits == c_iban_digits:
+                        return True
+                    return False
+
+                if normalized_account and c_num_clean and normalized_account == c_num_clean:
+                    return True
+                if acct_digits and c_num_digits and acct_digits == c_num_digits:
+                    return True
+                if acct_digits and c_iban_digits and c_iban_digits.endswith(acct_digits):
+                    return True
+                return False
+
+            conflicts = []
+            customer_id = str(customer_obj.id)
+            try:
+                other_accounts = CustomerBankAccount.objects.exclude(customer_id=customer_id)
+            except Exception as exc:
+                logger.warning(f"[bank_acct] other_accounts query failed: {exc}")
+                other_accounts = CustomerBankAccount.objects.none()
+            for cand in other_accounts:
+                if _is_same_account_for_target(cand.iban, cand.account_number):
+                    conflicts.append(cand)
+                    continue
+
+            try:
+                matches = CustomerBankAccount.objects.filter(customer_id=customer_id)
+            except Exception as exc:
+                logger.warning(f"[bank_acct] matches query failed: {exc}")
+                matches = CustomerBankAccount.objects.none()
+            for cand in matches:
+                if _is_same_account_for_target(cand.iban, cand.account_number):
+                    existing_acc = cand
+                    break
+
+            # If selected customer already has this account, allow local format update even when
+            # other-customer conflicts exist. Only block when this would create a new assignment.
+            if conflicts and not allow_conflict_delete and not existing_acc:
+                logger.warning(f"[bank_acct] SKIP conflicts={len(conflicts)} no_existing_acc")
+                skipped_conflicts += 1
+                return False
+            logger.warning(
+                f"[bank_acct] existing_acc={existing_acc.id if existing_acc else None} "
+                f"conflicts={len(conflicts)} allow_delete={allow_conflict_delete}"
+            )
+            if conflicts and allow_conflict_delete:
+                for c in conflicts:
+                    try:
+                        moved_accounts.append({
+                            'account': iban_clean or normalized_account or acct,
+                            'from_customer_id': str(c.customer_id),
+                            'from_customer_name': c.customer.name if c.customer_id else '',
+                            'to_customer_id': customer_id,
+                            'to_customer_name': customer_obj.name,
+                        })
+                    except Exception:
+                        pass
+                CustomerBankAccount.objects.filter(id__in=[c.id for c in conflicts]).delete()
+
+            if existing_acc:
+                update_fields = []
+                existing_iban_clean = _clean_alnum(existing_acc.iban)
+                existing_num_clean = _clean_alnum(existing_acc.account_number)
+
+                if is_iban:
+                    if iban_clean and existing_iban_clean != iban_clean:
+                        existing_acc.iban = iban_clean
+                        update_fields.append('iban')
+                    if existing_acc.account_number and existing_acc.account_number != existing_num_clean:
+                        existing_acc.account_number = existing_num_clean
+                        update_fields.append('account_number')
+                else:
+                    if normalized_account and (existing_acc.account_number or '') != normalized_account:
+                        existing_acc.account_number = normalized_account
+                        update_fields.append('account_number')
+
+                if currency and existing_acc.currency != currency:
+                    existing_acc.currency = currency
+                    update_fields.append('currency')
+
+                if update_fields:
+                    existing_acc.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+                    saved_accounts += 1
+                    saved_account_updates += 1
+                    logger.warning(
+                        f"[bank_acct] UPDATED id={existing_acc.id} fields={list(dict.fromkeys(update_fields))}"
+                    )
+            else:
+                CustomerBankAccount.objects.create(
+                    customer=customer_obj,
+                    iban=iban_clean if is_iban else None,
+                    account_number=None if is_iban else normalized_account,
+                    currency=currency
+                )
+                saved_accounts += 1
+                saved_account_creates += 1
+                logger.warning(
+                    f"[bank_acct] CREATED customer={customer_id} iban={bool(iban_clean)} acct={normalized_account or ''}"
+                )
+            return True
+
+        def mark_touched(invoice_obj=None, incoming_obj=None):
+            if invoice_obj is not None and getattr(invoice_obj, 'id', None):
+                touched_outgoing_ids.add(str(invoice_obj.id))
+            if incoming_obj is not None and getattr(incoming_obj, 'id', None):
+                touched_incoming_ids.add(str(incoming_obj.id))
+
         with transaction.atomic():
             for st in payload:
                 acc_id = st.get('account_id')
@@ -6506,19 +11835,136 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                 # Header: upsert by date+account
                 stmt_date = st.get('statement_date')
                 currency = st.get('currency') or bank_acc.currency or 'HUF'
-                header = BankStatement.objects.filter(company=company, bank_account=bank_acc, statement_date=stmt_date).first()
+                source_statement_id = st.get('source_statement_id')
+                sequence_number_raw = str(st.get('sequence_number') or '').strip()
+
+                if not source_statement_id and sequence_number_raw:
+                    duplicate_header = BankStatement.objects.filter(
+                        company=company,
+                        bank_account=bank_acc,
+                        statement_date=stmt_date,
+                        sequence_number=sequence_number_raw,
+                    ).first()
+                    if duplicate_header:
+                        skipped_duplicate_statements.append({
+                            'statement_date': stmt_date,
+                            'sequence_number': sequence_number_raw,
+                            'bank_account_id': str(bank_acc.id),
+                            'existing_statement_id': str(duplicate_header.id),
+                        })
+                        continue
+
+                header = None
+                if source_statement_id:
+                    header = BankStatement.objects.filter(company=company, id=source_statement_id).first()
                 if not header:
-                    seq_num = st.get('sequence_number') or f"{stmt_date}-{str(bank_acc.id)[:6]}"
+                    header_qs = BankStatement.objects.filter(company=company, bank_account=bank_acc, statement_date=stmt_date)
+                    if sequence_number_raw:
+                        header_qs = header_qs.filter(sequence_number=sequence_number_raw)
+                    header = header_qs.first()
+                if not header:
+                    seq_num = sequence_number_raw or f"{stmt_date}-{str(bank_acc.id)[:6]}"
                     header = BankStatement(company=company, bank_account=bank_acc, statement_date=stmt_date, sequence_number=seq_num, currency=currency)
                     if request.user and request.user.is_authenticated:
                         header.created_by = request.user
                     header.save()
                     created_headers += 1
+                else:
+                    changed_fields = []
+                    seq_num = st.get('sequence_number') or header.sequence_number
+                    if header.bank_account_id != bank_acc.id:
+                        header.bank_account = bank_acc
+                        changed_fields.append('bank_account')
+                    if str(header.statement_date) != str(stmt_date):
+                        header.statement_date = stmt_date
+                        changed_fields.append('statement_date')
+                    if seq_num and header.sequence_number != seq_num:
+                        header.sequence_number = seq_num
+                        changed_fields.append('sequence_number')
+                    if header.currency != currency:
+                        header.currency = currency
+                        changed_fields.append('currency')
+                    if changed_fields:
+                        header.save(update_fields=list(dict.fromkeys(changed_fields + ['updated_at'])))
+
+                if source_statement_id and str(header.id) == str(source_statement_id):
+                    existing_items = list(header.items.only('id', 'invoice_id', 'incoming_invoice_id'))
+                    for old in existing_items:
+                        if old.invoice_id:
+                            touched_outgoing_ids.add(str(old.invoice_id))
+                        if old.incoming_invoice_id:
+                            touched_incoming_ids.add(str(old.incoming_invoice_id))
+                    if existing_items:
+                        header.items.all().delete()
+
+                # Persist import metadata in note prefix for uploaded-statements modal and edit-reopen flow.
+                try:
+                    raw_items = st.get('items') or []
+                    preview_items = []
+                    for _it in raw_items:
+                        preview_items.append({
+                            'amount': _it.get('amount'),
+                            'currency': _it.get('currency') or currency,
+                            'value_date': _it.get('value_date') or _it.get('booking_date'),
+                            'remittance': _it.get('remittance'),
+                            'comment': _it.get('comment'),
+                            'counterparty_account': _it.get('counterparty_account'),
+                            'counterparty_name': _it.get('counterparty_name'),
+                            'proposed_customer': _it.get('proposed_customer') or ({
+                                'id': _it.get('customer_id'),
+                                'name': '',
+                            } if _it.get('customer_id') else None),
+                            'proposed_invoice': _it.get('proposed_invoice') or ({
+                                'id': _it.get('invoice_id'),
+                                'type': _it.get('invoice_type') or 'outgoing',
+                            } if _it.get('invoice_id') else None),
+                            'allocations': _it.get('allocations') or [],
+                            'approved': bool(_it.get('approved')),
+                            'pairing_marked_at': _it.get('pairing_marked_at') or (_it.get('approved') and timezone.now().isoformat()) or None,
+                        })
+
+                    existing_note = str(header.note or '')
+                    existing_meta = {}
+                    existing_meta_match = re.search(r'\[\[IMPORT_META:(.*?)\]\]', existing_note, flags=re.S)
+                    if existing_meta_match:
+                        try:
+                            parsed_existing_meta = json.loads(existing_meta_match.group(1))
+                            if isinstance(parsed_existing_meta, dict):
+                                existing_meta = parsed_existing_meta
+                        except Exception:
+                            existing_meta = {}
+
+                    source_file_name = (st.get('source_file_name') or '').strip()
+                    source_file_token = (st.get('source_file_token') or '').strip()
+                    if not source_file_name:
+                        source_file_name = str(existing_meta.get('xml') or '').strip()
+                    if not source_file_token:
+                        source_file_token = str(existing_meta.get('xml_file_token') or '').strip()
+
+                    import_meta = {
+                        'xml': source_file_name,
+                        'xml_file_token': source_file_token,
+                        'saved_items': int(sum(1 for _it in (st.get('items') or []) if _it.get('approved'))),
+                        'total_items': int(len(st.get('items') or [])),
+                        'preview_items': preview_items,
+                    }
+                    meta_prefix = f"[[IMPORT_META:{json.dumps(import_meta, ensure_ascii=False)}]]"
+                    current_note = existing_note
+                    current_note = re.sub(r'^\[\[IMPORT_META:.*?\]\]\s*', '', current_note, flags=re.S)
+                    header.note = f"{meta_prefix}\n{current_note}".strip()
+                    header.save(update_fields=['note', 'updated_at'])
+                except Exception:
+                    pass
                 # Items
                 from invoices.models import IncomingInvoiceDigest
                 for it in (st.get('items') or []):
-                    if not it.get('approved'):
-                        continue
+                    allocations = it.get('allocations') or []
+                    try:
+                        txn_amount = decimal.Decimal(str(it.get('amount') or 0))
+                    except Exception:
+                        txn_amount = decimal.Decimal('0')
+                    is_positive_txn = txn_amount > 0
+                    is_negative_txn = txn_amount < 0
                     cust_id = it.get('customer_id') or (it.get('proposed_customer') or {}).get('id')
                     
                     prop_inv = it.get('proposed_invoice') or {}
@@ -6526,68 +11972,249 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                     inv_type = it.get('invoice_type') or prop_inv.get('type') or 'outgoing'
                     
                     customer = Customer.objects.filter(id=cust_id).first() if cust_id else None
+
+                    if not persist_customer_bank_account(it, customer, currency):
+                        continue
+
+                    if not it.get('approved'):
+                        continue
                     
                     invoice = None
                     incoming_invoice = None
                     
                     if inv_id:
                         if inv_type == 'outgoing':
-                            invoice = Invoice.objects.filter(id=inv_id, company=company).first()
+                            invoice = resolve_outgoing_invoice(inv_id)
                         elif inv_type == 'incoming':
-                            incoming_invoice = IncomingInvoiceDigest.objects.filter(id=inv_id, company=company).first()
+                            incoming_invoice = resolve_incoming_invoice(inv_id)
+
+                    if is_positive_txn:
+                        if incoming_invoice and not is_external_outgoing_incoming(incoming_invoice):
+                            incoming_invoice = None
+                    elif is_negative_txn:
+                        invoice = None
+                        if incoming_invoice and is_external_outgoing_incoming(incoming_invoice):
+                            incoming_invoice = None
+                    else:
+                        invoice = None
+                        incoming_invoice = None
+
+                    # Multi-invoice allocation (for incoming/+ bank entries)
+                    if isinstance(allocations, list) and allocations:
+                        allocation_saved = False
+                        for alloc in allocations:
+                            alloc_invoice_id = alloc.get('invoice_id')
+                            alloc_invoice_type = alloc.get('invoice_type') or inv_type or 'outgoing'
+                            alloc_invoice = None
+                            alloc_amount_raw = alloc.get('amount')
+                            try:
+                                from decimal import Decimal
+                                alloc_amount = Decimal(str(alloc_amount_raw or 0))
+                            except Exception:
+                                alloc_amount = decimal.Decimal('0')
+                            alloc_amount_txn_raw = alloc.get('amount_txn')
+                            try:
+                                from decimal import Decimal
+                                alloc_amount_txn = Decimal(str(alloc_amount_txn_raw or 0))
+                            except Exception:
+                                alloc_amount_txn = decimal.Decimal('0')
+                            alloc_amount_abs = abs(alloc_amount)
+                            alloc_amount_txn_abs = abs(alloc_amount_txn)
+                            amount_to_store_abs = alloc_amount_txn_abs if alloc_amount_txn_abs > 0 else alloc_amount_abs
+                            if alloc_amount_abs <= 0:
+                                continue
+
+                            if is_positive_txn:
+                                if alloc_invoice_type == 'incoming':
+                                    alloc_incoming = resolve_incoming_invoice(alloc_invoice_id)
+                                    if not alloc_incoming or not is_external_outgoing_incoming(alloc_incoming):
+                                        continue
+                                    alloc_customer = customer
+                                    if not alloc_customer:
+                                        continue
+                                    note = (it.get('remittance') or '')[:500]
+                                    BankStatementItem.objects.create(
+                                        bank_statement=header,
+                                        customer=alloc_customer,
+                                        invoice=None,
+                                        incoming_invoice=alloc_incoming,
+                                        amount=amount_to_store_abs,
+                                        note=note
+                                    )
+                                    allocation_saved = True
+                                    created_items += 1
+                                    mark_touched(incoming_obj=alloc_incoming)
+
+                                    gross = decimal.Decimal(str((alloc_incoming.invoice_net_amount or 0) + (alloc_incoming.invoice_vat_amount or 0)))
+                                    current_paid = decimal.Decimal(str(alloc_incoming.amount_paid or 0))
+                                    new_paid = current_paid + amount_to_store_abs
+                                    alloc_incoming.amount_paid = new_paid
+                                    if new_paid >= (gross - decimal.Decimal('1.0')):
+                                        alloc_incoming.payment_status = 'paid'
+                                        alloc_incoming.payment_date = header.statement_date
+                                    elif new_paid > 0:
+                                        alloc_incoming.payment_status = 'partially_paid'
+                                    seq_info = f"{header.sequence_number}"
+                                    if alloc_incoming.payment_reference:
+                                        if seq_info not in alloc_incoming.payment_reference:
+                                            alloc_incoming.payment_reference = f"{alloc_incoming.payment_reference}, {seq_info}"[:100]
+                                    else:
+                                        alloc_incoming.payment_reference = seq_info[:100]
+                                    alloc_incoming.save(update_fields=['amount_paid', 'payment_status', 'payment_date', 'payment_reference'])
+                                    continue
+
+                                alloc_invoice = resolve_outgoing_invoice(alloc_invoice_id)
+                                if not alloc_invoice:
+                                    continue
+
+                                alloc_customer = customer or alloc_invoice.customer
+                                note = (it.get('remittance') or '')[:500]
+                                BankStatementItem.objects.create(
+                                    bank_statement=header,
+                                    customer=alloc_customer,
+                                    invoice=alloc_invoice,
+                                    incoming_invoice=None,
+                                    amount=amount_to_store_abs,
+                                    note=note
+                                )
+                                allocation_saved = True
+                                created_items += 1
+                                mark_touched(invoice_obj=alloc_invoice)
+
+                                outstanding = alloc_invoice.total_gross_amount - (alloc_invoice.amount_paid or 0)
+                                add_amt = amount_to_store_abs
+                                if outstanding is not None and add_amt > outstanding:
+                                    add_amt = outstanding
+                                alloc_invoice.amount_paid = (alloc_invoice.amount_paid or 0) + add_amt
+                                is_nav_status = alloc_invoice.status in self.NAV_PROGRESS_STATUSES
+                                if self._is_effectively_paid_outgoing(alloc_invoice, alloc_invoice.amount_paid):
+                                    if not is_nav_status:
+                                        alloc_invoice.status = 'paid'
+                                    try:
+                                        from datetime import datetime as _dt
+                                        alloc_invoice.payment_date = header.statement_date or _dt.utcnow().date()
+                                    except Exception:
+                                        alloc_invoice.payment_date = header.statement_date
+                                elif alloc_invoice.amount_paid > 0:
+                                    if not is_nav_status:
+                                        alloc_invoice.status = 'partially_paid'
+                                alloc_invoice.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
+                                continue
+
+                            if is_negative_txn:
+                                alloc_incoming = resolve_incoming_invoice(alloc_invoice_id)
+                                if not alloc_incoming or is_external_outgoing_incoming(alloc_incoming):
+                                    continue
+                                alloc_customer = customer
+                                if not alloc_customer:
+                                    continue
+                                note = (it.get('remittance') or '')[:500]
+                                BankStatementItem.objects.create(
+                                    bank_statement=header,
+                                    customer=alloc_customer,
+                                    invoice=None,
+                                    incoming_invoice=alloc_incoming,
+                                    amount=-amount_to_store_abs,
+                                    note=note
+                                )
+                                allocation_saved = True
+                                created_items += 1
+                                mark_touched(incoming_obj=alloc_incoming)
+
+                                gross = decimal.Decimal(str((alloc_incoming.invoice_net_amount or 0) + (alloc_incoming.invoice_vat_amount or 0)))
+                                current_paid = decimal.Decimal(str(alloc_incoming.amount_paid or 0))
+                                new_paid = current_paid + amount_to_store_abs
+                                alloc_incoming.amount_paid = new_paid
+                                if new_paid >= (gross - decimal.Decimal('1.0')):
+                                    alloc_incoming.payment_status = 'paid'
+                                    alloc_incoming.payment_date = header.statement_date
+                                elif new_paid > 0:
+                                    alloc_incoming.payment_status = 'partially_paid'
+                                seq_info = f"{header.sequence_number}"
+                                if alloc_incoming.payment_reference:
+                                    if seq_info not in alloc_incoming.payment_reference:
+                                        alloc_incoming.payment_reference = f"{alloc_incoming.payment_reference}, {seq_info}"[:100]
+                                else:
+                                    alloc_incoming.payment_reference = seq_info[:100]
+                                alloc_incoming.save(update_fields=['amount_paid', 'payment_status', 'payment_date', 'payment_reference'])
+                                continue
+
+                            continue
+
+                        # Continue to next statement item only when at least one allocation row was saved.
+                        # If all allocation rows were skipped (invalid ref/type), fall back to single-invoice handling below.
+                        if allocation_saved:
+                            continue
 
                     amount = it.get('amount')
+                    try:
+                        amount_decimal = decimal.Decimal(str(amount or 0))
+                    except Exception:
+                        amount_decimal = decimal.Decimal('0')
+                    amount_abs = abs(amount_decimal)
+                    if incoming_invoice:
+                        amount_to_store = amount_abs if is_external_outgoing_incoming(incoming_invoice) else -amount_abs
+                    elif invoice:
+                        amount_to_store = amount_abs
+                    else:
+                        amount_to_store = amount_decimal
                     note = it.get('remittance') or ''
                     bsi = BankStatementItem.objects.create(
                         bank_statement=header,
                         customer=customer if customer else (invoice.customer if invoice else None),
                         invoice=invoice,
                         incoming_invoice=incoming_invoice,
-                        amount=amount or 0,
+                        amount=amount_to_store,
                         note=note[:500]
                     )
                     created_items += 1
+                    mark_touched(invoice_obj=invoice, incoming_obj=incoming_invoice)
                     # Reconcile Outgoing Invoice
                     if invoice and amount:
                         try:
                             from decimal import Decimal
-                            add = Decimal(str(amount))
+                            add = abs(Decimal(str(amount)))
                         except Exception:
-                            add = amount
+                            try:
+                                add = abs(decimal.Decimal(str(amount or 0)))
+                            except Exception:
+                                add = decimal.Decimal('0')
                         outstanding = invoice.total_gross_amount - (invoice.amount_paid or 0)
                         if add > outstanding:
                             add = outstanding
                         invoice.amount_paid = (invoice.amount_paid or 0) + add
-                        if invoice.amount_paid >= invoice.total_gross_amount:
-                            invoice.status = 'paid'
+                        is_nav_status = invoice.status in self.NAV_PROGRESS_STATUSES
+                        if self._is_effectively_paid_outgoing(invoice, invoice.amount_paid):
+                            if not is_nav_status:
+                                invoice.status = 'paid'
                             try:
                                 from datetime import datetime as _dt
                                 invoice.payment_date = header.statement_date or _dt.utcnow().date()
                             except Exception:
                                 invoice.payment_date = header.statement_date
                         elif invoice.amount_paid > 0:
-                            invoice.status = 'partially_paid'
+                            if not is_nav_status:
+                                invoice.status = 'partially_paid'
                         invoice.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
                     
                     # Reconcile Incoming Invoice
                     if incoming_invoice and amount:
                         try:
-                             from decimal import Decimal
-                             val = Decimal(str(amount))
+                            from decimal import Decimal
+                            val = Decimal(str(amount))
                         except:
-                             val = amount
+                            val = Decimal('0')
                         pay_amt = abs(val) 
                         
-                        gross = float((incoming_invoice.invoice_net_amount or 0) + (incoming_invoice.invoice_vat_amount or 0))
-                        current_paid = float(incoming_invoice.amount_paid or 0)
+                        gross = Decimal(str((incoming_invoice.invoice_net_amount or 0) + (incoming_invoice.invoice_vat_amount or 0)))
+                        current_paid = Decimal(str(incoming_invoice.amount_paid or 0))
                         
                         new_paid = current_paid + pay_amt
                         
-                        from decimal import Decimal
-                        incoming_invoice.amount_paid = Decimal(new_paid)
+                        incoming_invoice.amount_paid = new_paid
                         
                         # Status update
-                        if new_paid >= (gross - 1.0): 
+                        if new_paid >= (gross - Decimal('1.0')): 
                             incoming_invoice.payment_status = 'paid'
                             incoming_invoice.payment_date = header.statement_date
                         elif new_paid > 0:
@@ -6602,54 +12229,131 @@ class BankStatementViewSet(viewsets.ModelViewSet):
                              incoming_invoice.payment_reference = seq_info[:100]
                         
                         incoming_invoice.save(update_fields=['amount_paid', 'payment_status', 'payment_date', 'payment_reference'])
-                    # Save new customer bank account if requested
-                    if it.get('save_bank_account') and customer and it.get('counterparty_account'):
-                        acct = it.get('counterparty_account').strip().upper()
-                        import re
-                        is_iban = bool(re.match(r'^[A-Z]{2}', acct))
-                        existing_acc = None
-                        
-                        if is_iban:
-                            # If iban, and the last 16 characters matches the non-iban, then update
-                            suffix = re.sub(r'\D', '', acct)[-16:]
-                            # Try find candidate by account_number suffix match (only if IBAN is empty on that record)
-                            # Or exact match on IBAN
-                            matches = CustomerBankAccount.objects.filter(customer=customer)
-                            for cand in matches:
-                                c_iban = (cand.iban or '').replace(' ', '').upper()
-                                # Exact IBAN match?
-                                if c_iban == acct.replace(' ', ''):
-                                    existing_acc = cand
-                                    break
-                                # Match suffix of non-IBAN account
-                                c_num = re.sub(r'\D', '', cand.account_number or '')
-                                if not c_iban and len(c_num) >= 16 and c_num.endswith(suffix):
-                                    # Found match to update
-                                    cand.iban = acct
-                                    cand.currency = currency
-                                    cand.save()
-                                    existing_acc = cand
-                                    saved_accounts += 1
-                                    break
-                        else:
-                            # Non-IBAN
-                            c_num_search = re.sub(r'\D', '', acct)
-                            matches = CustomerBankAccount.objects.filter(customer=customer)
-                            for cand in matches:
-                                c_num = re.sub(r'\D', '', cand.account_number or '')
-                                if c_num == c_num_search:
-                                    existing_acc = cand
-                                    break
-                        
-                        if not existing_acc:
-                            CustomerBankAccount.objects.create(
-                                customer=customer, 
-                                iban=acct if is_iban else None, 
-                                account_number=None if is_iban else acct, 
-                                currency=currency
-                            )
-                            saved_accounts += 1
-        return Response({'success': True, 'created_headers': created_headers, 'created_items': created_items, 'saved_accounts': saved_accounts})
+
+                try:
+                    self._normalize_bank_statement_item_signs(header)
+                except Exception:
+                    pass
+
+            if touched_outgoing_ids:
+                for inv in Invoice.objects.filter(company=company, id__in=list(touched_outgoing_ids)):
+                    agg = BankStatementItem.objects.filter(bank_statement__company=company, invoice=inv).aggregate(
+                        total=Sum('amount'),
+                        last_date=Max('bank_statement__statement_date')
+                    )
+                    paid_amount = decimal.Decimal(str(agg.get('total') or 0))
+                    if paid_amount < 0:
+                        paid_amount = decimal.Decimal('0')
+
+                    is_nav_status = inv.status in self.NAV_PROGRESS_STATUSES
+                    if self._is_effectively_paid_outgoing(inv, paid_amount):
+                        new_status = inv.status if is_nav_status else 'paid'
+                    elif paid_amount > 0:
+                        new_status = inv.status if is_nav_status else 'partially_paid'
+                    elif inv.status in ('paid', 'partially_paid'):
+                        new_status = 'sent'
+                    else:
+                        new_status = inv.status
+
+                    new_payment_date = agg.get('last_date') if paid_amount > 0 else None
+                    update_fields = []
+                    if inv.amount_paid != paid_amount:
+                        inv.amount_paid = paid_amount
+                        update_fields.append('amount_paid')
+                    if inv.status != new_status:
+                        inv.status = new_status
+                        update_fields.append('status')
+                    if inv.payment_date != new_payment_date:
+                        inv.payment_date = new_payment_date
+                        update_fields.append('payment_date')
+                    if update_fields:
+                        inv.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+            if touched_incoming_ids:
+                for inc in IncomingInvoiceDigest.objects.filter(company=company, id__in=list(touched_incoming_ids)):
+                    qs = BankStatementItem.objects.filter(bank_statement__company=company, incoming_invoice=inc).select_related('bank_statement')
+                    agg = qs.aggregate(
+                        last_date=Max('bank_statement__statement_date')
+                    )
+                    paid_amount = decimal.Decimal('0')
+                    for row in qs:
+                        try:
+                            paid_amount += abs(decimal.Decimal(str(row.amount or 0)))
+                        except Exception:
+                            continue
+                    gross = decimal.Decimal(str((inc.invoice_net_amount or 0) + (inc.invoice_vat_amount or 0)))
+
+                    if paid_amount >= (gross - decimal.Decimal('1.0')) and gross > 0:
+                        payment_status = 'paid'
+                    elif paid_amount > 0:
+                        payment_status = 'partially_paid'
+                    else:
+                        payment_status = 'unpaid'
+
+                    seqs = []
+                    seen_seq = set()
+                    for row in qs:
+                        seq = str(getattr(row.bank_statement, 'sequence_number', '') or '').strip()
+                        if seq and seq not in seen_seq:
+                            seen_seq.add(seq)
+                            seqs.append(seq)
+                    payment_reference = ', '.join(seqs)[:100] if seqs else None
+                    payment_date = agg.get('last_date') if paid_amount > 0 else None
+
+                    update_fields = []
+                    if inc.amount_paid != paid_amount:
+                        inc.amount_paid = paid_amount
+                        update_fields.append('amount_paid')
+                    if inc.payment_status != payment_status:
+                        inc.payment_status = payment_status
+                        update_fields.append('payment_status')
+                    if inc.payment_date != payment_date:
+                        inc.payment_date = payment_date
+                        update_fields.append('payment_date')
+                    if (inc.payment_reference or None) != payment_reference:
+                        inc.payment_reference = payment_reference
+                        update_fields.append('payment_reference')
+                    if update_fields:
+                        inc.save(update_fields=update_fields)
+        return Response({
+            'success': True,
+            'created_headers': created_headers,
+            'created_items': created_items,
+            'saved_accounts': saved_accounts,
+            'saved_account_updates': saved_account_updates,
+            'saved_account_creates': saved_account_creates,
+            'moved_accounts': moved_accounts,
+            'skipped_conflicts': skipped_conflicts,
+            'skipped_duplicate_statements': skipped_duplicate_statements,
+            'skipped_duplicates_count': len(skipped_duplicate_statements),
+        })
+
+    @action(detail=True, methods=['get'], url_path='download-source-xml')
+    def download_source_xml(self, request, pk=None):
+        from django.conf import settings
+        instance = self.get_object()
+        note = str(getattr(instance, 'note', '') or '')
+        match = re.search(r'\[\[IMPORT_META:(.*?)\]\]', note, flags=re.S)
+        if not match:
+            return Response({'error': 'Nincs mentett forrás XML ehhez a kivonathoz.'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            meta = json.loads(match.group(1))
+            if not isinstance(meta, dict):
+                meta = {}
+        except Exception:
+            meta = {}
+
+        token = os.path.basename(str(meta.get('xml_file_token') or '').strip())
+        file_name = str(meta.get('xml') or '').strip() or 'statement.xml'
+        if not token:
+            return Response({'error': 'Nincs mentett forrás XML ehhez a kivonathoz.'}, status=status.HTTP_404_NOT_FOUND)
+
+        media_root = getattr(settings, 'MEDIA_ROOT', None) or os.path.join(os.getcwd(), 'media')
+        file_path = os.path.join(media_root, 'bank_statement_sources', token)
+        if not os.path.exists(file_path):
+            return Response({'error': 'A mentett XML fájl nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+        return FileResponse(open(file_path, 'rb'), as_attachment=True, filename=file_name)
 
 
 class ProformaViewSet(viewsets.ModelViewSet):
@@ -6784,6 +12488,115 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not obj:
             raise Http404('Fizetési csomag nem található')
         return obj
+
+    def retrieve(self, request, *args, **kwargs):
+        batch = self.get_object()
+        data = PaymentBatchSerializer(batch).data
+        enriched = self._enrich_batch_export_accounts([batch], [data])
+        return Response(enriched[0] if enriched else data)
+
+    def _normalize_export_account(self, raw_account):
+        clean_account = str(raw_account or '').strip().replace(' ', '').replace('-', '')
+        if not clean_account:
+            return None, None
+        if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account.upper()):
+            return 'IBAN', clean_account.upper()
+        if re.match(r'^\d{24}$', clean_account):
+            return 'BBAN', clean_account
+        return 'OTHER', clean_account
+
+    def _pick_customer_bank_account(self, customer, preferred_currency=None):
+        if not customer:
+            return None
+        qs = customer.bank_accounts
+        if preferred_currency:
+            cand = qs.filter(currency=preferred_currency, is_primary=True).first()
+            if cand:
+                return cand
+            cand = qs.filter(currency=preferred_currency).first()
+            if cand:
+                return cand
+        return qs.filter(is_primary=True).first() or qs.first()
+
+    def _resolve_payment_batch_item_account(self, batch, batch_item):
+        acct_type = None
+        account = None
+        try:
+            q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=batch_item.invoice_number)
+            if batch_item.supplier_tax_number:
+                q = q.filter(supplier_tax_number=batch_item.supplier_tax_number)
+            invdata = q.order_by('-created_at').first()
+            if invdata and invdata.xml_text:
+                acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
+            elif invdata:
+                acct_type, account = self._extract_supplier_account('', batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
+            else:
+                acct_type, account = self._extract_supplier_account('', batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
+        except Exception:
+            pass
+        if not account:
+            try:
+                supplier_tax_raw = str(batch_item.supplier_tax_number or '').strip()
+                supplier_name_raw = str(batch_item.supplier_name or '').strip()
+
+                normalized_tax = re.sub(r'[^A-Za-z0-9]', '', supplier_tax_raw).upper() if supplier_tax_raw else ''
+                digit_tax = ''.join(ch for ch in supplier_tax_raw if ch.isdigit()) if supplier_tax_raw else ''
+                tax8 = digit_tax[:8] if len(digit_tax) >= 8 else ''
+
+                candidates = []
+                if supplier_tax_raw or normalized_tax or tax8:
+                    tax_q = Q()
+                    for value in {supplier_tax_raw, normalized_tax}:
+                        if not value:
+                            continue
+                        tax_q |= Q(tax_number__iexact=value)
+                        tax_q |= Q(full_tax_number__iexact=value)
+                        tax_q |= Q(vat_group_member_tax_number__iexact=value)
+                        tax_q |= Q(eu_tax_number__iexact=value)
+                    if tax8:
+                        tax_q |= Q(tax_number__iexact=tax8)
+                        tax_q |= Q(full_tax_number__istartswith=tax8)
+                        tax_q |= Q(vat_group_member_tax_number__istartswith=tax8)
+                    if tax_q:
+                        candidates = list(Customer.objects.filter(tax_q).distinct()[:20])
+
+                if not candidates and supplier_name_raw:
+                    by_exact_name = list(Customer.objects.filter(name__iexact=supplier_name_raw)[:10])
+                    candidates = by_exact_name or list(Customer.objects.filter(name__icontains=supplier_name_raw)[:10])
+
+                for customer in candidates:
+                    bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
+                    if not bank_acc:
+                        continue
+                    fallback_account = (bank_acc.account_number or '').strip() or (bank_acc.iban or '').strip()
+                    fallback_type, fallback_value = self._normalize_export_account(fallback_account)
+                    if fallback_value:
+                        acct_type = fallback_type
+                        account = fallback_value
+                        break
+            except Exception:
+                pass
+        return acct_type, account
+
+    def _enrich_batch_export_accounts(self, batch_queryset, serialized_batches):
+        try:
+            batch_map = {str(b.id): b for b in batch_queryset}
+            for batch_data in serialized_batches:
+                batch_obj = batch_map.get(str(batch_data.get('id')))
+                if not batch_obj:
+                    continue
+                item_map = {str(it.id): it for it in batch_obj.items.all()}
+                for item_data in (batch_data.get('items') or []):
+                    item_obj = item_map.get(str(item_data.get('id')))
+                    if not item_obj:
+                        continue
+                    acct_type, account = self._resolve_payment_batch_item_account(batch_obj, item_obj)
+                    item_data['export_account'] = account
+                    item_data['export_account_type'] = acct_type
+                    item_data['export_account_missing'] = not bool(account)
+        except Exception:
+            pass
+        return serialized_batches
 
     @action(detail=False, methods=['post'], url_path='pending-count')
     def pending_count(self, request):
@@ -7004,25 +12817,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         grouped_data = {}
 
         for it in batch.items.all():
-            acct_type = None
-            account = None
-            # Try find cached full invoice XML
-            try:
-                from invoices.models import IncomingInvoiceData
-                q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=it.invoice_number)
-                if it.supplier_tax_number:
-                    q = q.filter(supplier_tax_number=it.supplier_tax_number)
-                invdata = q.order_by('-created_at').first()
-                if invdata and invdata.xml_text:
-                    acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, it.supplier_tax_number, it.currency or batch.currency)
-                elif invdata:
-                    # Nincs XML cache, de van supplier_tax_number -> próbáljuk az ügyféltörzsből
-                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number, it.currency or batch.currency)
-                else:
-                    # Nincs invdata se -> próbáljuk az ügyféltörzsből
-                    acct_type, account = self._extract_supplier_account('', batch.company, it.supplier_tax_number, it.currency or batch.currency)
-            except Exception:
-                pass
+            acct_type, account = self._resolve_payment_batch_item_account(batch, it)
             if not account:
                 missing_accounts.append({
                     'invoice_number': it.invoice_number,
@@ -7301,7 +13096,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not company_id:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         qs = PaymentBatch.objects.filter(company_id=company_id, status='PENDING').order_by('-created_at')
-        return Response(PaymentBatchSerializer(qs, many=True).data)
+        data = PaymentBatchSerializer(qs, many=True).data
+        data = self._enrich_batch_export_accounts(qs, data)
+        return Response(data)
 
     @action(detail=False, methods=['post'], url_path='list-completed')
     def list_completed(self, request):
@@ -7309,7 +13106,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         if not company_id:
             return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         qs = PaymentBatch.objects.filter(company_id=company_id).exclude(status='PENDING').order_by('-created_at')
-        return Response(PaymentBatchSerializer(qs, many=True).data)
+        data = PaymentBatchSerializer(qs, many=True).data
+        data = self._enrich_batch_export_accounts(qs, data)
+        return Response(data)
 
     @action(detail=True, methods=['post'], url_path='update-item')
     def update_item(self, request, pk=None):

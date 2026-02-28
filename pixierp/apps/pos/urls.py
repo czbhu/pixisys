@@ -1,6 +1,12 @@
-from django.urls import path
-from . import views
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import POSTerminalViewSet
+
+
+router = DefaultRouter()
+router.register(r'terminals', POSTerminalViewSet, basename='pos-terminal')
 
 urlpatterns = [
-    # POS URLs will be added here
+    path('', include(router.urls)),
 ]

@@ -1,0 +1,142 @@
+.site-preview-page {
+  min-height: 100vh;
+  background: linear-gradient(180deg, #f4f7ff 0%, #eef2ff 45%, #f7f8fb 100%);
+}
+
+.site-preview-container {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 20px 24px 40px;
+}
+
+.site-preview-topbar {
+  margin-bottom: 16px;
+}
+
+.site-preview-loading {
+  text-align: center;
+  padding: 120px 0;
+}
+
+.site-preview-stack {
+  width: 100%;
+}
+
+.site-preview-card {
+  border-radius: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 10px 36px rgba(16, 24, 40, 0.12);
+  animation: previewFadeUp 520ms ease both;
+}
+
+.site-preview-hero-slide {
+  height: 460px;
+  background-size: cover;
+  background-position: center;
+  display: flex;
+  align-items: center;
+  position: relative;
+}
+
+.site-preview-hero-slide::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, rgba(7, 12, 26, 0.72) 0%, rgba(7, 12, 26, 0.35) 55%, rgba(7, 12, 26, 0.48) 100%);
+}
+
+.site-preview-hero-content {
+  position: relative;
+  z-index: 2;
+  padding: 0 48px;
+  max-width: 860px;
+  animation: previewFadeUp 700ms ease both;
+}
+
+.site-preview-hero-title {
+  color: #fff !important;
+  margin-bottom: 10px !important;
+  text-shadow: 0 4px 28px rgba(0, 0, 0, 0.35);
+}
+
+.site-preview-hero-subtitle {
+  color: #e9edf6 !important;
+  font-size: 16px;
+  margin-bottom: 20px !important;
+}
+
+.site-preview-info-grid {
+  animation: previewFadeUp 620ms ease both;
+}
+
+.site-preview-info-card {
+  height: 100%;
+  border-radius: 14px;
+  box-shadow: 0 8px 24px rgba(16, 24, 40, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.04);
+  backdrop-filter: blur(4px);
+}
+
+.site-preview-calculators-card {
+  border-radius: 14px;
+  animation: previewFadeUp 700ms ease both;
+}
+
+.site-preview-calculator-item {
+  border-radius: 12px;
+  box-shadow: 0 8px 20px rgba(16, 24, 40, 0.08);
+  border: 1px solid rgba(17, 24, 39, 0.06);
+  transition: transform 0.24s ease, box-shadow 0.24s ease;
+  animation: previewFloat 3.8s ease-in-out infinite;
+}
+
+.site-preview-calculator-item:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 14px 28px rgba(16, 24, 40, 0.14);
+}
+
+.site-preview-carousel .slick-dots li button {
+  background: rgba(255, 255, 255, 0.62);
+}
+
+.site-preview-carousel .slick-dots li.slick-active button {
+  background: #fff;
+}
+
+@keyframes previewFadeUp {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes previewFloat {
+  0% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+  100% {
+    transform: translateY(0px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .site-preview-card,
+  .site-preview-hero-content,
+  .site-preview-info-grid,
+  .site-preview-calculators-card,
+  .site-preview-calculator-item {
+    animation: none !important;
+  }
+
+  .site-preview-calculator-item {
+    transition: none !important;
+  }
+}

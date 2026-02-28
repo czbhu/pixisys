@@ -84,6 +84,7 @@ interface AttendanceReportProps {
 const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false }) => {
     const { user } = useAuth();
     const [searchParams] = useSearchParams();
+    const searchParamsKey = searchParams.toString();
     const [loading, setLoading] = useState(false);
     const [attendanceData, setAttendanceData] = useState<AttendanceRecord[]>([]);
     const [employees, setEmployees] = useState<Employee[]>([]);
@@ -153,7 +154,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
                 }
             }
         }
-    }, [isPersonal, user, searchParams]);
+    }, [isPersonal, user, searchParamsKey]);
 
     useEffect(() => {
         if (!isPersonal || (isPersonal && selectedEmployee)) {
@@ -196,6 +197,9 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
             if (params.toString()) {
                 url += '?' + params.toString();
             }
+
+            const cacheBuster = `_ts=${Date.now()}`;
+            url += (url.includes('?') ? '&' : '?') + cacheBuster;
 
             const response = await api.get(url);
             const data = response.data;

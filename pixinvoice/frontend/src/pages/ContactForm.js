@@ -351,6 +351,9 @@ const ContactForm = () => {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const isEdit = Boolean(id);
+  const [selectedCompanyId] = React.useState(() => {
+    try { return localStorage.getItem('selectedCompanyId') || ''; } catch { return ''; }
+  });
 
   const { data: contact, isLoading: contactLoading } = useQuery(
     ['contact', id],
@@ -362,9 +365,9 @@ const ContactForm = () => {
   );
 
   const { data: customers, isLoading: customersLoading, error: customersError } = useQuery(
-    ['customers-all'],
+    ['customers-all', { company_id: selectedCompanyId || '' }],
     async () => {
-      const response = await customerAPI.getCustomers({ page_size: 10000 });
+      const response = await customerAPI.getCustomers({ page_size: 10000, company_id: selectedCompanyId || undefined });
       console.log('ContactForm - Full API response:', response);
       console.log('ContactForm - response.data:', response.data);
       console.log('ContactForm - response.data.results:', response.data?.results);

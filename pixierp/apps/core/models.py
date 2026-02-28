@@ -3,6 +3,9 @@ from django.contrib.auth.models import AbstractUser
 from django.core.validators import MinValueValidator
 from django.contrib.contenttypes.models import ContentType
 from django.contrib.contenttypes.fields import GenericForeignKey
+from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
+import uuid
 
 # Import emergency access model
 from .models_emergency import EmergencyAccessToken
@@ -551,3 +554,309 @@ class ActivityLog(models.Model):
     def __str__(self):
         user_name = self.user.get_full_name() if self.user else "Rendszer"
         return f"{self.timestamp.strftime('%Y-%m-%d %H:%M')} - {user_name}: {self.description}"
+
+
+class TicketTopic(models.Model):
+    """Jegy témakörök"""
+    name = models.CharField(max_length=120, unique=True, verbose_name="Témakör neve")
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Jegy témakör"
+        verbose_name_plural = "Jegy témakörök"
+        ordering = ['sort_order', 'name']
+        db_table = 'ticket_topics'
+
+    def __str__(self):
+        return self.name
+
+
+class TicketType(models.Model):
+    """Jegy típusok dinamikus kezelése"""
+    code = models.SlugField(max_length=50, unique=True, verbose_name='Kód')
+    name = models.CharField(max_length=120, verbose_name='Megnevezés')
+    sort_order = models.PositiveIntegerField(default=0, verbose_name='Sorrend')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Jegy típus'
+        verbose_name_plural = 'Jegy típusok'
+        ordering = ['sort_order', 'name']
+        db_table = 'ticket_types'
+
+    def __str__(self):
+        return self.name
+
+
+class Ticket(models.Model):
+    """Általános jegy (belső/külső)"""
+    STATUS_CHOICES = [
+        ('open', 'Nyitott'),
+        ('in_progress', 'Folyamatban'),
+        ('answered', 'Megválaszolva'),
+        ('closed', 'Lezárt'),
+    ]
+
+    PRIORITY_CHOICES = [
+        ('low', 'Alacsony'),
+        ('normal', 'Normál'),
+        ('high', 'Magas'),
+        ('urgent', 'Sürgős'),
+    ]
+
+    AUDIENCE_CHOICES = [
+        ('internal', 'Belsős'),
+        ('external', 'Külsős'),
+        ('both', 'Mindkettő'),
+    ]
+
+    ticket_number = models.CharField(max_length=20, unique=True, blank=True, default='', db_index=True, verbose_name='Jegyszám')
+    title = models.CharField(max_length=255, verbose_name='Cím')
+    ticket_type = models.CharField(max_length=50, default='other', verbose_name='Típus')
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='open', verbose_name='Státusz')
+    priority = models.CharField(max_length=20, choices=PRIORITY_CHOICES, default='normal', verbose_name='Prioritás')
+    audience = models.CharField(max_length=20, choices=AUDIENCE_CHOICES, default='internal', verbose_name='Címzett típusa')
+
+    topic = models.ForeignKey(TicketTopic, on_delete=models.SET_NULL, null=True, blank=True, related_name='tickets', verbose_name='Témakör')
+    departments = models.ManyToManyField('hr.Department', blank=True, related_name='tickets', verbose_name='HR osztályok')
+    assigned_users = models.ManyToManyField('auth.User', blank=True, related_name='assigned_tickets', verbose_name='Személyek')
+
+    requester_name = models.CharField(max_length=255, blank=True, default='', verbose_name='Külsős név')
+    requester_email = models.EmailField(blank=True, default='', verbose_name='Külsős e-mail')
+    public_token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False, db_index=True, verbose_name='Publikus token')
+    public_reply_enabled = models.BooleanField(default=True, verbose_name='Publikus válasz engedélyezve')
+
+    created_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='created_tickets', verbose_name='Létrehozta')
+    first_response_due_at = models.DateTimeField(null=True, blank=True, verbose_name='Első válasz határidő')
+    resolution_due_at = models.DateTimeField(null=True, blank=True, verbose_name='Megoldási határidő')
+    first_responded_at = models.DateTimeField(null=True, blank=True, verbose_name='Első válasz időpontja')
+    resolved_at = models.DateTimeField(null=True, blank=True, verbose_name='Megoldva ekkor')
+    closed_at = models.DateTimeField(null=True, blank=True, verbose_name='Lezárva ekkor')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Jegy'
+        verbose_name_plural = 'Jegyek'
+        ordering = ['-created_at']
+        db_table = 'tickets'
+
+    def __str__(self):
+        return f"{self.ticket_number or '#'} - {self.title}"
+
+    def save(self, *args, **kwargs):
+        is_new = self.pk is None
+        if is_new and self.audience == 'internal':
+            self.public_reply_enabled = False
+        if self.status == 'closed' and not self.closed_at:
+            self.closed_at = timezone.now()
+        if self.status != 'closed' and self.closed_at:
+            self.closed_at = None
+
+        if self.status in ('answered', 'closed') and not self.resolved_at:
+            self.resolved_at = timezone.now()
+        if self.status in ('open', 'in_progress') and self.resolved_at:
+            self.resolved_at = None
+
+        super().save(*args, **kwargs)
+        if (is_new and not self.ticket_number) or self.ticket_number == '':
+            self.ticket_number = f"JEGY-{self.id:06d}"
+            super().save(update_fields=['ticket_number'])
+
+
+class TicketMessage(models.Model):
+    """Jegy üzenetfolyam eleme"""
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='messages', verbose_name='Jegy')
+    author = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='ticket_messages', verbose_name='Szerző')
+    author_name = models.CharField(max_length=255, blank=True, default='', verbose_name='Szerző neve')
+    author_email = models.EmailField(blank=True, default='', verbose_name='Szerző e-mail')
+    body_html = models.TextField(verbose_name='HTML üzenet')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Jegy üzenet'
+        verbose_name_plural = 'Jegy üzenetek'
+        ordering = ['created_at']
+        db_table = 'ticket_messages'
+
+    def __str__(self):
+        author = self.author.get_full_name() if self.author else (self.author_name or 'Ismeretlen')
+        return f"{self.ticket.ticket_number} - {author}"
+
+
+class TicketAttachment(models.Model):
+    """Jegy üzenet csatolmány"""
+    message = models.ForeignKey(TicketMessage, on_delete=models.CASCADE, related_name='attachments', verbose_name='Üzenet')
+    file = models.FileField(upload_to='tickets/attachments/%Y/%m/', verbose_name='Fájl')
+    uploaded_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='ticket_attachments', verbose_name='Feltöltő')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Jegy csatolmány'
+        verbose_name_plural = 'Jegy csatolmányok'
+        ordering = ['created_at']
+        db_table = 'ticket_attachments'
+
+    def __str__(self):
+        return self.file.name.split('/')[-1]
+
+
+class TicketStatusLog(models.Model):
+    ticket = models.ForeignKey(Ticket, on_delete=models.CASCADE, related_name='status_logs', verbose_name='Jegy')
+    from_status = models.CharField(max_length=20, blank=True, default='', verbose_name='Előző státusz')
+    to_status = models.CharField(max_length=20, verbose_name='Új státusz')
+    changed_by = models.ForeignKey('auth.User', on_delete=models.SET_NULL, null=True, blank=True, related_name='ticket_status_changes', verbose_name='Módosította')
+    note = models.CharField(max_length=255, blank=True, default='', verbose_name='Megjegyzés')
+    created_at = models.DateTimeField(auto_now_add=True, db_index=True)
+
+    class Meta:
+        verbose_name = 'Jegy státusznapló'
+        verbose_name_plural = 'Jegy státusznaplók'
+        ordering = ['-created_at']
+        db_table = 'ticket_status_logs'
+
+    def __str__(self):
+        return f"{self.ticket.ticket_number}: {self.from_status} -> {self.to_status}"
+
+
+class PublicSiteConfig(models.Model):
+    name = models.CharField(max_length=120, default='Alapértelmezett publikus site')
+    public_domain = models.CharField(max_length=255, blank=True, default='', verbose_name='Publikus domain')
+    portal_domain = models.CharField(max_length=255, blank=True, default='', verbose_name='Portál domain')
+    site_title = models.CharField(max_length=255, default='Pixi Portal', verbose_name='Oldal cím')
+    hero_title = models.CharField(max_length=255, default='Üdvözlünk a Pixi publikus felületén', verbose_name='Főcím')
+    hero_subtitle = models.TextField(blank=True, default='Marketing, kalkulátorok és kliens portál egy helyen.', verbose_name='Alcím')
+    primary_cta_text = models.CharField(max_length=100, blank=True, default='Kapcsolatfelvétel', verbose_name='Elsődleges CTA szöveg')
+    primary_cta_url = models.CharField(max_length=500, blank=True, default='', verbose_name='Elsődleges CTA URL')
+    calculators_enabled = models.BooleanField(default=True, verbose_name='Publikus kalkulátorok engedélyezve')
+    portal_enabled = models.BooleanField(default=True, verbose_name='Kliens portál engedélyezve')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    updated_at = models.DateTimeField(auto_now=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Publikus oldal beállítás'
+        verbose_name_plural = 'Publikus oldal beállítások'
+        ordering = ['-is_active', '-updated_at']
+        db_table = 'public_site_configs'
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        if self.is_active:
+            PublicSiteConfig.objects.exclude(id=self.id).filter(is_active=True).update(is_active=False)
+
+    def __str__(self):
+        return self.name
+
+
+class ClientPortalUser(models.Model):
+    email = models.EmailField(unique=True, db_index=True, verbose_name='E-mail')
+    full_name = models.CharField(max_length=255, blank=True, default='', verbose_name='Név')
+    password_hash = models.CharField(max_length=255, verbose_name='Jelszó hash')
+    company = models.ForeignKey('crm.Company', on_delete=models.SET_NULL, null=True, blank=True, related_name='portal_users', verbose_name='Cég')
+    contact = models.ForeignKey('crm.Contact', on_delete=models.SET_NULL, null=True, blank=True, related_name='portal_users', verbose_name='Kapcsolattartó')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    last_login = models.DateTimeField(null=True, blank=True, verbose_name='Utolsó belépés')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Kliens portál felhasználó'
+        verbose_name_plural = 'Kliens portál felhasználók'
+        ordering = ['email']
+        db_table = 'client_portal_users'
+
+    def save(self, *args, **kwargs):
+        if self.email:
+            self.email = self.email.strip().lower()
+        super().save(*args, **kwargs)
+
+    def set_password(self, raw_password):
+        self.password_hash = make_password(raw_password)
+
+    def check_password(self, raw_password):
+        return check_password(raw_password, self.password_hash)
+
+    def __str__(self):
+        return self.email
+
+
+class ClientPortalSession(models.Model):
+    user = models.ForeignKey(ClientPortalUser, on_delete=models.CASCADE, related_name='sessions', verbose_name='Portál user')
+    token = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True, editable=False)
+    expires_at = models.DateTimeField(verbose_name='Lejárat')
+    revoked_at = models.DateTimeField(null=True, blank=True, verbose_name='Visszavonva')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Kliens portál session'
+        verbose_name_plural = 'Kliens portál sessionök'
+        ordering = ['-created_at']
+        db_table = 'client_portal_sessions'
+
+    @property
+    def is_active(self):
+        if self.revoked_at:
+            return False
+        return timezone.now() < self.expires_at
+
+    def __str__(self):
+        return f"{self.user.email} ({self.token})"
+
+
+class SiteFeature(models.Model):
+    code = models.SlugField(max_length=80, unique=True, verbose_name='Kód')
+    name = models.CharField(max_length=120, verbose_name='Név')
+    description = models.TextField(blank=True, default='', verbose_name='Leírás')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    sort_order = models.PositiveIntegerField(default=0, verbose_name='Sorrend')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Site funkció'
+        verbose_name_plural = 'Site funkciók'
+        ordering = ['sort_order', 'name']
+        db_table = 'site_features'
+
+    def __str__(self):
+        return self.name
+
+
+class SalesSite(models.Model):
+    SITE_TYPE_CHOICES = [
+        ('marketing', 'Marketing'),
+        ('sales', 'Sales'),
+        ('portal', 'Portál'),
+        ('mixed', 'Vegyes'),
+    ]
+
+    name = models.CharField(max_length=150, verbose_name='Oldal neve')
+    slug = models.SlugField(max_length=80, unique=True, verbose_name='Slug')
+    domains = models.JSONField(default=list, blank=True, verbose_name='Domainek')
+    site_type = models.CharField(max_length=20, choices=SITE_TYPE_CHOICES, default='marketing', verbose_name='Típus')
+    site_title = models.CharField(max_length=255, blank=True, default='', verbose_name='Oldal cím')
+    hero_title = models.CharField(max_length=255, blank=True, default='', verbose_name='Főcím')
+    hero_subtitle = models.TextField(blank=True, default='', verbose_name='Alcím')
+    calculators_enabled = models.BooleanField(default=True, verbose_name='Kalkulátorok engedélyezve')
+    portal_enabled = models.BooleanField(default=True, verbose_name='Portál engedélyezve')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    product_classes = models.ManyToManyField('manufacturing.ProductClass', blank=True, related_name='sales_sites', verbose_name='Termékkategóriák')
+    calculators = models.ManyToManyField('manufacturing.CalculatorTemplate', blank=True, related_name='sales_sites', verbose_name='Kalkulátorok')
+    features = models.ManyToManyField(SiteFeature, blank=True, related_name='sales_sites', verbose_name='Funkciók')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Sales/Marketing oldal'
+        verbose_name_plural = 'Sales/Marketing oldalak'
+        ordering = ['name']
+        db_table = 'sales_sites'
+
+    def __str__(self):
+        return self.name

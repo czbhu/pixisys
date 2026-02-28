@@ -18,10 +18,16 @@ import WarehouseModule from './pages/Warehouse/WarehouseModule';
 import POSModule from './pages/POS/POSModule';
 import SettingsModule from './pages/Settings/SettingsModule';
 import PersonalModule from './pages/Personal/PersonalModule';
+import Tickets from './pages/Tickets/Tickets';
 import PublicQuoteOrder from './pages/Public/PublicQuoteOrder';
 import PublicDelivery from './pages/Public/PublicDelivery';
 import PublicDeliveryNote from './pages/Public/PublicDeliveryNote';
+import PublicTicket from './pages/Public/PublicTicket';
+import PublicSite from './pages/Public/PublicSite';
+import ClientPortal from './pages/Public/ClientPortal';
 import KioskPage from './pages/Public/KioskPage';
+import SiteManagement from './pages/SiteManagement/SiteManagement';
+import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview';
 import POSSales from './pages/POS/Sales';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
@@ -43,6 +49,7 @@ const { Content } = Layout;
 function AppContent() {
   const { user, loading } = useAuth();
   const location = useLocation();
+  const isSitePreviewPage = /^\/site-management\/[^/]+$/.test(location.pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
@@ -174,14 +181,21 @@ function AppContent() {
         <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
         <Route path="/public/delivery/:token" element={<PublicDelivery />} />
         <Route path="/public/delivery-note/:token" element={<PublicDeliveryNote />} />
+        <Route path="/public/ticket/:token" element={<PublicTicket />} />
+        <Route path="/site" element={<PublicSite />} />
+        <Route path="/portal" element={<ClientPortal />} />
         <Route path="/kiosk" element={<KioskPage />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );
   }
 
+  if (isSitePreviewPage) {
+    return <SiteManagementPreview />;
+  }
+
   // POS Sales fullscreen mode - no sidebar, no header
-  const isPOSSales = location.pathname === '/pos/sales';
+  const isPOSSales = location.pathname.startsWith('/pos/sales');
   
   if (isPOSSales) {
     return <POSSales />;
@@ -235,6 +249,9 @@ function AppContent() {
             <Route path="/public/quote/:token/order" element={<PublicQuoteOrder />} />
             <Route path="/public/delivery/:token" element={<PublicDelivery />} />
             <Route path="/public/delivery-note/:token" element={<PublicDeliveryNote />} />
+            <Route path="/public/ticket/:token" element={<PublicTicket />} />
+            <Route path="/site" element={<PublicSite />} />
+            <Route path="/portal" element={<ClientPortal />} />
             <Route path="/kiosk" element={<KioskPage />} />
             <Route path="/hr/*" element={<HRModule />} />
             <Route path="/sales/*" element={<SalesModule />} />
@@ -246,6 +263,11 @@ function AppContent() {
             <Route path="/pos/*" element={<POSModule />} />
             <Route path="/settings/*" element={<SettingsModule />} />
             <Route path="/personal/*" element={<PersonalModule />} />
+            <Route path="/tickets" element={<Navigate to="/tickets/list" replace />} />
+            <Route path="/tickets/list" element={<Tickets mode="list" />} />
+            <Route path="/tickets/settings" element={<Tickets mode="settings" />} />
+            <Route path="/site-management" element={<SiteManagement />} />
+            <Route path="/site-management/:slug" element={<SiteManagementPreview />} />
           </Routes>
         </Content>
 

@@ -543,21 +543,28 @@ const CustomerDetail = () => {
         </InfoGrid>
       </DetailCard>
 
-      {(customer.vat_group_id || customer.vat_group_member_tax_number) && (
+      {(customer.group_tax_number || customer.vat_group_id || customer.vat_group_member_tax_number) && (
         <DetailCard>
-          <SectionTitle>ÁFA csoport</SectionTitle>
+          <SectionTitle>ÁFA csoport tagság</SectionTitle>
           <InfoGrid>
-            {customer.vat_group_id && (
+            {customer.group_tax_number && (
               <InfoItem>
-                <InfoLabel>ÁFA csoport ID</InfoLabel>
-                <InfoValue>{customer.vat_group_id}</InfoValue>
+                <InfoLabel>Csoport adószám</InfoLabel>
+                <InfoValue>{customer.group_tax_number}</InfoValue>
               </InfoItem>
             )}
 
             {customer.vat_group_member_tax_number && (
               <InfoItem>
-                <InfoLabel>ÁFA csoport tag adószám</InfoLabel>
+                <InfoLabel>Csoport tag adószáma</InfoLabel>
                 <InfoValue>{customer.vat_group_member_tax_number}</InfoValue>
+              </InfoItem>
+            )}
+
+            {customer.vat_group_id && !customer.group_tax_number && (
+              <InfoItem>
+                <InfoLabel>Csoport azonosító (NAV)</InfoLabel>
+                <InfoValue>{customer.vat_group_id}</InfoValue>
               </InfoItem>
             )}
           </InfoGrid>

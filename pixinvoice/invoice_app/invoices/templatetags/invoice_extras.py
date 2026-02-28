@@ -37,3 +37,20 @@ def invoice_quantity_format(value):
         return formatted.replace(",", " ")
     except (ValueError, TypeError):
         return value
+
+
+@register.filter
+def tax_number_full(value):
+    if value is None:
+        return ""
+    raw = str(value).strip()
+    if not raw:
+        return ""
+    if len(raw) >= 13 and raw[8] == '-' and raw[10] == '-':
+        return raw
+    digits = ''.join(ch for ch in raw if ch.isdigit())
+    if len(digits) == 11:
+        return f"{digits[:8]}-{digits[8:9]}-{digits[9:11]}"
+    if len(digits) == 12:
+        return f"{digits[:9]}-{digits[9:10]}-{digits[10:12]}"
+    return raw

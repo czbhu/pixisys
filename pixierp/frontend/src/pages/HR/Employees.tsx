@@ -112,9 +112,31 @@ const Employees: React.FC = () => {
     const [deleteEmailPromptVisible, setDeleteEmailPromptVisible] = useState(false);
     const [showInactive, setShowInactive] = useState(settings.showInactiveEmployees);
     const [form] = Form.useForm();
+    const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
     const [formKey, setFormKey] = useState(0);
     const usernameInputRef = useRef<any>(null);
     const [generatingEmail, setGeneratingEmail] = useState(false);
+
+    const normalizeForCompare = (value: any): any => {
+        if (value === null || value === undefined) return undefined;
+        if (typeof value === 'string') return value.trim();
+        if (Array.isArray(value)) return value.map(normalizeForCompare);
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+        if (typeof value === 'object') {
+            return Object.keys(value)
+                .sort()
+                .reduce((acc: any, key: string) => {
+                    const normalized = normalizeForCompare(value[key]);
+                    if (normalized !== undefined) acc[key] = normalized;
+                    return acc;
+                }, {} as any);
+        }
+        return value;
+    };
+
+    const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+    const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
     useEffect(() => {
         loadEmployees();
@@ -122,6 +144,14 @@ const Employees: React.FC = () => {
         loadPositions();
         loadRoles();
     }, []);
+
+    useEffect(() => {
+        if (!isModalVisible) return;
+        const timer = setTimeout(() => {
+            setInitialFormSnapshot(getFormSnapshot());
+        }, 700);
+        return () => clearTimeout(timer);
+    }, [isModalVisible, formKey]);
 
     // Keresési logika
     const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -668,7 +698,7 @@ const Employees: React.FC = () => {
     };
 
     const handleCancel = () => {
-        if (form.isFieldsTouched()) {
+        if (hasFormChanges()) {
             Modal.confirm({
                 title: 'Biztos, hogy mentés nélkül be akarja zárni?',
                 icon: <ExclamationCircleOutlined />,
@@ -915,7 +945,7 @@ const Employees: React.FC = () => {
                     size="small"
                     loading={loading}
                     onRow={(record) => ({
-                        onDoubleClick: () => navigate(`/hr/attendance?employee_id=${record.id}`),
+                        onDoubleClick: () => navigate(`/hr/attendance?employee_id=${record.id}&refresh=${Date.now()}`),
                         style: { cursor: 'pointer' }
                     })}
                 />

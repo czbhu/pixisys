@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from django.contrib.auth import authenticate, get_user_model
 from django.contrib.auth.tokens import default_token_generator
-from django.core.mail import EmailMultiAlternatives
+from django.core.mail import EmailMultiAlternatives, get_connection
 from django.template.loader import render_to_string
 from django.utils.encoding import force_str, force_bytes
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
@@ -13,10 +13,13 @@ from django.conf import settings
 from decouple import config
 import jwt
 import json
+import logging
+from urllib.parse import urlparse
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
-from invoices.models import SystemUser, Role
+from invoices.models import SystemUser, Role, CompanyEmailSettings
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
 
 
 def _serialize_roles_for_user(system_user: SystemUser):
@@ -42,6 +45,51 @@ def _serialize_roles_for_user(system_user: SystemUser):
         seen.add(key)
         deduped.append(key)
     return roles_data, deduped
+
+
+def _get_password_reset_mail_config(email: str):
+    system_user = SystemUser.objects.filter(email__iexact=email, is_active=True).first()
+    if not system_user:
+        return None, None
+
+    settings_qs = CompanyEmailSettings.objects.filter(company__in=system_user.companies.all())
+    preferred = settings_qs.filter(smtp_user__iexact=email).first()
+    ces = preferred or settings_qs.first()
+    if not ces or not ces.smtp_host or not ces.smtp_user or not ces.smtp_password:
+        return None, None
+
+    use_ssl = int(ces.smtp_port or 587) == 465
+    use_tls = False if use_ssl else bool(ces.smtp_use_tls)
+    connection = get_connection(
+        backend='django.core.mail.backends.smtp.EmailBackend',
+        host=ces.smtp_host,
+        port=int(ces.smtp_port or 587),
+        username=ces.smtp_user,
+        password=ces.smtp_password,
+        use_tls=use_tls,
+        use_ssl=use_ssl,
+        fail_silently=False,
+    )
+    from_email = ces.smtp_from or ces.smtp_user
+    return connection, from_email
+
+
+def _resolve_frontend_base_url(request):
+    origin = (request.headers.get('Origin') or '').strip()
+    if origin:
+        return origin.rstrip('/')
+
+    referer = (request.headers.get('Referer') or '').strip()
+    if referer:
+        parsed = urlparse(referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
+
+    if getattr(settings, 'FRONTEND_BASE_URL', None):
+        return str(settings.FRONTEND_BASE_URL).rstrip('/')
+
+    scheme = 'https' if request.is_secure() else 'http'
+    return f"{scheme}://{request.get_host()}".rstrip('/')
 
 
 @api_view(['POST'])
@@ -213,8 +261,8 @@ def login_view(request):
     
     # Try SystemUser first
     try:
-        system_user = SystemUser.objects.get(email=identifier, is_active=True)
-        if system_user.check_password(password):
+        system_user = SystemUser.objects.filter(email__iexact=identifier, is_active=True).first()
+        if system_user and system_user.check_password(password):
             # Update last login time
             from django.utils import timezone
             system_user.last_login = timezone.now()
@@ -222,9 +270,9 @@ def login_view(request):
             
             # Get or create corresponding Django user for JWT
             django_user, created = User.objects.get_or_create(
-                email=identifier,
+                email=system_user.email,
                 defaults={
-                    'username': identifier,
+                    'username': system_user.email,
                     'first_name': system_user.first_name,
                     'last_name': system_user.last_name,
                     'is_active': True,
@@ -238,6 +286,14 @@ def login_view(request):
             # Generate JWT tokens
             refresh = RefreshToken.for_user(django_user)
             roles_data, allowed_menus = _serialize_roles_for_user(system_user)
+            companies_data = [
+                {
+                    'id': str(c.id),
+                    'name': c.name,
+                    'short_name': c.short_name,
+                }
+                for c in system_user.companies.filter(is_active=True)
+            ]
             
             return Response({
                 'user': {
@@ -246,6 +302,7 @@ def login_view(request):
                     'first_name': system_user.first_name,
                     'last_name': system_user.last_name,
                     'full_name': system_user.full_name,
+                    'companies': companies_data,
                     'roles': roles_data,
                     'allowed_menus': allowed_menus,
                 },
@@ -255,16 +312,23 @@ def login_view(request):
                 },
                 'user_type': 'system'
             })
-    except SystemUser.DoesNotExist:
+        if system_user and not system_user.check_password(password):
+            logger.warning("Login rejected: invalid SystemUser password for %s", identifier)
+    except Exception:
+        logger.exception("Login SystemUser branch failed for identifier=%s", identifier)
         pass
     
     # Fallback to Django User authentication
     user = None
     try:
-        user_obj = User.objects.get(email=identifier)
-        user = authenticate(username=user_obj.username, password=password)
-    except User.DoesNotExist:
+        user_obj = User.objects.filter(email__iexact=identifier).first()
+        if user_obj:
+            user = authenticate(username=user_obj.username, password=password)
+    except Exception:
         # Fallback: try as username for backward compatibility
+        user = authenticate(username=identifier, password=password)
+
+    if not user:
         user = authenticate(username=identifier, password=password)
     
     if user:
@@ -286,6 +350,7 @@ def login_view(request):
             'user_type': 'django'
         })
     else:
+        logger.warning("Login rejected: invalid credentials for %s", identifier)
         return Response(
             {'error': 'Invalid credentials'}, 
             status=status.HTTP_401_UNAUTHORIZED
@@ -305,34 +370,41 @@ def password_reset_request_view(request):
         )
     
     try:
-        user = User.objects.get(email=email)
+        user = User.objects.filter(email__iexact=email).first()
+        if not user:
+            raise User.DoesNotExist
         
         # Generate reset token
         token = default_token_generator.make_token(user)
         uid = urlsafe_base64_encode(force_bytes(user.pk))
         
-        # Build reset URL
-        reset_url = f"{settings.FRONTEND_BASE_URL}/reset-password/{uid}/{token}"
+        # Build reset URL from current request origin (fallback to configured default)
+        frontend_base_url = _resolve_frontend_base_url(request)
+        reset_url = f"{frontend_base_url}/reset-password/{uid}/{token}"
         
         # Render email templates
         subject = render_to_string('emails/password_reset_subject.txt', {'user': user}).strip()
         text_body = render_to_string('emails/password_reset_body.txt', {
             'user': user,
             'reset_url': reset_url,
-            'frontend_url': settings.FRONTEND_BASE_URL,
+            'frontend_url': frontend_base_url,
         })
         
         # Send email
+        mail_connection, from_email = _get_password_reset_mail_config(user.email)
         email_message = EmailMultiAlternatives(
             subject=subject,
             body=text_body,
-            from_email=settings.DEFAULT_FROM_EMAIL,
-            to=[user.email]
+            from_email=from_email or settings.DEFAULT_FROM_EMAIL,
+            to=[user.email],
+            connection=mail_connection,
         )
         email_message.send()
-        
+
     except User.DoesNotExist:
         pass  # Don't reveal if email exists
+    except Exception:
+        logger.exception('Password reset email send failed for %s', email)
     
     return Response({
         'message': 'Ha a megadott e-mail cím szerepel a rendszerünkben, küldtünk egy jelszó-visszaállító linket.'

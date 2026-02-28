@@ -37,6 +37,13 @@ interface MaterialGroup {
   children?: MaterialGroup[];
 }
 
+interface MaterialGroupFormValues {
+  parent?: number;
+  name?: string;
+  description?: string;
+  is_active?: boolean;
+}
+
 
 
 const MaterialGroups: React.FC = () => {
@@ -44,6 +51,7 @@ const MaterialGroups: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null);
+  const [initialFormValues, setInitialFormValues] = useState<MaterialGroupFormValues>({});
   const [form] = Form.useForm();
 
 
@@ -109,22 +117,48 @@ const MaterialGroups: React.FC = () => {
 
   const showCreateModal = () => {
     setEditingGroup(null);
+    const values: MaterialGroupFormValues = {
+      parent: undefined,
+      name: '',
+      description: '',
+      is_active: true,
+    };
+    setInitialFormValues(values);
     form.resetFields();
-    form.setFieldsValue({ is_active: true });
+    form.setFieldsValue(values);
     setIsModalVisible(true);
   };
 
   const showEditModal = (group: MaterialGroup) => {
     setEditingGroup(group);
-    form.setFieldsValue({
-        ...group,
-        parent: group.parent || undefined // ensure null becomes undefined for placeholder
-    });
+    const values: MaterialGroupFormValues = {
+      parent: group.parent || undefined,
+      name: group.name || '',
+      description: group.description || '',
+      is_active: !!group.is_active,
+    };
+    setInitialFormValues(values);
+    form.resetFields();
+    form.setFieldsValue(values);
     setIsModalVisible(true);
   };
 
+  const normalizeFormValues = (values: MaterialGroupFormValues): MaterialGroupFormValues => ({
+    parent: values.parent ?? undefined,
+    name: (values.name || '').trim(),
+    description: (values.description || '').trim(),
+    is_active: !!values.is_active,
+  });
+
+  const hasFormChanges = (): boolean => {
+    const currentValues = form.getFieldsValue(true) as MaterialGroupFormValues;
+    const normalizedCurrent = normalizeFormValues(currentValues);
+    const normalizedInitial = normalizeFormValues(initialFormValues);
+    return JSON.stringify(normalizedCurrent) !== JSON.stringify(normalizedInitial);
+  };
+
   const handleCancel = () => {
-    if (form.isFieldsTouched()) {
+    if (hasFormChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,

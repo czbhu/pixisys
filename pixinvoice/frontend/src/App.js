@@ -21,6 +21,8 @@ import ContactDetail from './pages/ContactDetail';
 import ContactForm from './pages/ContactForm';
 import Settings from './pages/Settings';
 import EmailSettings from './pages/EmailSettings';
+import EmailTemplates from './pages/EmailTemplates';
+import EmailSignatures from './pages/EmailSignatures';
 import VATTypes from './pages/VATTypes';
 import Companies from './pages/Companies';
 import CompanyForm from './pages/CompanyForm';
@@ -36,11 +38,17 @@ import NAVConfig from './pages/NAVConfig';
 import Reports from './pages/Reports';
 import BankStatements from './pages/BankStatements';
 import BankStatementForm from './pages/BankStatementForm';
+import UploadedBankStatements from './pages/UploadedBankStatements';
+import CashRegisters from './pages/CashRegisters';
+import Arrears from './pages/Arrears';
+import ScheduledInvoices from './pages/ScheduledInvoices';
 import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
+import IncomingInvoiceOpen from './pages/IncomingInvoiceOpen';
 import BackupRestore from './pages/Settings/BackupRestore';
 import NavAuditExport from './pages/Settings/NavAuditExport';
 import Currencies from './pages/Settings/Currencies';
+import CronJobs from './pages/Settings/CronJobs';
 import ApiAccess from './pages/ApiAccess';
 import DataImport from './pages/DataImport';
 
@@ -89,10 +97,19 @@ function AppContent() {
               <Routes>
                 <Route path="/" element={guard('dashboard', <Dashboard />)} />
                 <Route path="/invoices" element={guard('invoices', <Invoices />)} />
+                <Route path="/scheduled-invoices" element={guard('scheduled_invoices', <ScheduledInvoices />)} />
                 <Route path="/incoming-invoices" element={guard('incoming_invoices', <IncomingInvoices />)} />
+                <Route path="/incoming-invoices-external" element={guard('incoming_invoices', <IncomingInvoices externalOutgoing />)} />
+                <Route path="/incoming-invoices/open" element={guard('incoming_invoices', <IncomingInvoiceOpen />)} />
+                <Route path="/incoming-invoices/new" element={guard('incoming_invoices', <InvoiceForm />)} />
                 <Route path="/invoices/new" element={guard('invoices', <InvoiceForm />)} />
                 <Route path="/invoices/:id/edit" element={guard('invoices', <InvoiceForm />)} />
                 <Route path="/bank-statements" element={guard('bank_statements', <BankStatements />)} />
+                <Route path="/bank-statements/import" element={guard('bank_statements', <BankStatements />)} />
+                <Route path="/bank-statements/import/preview" element={guard('bank_statements', <BankStatements />)} />
+                <Route path="/bank-statements/uploaded" element={guard('bank_statements', <UploadedBankStatements />)} />
+                <Route path="/cash-registers" element={guard('bank_statements', <CashRegisters />)} />
+                <Route path="/arrears" element={guard('arrears', <Arrears />)} />
                 <Route path="/bank-statements/new" element={guard('bank_statements', <BankStatementForm />)} />
                 <Route path="/bank-statements/:id/edit" element={guard('bank_statements', <BankStatementForm />)} />
                 <Route path="/proformas" element={guard('proformas', <Proformas />)} />
@@ -108,8 +125,11 @@ function AppContent() {
                 <Route path="/contacts/:id/edit" element={guard('contacts', <ContactForm />)} />
                 <Route path="/settings" element={guard('settings', <Settings />)} />
                 <Route path="/settings/currencies" element={guard('settings', <Currencies />)} />
+                <Route path="/settings/cron-jobs" element={guard('settings', <CronJobs />)} />
                 <Route path="/settings/vat-types" element={guard('settings_vat_types', <VATTypes />)} />
                 <Route path="/settings/email" element={guard('settings_email', <EmailSettings />)} />
+                <Route path="/settings/email-templates" element={guard('settings_email', <EmailTemplates />)} />
+                <Route path="/settings/email-signatures" element={guard('settings_email', <EmailSignatures />)} />
                 <Route path="/settings/companies" element={guard('settings_companies', <Companies />)} />
                 <Route path="/settings/companies/new" element={guard('settings_companies', <CompanyForm />)} />
                 <Route path="/settings/companies/:id" element={guard('settings_companies', <CompanyForm />)} />

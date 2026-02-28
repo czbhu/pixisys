@@ -5,7 +5,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Save, ArrowLeft, FileText, Hash } from 'lucide-react';
 import styled from 'styled-components';
-import { invoiceBlockAPI, companyAPI, companyNAVConfigAPI, currencyAPI, companyBankAccountAPI } from '../services/api';
+import { invoiceBlockAPI, companyAPI, companyNAVConfigAPI, currencyAPI, companyBankAccountAPI, vatTypesAPI } from '../services/api';
 
 const FormContainer = styled.div`
   background: white;
@@ -216,7 +216,7 @@ const InvoiceBlockForm = () => {
   const DRAFT_KEY = React.useMemo(() => (isEdit ? `invoice_block_form_draft_${id}` : 'invoice_block_form_draft_new'), [isEdit, id]);
   const KEEP_FLAG_KEY = React.useMemo(() => `${DRAFT_KEY}__keep_on_refresh`, [DRAFT_KEY]);
 
-  const { register, handleSubmit, control, formState: { errors }, setValue, watch } = useForm({
+  const { register, handleSubmit, control, formState: { errors }, setValue, watch, getValues } = useForm({
     defaultValues: {
       company: '',
       name: '',
@@ -228,6 +228,7 @@ const InvoiceBlockForm = () => {
       footer_note: '',
       default_currency: 'HUF',
       default_bank_account: '',
+      default_vat_type: '',
       language: 'hu',
       second_language: '',
     }
@@ -297,6 +298,11 @@ const InvoiceBlockForm = () => {
     { enabled: !!selectedCompany }
   );
 
+  const { data: vatTypes } = useQuery(
+    ['vat-types', { active: true }],
+    () => vatTypesAPI.getVATTypes({ active: true }).then(res => (Array.isArray(res.data) ? res.data : (res.data?.results || [])))
+  );
+
   const createBlockMutation = useMutation(
     (data) => invoiceBlockAPI.createInvoiceBlock(data),
     {
@@ -363,6 +369,7 @@ const InvoiceBlockForm = () => {
       setValue('footer_note', block.footer_note || '');
       setValue('default_currency', block.default_currency || 'HUF');
       setValue('default_bank_account', getId(block.default_bank_account));
+      setValue('default_vat_type', getId(block.default_vat_type));
       setValue('language', block.language || 'hu');
       setValue('second_language', block.second_language || '');
       setBilingual(!!block.second_language);
@@ -384,6 +391,15 @@ const InvoiceBlockForm = () => {
            }
       }
   }, [navConfigs, setValue, watch]);
+
+  React.useEffect(() => {
+    if (isEdit) return;
+    if (!Array.isArray(vatTypes) || vatTypes.length === 0) return;
+    const current = getValues('default_vat_type');
+    if (!current) {
+      setValue('default_vat_type', vatTypes[0].id);
+    }
+  }, [isEdit, vatTypes, setValue, getValues]);
 
   const onSubmit = (data) => {
     const formData = {
@@ -578,6 +594,22 @@ const InvoiceBlockForm = () => {
             ))}
             {(!activeCurrencies || activeCurrencies.length === 0) && <option value="HUF">HUF</option>}
           </Select>
+        </FormGroup>
+
+        <FormGroup>
+          <Label htmlFor="default_vat_type">Alap ÁFA kulcs</Label>
+          <Select
+            id="default_vat_type"
+            {...register('default_vat_type')}
+          >
+            <option value="">Nincs kiválasztva</option>
+            {(vatTypes || []).map((vt) => (
+              <option key={vt.id} value={vt.id}>
+                {vt.code} - {vt.name}{vt.percentage != null ? ` (${vt.percentage}%)` : ''}
+              </option>
+            ))}
+          </Select>
+          <SmallHelpText>Az új számlák új tételei ennél a számlatömbnél ezt az ÁFA típust kapják alapból.</SmallHelpText>
         </FormGroup>
 
         <FormGroup>

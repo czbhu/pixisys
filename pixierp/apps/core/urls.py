@@ -20,6 +20,12 @@ router.register(r'email-templates', views.EmailTemplateViewSet, basename='email-
 router.register(r'signature-templates', views.SignatureTemplateViewSet, basename='signature-template')
 router.register(r'zones', views.ZoneViewSet, basename='zone')
 router.register(r'activity-logs', views.ActivityLogViewSet, basename='activity-log')
+router.register(r'ticket-topics', views.TicketTopicViewSet, basename='ticket-topic')
+router.register(r'ticket-types', views.TicketTypeViewSet, basename='ticket-type')
+router.register(r'client-portal-users', views.ClientPortalUserViewSet, basename='client-portal-user')
+router.register(r'site-features', views.SiteFeatureViewSet, basename='site-feature')
+router.register(r'sales-sites', views.SalesSiteViewSet, basename='sales-site')
+router.register(r'tickets', views.TicketViewSet, basename='ticket')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),
@@ -36,6 +42,15 @@ urlpatterns = [
     path('currencies/update-rates/', views.update_exchange_rates_view, name='update_exchange_rates'),
     path('backup/export/', views.export_database_view, name='export_database'),
     path('backup/import/', views.import_database_view, name='import_database'),
+    path('tickets/public/<uuid:token>/', views.PublicTicketView.as_view(), name='public-ticket-detail'),
+    path('tickets/public/<uuid:token>/reply/', views.PublicTicketReplyView.as_view(), name='public-ticket-reply'),
+    path('public-site/config/', views.PublicSiteConfigView.as_view(), name='public-site-config'),
+    path('public-sites/resolve/', views.PublicSiteResolveView.as_view(), name='public-site-resolve'),
+    path('public-site/portal/login/', views.ClientPortalLoginView.as_view(), name='client-portal-login'),
+    path('public-site/portal/me/', views.ClientPortalMeView.as_view(), name='client-portal-me'),
+    path('public-site/portal/logout/', views.ClientPortalLogoutView.as_view(), name='client-portal-logout'),
+    path('public-site/portal/dashboard/', views.ClientPortalDashboardView.as_view(), name='client-portal-dashboard'),
+    path('public-site/portal/tickets/', views.ClientPortalTicketCreateView.as_view(), name='client-portal-ticket-create'),
     path('', include(router.urls)),
     path('pixinvoice/test-connection/', views.PixinvoiceConfigViewSet.as_view({'post': 'test_connection'}), name='pixinvoice-test-connection'),
 ]

@@ -24,6 +24,9 @@ const ProformaForm = () => {
   const location = useLocation();
   const params = new URLSearchParams(location.search);
   const copyFrom = params.get('copy_from') || '';
+  const [selectedCompanyId, setSelectedCompanyId] = React.useState(() => {
+    try { return localStorage.getItem('selectedCompanyId') || ''; } catch { return ''; }
+  });
   const { register, handleSubmit, setValue, watch, reset } = useForm({
     defaultValues: { issue_date: new Date().toISOString().slice(0,10), due_date: new Date().toISOString().slice(0,10), currency: 'HUF', payment_method: 'transfer' }
   });
@@ -34,16 +37,32 @@ const ProformaForm = () => {
   const updateItem = (idx, key, val) => setItems(prev => prev.map((it,i)=> i===idx ? { ...it, [key]: val } : it));
 
   const { data: companies } = useQuery(['companies', { is_active: true }], () => companyAPI.getCompanies({ is_active: true }), { select: (res) => res.data });
-  const { data: customers } = useQuery('customers', () => customerAPI.getCustomers({ page_size: 5000 }), { select: (res) => res.data });
+  const { data: customers } = useQuery(
+    ['customers', { company_id: selectedCompanyId || '' }],
+    () => customerAPI.getCustomers({ page_size: 5000, company_id: selectedCompanyId || undefined }),
+    { select: (res) => res.data }
+  );
 
   // Default company to sidebar selection on new
   React.useEffect(() => {
     if (isEdit) return;
     try {
       const cid = localStorage.getItem('selectedCompanyId');
-      if (cid) setValue('company_id', cid);
+      if (cid) {
+        setValue('company_id', cid);
+        setSelectedCompanyId(cid);
+      }
     } catch {}
   }, [isEdit, setValue]);
+
+  React.useEffect(() => {
+    const sub = watch((value, meta) => {
+      if (meta?.name === 'company_id') {
+        setSelectedCompanyId(value?.company_id || '');
+      }
+    });
+    return () => sub.unsubscribe();
+  }, [watch]);
 
   const createMutation = useMutation((payload) => isEdit ? proformaAPI.updateProforma(id, payload) : proformaAPI.createProforma(payload), {
     onSuccess: () => { toast.success(isEdit ? 'Díjbekérő frissítve' : 'Díjbekérő létrehozva'); queryClient.invalidateQueries('proformas'); navigate('/proformas'); },

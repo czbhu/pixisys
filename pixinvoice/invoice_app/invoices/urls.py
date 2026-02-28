@@ -3,7 +3,8 @@ from rest_framework.routers import DefaultRouter
 from invoices.views.views import (
     CustomerViewSet, InvoiceViewSet, InvoiceItemViewSet, NAVConfigurationViewSet, ContactViewSet,
     CompanyViewSet, SystemUserViewSet, RoleViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
-    CompanyEmailSettingsViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
+    CompanyEmailSettingsViewSet, EmailTemplateViewSet, EmailSignatureViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
+    CashRegisterViewSet, CashRegisterTransactionViewSet, CronJobConfigurationViewSet,
     BackupConfigurationViewSet, BackupFileViewSet, CurrencyViewSet
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
@@ -27,10 +28,15 @@ router.register(r'roles', RoleViewSet)
 router.register(r'invoice-blocks', InvoiceBlockViewSet)
 router.register(r'company-nav-configurations', CompanyNAVConfigurationViewSet)
 router.register(r'company-email-settings', CompanyEmailSettingsViewSet)
+router.register(r'email-templates', EmailTemplateViewSet)
+router.register(r'email-signatures', EmailSignatureViewSet)
 router.register(r'customer-bank-accounts', CustomerBankAccountViewSet)
 router.register(r'company-bank-accounts', CompanyBankAccountViewSet)
 router.register(r'vat-types', VATTypeViewSet)
 router.register(r'bank-statements', BankStatementViewSet)
+router.register(r'cash-registers', CashRegisterViewSet)
+router.register(r'cash-register-transactions', CashRegisterTransactionViewSet)
+router.register(r'cron-jobs', CronJobConfigurationViewSet)
 router.register(r'proformas', ProformaViewSet)
 router.register(r'payment-batches', PaymentBatchViewSet)
 router.register(r'api-clients', APIClientViewSet, basename='api-client')

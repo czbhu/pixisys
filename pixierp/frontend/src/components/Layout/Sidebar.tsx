@@ -13,6 +13,7 @@ import {
   InboxOutlined,
   BarChartOutlined,
   FileTextOutlined,
+  GlobalOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -50,9 +51,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     // Check for exact match first
     const allMenuKeys = [
       '/dashboard',
+      '/tickets/list', '/tickets/settings',
+      '/site-management',
       '/personal', '/hr', '/sales', '/manufacturing', '/finance', '/crm', '/orders', '/warehouse', '/pos', '/settings',
-      '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/approvals', '/personal/cash-registers',
-      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log',
+      '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/tasks', '/personal/approvals', '/personal/cash-registers', '/personal/tickets',
+      '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log', '/hr/task-settings',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
@@ -61,10 +64,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/orders/orders', '/orders/returns',
       '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
       '/pos/transactions', '/pos/products', '/pos/inventory',
-      '/pos/sales', '/pos/customers', '/pos/reports', '/pos/fam',
+      '/pos/sales', '/pos/registration', '/pos/terminals', '/pos/customers', '/pos/reports',
       '/orders/shipments', '/orders/suppliers',
       '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports', '/warehouse/suppliers',
       '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/hestia', '/settings/backup', '/settings/zones'
+      , '/settings/public-site'
     ];
     
     // Find the longest matching prefix
@@ -152,6 +156,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/orders', 
       '/warehouse', 
       '/pos', 
+      '/tickets',
+      '/site-management',
       '/settings'
     ];
     
@@ -210,12 +216,20 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           label: 'Jelenléti ív',
         },
         {
+          key: '/personal/tasks',
+          label: 'Feladatok',
+        },
+        {
           key: '/personal/approvals',
           label: 'Jóváhagyások',
         },
         {
           key: '/personal/cash-registers',
           label: 'Kassza',
+        },
+        {
+          key: '/personal/tickets',
+          label: 'Jegyek',
         },
       ],
     },
@@ -262,6 +276,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           key: '/hr/activity-log',
           icon: <FileTextOutlined />,
           label: 'Napló',
+        },
+        {
+          key: '/hr/task-settings',
+          icon: <FileTextOutlined />,
+          label: 'Feladatok beállítása',
         },
       ],
     },
@@ -486,24 +505,38 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       label: 'POS',
       children: [
         {
-          key: '/pos/sales',
-          label: 'Értékesítés',
+          key: '/pos/registration',
+          label: 'POS regisztráció',
         },
         {
-          key: '/pos/products',
-          label: 'Termékek',
+          key: '/pos/terminals',
+          label: 'POSek',
+        },
+      ],
+    },
+    {
+      key: '/tickets',
+      icon: <FileTextOutlined />,
+      label: 'Jegyek',
+      children: [
+        {
+          key: '/tickets/list',
+          label: 'Jegyek',
         },
         {
-          key: '/pos/customers',
-          label: 'Ügyfelek',
+          key: '/tickets/settings',
+          label: 'Beállítások',
         },
+      ],
+    },
+    {
+      key: '/site-management',
+      icon: <GlobalOutlined />,
+      label: 'Weboldalak',
+      children: [
         {
-          key: '/pos/reports',
-          label: 'Jelentések',
-        },
-        {
-          key: '/pos/fam',
-          label: 'FAM',
+          key: '/site-management',
+          label: 'Oldal menedzsment',
         },
       ],
     },
@@ -525,6 +558,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/pixinvoice', label: 'PIXINVOICE' },
         { key: '/settings/hestia', label: 'Hestia' },
         { key: '/settings/backup', label: 'Backup' },
+        { key: '/settings/public-site', label: 'Publikus oldal' },
       ],
     },
   ];
@@ -542,6 +576,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/hr/payroll': 'hr.payroll',
     '/hr/leaves': 'hr.leave_requests',
     '/hr/analytics': 'hr.employees',
+    '/hr/task-settings': 'hr.employees',
 
     // Sales
     '/sales/rfqs': 'sales.rfqs',
@@ -599,10 +634,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
 
     // POS
     '/pos/sales': 'pos',
+    '/pos/registration': 'pos',
+    '/pos/terminals': 'pos',
     '/pos/products': 'pos',
     '/pos/customers': 'pos',
     '/pos/reports': 'pos',
-    '/pos/fam': 'pos',
     '/pos/transactions': 'pos', 
     '/pos/inventory': 'pos',
 
@@ -619,6 +655,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/settings/pixinvoice': 'settings',
     '/settings/hestia': 'settings',
     '/settings/backup': 'settings',
+    '/settings/public-site': 'settings',
+    '/site-management': 'settings',
     '/personal/cash-registers': 'finance.cash_registers',
   };
 
@@ -631,17 +669,22 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   };
 
   const hasAccess = (itemKey: string) => {
-    if ((itemKey === '/personal/cash-registers' || itemKey === '/finance/cash-registers') && !hasCashRegisterAccess) {
+    if (itemKey === '/personal/cash-registers' && !hasCashRegisterAccess) {
       return false;
     }
 
     // 1. Always allow Dashboard and Personal
-    if (['/dashboard', '/personal'].some(k => itemKey.startsWith(k))) {
+    if (['/dashboard', '/personal', '/tickets'].some(k => itemKey.startsWith(k))) {
         return true;
     }
 
     const perms = Array.isArray(user?.permissions) ? user.permissions : [];
     if (!perms.length) return false;
+
+    const hasFinanceModuleAccess = perms.some((p: any) => p.module === 'finance' && p.allowed);
+    if (itemKey === '/finance/cash-registers' || itemKey === '/finance/cash-register-setup') {
+      return hasFinanceModuleAccess || perms.some((p: any) => p.resource === 'finance.cash_registers' && p.allowed);
+    }
 
     // 2. Check Resource Map first
     const resource = RESOURCE_MAP[itemKey];

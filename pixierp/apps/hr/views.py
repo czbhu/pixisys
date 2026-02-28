@@ -1,8 +1,9 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from django.contrib.auth import get_user_model
+from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 from django.utils.crypto import get_random_string
 from django.views.decorators.csrf import csrf_exempt
 from django.conf import settings
@@ -19,6 +20,7 @@ from channels.layers import get_channel_layer
 from asgiref.sync import async_to_sync
 import logging
 import requests
+import secrets
 
 logger = logging.getLogger(__name__)
 
@@ -28,11 +30,13 @@ from apps.core.permissions import (
     check_permission,
     has_own_data_permission,
 )
+from apps.core.models import Zone
 from apps.core.services import send_notification
-from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog, AttendanceKioskConfig
+from .models import Department, Position, Employee, Attendance, LeaveRequest, Payroll, AccessLog, AttendanceKioskConfig, TaskConfiguration, TaskExecution
 from .serializers import (
     DepartmentSerializer, PositionSerializer, EmployeeSerializer,
-    AttendanceSerializer, LeaveRequestSerializer, PayrollSerializer, AttendanceReportSerializer, AttendanceKioskConfigSerializer
+    AttendanceSerializer, LeaveRequestSerializer, PayrollSerializer, AttendanceReportSerializer, AttendanceKioskConfigSerializer,
+    TaskConfigurationSerializer, TaskExecutionSerializer
 )
 
 User = get_user_model()
@@ -46,6 +50,449 @@ class DepartmentViewSet(viewsets.ModelViewSet):
 class PositionViewSet(viewsets.ModelViewSet):
     queryset = Position.objects.order_by('title', 'department__name')
     serializer_class = PositionSerializer
+
+
+class TaskConfigurationViewSet(viewsets.ModelViewSet):
+    queryset = TaskConfiguration.objects.all().prefetch_related('employees__user', 'departments')
+    serializer_class = TaskConfigurationSerializer
+    permission_classes = [AllowAny]
+
+    def _get_employee(self, request):
+        return getattr(request.user, 'employee_profile', None)
+
+    def _get_allowed_kiosk_device_ids(self, user, employee):
+        from .models import KioskDevice
+
+        if employee:
+            departments = employee.departments.all()
+            if departments.exists():
+                zones = Zone.objects.filter(departments__in=departments)
+                return list(
+                    KioskDevice.objects.filter(zones__in=zones, status='approved')
+                    .distinct()
+                    .values_list('device_id', flat=True)
+                )
+            return []
+
+        if user.is_staff or user.is_superuser:
+            return list(KioskDevice.objects.filter(status='approved').values_list('device_id', flat=True))
+
+        return []
+
+    def _is_task_for_employee(self, task, employee):
+        if not employee:
+            return False
+        if task.employees.filter(id=employee.id).exists():
+            return True
+        employee_department_ids = set(employee.departments.values_list('id', flat=True))
+        task_department_ids = set(task.departments.values_list('id', flat=True))
+        return bool(employee_department_ids.intersection(task_department_ids))
+
+    def _period_window(self, task, now, employee):
+        local_now = timezone.localtime(now)
+        if task.frequency_type == 'once':
+            start = timezone.make_aware(datetime.combine(date(1970, 1, 1), dt_time.min))
+            end = timezone.make_aware(datetime.combine(date(9999, 12, 31), dt_time.max))
+            period_key = 'once:global'
+            return start, end, period_key
+
+        if task.frequency_type == 'daily':
+            start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+            end = start + timedelta(days=1)
+            period_key = f"daily:{start.date().isoformat()}"
+            return start, end, period_key
+
+        if task.frequency_type == 'weekly':
+            week_start_date = local_now.date() - timedelta(days=local_now.weekday())
+            start = timezone.make_aware(datetime.combine(week_start_date, dt_time.min))
+            end = start + timedelta(days=7)
+            period_key = f"weekly:{week_start_date.isoformat()}"
+            return start, end, period_key
+
+        if task.frequency_type == 'monthly':
+            month_start_date = local_now.date().replace(day=1)
+            start = timezone.make_aware(datetime.combine(month_start_date, dt_time.min))
+            if month_start_date.month == 12:
+                next_month_start = date(month_start_date.year + 1, 1, 1)
+            else:
+                next_month_start = date(month_start_date.year, month_start_date.month + 1, 1)
+            end = timezone.make_aware(datetime.combine(next_month_start, dt_time.min))
+            period_key = f"monthly:{month_start_date.strftime('%Y-%m')}"
+            return start, end, period_key
+
+        if task.frequency_type == 'yearly':
+            year_start_date = date(local_now.year, 1, 1)
+            start = timezone.make_aware(datetime.combine(year_start_date, dt_time.min))
+            next_year_start = date(local_now.year + 1, 1, 1)
+            end = timezone.make_aware(datetime.combine(next_year_start, dt_time.min))
+            period_key = f"yearly:{local_now.year}"
+            return start, end, period_key
+
+        login_time = getattr(employee.user, 'last_login', None) if employee and employee.user else None
+        start = login_time or local_now
+        if timezone.is_naive(start):
+            start = timezone.make_aware(start)
+        period_owner = employee.id if employee else 0
+        period_key = f"login:{period_owner}:{int(start.timestamp())}"
+        end = start + timedelta(days=1)
+        return start, end, period_key
+
+    def _calculate_due_at(self, task, now, period_start, completed_count):
+        due_at = period_start
+        required_count = max(1, int(task.required_count or 1))
+
+        if task.frequency_type == 'weekly' and task.days_of_week:
+            today_weekday = now.weekday()
+            valid_days = sorted([d for d in task.days_of_week if isinstance(d, int) and 0 <= d <= 6])
+            if valid_days:
+                selected_day = next((d for d in valid_days if d >= today_weekday), valid_days[0])
+                day_offset = selected_day - today_weekday if selected_day >= today_weekday else (7 - today_weekday + selected_day)
+                due_date = now.date() + timedelta(days=day_offset)
+                due_at = timezone.make_aware(datetime.combine(due_date, dt_time.min))
+
+        if task.schedule_type in ('time', 'time_and_count') and task.interval_minutes:
+            occurrence_index = min(required_count, completed_count + 1)
+            due_at = due_at + timedelta(minutes=int(task.interval_minutes) * occurrence_index)
+
+        if task.frequency_type == 'monthly':
+            _, month_last_day = monthrange(period_start.year, period_start.month)
+            selected_day = int(task.due_day_of_month or 1)
+            selected_day = max(1, min(selected_day, month_last_day))
+            due_at = timezone.make_aware(datetime.combine(date(period_start.year, period_start.month, selected_day), dt_time.min))
+
+        if task.frequency_type == 'yearly':
+            selected_month = int(task.due_month_of_year or 12)
+            selected_month = max(1, min(selected_month, 12))
+            _, month_last_day = monthrange(period_start.year, selected_month)
+            selected_day = int(task.due_day_of_month or month_last_day)
+            selected_day = max(1, min(selected_day, month_last_day))
+            due_at = timezone.make_aware(datetime.combine(date(period_start.year, selected_month, selected_day), dt_time.min))
+
+        return due_at
+
+    def _task_type(self, task):
+        if task.kiosk_required:
+            return 'kiosk'
+        if task.qr_required:
+            return 'qr'
+        return 'simple'
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            qs = qs.filter(is_active=str(is_active).lower() == 'true')
+        return qs.order_by('name')
+
+    @action(detail=False, methods=['post'])
+    def generate_qr(self, request):
+        token = secrets.token_urlsafe(16)
+        return Response({'qr_code': token})
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated], url_path='my-tasks')
+    def my_tasks(self, request):
+        employee = self._get_employee(request)
+        if not employee:
+            return Response([], status=status.HTTP_200_OK)
+
+        now = timezone.now()
+        configs = TaskConfiguration.objects.filter(
+            is_active=True
+        ).filter(
+            Q(employees=employee) | Q(departments__in=employee.departments.all())
+        ).distinct().prefetch_related('employees', 'departments')
+
+        response_rows = []
+        for config in configs:
+            period_start, period_end, period_key = self._period_window(config, now, employee)
+
+            base_executions = TaskExecution.objects.filter(
+                task_configuration=config,
+                period_key=period_key,
+            )
+            if config.target_level == 'person':
+                period_executions = base_executions.filter(employee=employee)
+            else:
+                department_ids = config.departments.values_list('id', flat=True)
+                period_executions = base_executions.filter(employee__departments__id__in=department_ids).distinct()
+
+            completed_queryset = period_executions.filter(status='completed')
+            completed_count = completed_queryset.count()
+            latest_completed = completed_queryset.order_by('-completed_at').first()
+
+            active_execution = base_executions.filter(
+                employee=employee,
+                status__in=['in_progress', 'paused']
+            ).order_by('-started_at').first()
+
+            required_count = max(1, int(config.required_count or 1))
+            is_completed = completed_count >= required_count
+            due_at = self._calculate_due_at(config, now, period_start, completed_count)
+            due_in_minutes = int((due_at - now).total_seconds() // 60)
+            flexibility_minutes = int(config.flexibility_minutes or 0)
+            overdue_at = due_at + timedelta(minutes=flexibility_minutes)
+            overdue_minutes = int((now - overdue_at).total_seconds() // 60) if (now > overdue_at and not is_completed) else 0
+
+            active_payload = None
+            if active_execution:
+                elapsed_seconds = active_execution.get_total_duration_seconds(now=now)
+                active_payload = {
+                    'id': active_execution.id,
+                    'status': active_execution.status,
+                    'started_at': active_execution.started_at,
+                    'last_resumed_at': active_execution.last_resumed_at,
+                    'paused_at': active_execution.paused_at,
+                    'notes': active_execution.notes or '',
+                    'elapsed_seconds': elapsed_seconds,
+                    'elapsed_minutes': round(elapsed_seconds / 60, 2),
+                }
+
+            duration_minutes = None
+            if latest_completed:
+                duration_minutes = round(latest_completed.get_total_duration_seconds() / 60, 2)
+
+            response_rows.append({
+                'task_id': config.id,
+                'task_code': f"TASK-{config.id}",
+                'task_name': config.name,
+                'description': config.description or '',
+                'task_type': self._task_type(config),
+                'due_at': due_at,
+                'due_in_minutes': due_in_minutes,
+                'overdue_minutes': overdue_minutes,
+                'period_key': period_key,
+                'required_count': required_count,
+                'completed_count': completed_count,
+                'is_completed': is_completed,
+                'completed_at': latest_completed.completed_at if latest_completed else None,
+                'completed_by_name': (
+                    latest_completed.completed_by.get_full_name() or latest_completed.completed_by.username
+                    if latest_completed and latest_completed.completed_by else None
+                ),
+                'duration_minutes': duration_minutes,
+                'active_execution': active_payload,
+                'qr_required': config.qr_required,
+                'kiosk_required': config.kiosk_required,
+                'can_start': (not is_completed and not active_execution),
+                'can_resume': bool(active_execution and active_execution.status == 'paused'),
+                'can_finish': bool(active_execution),
+                'sort_due': due_at,
+            })
+
+        response_rows.sort(key=lambda row: row['sort_due'])
+        for row in response_rows:
+            row.pop('sort_due', None)
+
+        return Response(response_rows, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='request-kiosk-token')
+    def request_kiosk_token(self, request, pk=None):
+        task = self.get_object()
+        employee = self._get_employee(request)
+        if not employee or not self._is_task_for_employee(task, employee):
+            return Response({'error': 'Nincs jogosultság a feladathoz.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not task.kiosk_required:
+            return Response({'error': 'Ehhez a feladathoz nem kell KIOSK azonosítás.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        allowed_kiosk_ids = self._get_allowed_kiosk_device_ids(request.user, employee)
+        if not allowed_kiosk_ids:
+            return Response({'error': 'Nincs engedélyezett KIOSK a dolgozó zónáiban.'}, status=status.HTTP_403_FORBIDDEN)
+
+        kiosk_cfg = AttendanceKioskConfig.objects.first()
+        qr_validity_seconds = int(kiosk_cfg.qr_validity_seconds) if kiosk_cfg and kiosk_cfg.qr_validity_seconds else 10
+        nonce = secrets.token_urlsafe(8)
+        signer = TimestampSigner()
+        payload = f"TASK_KIOSK:{request.user.id}:{task.id}:{nonce}"
+        signed_token = signer.sign(payload)
+
+        channel_layer = get_channel_layer()
+        user_name = request.user.get_full_name() or request.user.username or 'Felhasználó'
+        for kiosk_device_id in allowed_kiosk_ids:
+            async_to_sync(channel_layer.group_send)(
+                f"attendance_kiosk_{kiosk_device_id}",
+                {
+                    "type": "kiosk_message",
+                    "message": {
+                        "type": "show_qr",
+                        "qr_data": signed_token,
+                        "user_name": user_name,
+                        "mode": "task_kiosk"
+                    }
+                }
+            )
+
+        return Response({
+            'message': 'A KIOSK QR kód kiküldve az engedélyezett kioszkokra.',
+            'kiosk_count': len(allowed_kiosk_ids),
+            'expires_seconds': qr_validity_seconds,
+        }, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='start-execution')
+    def start_execution(self, request, pk=None):
+        task = self.get_object()
+        employee = self._get_employee(request)
+        if not employee or not self._is_task_for_employee(task, employee):
+            return Response({'error': 'Nincs jogosultság a feladathoz.'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        _, _, period_key = self._period_window(task, now, employee)
+
+        existing_active = TaskExecution.objects.filter(
+            task_configuration=task,
+            employee=employee,
+            period_key=period_key,
+            status__in=['in_progress', 'paused']
+        ).order_by('-started_at').first()
+        if existing_active:
+            return Response(TaskExecutionSerializer(existing_active).data, status=status.HTTP_200_OK)
+
+        base_executions = TaskExecution.objects.filter(task_configuration=task, period_key=period_key)
+        if task.target_level == 'person':
+            completed_count = base_executions.filter(employee=employee, status='completed').count()
+        else:
+            department_ids = task.departments.values_list('id', flat=True)
+            completed_count = base_executions.filter(employee__departments__id__in=department_ids, status='completed').distinct().count()
+
+        required_count = max(1, int(task.required_count or 1))
+        if completed_count >= required_count:
+            return Response({'error': 'A feladat ebben a periódusban már teljesítve lett.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        scanned_qr = (request.data.get('qr_code') or '').strip()
+        if task.qr_required and scanned_qr != (task.qr_code or '').strip():
+            return Response({'error': 'Érvénytelen QR kód.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        kiosk_verified = False
+        if task.kiosk_required:
+            provided_token = (request.data.get('kiosk_token') or '').strip()
+            if not provided_token:
+                return Response({'error': 'A KIOSK token megadása kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            kiosk_cfg = AttendanceKioskConfig.objects.first()
+            qr_validity_seconds = int(kiosk_cfg.qr_validity_seconds) if kiosk_cfg and kiosk_cfg.qr_validity_seconds else 10
+
+            signer = TimestampSigner()
+            try:
+                original = signer.unsign(provided_token, max_age=qr_validity_seconds + 20)
+                parts = original.split(':')
+                if len(parts) < 4 or parts[0] != 'TASK_KIOSK':
+                    raise BadSignature('Hibás token formátum')
+
+                token_user_id = parts[1]
+                token_task_id = parts[2]
+                if str(token_user_id) != str(request.user.id) or str(token_task_id) != str(task.id):
+                    return Response({'error': 'A KIOSK token nem ehhez a felhasználóhoz vagy feladathoz tartozik.'}, status=status.HTTP_403_FORBIDDEN)
+            except SignatureExpired:
+                return Response({'error': 'Lejárt KIOSK token.'}, status=status.HTTP_400_BAD_REQUEST)
+            except BadSignature:
+                return Response({'error': 'Érvénytelen KIOSK token.'}, status=status.HTTP_400_BAD_REQUEST)
+
+            kiosk_verified = True
+
+        notes = (request.data.get('notes') or '').strip()
+        execution = TaskExecution.objects.create(
+            task_configuration=task,
+            employee=employee,
+            started_by=request.user,
+            status='in_progress',
+            started_at=now,
+            last_resumed_at=now,
+            notes=notes,
+            period_key=period_key,
+            qr_verified_code=scanned_qr if task.qr_required else '',
+            kiosk_verified=kiosk_verified,
+        )
+        return Response(TaskExecutionSerializer(execution).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='pause-execution')
+    def pause_execution(self, request, pk=None):
+        task = self.get_object()
+        employee = self._get_employee(request)
+        if not employee or not self._is_task_for_employee(task, employee):
+            return Response({'error': 'Nincs jogosultság a feladathoz.'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        _, _, period_key = self._period_window(task, now, employee)
+        execution = TaskExecution.objects.filter(
+            task_configuration=task,
+            employee=employee,
+            period_key=period_key,
+            status='in_progress'
+        ).order_by('-started_at').first()
+
+        if not execution:
+            return Response({'error': 'Nincs futó feladat.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if execution.last_resumed_at:
+            execution.total_duration_seconds = execution.get_total_duration_seconds(now=now)
+        execution.status = 'paused'
+        execution.paused_at = now
+        execution.last_resumed_at = None
+        notes = request.data.get('notes')
+        if notes is not None:
+            execution.notes = notes
+        execution.save()
+        return Response(TaskExecutionSerializer(execution).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='resume-execution')
+    def resume_execution(self, request, pk=None):
+        task = self.get_object()
+        employee = self._get_employee(request)
+        if not employee or not self._is_task_for_employee(task, employee):
+            return Response({'error': 'Nincs jogosultság a feladathoz.'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        _, _, period_key = self._period_window(task, now, employee)
+        execution = TaskExecution.objects.filter(
+            task_configuration=task,
+            employee=employee,
+            period_key=period_key,
+            status='paused'
+        ).order_by('-started_at').first()
+
+        if not execution:
+            return Response({'error': 'Nincs szüneteltetett feladat.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        execution.status = 'in_progress'
+        execution.last_resumed_at = now
+        execution.paused_at = None
+        notes = request.data.get('notes')
+        if notes is not None:
+            execution.notes = notes
+        execution.save()
+        return Response(TaskExecutionSerializer(execution).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=['post'], permission_classes=[IsAuthenticated], url_path='complete-execution')
+    def complete_execution(self, request, pk=None):
+        task = self.get_object()
+        employee = self._get_employee(request)
+        if not employee or not self._is_task_for_employee(task, employee):
+            return Response({'error': 'Nincs jogosultság a feladathoz.'}, status=status.HTTP_403_FORBIDDEN)
+
+        now = timezone.now()
+        _, _, period_key = self._period_window(task, now, employee)
+        execution = TaskExecution.objects.filter(
+            task_configuration=task,
+            employee=employee,
+            period_key=period_key,
+            status__in=['in_progress', 'paused']
+        ).order_by('-started_at').first()
+
+        if not execution:
+            return Response({'error': 'Nincs lezárható feladat.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        total_seconds = execution.get_total_duration_seconds(now=now)
+        execution.total_duration_seconds = total_seconds
+        execution.status = 'completed'
+        execution.completed_at = now
+        execution.completed_by = request.user
+        execution.last_resumed_at = None
+        execution.paused_at = None
+        notes = request.data.get('notes')
+        if notes is not None:
+            execution.notes = notes
+        execution.save()
+        return Response(TaskExecutionSerializer(execution).data, status=status.HTTP_200_OK)
 
 
 class EmployeeViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
@@ -667,9 +1114,6 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
-
-from rest_framework.permissions import IsAuthenticated
-from rest_framework.decorators import action
 from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
 class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = Attendance.objects.all()

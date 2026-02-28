@@ -6,6 +6,7 @@ from . import analytics_views
 router = DefaultRouter()
 router.register(r'departments', views.DepartmentViewSet)
 router.register(r'positions', views.PositionViewSet)
+router.register(r'task-configurations', views.TaskConfigurationViewSet)
 router.register(r'employees', views.EmployeeViewSet)
 router.register(r'attendances', views.AttendanceViewSet)
 router.register(r'attendance-reports', views.AttendanceReportViewSet, basename='attendance-report')

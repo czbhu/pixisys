@@ -90,6 +90,28 @@ const Contacts: React.FC = () => {
     const [viewingContact, setViewingContact] = useState<Contact | null>(null);
     const [contactParam, setContactParam] = useState<string | null>(null);
     const [form] = Form.useForm();
+    const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+
+    const normalizeForCompare = (value: any): any => {
+        if (value === null || value === undefined) return undefined;
+        if (typeof value === 'string') return value.trim();
+        if (Array.isArray(value)) return value.map(normalizeForCompare);
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+        if (typeof value === 'object') {
+            return Object.keys(value)
+                .sort()
+                .reduce((acc: any, key: string) => {
+                    const normalized = normalizeForCompare(value[key]);
+                    if (normalized !== undefined) acc[key] = normalized;
+                    return acc;
+                }, {} as any);
+        }
+        return value;
+    };
+
+    const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+    const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
     const loadData = useCallback(async () => {
         try {
@@ -114,6 +136,14 @@ const Contacts: React.FC = () => {
     useEffect(() => {
         loadData();
     }, [loadData]);
+
+    useEffect(() => {
+        if (!isModalVisible) return;
+        const timer = setTimeout(() => {
+            setInitialFormSnapshot(getFormSnapshot());
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [isModalVisible]);
 
     const showCreateModal = useCallback(() => {
         setEditingContact(null);
@@ -208,7 +238,7 @@ const Contacts: React.FC = () => {
     };
 
     const handleCancel = () => {
-        if (form.isFieldsTouched()) {
+        if (hasFormChanges()) {
             Modal.confirm({
                 title: 'Biztos, hogy mentés nélkül be akarja zárni?',
                 icon: <ExclamationCircleOutlined />,

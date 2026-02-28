@@ -80,6 +80,25 @@ export const invoiceAPI = {
   
   // Create invoice
   createInvoice: (data) => api.post('/api/invoices/', data),
+  // Create manual incoming invoice digest (for non-NAV/foreign invoices)
+  createIncomingManual: (data) => api.post('/api/invoices/incoming/manual_create/', data),
+  getIncomingManual: (companyId, digestId) => api.post('/api/invoices/incoming/manual_get/', { company_id: companyId, digest_id: digestId }),
+  updateIncomingManual: (data) => api.post('/api/invoices/incoming/manual_update/', data),
+  deleteIncomingManual: async (companyId, digestId) => {
+    const payload = { company_id: companyId, digest_id: digestId };
+    try {
+      return await api.post('/api/invoices/incoming/manual_delete/', payload);
+    } catch (error) {
+      if (error?.response?.status !== 404) throw error;
+      return api.post('/api/invoices/incoming/manual-delete/', payload);
+    }
+  },
+  parseIncomingDocument: (companyId, file) => {
+    const fd = new FormData();
+    if (companyId) fd.append('company_id', companyId);
+    if (file) fd.append('file', file);
+    return api.post('/api/invoices/incoming/parse-document/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
   
   // Update invoice
   updateInvoice: (id, data) => api.put(`/api/invoices/${id}/`, data),
@@ -102,11 +121,24 @@ export const invoiceAPI = {
   draftEML: (id, payload) => api.post(`/api/invoices/${id}/draft_eml/`, payload, { responseType: 'blob' }),
   // Bulk email send
   sendBulkEmail: (payload) => api.post(`/api/invoices/send_bulk_email/`, payload),
+  // Overdue receivables workflow
+  getArrearsList: (params = {}) => api.get('/api/invoices/arrears-list/', { params }),
+  advanceArrearsStatus: (payload) => api.post('/api/invoices/arrears-advance-status/', payload),
+  // Scheduled invoices workflow
+  createScheduledInvoice: (payload) => api.post('/api/invoices/scheduled-invoices/create/', payload),
+  listScheduledInvoices: (params = {}) => api.get('/api/invoices/scheduled-invoices/list/', { params }),
+  processScheduledInvoices: (payload) => api.post('/api/invoices/scheduled-invoices/process/', payload),
+  approveScheduledInvoices: (payload) => api.post('/api/invoices/scheduled-invoices/approve/', payload),
+  getScheduledInvoiceTemplate: (id) => api.get(`/api/invoices/scheduled-invoices/${id}/template/`),
+  updateScheduledInvoice: (id, payload) => api.put(`/api/invoices/scheduled-invoices/${id}/update/`, payload),
+  deleteScheduledInvoice: (id) => api.delete(`/api/invoices/scheduled-invoices/${id}/delete/`),
+  toggleScheduledInvoiceActive: (id, payload = {}) => api.post(`/api/invoices/scheduled-invoices/${id}/toggle-active/`, payload),
+  getScheduledInvoiceRuns: (id) => api.get(`/api/invoices/scheduled-invoices/${id}/invoices/`),
   // Bulk draft EML (download)
   draftBulkEML: (payload) => api.post(`/api/invoices/draft_bulk_eml/`, payload, { responseType: 'blob' }),
   
   // Get statistics
-  getStatistics: () => api.get('/api/invoices/statistics/'),
+  getStatistics: (params = {}) => api.get('/api/invoices/statistics/', { params }),
 };
 
 export const currencyAPI = {
@@ -322,7 +354,7 @@ export const companyNAVConfigAPI = {
   createCompanyNAVConfiguration: (data) => api.post('/api/company-nav-configurations/', data),
   
   // Update configuration
-  updateCompanyNAVConfiguration: (id, data) => api.put(`/api/company-nav-configurations/${id}/`, data),
+  updateCompanyNAVConfiguration: (id, data) => api.patch(`/api/company-nav-configurations/${id}/`, data),
   
   // Delete configuration
   deleteCompanyNAVConfiguration: (id) => api.delete(`/api/company-nav-configurations/${id}/`),
@@ -351,6 +383,29 @@ export const emailSettingsAPI = {
   }
 };
 
+export const emailTemplateAPI = {
+  list: (params = {}) => api.get('/api/email-templates/', { params }),
+  get: (id) => api.get(`/api/email-templates/${id}/`),
+  create: (data) => api.post('/api/email-templates/', data),
+  update: (id, data) => api.put(`/api/email-templates/${id}/`, data),
+  delete: (id) => api.delete(`/api/email-templates/${id}/`),
+  ensureDefaults: (data) => api.post('/api/email-templates/ensure_defaults/', data),
+};
+
+export const emailSignatureAPI = {
+  list: (params = {}) => api.get('/api/email-signatures/', { params }),
+  get: (id) => api.get(`/api/email-signatures/${id}/`),
+  create: (data) => api.post('/api/email-signatures/', data),
+  update: (id, data) => api.put(`/api/email-signatures/${id}/`, data),
+  delete: (id) => api.delete(`/api/email-signatures/${id}/`),
+  setDefault: (id) => api.post(`/api/email-signatures/${id}/set_default/`),
+};
+
+export const cronJobAPI = {
+  list: (params = {}) => api.get('/api/cron-jobs/', { params }),
+  update: (id, data) => api.patch(`/api/cron-jobs/${id}/`, data),
+};
+
 export const customerBankAccountAPI = {
   getAccounts: (params = {}) => api.get('/api/customer-bank-accounts/', { params }),
   createAccount: (data) => api.post('/api/customer-bank-accounts/', data),
@@ -373,7 +428,44 @@ export const vatTypesAPI = {
 
 export const bankStatementsAPI = {
   getStatements: (params = {}) => api.get('/api/bank-statements/', { params }),
-  getStatement: (id) => api.get(`/api/bank-statements/${id}/`),
+  getAllStatements: async (params = {}) => {
+    const pageSize = 500;
+    let page = 1;
+    let guard = 0;
+    const collected = [];
+
+    while (guard < 300) {
+      guard += 1;
+      const res = await api.get('/api/bank-statements/', {
+        params: {
+          ...params,
+          page,
+          page_size: pageSize,
+        },
+      });
+
+      const data = res?.data;
+      if (Array.isArray(data)) {
+        return data;
+      }
+
+      const rows = Array.isArray(data?.results) ? data.results : [];
+      collected.push(...rows);
+
+      const hasNext = !!data?.next;
+      const pageCount = Number(data?.pageCount || data?.total_pages || 0);
+      const hasMoreByPageCount = Number.isFinite(pageCount) && pageCount > 0 ? page < pageCount : false;
+      const hasMoreByChunk = !hasNext && !hasMoreByPageCount && rows.length === pageSize;
+
+      if (!hasNext && !hasMoreByPageCount && !hasMoreByChunk) {
+        break;
+      }
+      page += 1;
+    }
+
+    return collected;
+  },
+  getStatement: (id, params = {}) => api.get(`/api/bank-statements/${id}/`, { params }),
   createStatement: (data) => api.post('/api/bank-statements/', data),
   updateStatement: (id, data) => api.patch(`/api/bank-statements/${id}/`, data),
   deleteStatement: (id) => api.delete(`/api/bank-statements/${id}/`),
@@ -396,16 +488,32 @@ export const bankStatementsAPI = {
     (files||[]).forEach((f) => fd.append('files', f));
     return api.post('/api/bank-statements/import-zip/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
   },
-  importStmDryRun: (companyId, files) => {
+  importStmDryRun: (companyId, files, options = {}) => {
     const fd = new FormData();
     fd.append('company', companyId);
     fd.append('dry_run', '1');
+    if (options?.skipExisting) {
+      fd.append('skip_existing', '1');
+    }
     (files||[]).forEach((f) => fd.append('files', f));
     return api.post('/api/bank-statements/import-stm/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
   },
   importStmCommit: (companyId, statements) => {
     return api.post('/api/bank-statements/import-stm-commit/', { company: companyId, statements });
   },
+};
+
+export const cashRegisterAPI = {
+  list: (params = {}) => api.get('/api/cash-registers/', { params }),
+  get: (id) => api.get(`/api/cash-registers/${id}/`),
+  create: (data) => api.post('/api/cash-registers/', data),
+  update: (id, data) => api.patch(`/api/cash-registers/${id}/`, data),
+  delete: (id) => api.delete(`/api/cash-registers/${id}/`),
+};
+
+export const cashRegisterTransactionAPI = {
+  list: (params = {}) => api.get('/api/cash-register-transactions/', { params }),
+  create: (data) => api.post('/api/cash-register-transactions/', data),
 };
 
 export const apiAccessAPI = {

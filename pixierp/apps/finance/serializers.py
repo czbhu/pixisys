@@ -71,14 +71,19 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         source='transaction_view_employees',
         required=False
     )
+    pos_name = serializers.SerializerMethodField()
 
     class Meta:
         model = CashRegister
         fields = ['id', 'name', 'location', 'currency', 'currency_code', 'currency_symbol',
-                  'initial_balance', 'current_balance', 'is_active', 'email_notify_on_deposit',
+                  'initial_balance', 'current_balance', 'is_active', 'is_pos_default', 'email_notify_on_deposit',
                   'email_notify_on_withdrawal', 'notify_user_ids', 'transaction_view_employee_ids',
-                  'created_at', 'updated_at', 'created_by', 'employee_permissions', 'employees']
+                  'created_at', 'updated_at', 'created_by', 'employee_permissions', 'employees', 'pos_name']
         read_only_fields = ['current_balance', 'created_by']
+
+    def get_pos_name(self, obj):
+        terminal = getattr(obj, 'pos_terminal', None)
+        return terminal.name if terminal else None
 
     def create(self, validated_data):
         employees = validated_data.pop('employees', [])
@@ -95,6 +100,9 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         validated_data['current_balance'] = validated_data.get('initial_balance', 0)
         
         cash_register = CashRegister.objects.create(**validated_data)
+
+        if cash_register.is_pos_default:
+            CashRegister.objects.exclude(id=cash_register.id).update(is_pos_default=False)
         
         # Set notify users
         if notify_users:
@@ -129,6 +137,9 @@ class CashRegisterSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
+
+        if instance.is_pos_default:
+            CashRegister.objects.exclude(id=instance.id).update(is_pos_default=False)
         
         # Update notify users if provided
         if notify_users is not None:

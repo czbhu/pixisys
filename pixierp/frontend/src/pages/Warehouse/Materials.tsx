@@ -170,9 +170,31 @@ const Materials: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [form] = Form.useForm();
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+
+  const normalizeForCompare = (value: any): any => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) return value.map(normalizeForCompare);
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+    if (typeof value === 'object') {
+      return Object.keys(value)
+        .sort()
+        .reduce((acc: any, key: string) => {
+          const normalized = normalizeForCompare(value[key]);
+          if (normalized !== undefined) acc[key] = normalized;
+          return acc;
+        }, {} as any);
+    }
+    return value;
+  };
+
+  const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+  const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
   const handleCancel = () => {
-    if (form.isFieldsTouched()) {
+    if (hasFormChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,
@@ -189,6 +211,14 @@ const Materials: React.FC = () => {
       form.resetFields();
     }
   };
+
+  useEffect(() => {
+    if (!modalVisible) return;
+    const timer = setTimeout(() => {
+      setInitialFormSnapshot(getFormSnapshot());
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [modalVisible]);
 
   useEffect(() => {
     const create = searchParams.get('create') === 'true';

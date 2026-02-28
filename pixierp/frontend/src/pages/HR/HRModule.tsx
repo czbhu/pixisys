@@ -9,7 +9,8 @@ import {
     MoneyCollectOutlined, 
     RestOutlined, 
     BarChartOutlined,
-    FileTextOutlined
+    FileTextOutlined,
+    CheckSquareOutlined
 } from '@ant-design/icons';
 import Employees from './Employees';
 import Departments from './Departments';
@@ -18,6 +19,7 @@ import Payroll from './Payroll';
 import Leaves from './Leaves';
 import WorkLogs from './WorkLogs';
 import ActivityLog from './ActivityLog';
+import TaskSettings from './TaskSettings';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const EmployeePerformance = lazy(() => import('./EmployeePerformance'));
@@ -32,6 +34,7 @@ const HRModule = () => {
         { key: '/hr/leaves', label: 'Szabadságok', icon: <RestOutlined /> },
         { key: '/hr/analytics', label: 'Teljesítmény Mérés', icon: <BarChartOutlined /> },
         { key: '/hr/activity-log', label: 'Napló', icon: <FileTextOutlined /> },
+        { key: '/hr/task-settings', label: 'Feladatok beállítása', icon: <CheckSquareOutlined /> },
     ];
 
     return (
@@ -46,6 +49,7 @@ const HRModule = () => {
                 <Route path="/leaves" element={<Leaves />} />
                 <Route path="/analytics" element={<EmployeePerformance />} />
                 <Route path="/activity-log" element={<ActivityLog />} />
+                <Route path="/task-settings" element={<TaskSettings />} />
             </Routes>
         </Suspense>
     );

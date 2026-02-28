@@ -153,6 +153,28 @@ const SupplierInvoices: React.FC = () => {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<SupplierInvoice | null>(null);
   const [form] = Form.useForm();
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+
+  const normalizeForCompare = (value: any): any => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) return value.map(normalizeForCompare);
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+    if (typeof value === 'object') {
+      return Object.keys(value)
+        .sort()
+        .reduce((acc: any, key: string) => {
+          const normalized = normalizeForCompare(value[key]);
+          if (normalized !== undefined) acc[key] = normalized;
+          return acc;
+        }, {} as any);
+    }
+    return value;
+  };
+
+  const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+  const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
   
   // NAV Items State
   const [navItems, setNavItems] = useState<NavInvoiceItem[]>([]);
@@ -194,6 +216,14 @@ const SupplierInvoices: React.FC = () => {
     loadMaterials();
     loadWarehouses();
   }, []);
+
+  useEffect(() => {
+    if (!isModalVisible) return;
+    const timer = setTimeout(() => {
+      setInitialFormSnapshot(getFormSnapshot());
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [isModalVisible]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
@@ -269,7 +299,7 @@ const SupplierInvoices: React.FC = () => {
   };
   
   const handleCancel = () => {
-    if (form.isFieldsTouched()) {
+    if (hasFormChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,

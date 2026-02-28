@@ -3,7 +3,6 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Spin, Result, Button } from 'antd';
 import { LoadingOutlined } from '@ant-design/icons';
 import axios from 'axios';
-import { useAuth } from '../contexts/AuthContext';
 
 const SSOLogin = () => {
   const [searchParams] = useSearchParams();

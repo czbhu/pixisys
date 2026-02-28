@@ -130,6 +130,28 @@ const Departments: React.FC = () => {
     const [departmentEmployees, setDepartmentEmployees] = useState<Employee[]>([]);
     const [savingOrder, setSavingOrder] = useState(false);
     const [form] = Form.useForm();
+    const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
+
+    const normalizeForCompare = (value: any): any => {
+        if (value === null || value === undefined) return undefined;
+        if (typeof value === 'string') return value.trim();
+        if (Array.isArray(value)) return value.map(normalizeForCompare);
+        if (value instanceof Date) return value.toISOString();
+        if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+        if (typeof value === 'object') {
+            return Object.keys(value)
+                .sort()
+                .reduce((acc: any, key: string) => {
+                    const normalized = normalizeForCompare(value[key]);
+                    if (normalized !== undefined) acc[key] = normalized;
+                    return acc;
+                }, {} as any);
+        }
+        return value;
+    };
+
+    const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+    const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
     const sensors = useSensors(
         useSensor(PointerSensor),
@@ -141,6 +163,14 @@ const Departments: React.FC = () => {
     useEffect(() => {
         loadData();
     }, []);
+
+    useEffect(() => {
+        if (!isModalVisible) return;
+        const timer = setTimeout(() => {
+            setInitialFormSnapshot(getFormSnapshot());
+        }, 0);
+        return () => clearTimeout(timer);
+    }, [isModalVisible]);
 
     // Keresési logika
     const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -189,7 +219,7 @@ const Departments: React.FC = () => {
     };
 
     const handleCancel = () => {
-        if (form.isFieldsTouched()) {
+        if (hasFormChanges()) {
             Modal.confirm({
                 title: 'Biztos, hogy mentés nélkül be akarja zárni?',
                 icon: <ExclamationCircleOutlined />,

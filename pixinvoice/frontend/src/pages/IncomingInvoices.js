@@ -1,9 +1,10 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
-import { Search, Eye, RefreshCw, Printer, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar, Banknote } from 'lucide-react';
+import { Eye, RefreshCw, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar, Banknote } from 'lucide-react';
 import { Pagination, Spin } from 'antd';
 import { toast } from 'react-toastify';
-import api, { incomingDocsAPI } from '../services/api';
+import api, { incomingDocsAPI, invoiceAPI } from '../services/api';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import '../print.css';
 
@@ -22,6 +23,11 @@ const InvoicesHeader = styled.div`
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
+
+  @media (max-width: 768px) {
+    padding: 12px;
+    gap: 10px;
+  }
 `;
 
 const Title = styled.h1`
@@ -29,15 +35,12 @@ const Title = styled.h1`
   font-weight: 600;
   margin: 0;
   color: #2c3e50;
-`;
 
-const SearchContainer = styled.div`
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
-  align-items: center;
+  @media (max-width: 768px) {
+    font-size: 20px;
+    width: 100%;
+  }
 `;
-
 
 const PrimaryButton = styled.button`
   display: inline-flex;
@@ -59,6 +62,10 @@ const PrimaryButton = styled.button`
 
 const TableContainer = styled.div`
   overflow-x: auto;
+
+  @media (max-width: 768px) {
+    overflow-x: hidden;
+  }
 `;
 
 const EditInfoBar = styled.div`
@@ -77,6 +84,10 @@ const EditInfoBar = styled.div`
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
+
+  @media (max-width: 768px) {
+    table-layout: fixed;
+  }
 `;
 
 const TableHeader = styled.thead`
@@ -89,6 +100,13 @@ const TableHeaderCell = styled.th`
   font-weight: 600;
   color: #2c3e50;
   border-bottom: 1px solid #ecf0f1;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    word-break: break-word;
+  }
 `;
 
 const TableBody = styled.tbody``;
@@ -104,6 +122,51 @@ const TableCell = styled.td`
   padding: 16px;
   border-bottom: 1px solid #ecf0f1;
   color: #2c3e50;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    word-break: break-word;
+  }
+`;
+
+const MainActionsCell = styled(TableCell)`
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #fff;
+  }
+`;
+
+const MobileActionsBar = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 `;
 
 const SmallMuted = styled.div`
@@ -128,6 +191,22 @@ const Toolbar = styled.div`
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    width: 100%;
+    gap: 6px;
+    align-items: stretch;
+  }
+`;
+
+const SearchInput = styled.input`
+  padding: 6px 10px;
+  min-width: 260px;
+
+  @media (max-width: 768px) {
+    min-width: 0;
+    width: 100%;
+  }
 `;
 
 const CheckboxBtn = styled.button`
@@ -165,6 +244,33 @@ const SecondaryButton = styled.button`
   font-size: 14px;
   cursor: pointer;
   &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
+`;
+
+const ToolbarRow = styled.div`
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+
+  @media (max-width: 768px) {
+    width: 100%;
+
+    > * {
+      width: 100%;
+    }
+  }
+`;
+
+const RefreshButton = styled(PrimaryButton)`
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
 
 // Simple modal for inline XML viewing
@@ -223,12 +329,7 @@ const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
   const [statements, setStatements] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    if (!visible || !companyId) return;
-    loadData();
-  }, [visible, companyId, tab]);
-
-  const loadData = async () => {
+  const loadData = React.useCallback(async () => {
     setLoading(true);
     try {
       if (tab === 'batches') {
@@ -243,7 +344,12 @@ const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [tab, companyId]);
+
+  useEffect(() => {
+    if (!visible || !companyId) return;
+    loadData();
+  }, [visible, companyId, loadData]);
 
   if (!visible) return null;
 
@@ -328,9 +434,21 @@ const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
   );
 };
 
-export default function IncomingInvoices() {
+export default function IncomingInvoices({ externalOutgoing = false }) {
+  const navigate = useNavigate();
   const queryParams = new URLSearchParams(window.location.search);
   const isSelectorMode = queryParams.get('mode') === 'select';
+  const preselectIdsRaw = (queryParams.get('preselect_ids') || '').trim();
+  const requestedPageSize = Number(queryParams.get('page_size') || 50);
+  const preselectIds = React.useMemo(
+    () => new Set(
+      preselectIdsRaw
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean)
+    ),
+    [preselectIdsRaw]
+  );
   const [companyId, setCompanyId] = useState(() => localStorage.getItem('selectedCompanyId') || '');
   const [dateFrom, setDateFrom] = useState(null);
   const [dateTo, setDateTo] = useState(null);
@@ -340,14 +458,17 @@ export default function IncomingInvoices() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize] = useState(
+    Number.isFinite(requestedPageSize) && requestedPageSize > 0 ? requestedPageSize : 50
+  );
   const [totalItems, setTotalItems] = useState(0);
-  const [hasMore, setHasMore] = useState(true);
+  const [, setHasMore] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
-  const [lastRefreshedAt, setLastRefreshedAt] = useState(null);
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid | due
-  const [paymentFilter, setPaymentFilter] = useState('all'); // all | transfer | cash | card | voucher | utanvet | other
+  const [paymentFilter, setPaymentFilter] = useState([]); // ['TRANSFER','CASH',...]
+  const [paymentListMode, setPaymentListMode] = useState('manual'); // manual | bank
+  const [manualOnly, setManualOnly] = useState(false);
   const [approvalFilter, setApprovalFilter] = useState('all'); // all | approved | unapproved
   const [amountFrom, setAmountFrom] = useState('');
   const [amountTo, setAmountTo] = useState('');
@@ -355,10 +476,10 @@ export default function IncomingInvoices() {
   const [amountDraftFrom, setAmountDraftFrom] = useState('');
   const [amountDraftTo, setAmountDraftTo] = useState('');
   const [xmlOpen, setXmlOpen] = useState(false);
-  const [xmlLoading, setXmlLoading] = useState(false);
-  const [xmlError, setXmlError] = useState('');
-  const [xmlText, setXmlText] = useState('');
-  const [xmlTitle, setXmlTitle] = useState('');
+  const [xmlLoading] = useState(false);
+  const [xmlError] = useState('');
+  const [xmlText] = useState('');
+  const [xmlTitle] = useState('');
   const [parsed, setParsed] = useState(null);
   // Attachments modal state
   const [attachOpen, setAttachOpen] = useState(false);
@@ -371,6 +492,7 @@ export default function IncomingInvoices() {
   const lastAutoRefreshCompany = useRef(null);
   // Selection & batch state
   const [selected, setSelected] = useState(() => new Map());
+  const [allowAllPaymentTypesForBatch, setAllowAllPaymentTypesForBatch] = useState(false);
   const [showCreateBatch, setShowCreateBatch] = useState(false);
   const [showBatches, setShowBatches] = useState(false);
   const [bankAccounts, setBankAccounts] = useState([]);
@@ -384,12 +506,19 @@ export default function IncomingInvoices() {
   const [paymentDrafts, setPaymentDrafts] = useState({});
   const [editableAfterSave, setEditableAfterSave] = useState({});
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
+  const [preselectApplied, setPreselectApplied] = useState(false);
   const [batchTab, setBatchTab] = useState('pending');
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const searchTimer = useRef(null);
+  const headerSelectRef = useRef(null);
   const [approvalSaving, setApprovalSaving] = useState({});
+  const [czBackfillLoading, setCzBackfillLoading] = useState(false);
+  const [mobileActionsRowKey, setMobileActionsRowKey] = useState(null);
+  const pageTitle = externalOutgoing ? 'Kimenő számlák (külső)' : 'Bejövő számlák';
+  const backfillSeriesLabel = externalOutgoing ? 'PP' : 'CZ';
+  const refreshToastLabel = externalOutgoing ? 'Új külső kimenő számlák frissítve' : 'Új bejövő számlák frissítve';
   const formatDate = (d) => {
     if (!d) return '';
     const dt = d instanceof Date ? d : new Date(d);
@@ -480,7 +609,7 @@ export default function IncomingInvoices() {
     setHasMore(true); 
     // Only clear selection if company changes, otherwise persist selection across filters/search
     // setSelected(new Set()); 
-  }, [statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, amountFrom, amountTo]);
+  }, [statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, amountFrom, amountTo, manualOnly]);
 
   // Clear selection explicitly when companyId changes
   useEffect(() => {
@@ -512,6 +641,20 @@ export default function IncomingInvoices() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId]);
 
+  useEffect(() => {
+    if (preselectApplied || preselectIds.size === 0 || !Array.isArray(items) || items.length === 0) return;
+    const next = new Map();
+    (items || []).forEach((row) => {
+      if (preselectIds.has(String(row?.id || ''))) {
+        next.set(`${row?.invoiceNumber || ''}|${row?.supplierTaxNumber || ''}`, row);
+      }
+    });
+    if (next.size > 0) {
+      setSelected(next);
+    }
+    setPreselectApplied(true);
+  }, [items, preselectApplied, preselectIds]);
+
   const fetchDigest = async (pageArg, opts = {}) => {
     if (!companyId) { toast.error('Válassz céget'); return; }
     const replace = true; // Always replace in pagination mode
@@ -519,25 +662,29 @@ export default function IncomingInvoices() {
     setLoading(true);
     setErrorMsg('');
     try {
-      const res = await api.get('/api/invoices/incoming/', { params: { 
-        company_id: companyId, 
-        date_from: dateFrom, 
-        date_to: dateTo, 
-        page: pageArg || page,
-        page_size: pageSize, 
-        refresh: doRefresh, 
-        backfill_all: opts.backfillAll ? 1 : undefined, 
-        search: (searchText||'').trim() || undefined, 
-        status: statusFilter==='all'? undefined : statusFilter, 
-        payment_method: paymentFilter==='all'? undefined : paymentFilter, 
-        approval: approvalFilter==='all'? undefined : approvalFilter,
-        amount_from: amountFrom || undefined,
-        amount_to: amountTo || undefined
-      } });
+      const targetPage = pageArg || page || 1;
+      const baseParams = {
+        company_id: companyId,
+        external_outgoing: externalOutgoing ? 1 : undefined,
+        manual_only: (!externalOutgoing && manualOnly) ? 1 : undefined,
+        date_from: dateFrom,
+        date_to: dateTo,
+        page_size: pageSize,
+        refresh: doRefresh,
+        backfill_all: opts.backfillAll ? 1 : undefined,
+        search: (searchText||'').trim() || undefined,
+        status: (paymentListMode === 'manual' && statusFilter!=='all') ? statusFilter : undefined,
+        payment_method: externalOutgoing ? undefined : ((paymentFilter && paymentFilter.length) ? paymentFilter.join(',') : undefined),
+        approval: externalOutgoing ? undefined : (approvalFilter==='all'? undefined : approvalFilter),
+        amount_from: externalOutgoing ? undefined : (amountFrom || undefined),
+        amount_to: externalOutgoing ? undefined : (amountTo || undefined),
+      };
+
+      const res = await api.get('/api/invoices/incoming/', { params: { ...baseParams, page: targetPage } });
       const data = res.data || {};
       if (data.success && Array.isArray(data.items)) {
         setItems(data.items);
-        setPage(data.page || pageArg || 1);
+        setPage(data.page || targetPage || 1);
         setTotalItems(data.totalItems || 0); // Use backend provided totalItems, or 0
         // Fallback for older backend if totalItems is missing but pageCount is present
         if (!data.totalItems && data.items.length > 0 && data.pageCount) {
@@ -555,13 +702,12 @@ export default function IncomingInvoices() {
         }
         
         setHasMore(!!data.hasMore);
-        setLastRefreshedAt(data.lastRefreshedAt || null);
         if (data.refreshError) {
           toast.error(data.refreshError);
         }
         if (replace && data.refreshed) {
           const cnt = typeof data.upserted === 'number' ? data.upserted : data.items.length;
-          if (cnt > 0) toast.success(`Új bejövő számlák frissítve (${cnt})`);
+          if (cnt > 0) toast.success(`${refreshToastLabel} (${cnt})`);
           else toast.info('nincs új számla', { toastId: 'incoming-no-new' });
         }
       } else {
@@ -579,6 +725,58 @@ export default function IncomingInvoices() {
     }
   };
 
+  const runCzBackfill = async () => {
+    if (!externalOutgoing) return;
+    if (!companyId) { toast.error('Válassz céget'); return; }
+
+    const defaultPrefix = `${backfillSeriesLabel} ${new Date().getFullYear()}/`;
+    const prefixInput = window.prompt('Előtag (pl. CZ 2025/ vagy PP 2026/):', defaultPrefix);
+    if (prefixInput === null) return;
+    const fromInput = window.prompt('Kezdő sorszám:', '1');
+    if (fromInput === null) return;
+    const toInput = window.prompt('Végsorszám:', '637');
+    if (toInput === null) return;
+
+    const prefixMatch = String(prefixInput || '').trim().match(/^([A-Za-z]+)\s*(\d{4})\s*\/?$/);
+    if (!prefixMatch) {
+      toast.error('Hibás előtag formátum. Példa: PP 2026/');
+      return;
+    }
+
+    const prefix = String(prefixMatch[1] || '').toUpperCase();
+    const year = Number(prefixMatch[2]);
+    const fromSeq = Number(fromInput);
+    const toSeq = Number(toInput);
+    if (!Number.isFinite(year) || !Number.isFinite(fromSeq) || !Number.isFinite(toSeq) || fromSeq < 1 || toSeq < fromSeq) {
+      toast.error('Érvénytelen tartomány.');
+      return;
+    }
+
+    setCzBackfillLoading(true);
+    try {
+      const res = await api.post('/api/invoices/incoming/external-cz-backfill/', {
+        company_id: companyId,
+        prefix,
+        year,
+        from_seq: fromSeq,
+        to_seq: toSeq,
+      });
+      const data = res?.data || {};
+      const msg = `Számla pótlás kész (${prefix} ${year}/): létrehozva ${data.created_count || 0}, frissítve ${data.updated_count || 0}, hiányzik ${data.missing_after_count || 0}`;
+      if ((data.missing_after_count || 0) > 0) {
+        toast.warn(msg);
+      } else {
+        toast.success(msg);
+      }
+      fetchDigest(1, { replace: true });
+    } catch (e) {
+      const msg = e?.response?.data?.error || e?.message || 'Számla pótlás hiba';
+      toast.error(msg);
+    } finally {
+      setCzBackfillLoading(false);
+    }
+  };
+
   // Debounced search to keep quick search responsive
   useEffect(() => {
     if (!companyId) return;
@@ -589,147 +787,43 @@ export default function IncomingInvoices() {
     }, 400);
     return () => { if (searchTimer.current) clearTimeout(searchTimer.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, pageSize, amountFrom, amountTo]);
+  }, [searchText, companyId, statusFilter, paymentFilter, approvalFilter, dateFrom, dateTo, pageSize, amountFrom, amountTo, paymentListMode, externalOutgoing, manualOnly]);
 
 
 
 
-  const downloadXml = async (invoiceNumber, supplierTaxNumber) => {
-    // kept as fallback download if needed in the future
-    try {
-      const res = await api.post('/api/invoices/incoming/download/', { company_id: companyId, invoice_number: invoiceNumber, supplier_tax_number: supplierTaxNumber }, { responseType: 'blob' });
-      const blob = new Blob([res.data], { type: 'application/xml' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `incoming_${invoiceNumber||'invoice'}.xml`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (e) {
-      toast.error('XML letöltési hiba');
+  const openXmlInNewTab = async (invoiceNumber, supplierTaxNumber) => {
+    if (!companyId) { toast.error('Válassz céget'); return; }
+    const targetUrl = `/incoming-invoices/open?company_id=${encodeURIComponent(companyId || '')}&invoice_number=${encodeURIComponent(invoiceNumber || '')}${supplierTaxNumber ? `&supplier_tax_number=${encodeURIComponent(supplierTaxNumber)}` : ''}${externalOutgoing ? '&external_outgoing=1' : ''}`;
+    const opened = window.open(targetUrl, '_blank');
+    if (!opened) {
+      toast.error('A böngésző blokkolta az új lap megnyitását.');
     }
   };
 
-  const openXmlInline = async (invoiceNumber, supplierTaxNumber) => {
-    if (!companyId) { toast.error('Válassz céget'); return; }
-    setXmlLoading(true);
-    setXmlError('');
-    setXmlText('');
+  const isManualIncomingRow = (row) => {
+    if (row?.isManual === true) return true;
+    const op = String(row?.invoiceOperation || '').toUpperCase();
+    const tx = String(row?.transactionId || '');
+    return op === 'MANUAL' || tx.startsWith('MANUAL-');
+  };
+
+  const openManualEdit = (row) => {
+    if (!row?.id) return;
+    navigate(`/incoming-invoices/new?edit_manual_id=${encodeURIComponent(String(row.id))}`);
+  };
+
+  const deleteManualIncoming = async (row) => {
+    if (!companyId || !row?.id) return;
+    const ok = window.confirm(`Biztosan törlöd a kézzel felvitt számlát?\n${row.invoiceNumber || ''}`);
+    if (!ok) return;
     try {
-      const baseParams = { company_id: companyId, invoice_number: invoiceNumber, supplier_tax_number: supplierTaxNumber, inline: 1 };
-      const res = await api.post('/api/invoices/incoming/download/', baseParams, {
-        responseType: 'text'
-      });
-      setXmlTitle(`Számla XML: ${invoiceNumber}`);
-      let text = typeof res.data === 'string' ? res.data : (res?.data ? String(res.data) : '');
-      // Fallback: if backend returned NAV outer response, try to decode inner invoiceData here
-      try {
-        if (text && (text.includes('QueryInvoiceDataResponse') || text.includes('invoiceDataResult'))) {
-          const parser = new DOMParser();
-          const doc = parser.parseFromString(text, 'application/xml');
-          if (!doc.getElementsByTagName('parsererror').length) {
-            const els = doc.getElementsByTagNameNS('*', 'invoiceData');
-            const compEls = doc.getElementsByTagNameNS('*', 'compressedContentIndicator');
-            if (els && els[0] && els[0].textContent) {
-              const b64 = els[0].textContent.trim();
-              const isCompressed = compEls && compEls[0] && /true/i.test(compEls[0].textContent || '');
-              const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-              if (isCompressed) {
-                // Try gunzip if available (modern browsers)
-                if (typeof DecompressionStream !== 'undefined') {
-                  const ds = new DecompressionStream('gzip');
-                  const stream = new Response(new Blob([raw]).stream().pipeThrough(ds));
-                  const buf = await stream.arrayBuffer();
-                  text = new TextDecoder('utf-8').decode(buf);
-                } else {
-                  // Fallback: leave as-is; backend should handle gzip
-                }
-              } else {
-                text = new TextDecoder('utf-8').decode(raw);
-              }
-            }
-          }
-        }
-      } catch (_) { /* ignore */ }
-      // Defensive: if still NAV wrapper leaked through, try to extract inner invoiceData here
-      try {
-        if (text && /<\/?[A-Za-z0-9:]*QueryInvoiceDataResponse|invoiceDataResult/.test(text)) {
-          const parser2 = new DOMParser();
-          const doc2 = parser2.parseFromString(text, 'application/xml');
-          const els2 = doc2.getElementsByTagNameNS('*', 'invoiceData');
-          const comp2 = doc2.getElementsByTagNameNS('*', 'compressedContentIndicator');
-          if (els2 && els2[0] && els2[0].textContent) {
-            const b64 = els2[0].textContent.trim();
-            const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-            let decodedText = null;
-            const isCompressed = comp2 && comp2[0] && /true/i.test(comp2[0].textContent || '');
-            if (isCompressed && typeof DecompressionStream !== 'undefined') {
-              const ds = new DecompressionStream('gzip');
-              const stream = new Response(new Blob([raw]).stream().pipeThrough(ds));
-              const buf = await stream.arrayBuffer();
-              decodedText = new TextDecoder('utf-8').decode(buf);
-            } else if (!isCompressed) {
-              decodedText = new TextDecoder('utf-8').decode(raw);
-            }
-            if (decodedText) text = decodedText;
-          }
-        }
-      } catch (_) {}
-      // Quick heuristic: if looks like NAV wrapper or parsing would likely be empty, retry with force=1
-      let needForce = false;
-      try {
-        if (!text || /QueryInvoiceDataResponse|invoiceDataResult/.test(text)) needForce = true;
-        if (!needForce) {
-          const tmpDoc = new DOMParser().parseFromString(text, 'application/xml');
-          if (!tmpDoc || tmpDoc.getElementsByTagName('parsererror').length) needForce = true;
-          const hasInvoiceData = tmpDoc.getElementsByTagNameNS('*','invoiceMain').length || tmpDoc.getElementsByTagNameNS('*','line').length;
-          if (!hasInvoiceData) needForce = true;
-        }
-      } catch (_) {}
-
-      if (needForce) {
-        try {
-          const res2 = await api.post('/api/invoices/incoming/download/', {
-            ...baseParams, force: 1
-          }, {
-            responseType: 'text'
-          });
-          let t2 = typeof res2.data === 'string' ? res2.data : (res2?.data ? String(res2.data) : '');
-          try {
-            if (t2 && (t2.includes('QueryInvoiceDataResponse') || t2.includes('invoiceDataResult'))) {
-              const parser = new DOMParser();
-              const doc = parser.parseFromString(t2, 'application/xml');
-              const els = doc.getElementsByTagNameNS('*', 'invoiceData');
-              const compEls = doc.getElementsByTagNameNS('*', 'compressedContentIndicator');
-              if (els && els[0] && els[0].textContent) {
-                const b64 = els[0].textContent.trim();
-                const isCompressed = compEls && compEls[0] && /true/i.test(compEls[0].textContent || '');
-                const raw = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
-                if (isCompressed && typeof DecompressionStream !== 'undefined') {
-                  const ds = new DecompressionStream('gzip');
-                  const stream = new Response(new Blob([raw]).stream().pipeThrough(ds));
-                  const buf = await stream.arrayBuffer();
-                  t2 = new TextDecoder('utf-8').decode(buf);
-                } else if (!isCompressed) {
-                  t2 = new TextDecoder('utf-8').decode(raw);
-                }
-              }
-            }
-          } catch (_) {}
-          text = t2 || text;
-        } catch (_) { /* ignore and keep original text */ }
-      }
-
-      setXmlText(text);
-      setXmlOpen(true);
+      await invoiceAPI.deleteIncomingManual(companyId, row.id);
+      toast.success('Kézzel felvitt számla törölve');
+      fetchDigest(1, { replace: true });
     } catch (e) {
-      const msg = e?.response?.data || e?.message || 'XML megnyitási hiba';
-      setXmlError(typeof msg === 'string' ? msg : 'XML megnyitási hiba');
-      setXmlOpen(true);
-    } finally {
-      setXmlLoading(false);
+      const msg = e?.response?.data?.error || 'Törlési hiba';
+      toast.error(msg);
     }
   };
 
@@ -789,13 +883,13 @@ export default function IncomingInvoices() {
     catch (e) { toast.error('Megjegyzés mentési hiba'); }
   };
 
-  // Parse NAV XML into a printable data structure
-  useEffect(() => {
-    if (!xmlText) { setParsed(null); return; }
+  const parseIncomingXmlForPrint = React.useCallback((xmlRaw) => {
     try {
+      if (!xmlRaw) return null;
       const parser = new DOMParser();
-      const doc = parser.parseFromString(xmlText, 'application/xml');
-      if (doc.getElementsByTagName('parsererror').length) { setParsed(null); return; }
+      const doc = parser.parseFromString(xmlRaw, 'application/xml');
+      if (doc.getElementsByTagName('parsererror').length) return null;
+
       const firstText = (name) => {
         const els = doc.getElementsByTagNameNS('*', name);
         return els && els[0] && els[0].textContent ? els[0].textContent.trim() : '';
@@ -811,25 +905,25 @@ export default function IncomingInvoices() {
         return isNaN(n) ? null : n;
       };
 
-  const invoiceNumber = firstText('invoiceNumber') || firstText('fulfillmentDocumentNumber');
+      const invoiceNumber = firstText('invoiceNumber') || firstText('fulfillmentDocumentNumber');
       const issueDate = firstText('invoiceIssueDate') || firstText('issueDate');
       const deliveryDate = firstText('invoiceDeliveryDate') || firstText('fulfillmentDate');
       const paymentDate = firstText('paymentDate') || firstText('dueDate');
       const paymentMethod = firstText('paymentMethod');
-  const currency = firstText('invoiceCurrencyCode') || firstText('invoiceCurrency') || firstText('currencyCode') || firstText('currency');
-  const exchangeRate = firstText('exchangeRate');
-  const invoiceCategory = firstText('invoiceCategory');
-  const invoiceOperation = firstText('invoiceOperation');
-  const invoiceAppearance = firstText('invoiceAppearance');
-  const originalInvoiceNumber = firstText('originalInvoiceNumber');
-  const modificationIndex = firstText('modificationIndex');
+      const currency = firstText('invoiceCurrencyCode') || firstText('invoiceCurrency') || firstText('currencyCode') || firstText('currency');
+      const exchangeRate = firstText('exchangeRate');
+      const invoiceCategory = firstText('invoiceCategory');
+      const invoiceOperation = firstText('invoiceOperation');
+      const invoiceAppearance = firstText('invoiceAppearance');
+      const originalInvoiceNumber = firstText('originalInvoiceNumber');
+      const modificationIndex = firstText('modificationIndex');
 
       const supplierInfo = doc.getElementsByTagNameNS('*', 'supplierInfo')[0] || doc;
       const customerInfo = doc.getElementsByTagNameNS('*', 'customerInfo')[0] || doc;
       const supplierName = textFrom(supplierInfo, 'supplierName') || firstText('supplierName');
       const supplierTax = textFrom(supplierInfo, 'supplierTaxNumber') || firstText('supplierTaxNumber');
-      const supplierBankAccounts = Array.from(doc.getElementsByTagNameNS('*','supplierBankAccountNumber'))
-        .concat(Array.from(doc.getElementsByTagNameNS('*','bankAccountNumber')))
+      const supplierBankAccounts = Array.from(doc.getElementsByTagNameNS('*', 'supplierBankAccountNumber'))
+        .concat(Array.from(doc.getElementsByTagNameNS('*', 'bankAccountNumber')))
         .map(el => (el.textContent || '').trim())
         .filter((v, i, a) => v && a.indexOf(v) === i);
       const customerName = textFrom(customerInfo, 'customerName') || firstText('customerName');
@@ -840,24 +934,22 @@ export default function IncomingInvoices() {
         const parts = [
           textFrom(addrRoot, 'postalCode'),
           textFrom(addrRoot, 'city'),
-          [textFrom(addrRoot, 'streetName'), textFrom(addrRoot, 'publicPlaceCategory'), textFrom(addrRoot, 'number')].filter(Boolean).join(' ')
+          [textFrom(addrRoot, 'streetName'), textFrom(addrRoot, 'publicPlaceCategory'), textFrom(addrRoot, 'number')].filter(Boolean).join(' '),
         ].filter(Boolean);
         const country = textFrom(addrRoot, 'countryCode');
         if (country) parts.push(country);
         return parts;
       };
-      const supplierAddr = (doc.getElementsByTagNameNS('*','supplierAddress')[0]) || (doc.getElementsByTagNameNS('*','supplierAddressList')[0]);
-      const customerAddr = (doc.getElementsByTagNameNS('*','customerAddress')[0]) || (doc.getElementsByTagNameNS('*','customerAddressList')[0]);
+      const supplierAddr = doc.getElementsByTagNameNS('*', 'supplierAddress')[0] || doc.getElementsByTagNameNS('*', 'supplierAddressList')[0];
+      const customerAddr = doc.getElementsByTagNameNS('*', 'customerAddress')[0] || doc.getElementsByTagNameNS('*', 'customerAddressList')[0];
       const supplierAddressLines = addressToLines(supplierAddr);
       const customerAddressLines = addressToLines(customerAddr);
 
       const lines = [];
-      const lineNodes = all('line');
-      lineNodes.forEach((ln) => {
+      all('line').forEach((ln) => {
         const description = textFrom(ln, 'lineDescription') || textFrom(ln, 'productName') || '';
         const lineNumber = textFrom(ln, 'lineNumber') || '';
-        // product codes array
-        const productCodes = Array.from(ln.getElementsByTagNameNS('*','productCode')).map(pc => {
+        const productCodes = Array.from(ln.getElementsByTagNameNS('*', 'productCode')).map((pc) => {
           const cat = textFrom(pc, 'productCodeCategory') || textFrom(pc, 'productCodeCategoryOwn');
           const val = textFrom(pc, 'productCodeValue');
           return [cat, val].filter(Boolean).join(':');
@@ -866,11 +958,10 @@ export default function IncomingInvoices() {
         const unit = textFrom(ln, 'unitOfMeasure') || textFrom(ln, 'unitOfMeasureOwn') || '';
         let unitPrice = number(textFrom(ln, 'unitPrice')) || number(textFrom(ln, 'unitPriceHUF')) || null;
         if (unitPrice == null) {
-          const up = ln.getElementsByTagNameNS('*','unitPrice')[0] || ln.getElementsByTagNameNS('*','lineUnitPrice')[0];
+          const up = ln.getElementsByTagNameNS('*', 'unitPrice')[0] || ln.getElementsByTagNameNS('*', 'lineUnitPrice')[0];
           if (up) unitPrice = number(up.textContent);
         }
         const vatPct = number(textFrom(ln, 'vatPercentage'));
-        // amounts can be nested under lineAmountsNormal
         let net = number(textFrom(ln, 'lineNetAmount')) || number(textFrom(ln, 'netAmount'));
         let vat = number(textFrom(ln, 'lineVatAmount')) || number(textFrom(ln, 'vatAmount'));
         let gross = number(textFrom(ln, 'lineGrossAmount')) || number(textFrom(ln, 'grossAmount'));
@@ -885,7 +976,6 @@ export default function IncomingInvoices() {
         lines.push({ description, lineNumber, productCodes, qty, unit, unitPrice, net, vat, gross, vatPct });
       });
 
-      // totals
       let totalNet = number(firstText('invoiceNetAmount')) || null;
       let totalVat = number(firstText('invoiceVatAmount')) || null;
       let totalGross = number(firstText('invoiceGrossAmount')) || null;
@@ -894,15 +984,14 @@ export default function IncomingInvoices() {
       let totalGrossHUF = number(firstText('invoiceGrossAmountHUF')) || null;
       if (totalNet == null || totalVat == null || totalGross == null) {
         totalNet = 0; totalVat = 0; totalGross = 0;
-        lines.forEach(l => {
+        lines.forEach((l) => {
           totalNet += l.net || 0;
           totalVat += l.vat || 0;
           totalGross += l.gross || ((l.net || 0) + (l.vat || 0));
         });
       }
 
-      // VAT summary by rate
-      const vatSummary = Array.from(doc.getElementsByTagNameNS('*','summaryByVatRate')).map(gr => {
+      const vatSummary = Array.from(doc.getElementsByTagNameNS('*', 'summaryByVatRate')).map((gr) => {
         const ratePct = number(textFrom(gr, 'vatPercentage'));
         const label = ratePct != null ? `${ratePct}%` : (textFrom(gr, 'vatExemption') || textFrom(gr, 'domesticReverseCharge') || 'Különböző');
         const net = number(textFrom(gr, 'vatRateNetAmount')) || number(textFrom(gr, 'netAmount'));
@@ -911,13 +1000,7 @@ export default function IncomingInvoices() {
         return { label, net, vat, gross };
       });
 
-      // Additional invoice data key-values
-      const additionalData = Array.from(doc.getElementsByTagNameNS('*','additionalInvoiceData')).map(el => ({
-        desc: textFrom(el, 'dataDescription'),
-        value: textFrom(el, 'dataValue')
-      })).filter(d => d.desc || d.value);
-
-      setParsed({
+      return {
         invoiceNumber,
         issueDate,
         deliveryDate,
@@ -934,38 +1017,31 @@ export default function IncomingInvoices() {
         customer: { name: customerName, taxNumber: customerTax, addressLines: customerAddressLines },
         lines,
         vatSummary,
-        additionalData,
         totals: { net: totalNet, vat: totalVat, gross: totalGross },
         totalsHUF: { net: totalNetHUF, vat: totalVatHUF, gross: totalGrossHUF },
-      });
-    } catch (e) {
-      setParsed(null);
+      };
+    } catch (_) {
+      return null;
     }
-  }, [xmlText]);
+  }, []);
+
+  // Parse NAV XML into a printable data structure
+  useEffect(() => {
+    if (!xmlText) { setParsed(null); return; }
+    setParsed(parseIncomingXmlForPrint(xmlText));
+  }, [xmlText, parseIncomingXmlForPrint]);
 
   const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
-
-  const fmtAmt = (v) => {
-    if (v === null || v === undefined || v === '') return '-';
-    const n = Number(v);
-    if (isNaN(n)) return String(v);
-    return n.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  };
-
-  const truncName = (name) => {
-    if (!name) return '-';
-    const s = String(name);
-    return s.length > 30 ? `${s.slice(0, 30)}…` : s;
-  };
-
-  const loadPrev = () => { if (page > 1) fetchDigest(page - 1); };
-  const loadNext = () => { if (hasMore) fetchDigest(page + 1); };
 
   const rowKey = (row) => `${row.invoiceNumber||''}|${row.supplierTaxNumber||''}`;
   const isRowApproved = (row) => row?.isApproved === true || row?.isApproved === 1 || row?.isApproved === '1';
   const canSelect = (row) => {
-    const isTransfer = String(row.paymentMethod || '').toUpperCase() === 'TRANSFER';
-    if (!isTransfer || row.inPaymentBatch) return false;
+    const paymentMethod = String(row.paymentMethod || '').toUpperCase();
+    const isTransfer = paymentMethod === 'TRANSFER';
+    if (row.inPaymentBatch) return false;
+    if (!allowAllPaymentTypesForBatch && !isTransfer) return false;
+    // Jóváhagyás csak átutalásnál szükséges
+    if (!isTransfer) return true;
     if (isSuperuser || allowAllMenus || canSkipApprovalForBatch) return true;
     return isRowApproved(row);
   };
@@ -1008,6 +1084,142 @@ export default function IncomingInvoices() {
   const excludedForBatch = selectedRows.length - selectedRowsForBatch.length;
   const selectedTotal = selectedRowsForBatch.reduce((sum, r) => sum + Number(r.grossAmount || 0), 0);
 
+  const isVisibleByBankStatus = (row) => {
+    if (paymentListMode !== 'bank' || statusFilter === 'all') return true;
+    const gross = Number(row.grossAmount || 0);
+    const paid = Number(row.bankPaidAmount || 0);
+    const tol = 0.005;
+    const isPaidByBank = paid > tol && (gross - paid) <= tol;
+    const isUnpaidByBank = paid <= tol;
+    if (statusFilter === 'paid') return isPaidByBank;
+    if (statusFilter === 'unpaid') return isUnpaidByBank;
+    if (statusFilter === 'due') return !isPaidByBank;
+    return true;
+  };
+
+  const isVisibleRow = (row) => {
+    if (!isVisibleByBankStatus(row)) return false;
+    if (manualOnly && !isManualIncomingRow(row)) return false;
+    return true;
+  };
+
+  const toggleHeaderSelection = () => {
+    if (selectedCount > 0) {
+      setSelected(new Map());
+      return;
+    }
+    const next = new Map();
+    (items || [])
+      .filter(isVisibleRow)
+      .forEach((row) => {
+        if (canSelect(row)) next.set(rowKey(row), row);
+      });
+    setSelected(next);
+  };
+
+  const visibleSelectableRows = (items || []).filter(isVisibleRow).filter(canSelect);
+  const selectedVisibleCount = visibleSelectableRows.filter((row) => selected.has(rowKey(row))).length;
+  const allVisibleSelected = visibleSelectableRows.length > 0 && selectedVisibleCount === visibleSelectableRows.length;
+
+  useEffect(() => {
+    if (!headerSelectRef.current) return;
+    headerSelectRef.current.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
+  }, [selectedVisibleCount, allVisibleSelected]);
+
+  const isMobileViewport = () => {
+    try {
+      return window.matchMedia('(max-width: 768px)').matches;
+    } catch {
+      return false;
+    }
+  };
+
+  const toggleMobileActionsForRow = React.useCallback((key) => {
+    setMobileActionsRowKey((prev) => (prev === key ? null : key));
+  }, []);
+
+  const handleRowTouchTap = React.useCallback((event, key) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) {
+      return;
+    }
+    event.preventDefault();
+    toggleMobileActionsForRow(key);
+  }, [toggleMobileActionsForRow]);
+
+  const handleRowContextMenu = React.useCallback((event, key) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForRow(key);
+  }, [toggleMobileActionsForRow]);
+
+  const exportSelectedCsv = () => {
+    if (!selectedRows.length) {
+      toast.info('Nincs kijelölt tétel');
+      return;
+    }
+    const headers = [
+      externalOutgoing ? 'ugyfel' : 'kibocsato',
+      'adoszam',
+      'szamlaszam',
+      'kibocsatas_datum',
+      'teljesites_datum',
+      'esedekesseg',
+      'deviza',
+      'netto',
+      'afa',
+      'brutto',
+      'fizetesi_mod',
+      'tipus',
+    ];
+    const escapeCell = (value) => {
+      const str = value == null ? '' : String(value);
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+    const rows = selectedRows.map((row) => {
+      const rowType = externalOutgoing ? 'Kimenő számlák (külső)' : 'Bejövő számlák';
+      return [
+        row.supplierName || '',
+        row.supplierTaxNumber || '',
+        row.invoiceNumber || '',
+        row.invoiceIssueDate || '',
+        row.invoiceDeliveryDate || '',
+        row.dueDate || '',
+        row.currency || '',
+        row.netAmount ?? '',
+        row.vatAmount ?? '',
+        row.grossAmount ?? '',
+        row.paymentMethod || '',
+        rowType,
+      ];
+    });
+    const csv = [headers, ...rows].map(cols => cols.map(escapeCell).join(';')).join('\n');
+    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const prefix = externalOutgoing ? 'kijelolt_kulso_kimeno_szamlak' : 'kijelolt_bejovo_szamlak';
+    a.download = `${prefix}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`CSV export elkészült (${selectedRows.length} tétel)`);
+  };
+
+  useEffect(() => {
+    if (allowAllPaymentTypesForBatch) return;
+    setSelected(prev => {
+      const next = new Map();
+      prev.forEach((row, key) => {
+        if (canSelect(row)) next.set(key, row);
+      });
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [allowAllPaymentTypesForBatch]);
+
   const needsPaymentMethod = (row) => {
     const pm = String(row.paymentMethod || '').trim().toUpperCase();
     return !pm || pm === 'OTHER' || pm === '-';
@@ -1049,6 +1261,7 @@ export default function IncomingInvoices() {
         company_id: companyId,
         invoice_number: row.invoiceNumber,
         supplier_tax_number: row.supplierTaxNumber,
+        external_outgoing: externalOutgoing ? 1 : undefined,
         payment_method: pm,
       });
       setItems(prev => prev.map(r => (rowKey(r) === key ? { ...r, paymentMethod: pm } : r)));
@@ -1067,6 +1280,7 @@ export default function IncomingInvoices() {
         company_id: companyId,
         invoice_number: row.invoiceNumber,
         supplier_tax_number: row.supplierTaxNumber,
+        external_outgoing: externalOutgoing ? 1 : undefined,
         payment_method: 'OTHER',
       });
       const key = rowKey(row);
@@ -1092,6 +1306,7 @@ export default function IncomingInvoices() {
         company_id: companyId,
         invoice_number: row.invoiceNumber,
         supplier_tax_number: row.supplierTaxNumber,
+        external_outgoing: externalOutgoing ? 1 : undefined,
         approved: nextVal,
       });
       const data = res.data || {};
@@ -1134,7 +1349,10 @@ export default function IncomingInvoices() {
 
   const openCreateBatchModal = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
-    if (selectedCount === 0) { toast.info('Válassz átutalásos számlákat'); return; }
+    if (selectedCount === 0) {
+      toast.info(allowAllPaymentTypesForBatch ? 'Válassz számlákat' : 'Válassz átutalásos számlákat');
+      return;
+    }
     try {
       const [accRes, cntRes] = await Promise.all([
         api.get('/api/company-bank-accounts/', { params: { company_id: companyId } }),
@@ -1341,47 +1559,6 @@ export default function IncomingInvoices() {
     }
   };
 
-  const addSelectedToBatch = async (batch) => {
-    if (selectedCount === 0) { toast.info('Nincs kijelölt tétel'); return; }
-    try {
-      const currency = batch.currency || '';
-      const filtered = selectedRows.filter(r => !currency || !r.currency || r.currency === currency);
-      const excluded = selectedRows.length - filtered.length;
-      const itemsPayload = filtered.map(r => {
-        // If batch is HUF and invoice has HUF amount, use that; otherwise use original
-        let amountToUse = r.grossAmount;
-        let currencyToUse = r.currency;
-        if (currency === 'HUF' && r.currency !== 'HUF' && r.netAmountHUF && r.vatAmountHUF) {
-          amountToUse = Number(r.netAmountHUF) + Number(r.vatAmountHUF);
-          currencyToUse = 'HUF';
-        }
-        return {
-          invoice_number: r.invoiceNumber,
-          supplier_tax_number: r.supplierTaxNumber,
-          supplier_name: r.supplierName,
-          amount_gross: amountToUse,
-          currency: currencyToUse,
-        };
-      });
-      const res = await api.post(`/api/payment-batches/${batch.id}/add-items/`, { items: itemsPayload });
-      const cr = res.data || {};
-      toast.success(`Hozzáadva: ${cr.created}, kihagyva: ${excluded + (cr.skipped||0)}`);
-      // Refresh list to update item_count
-      try {
-        const list = await api.post('/api/payment-batches/list-pending/', { company_id: companyId });
-        setPendingBatches(list.data || []);
-      } catch {}
-    } catch (e) {
-      const resp = e?.response?.data || {};
-      const msg = resp.error || e?.message || 'Hozzáadás hiba';
-      if (Array.isArray(resp.not_approved) && resp.not_approved.length) {
-        toast.error(`${msg}: jóváhagyás szükséges (${resp.not_approved.join(', ')})`);
-      } else {
-        toast.error(msg);
-      }
-    }
-  };
-
   const saveBatchItemAmount = async (batchId, itemId, amount) => {
     if (!amount && amount !== 0) { toast.error('Adj meg összeget'); return; }
     setBatchItemSaving(prev => ({ ...prev, [itemId]: true }));
@@ -1516,66 +1693,151 @@ export default function IncomingInvoices() {
     window.parent.postMessage(msg, '*');
   };
 
+  const editingMissingExportCount = (editingBatch?.items || []).filter(it => !it.export_account).length;
+
   return (
     <InvoicesContainer>
       <InvoicesHeader>
-        <Title>Bejövő számlák</Title>
+        <Title>{pageTitle}</Title>
         <Toolbar>
-          <div style={{display:'flex', gap:8, alignItems:'center'}}>
-            <input
+          <ToolbarRow>
+            <SearchInput
               value={searchText}
               onChange={(e)=>{ setSearchText(e.target.value); }}
               onKeyDown={(e)=>{ if (e.key==='Enter') fetchDigest(1, { replace: true }); }}
-              placeholder="Gyorskereső (számla, név, adószám)"
-              style={{ padding:'6px 10px', minWidth:260 }}
+              placeholder={externalOutgoing ? 'Keresés számlaszám, ügyfél vagy adószám alapján...' : 'Gyorskereső (számla, név, adószám)'}
             />
-            <SecondaryButton
-              onClick={()=>{ setAmountDraftFrom(amountFrom); setAmountDraftTo(amountTo); setShowAmountModal(true); }}
-            >
-              <Banknote size={16}/>
-              {amountFrom || amountTo ? `${amountFrom || '0'} – ${amountTo || '∞'} Ft` : 'Összeg'}
-            </SecondaryButton>
+            {!externalOutgoing && (
+              <SecondaryButton
+                onClick={()=>{ setAmountDraftFrom(amountFrom); setAmountDraftTo(amountTo); setShowAmountModal(true); }}
+              >
+                <Banknote size={16}/>
+                {amountFrom || amountTo ? `${amountFrom || '0'} – ${amountTo || '∞'} Ft` : 'Összeg'}
+              </SecondaryButton>
+            )}
             <select value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
-              <option value="all">Mind</option>
+              <option value="all">{externalOutgoing ? 'Összes státusz' : 'Mind'}</option>
               <option value="unpaid">Kifizetetlen</option>
               <option value="paid">Kifizetett</option>
               <option value="due">Esedékes</option>
             </select>
-            <select value={paymentFilter} onChange={(e)=>{ setPaymentFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
-              <option value="all">Összes fizetési mód</option>
-              <option value="TRANSFER">Átutalás</option>
-              <option value="CASH">Készpénz</option>
-              <option value="CARD">Kártya</option>
-              <option value="VOUCHER">Utalvány</option>
-              <option value="UTANVET">Utánvét</option>
-              <option value="OTHER">Egyéb</option>
-            </select>
-            <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
-              <option value="all">Összes jóváhagyás</option>
-              <option value="approved">Csak jóváhagyott</option>
-              <option value="unapproved">Csak nem jóváhagyott</option>
-            </select>
-          </div>
+            {!externalOutgoing && (
+              <details style={{ position: 'relative' }}>
+                <summary style={{ listStyle: 'none', cursor: 'pointer', padding:'6px 10px', border:'1px solid #ddd', borderRadius:4, minWidth: 210 }}>
+                  {paymentFilter.length ? `Fizetési mód (${paymentFilter.length})` : 'Összes fizetési mód'}
+                </summary>
+                <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:20, background:'#fff', border:'1px solid #ddd', borderRadius:6, padding:8, minWidth:230, boxShadow:'0 2px 8px rgba(0,0,0,0.12)' }}>
+                  {[
+                    ['TRANSFER','Átutalás'],
+                    ['CASH','Készpénz'],
+                    ['CARD','Kártya'],
+                    ['VOUCHER','Utalvány'],
+                    ['UTANVET','Utánvét'],
+                    ['OTHER','Egyéb'],
+                    ['UNKNOWN','Ismeretlen'],
+                  ].map(([code, label]) => (
+                    <label key={code} style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6, cursor:'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={paymentFilter.includes(code)}
+                        onChange={(e)=>{
+                          setPaymentFilter(prev => {
+                            if (e.target.checked) return Array.from(new Set([...(prev||[]), code]));
+                            return (prev||[]).filter(x => x !== code);
+                          });
+                        }}
+                      />
+                      {label}
+                    </label>
+                  ))}
+                  <div style={{ display:'flex', justifyContent:'space-between', marginTop:6 }}>
+                    <SecondaryButton onClick={()=>setPaymentFilter([])} style={{ fontSize:12, padding:'4px 8px' }}>Összes</SecondaryButton>
+                  </div>
+                </div>
+              </details>
+            )}
+            {!externalOutgoing && (
+              <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
+                <option value="all">Összes jóváhagyás</option>
+                <option value="approved">Csak jóváhagyott</option>
+                <option value="unapproved">Csak nem jóváhagyott</option>
+              </select>
+            )}
+            {!externalOutgoing && (
+              <label style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'0 4px' }}>
+                <input
+                  type="checkbox"
+                  checked={manualOnly}
+                  onChange={(e)=>setManualOnly(e.target.checked)}
+                />
+                Kézzel felvitt számlák
+              </label>
+            )}
+          </ToolbarRow>
           <SecondaryButton
             onClick={()=>{ setDateDraftFrom(dateFrom); setDateDraftTo(dateTo); setShowDateModal(true); }}
-            style={{ marginLeft:'auto' }}
             title={dateFrom || dateTo ? `${dateFrom || '…'} – ${dateTo || '…'}` : 'Dátumszűrés'}
           >
-            <Calendar size={16}/>
+            <Calendar size={16}/>{externalOutgoing ? ' Dátum szűrés' : ''}
           </SecondaryButton>
-          <PrimaryButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading} title="Frissítés">
+          <RefreshButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading} title="Frissítés">
             <RefreshCw size={16}/>
-          </PrimaryButton>
-          
+          </RefreshButton>
+          {!externalOutgoing && (
+            <PrimaryButton onClick={()=>navigate('/incoming-invoices/new')} title="Új bejövő számla kézi rögzítése">
+              Új számla
+            </PrimaryButton>
+          )}
+          {externalOutgoing && (
+            <SecondaryButton onClick={runCzBackfill} disabled={czBackfillLoading} title="Számla sorozat pótlása NAV-ból">
+              {czBackfillLoading ? 'Számla pótlás…' : 'Számla pótlás'}
+            </SecondaryButton>
+          )}
           {!isSelectorMode && (
+            <SecondaryButton
+              onClick={exportSelectedCsv}
+              disabled={selectedCount===0}
+              title={selectedCount===0 ? 'Jelölj ki számlákat az exporthoz' : 'Kijelölt számlák exportálása CSV-be'}
+            >
+              <FileDown size={16}/> Kijelöltek CSV ({selectedCount})
+            </SecondaryButton>
+          )}
+          
+          {!isSelectorMode && !externalOutgoing && (
           <>
           <SecondaryButton onClick={() => setShowPaymentHistory(true)}>
             Kifizetések
           </SecondaryButton>
+          <SecondaryButton
+            onClick={() => {
+              setPaymentListMode(prev => {
+                const next = prev === 'manual' ? 'bank' : 'manual';
+                if (next === 'bank') {
+                  setPaymentFilter((cur) => Array.from(new Set([...(cur || []), 'TRANSFER', 'UTANVET'])));
+                }
+                return next;
+              });
+            }}
+            style={paymentListMode === 'bank' ? { background:'#dbeafe', color:'#0f172a' } : {}}
+          >
+            Bankkivonat
+          </SecondaryButton>
           <SecondaryButton onClick={openBatches}>
             <FolderOpen size={16}/> Csomagok ({pendingCount})
           </SecondaryButton>
-          <SecondaryButton onClick={openCreateBatchModal} disabled={selectedCount===0} title={selectedCount===0? 'Válassz átutalásos számlákat':''}>
+          <label style={{ display:'inline-flex', alignItems:'center', gap:8, marginLeft:4, padding:'0 4px' }}>
+            <input
+              type="checkbox"
+              checked={allowAllPaymentTypesForBatch}
+              onChange={(e)=>setAllowAllPaymentTypesForBatch(e.target.checked)}
+            />
+            Minden számlatípus kijelölhető
+          </label>
+          <SecondaryButton
+            onClick={openCreateBatchModal}
+            disabled={selectedCount===0}
+            title={selectedCount===0 ? (allowAllPaymentTypesForBatch ? 'Válassz számlákat' : 'Válassz átutalásos számlákat') : ''}
+          >
             <PlusCircle size={16}/> Fizetési csomag készítése ({selectedCount})
           </SecondaryButton>
           {editingBatch && (
@@ -1603,8 +1865,13 @@ export default function IncomingInvoices() {
               <> — {editingBatch.currency}</>
             ) : null}
           </div>
-          <div style={{ fontSize: 13, color: '#7f6b00' }}>
-            Tételek: {editingBatch.item_count ?? (editingBatch.items?.length || 0)}
+          <div style={{ fontSize: 13, color: '#7f6b00', textAlign: 'right' }}>
+            <div>Tételek: {editingBatch.item_count ?? (editingBatch.items?.length || 0)}</div>
+            {editingMissingExportCount > 0 && (
+              <div style={{ color: '#c0392b', fontWeight: 600 }}>
+                Figyelem: {editingMissingExportCount} tételnél hiányzik export bankszámla
+              </div>
+            )}
           </div>
         </EditInfoBar>
       )}
@@ -1613,22 +1880,35 @@ export default function IncomingInvoices() {
         <Table>
           <TableHeader>
             <tr>
-              {isSelectorMode ? <TableHeaderCell>Kiválasztás</TableHeaderCell> : <TableHeaderCell></TableHeaderCell>}
-              <TableHeaderCell>Kibocsátó</TableHeaderCell>
+              {isSelectorMode ? (
+                <TableHeaderCell>Kiválasztás</TableHeaderCell>
+              ) : (
+                <TableHeaderCell>
+                  <input
+                    ref={headerSelectRef}
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    onChange={toggleHeaderSelection}
+                    title={selectedCount > 0 ? 'Kijelölés törlése' : 'Összes kijelölése'}
+                  />
+                </TableHeaderCell>
+              )}
+              <TableHeaderCell>{externalOutgoing ? 'Ügyfél' : 'Kibocsátó'}</TableHeaderCell>
               <TableHeaderCell>Adószám</TableHeaderCell>
               <TableHeaderCell>Számlaszám</TableHeaderCell>
               <TableHeaderCell>Kibocsátás</TableHeaderCell>
-              <TableHeaderCell>Deviza</TableHeaderCell>
               <TableHeaderCell>Nettó</TableHeaderCell>
               <TableHeaderCell>ÁFA</TableHeaderCell>
               <TableHeaderCell>Bruttó</TableHeaderCell>
-              <TableHeaderCell>Jóváhagyás</TableHeaderCell>
+              <TableHeaderCell>Deviza</TableHeaderCell>
+              {!externalOutgoing && <TableHeaderCell>Jóváhagyás</TableHeaderCell>}
               <TableHeaderCell>Fizetési mód</TableHeaderCell>
+              {paymentListMode === 'bank' && <TableHeaderCell>Bankkivonat</TableHeaderCell>}
               <TableHeaderCell>Művelet</TableHeaderCell>
             </tr>
           </TableHeader>
           <TableBody>
-            {items.map((row, idx) => {
+            {items.filter(isVisibleRow).map((row, idx) => {
               const key = rowKey(row);
               const toNumber = (v) => {
                 if (v === null || v === undefined || v === '') return 0;
@@ -1640,21 +1920,54 @@ export default function IncomingInvoices() {
               const overpaid = toNumber(row.overpaidAmount);
               const paymentDisplayDate = row.paymentDisplayDate || row.paymentDate;
               const hasPaymentDate = !!paymentDisplayDate;
-              const isTransfer = String(row.paymentMethod||'').toUpperCase() === 'TRANSFER';
+              const pmUpper = String(row.paymentMethod||'').toUpperCase();
+              const isTransfer = pmUpper === 'TRANSFER' || pmUpper === 'COD' || pmUpper === 'UTANVET';
               const hasBalance = remaining > 0.0001;
               const hasOverpay = overpaid > 0.0001;
-              const isPaid = !!row.isPaid || (!isTransfer ? hasPaymentDate : hasPaymentDate || (!hasBalance));
+              const isPaid = !!row.isPaid || (!isTransfer ? hasPaymentDate : (!hasBalance && !hasOverpay));
               const isUnpaid = !isPaid && isTransfer;
               const hasPaidTag = isTransfer ? !isUnpaid : hasPaymentDate;
-              const remainingAmount = row.remainingAmount;
-              const overpaidAmount = row.overpaidAmount;
               const dueText = row.dueDate ? row.dueDate : '-';
+              const bankPaid = Number(row.bankPaidAmount || 0);
+              const grossNum = Number(row.grossAmount || 0);
+              const bankRemaining = Math.max(grossNum - bankPaid, 0);
+              const bankOverpay = Math.max(bankPaid - grossNum, 0);
+              const bankHasAny = bankPaid > 0.005;
+              const bankIsPaid = bankHasAny && bankRemaining <= 0.005;
+              const bankIsPartial = bankHasAny && bankRemaining > 0.005;
+              const bankMethodLabel = 'Átutalás+Utánvét';
+              const rowActions = (
+                <>
+                  <IconButton onClick={()=>openXmlInNewTab(row.invoiceNumber, row.supplierTaxNumber)} title="Megnyitás új lapon">
+                    <Eye size={16}/>
+                  </IconButton>
+                  <IconButton onClick={()=>openAttachments(row.invoiceNumber, row.supplierTaxNumber)} title="Csatolmányok">
+                    <Upload size={16}/>
+                  </IconButton>
+                  {isManualIncomingRow(row) && !externalOutgoing && (
+                    <>
+                      <IconButton onClick={()=>openManualEdit(row)} title="Kézi számla szerkesztése" style={{ backgroundColor:'#0ea5e9' }}>
+                        <Edit2 size={16}/>
+                      </IconButton>
+                      <IconButton onClick={()=>deleteManualIncoming(row)} title="Kézi számla törlése" style={{ backgroundColor:'#dc2626' }}>
+                        <Trash2 size={16}/>
+                      </IconButton>
+                    </>
+                  )}
+                </>
+              );
+              const mobileActionColSpan = externalOutgoing
+                ? (paymentListMode === 'bank' ? 12 : 11)
+                : (paymentListMode === 'bank' ? 13 : 12);
               return (
+              <React.Fragment key={`${row.invoiceNumber||'row'}_${idx}`}>
               <TableRow
-                key={`${row.invoiceNumber||'row'}_${idx}`}
                 $paid={hasPaidTag}
                 $unpaid={isUnpaid}
                 $selected={selected.has(rowKey(row))}
+                onDoubleClick={() => openXmlInNewTab(row.invoiceNumber, row.supplierTaxNumber)}
+                onContextMenu={(event) => handleRowContextMenu(event, key)}
+                onTouchEnd={(event) => handleRowTouchTap(event, key)}
               >
                 <TableCell style={{width:40}}>
                   {isSelectorMode ? (
@@ -1667,54 +1980,68 @@ export default function IncomingInvoices() {
                       {selected.has(rowKey(row)) ? <CheckSquare size={18}/> : <Square size={18}/>} 
                     </CheckboxBtn>
                   ) : (
-                    <span title="Nem átutalásos"> </span>
+                    <span title={row.inPaymentBatch ? 'Már fizetési csomagban van' : 'Nem kijelölhető'}> </span>
                   )
                   )}
                 </TableCell>
-                <TableCell title={row.supplierName}>{row.supplierName?.length>30? row.supplierName.slice(0,30)+'…':row.supplierName}</TableCell>
+                <TableCell title={row.supplierName}>
+                  <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                    <span>{row.supplierName?.length>30? row.supplierName.slice(0,30)+'…':row.supplierName}</span>
+                    {isManualIncomingRow(row) && !externalOutgoing && (
+                      <span
+                        title="Kézzel felvitt"
+                        style={{ display:'inline-flex', alignItems:'center', justifyContent:'center', minWidth:16, height:16, borderRadius:999, fontSize:10, fontWeight:700, background:'#e0f2fe', color:'#075985' }}
+                      >
+                        M
+                      </span>
+                    )}
+                  </span>
+                </TableCell>
                 <TableCell>{row.supplierTaxNumber}</TableCell>
                 <TableCell>{row.invoiceNumber}</TableCell>
                 <TableCell>{row.invoiceIssueDate}</TableCell>
-                <TableCell>{row.currency}</TableCell>
                 <TableCell className="text-right">{row.netAmount}</TableCell>
                 <TableCell className="text-right">{row.vatAmount}</TableCell>
                 <TableCell className="text-right">
-                  <div>{row.grossAmount} {row.currency || ''}</div>
+                  <div>{row.grossAmount}</div>
                   {row.currency && row.currency !== 'HUF' && row.netAmountHUF && (
                     <SmallMuted>
                       {Number(row.netAmountHUF) + Number(row.vatAmountHUF || 0)} HUF
                     </SmallMuted>
                   )}
                 </TableCell>
-                <TableCell>
-                  {isTransfer ? (
-                    canApproveInvoices ? (
-                      <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
-                        <input
-                          type="checkbox"
-                          checked={isRowApproved(row)}
-                          onChange={()=>toggleApproval(row)}
-                          disabled={!!approvalSaving[rowKey(row)]}
-                        />
+                <TableCell>{row.currency}</TableCell>
+                {!externalOutgoing && (
+                  <TableCell>
+                    {isTransfer ? (
+                      canApproveInvoices ? (
+                        <label style={{ display:'flex', alignItems:'flex-start', gap:8 }}>
+                          <input
+                            type="checkbox"
+                            checked={isRowApproved(row)}
+                            onChange={()=>toggleApproval(row)}
+                            disabled={!!approvalSaving[rowKey(row)]}
+                          />
+                          <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                            <span>Jóváhagyó: {row.approvedBy || '—'}</span>
+                            <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                          </SmallMuted>
+                        </label>
+                      ) : (
                         <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
+                          <span>{isRowApproved(row) ? 'Jóváhagyva' : '—'}</span>
                           <span>Jóváhagyó: {row.approvedBy || '—'}</span>
                           <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
                         </SmallMuted>
-                      </label>
+                      )
                     ) : (
                       <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
-                        <span>{isRowApproved(row) ? 'Jóváhagyva' : '—'}</span>
-                        <span>Jóváhagyó: {row.approvedBy || '—'}</span>
-                        <span>Dátum: {row.approvedAt ? row.approvedAt.slice(0,10) : '—'}</span>
+                        <span>Nem szükséges</span>
+                        <span>Fizetési mód: {formatPaymentMethod(row.paymentMethod)}</span>
                       </SmallMuted>
-                    )
-                  ) : (
-                    <SmallMuted style={{ display:'flex', flexDirection:'column', lineHeight:1.2 }}>
-                      <span>Nem szükséges</span>
-                      <span>Fizetési mód: {formatPaymentMethod(row.paymentMethod)}</span>
-                    </SmallMuted>
-                  )}
-                </TableCell>
+                    )}
+                  </TableCell>
+                )}
                 <TableCell>
                   {needsPaymentMethod(row) ? (
                     <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
@@ -1747,7 +2074,7 @@ export default function IncomingInvoices() {
                   ) : (
                     <>
                       <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
-                        <span>{formatPaymentMethod(row.paymentMethod)}</span>
+                        <span>{paymentListMode === 'bank' ? bankMethodLabel : formatPaymentMethod(row.paymentMethod)}</span>
                         {editableAfterSave[key] && !isPaymentEditable(row) && (
                           <button
                             onClick={()=>resetPaymentMethod(row)}
@@ -1759,7 +2086,22 @@ export default function IncomingInvoices() {
                         )}
                       </div>
                       {isTransfer ? (
-                        isUnpaid ? (
+                        paymentListMode === 'bank' ? (
+                          bankIsPaid ? (
+                            <>
+                              <StatusPill variant="paid">Bankkivonat: rendezve</StatusPill>
+                              <SmallMuted>Kifizetve: {formatMoney(bankPaid)} {row.currency}</SmallMuted>
+                            </>
+                          ) : bankIsPartial ? (
+                            <>
+                              <StatusPill variant="unpaid">Bankkivonat: részben rendezett</StatusPill>
+                              <SmallMuted>Kifizetve: {formatMoney(bankPaid)} {row.currency}</SmallMuted>
+                              <SmallMuted>Fennmaradó összeg: {formatMoney(bankRemaining)} {row.currency}</SmallMuted>
+                            </>
+                          ) : (
+                            <SmallMuted>Nincs bankkivonat alapú egyeztetés</SmallMuted>
+                          )
+                        ) : isUnpaid ? (
                           <>
                             <StatusPill variant="unpaid">
                               Esedékes: {dueText}
@@ -1797,16 +2139,38 @@ export default function IncomingInvoices() {
                     </>
                   )}
                 </TableCell>
-                <TableCell>
-                  <IconButton onClick={()=>openXmlInline(row.invoiceNumber, row.supplierTaxNumber)} title="Megnyitás">
-                    <Eye size={16}/>
-                  </IconButton>
-                  <div style={{ height: 6 }} />
-                  <IconButton onClick={()=>openAttachments(row.invoiceNumber, row.supplierTaxNumber)} title="Csatolmányok">
-                    <Upload size={16}/>
-                  </IconButton>
-                </TableCell>
+                {paymentListMode === 'bank' && (
+                  <TableCell>
+                    {(row.bankStatements || []).length ? (
+                      <div>
+                        <div style={{ fontWeight: 600 }}>{(row.bankStatements || []).length} tétel</div>
+                        <SmallMuted>
+                          {(row.bankStatements || []).slice(0, 2).map(bs => `${bs.sequenceNumber || '-'} (${bs.statementDate || '-'})`).join(', ')}
+                          {(row.bankStatements || []).length > 2 ? ' …' : ''}
+                        </SmallMuted>
+                        {bankOverpay > 0.005 && (
+                          <StatusPill variant="unpaid">Túlfizetés: {formatMoney(bankOverpay)} {row.currency}</StatusPill>
+                        )}
+                      </div>
+                    ) : (
+                      <SmallMuted>-</SmallMuted>
+                    )}
+                  </TableCell>
+                )}
+                <MainActionsCell>
+                  <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+                    {rowActions}
+                  </div>
+                </MainActionsCell>
               </TableRow>
+              <MobileActionsRow $open={mobileActionsRowKey === key}>
+                <MobileActionsCell colSpan={mobileActionColSpan}>
+                  <MobileActionsBar>
+                    {rowActions}
+                  </MobileActionsBar>
+                </MobileActionsCell>
+              </MobileActionsRow>
+              </React.Fragment>
             );})}
           </TableBody>
         </Table>
@@ -2272,15 +2636,21 @@ export default function IncomingInvoices() {
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>#</th>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Eladó</th>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Számlaszám</th>
+                                <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Bankszámla (export)</th>
                                 <th style={{textAlign:'left', padding:6, borderBottom:'1px solid #eee'}}>Bruttó összeg</th>
                               </tr>
                             </thead>
                             <tbody>
                               {b.items.map((it, idx) => (
-                                <tr key={it.id}>
+                                <tr key={it.id} style={!it.export_account ? { background:'#fff4e5' } : undefined}>
                                   <td style={{padding:6}}>{idx+1}</td>
                                   <td style={{padding:6}}>{it.supplier_name || '-'}</td>
                                   <td style={{padding:6}}>{it.invoice_number}</td>
+                                  <td style={{padding:6}}>
+                                    {it.export_account || (
+                                      <span style={{ color:'#c0392b', fontWeight:600 }}>Hiányzik</span>
+                                    )}
+                                  </td>
                                   <td style={{padding:6}}>
                                     {batchTab==='pending' ? (
                                       <div style={{ display:'flex', gap:6, alignItems:'center' }}>

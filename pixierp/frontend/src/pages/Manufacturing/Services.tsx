@@ -77,6 +77,7 @@ const Services: React.FC = () => {
   const [modalVisible, setModalVisible] = useState(false);
   const [editingService, setEditingService] = useState<Service | null>(null);
   const [form] = Form.useForm();
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [filteredSuppliers, setFilteredSuppliers] = useState<{ value: string }[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -98,6 +99,27 @@ const Services: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('active');
   const [serviceGroups, setServiceGroups] = useState<any[]>([]);
   const [selectedCategoryFilter, setSelectedCategoryFilter] = useState<number | undefined>(undefined);
+
+  const normalizeForCompare = (value: any): any => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) return value.map(normalizeForCompare);
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+    if (typeof value === 'object') {
+      return Object.keys(value)
+        .sort()
+        .reduce((acc: any, key: string) => {
+          const normalized = normalizeForCompare(value[key]);
+          if (normalized !== undefined) acc[key] = normalized;
+          return acc;
+        }, {} as any);
+    }
+    return value;
+  };
+
+  const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+  const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
   // Unit options based on calculation type
   const getUnitOptions = (calculationType: string) => {
@@ -192,6 +214,14 @@ const Services: React.FC = () => {
         }).finally(() => setLoading(false));
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (!modalVisible) return;
+    const timer = setTimeout(() => {
+      setInitialFormSnapshot(getFormSnapshot());
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [modalVisible]);
 
   const fetchServices = async () => {
     setLoading(true);
@@ -388,7 +418,7 @@ const Services: React.FC = () => {
   };
 
   const handleCancel = () => {
-    if (form.isFieldsTouched()) {
+    if (hasFormChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,

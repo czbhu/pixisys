@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Typography, Avatar, Dropdown, Button, Space, MenuProps, Tag } from 'antd';
 import { UserOutlined, LogoutOutlined, FieldTimeOutlined, RestOutlined, FullscreenOutlined, FullscreenExitOutlined } from '@ant-design/icons';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import POS from './POS';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
-import famApi from '../../services/famApi';
 
 dayjs.extend(duration);
 
@@ -25,11 +24,18 @@ const Sales = () => {
         inactivity_timeout?: number;
     } | null>(null);
     const [isFullscreen, setIsFullscreen] = useState(!!document.fullscreenElement);
-    const [famOnline, setFamOnline] = useState<boolean | null>(null);
-    const [famState, setFamState] = useState<string>('');
-    const famSystemId = process.env.REACT_APP_FAM_SYSTEM_ID || 'C00000001';
+    const [posCashInfo, setPosCashInfo] = useState<{
+        name: string;
+        current_balance: number | string;
+        currency_code?: string;
+        currency_symbol?: string;
+    } | null>(null);
+    const [posTerminalName, setPosTerminalName] = useState<string>('POS');
+    const [showAllCategories, setShowAllCategories] = useState<boolean>(true);
+    const [allowedMaterialGroupIds, setAllowedMaterialGroupIds] = useState<number[]>([]);
     const { user, logout } = useAuth();
     const navigate = useNavigate();
+    const location = useLocation();
 
     // Update time every second
     useEffect(() => {
@@ -82,22 +88,69 @@ const Sales = () => {
     }, []);
 
     useEffect(() => {
-        const checkFam = async () => {
+        const search = new URLSearchParams(location.search);
+        const posId = search.get('pos_id');
+
+        const loadPosContext = async () => {
             try {
-                await famApi.health();
-                const status = await famApi.getSystemStatus(famSystemId);
-                setFamOnline(true);
-                setFamState(status?.fcuState || 'UNKNOWN');
-            } catch (error) {
-                setFamOnline(false);
-                setFamState('OFFLINE');
+                if (posId) {
+                    const { data } = await api.get(`/pos/terminals/${posId}/launch_context/`);
+                    setPosTerminalName(data?.name || 'POS');
+                    setShowAllCategories(!!data?.show_all_categories);
+                    setAllowedMaterialGroupIds(Array.isArray(data?.material_group_ids) ? data.material_group_ids : []);
+
+                    if (data?.cash_register_name) {
+                        setPosCashInfo({
+                            name: data.cash_register_name,
+                            current_balance: data.cash_register_current_balance || 0,
+                            currency_code: data.cash_register_currency_code,
+                            currency_symbol: data.cash_register_currency_symbol,
+                        });
+                    } else {
+                        setPosCashInfo(null);
+                    }
+                    return;
+                }
+
+                const response = await api.get('/pos/terminals/', { params: { is_active: true, mine: true } });
+                const list = response.data?.results || response.data || [];
+                const first = Array.isArray(list) && list.length ? list[0] : null;
+                if (!first) {
+                    setPosTerminalName('POS');
+                    setShowAllCategories(true);
+                    setAllowedMaterialGroupIds([]);
+                    setPosCashInfo(null);
+                    return;
+                }
+
+                setPosTerminalName(first.name || 'POS');
+                setShowAllCategories(!!first.show_all_categories);
+                setAllowedMaterialGroupIds(Array.isArray(first.material_group_ids) ? first.material_group_ids : []);
+
+                if (first.cash_register_name) {
+                    setPosCashInfo({
+                        name: first.cash_register_name,
+                        current_balance: first.cash_register_current_balance || 0,
+                        currency_code: first.cash_register_currency_code,
+                        currency_symbol: first.cash_register_currency_symbol,
+                    });
+                } else {
+                    setPosCashInfo(null);
+                }
+            } catch (error: any) {
+                if (error?.response?.status === 403) {
+                    setPosTerminalName('POS');
+                    setShowAllCategories(true);
+                    setAllowedMaterialGroupIds([]);
+                    setPosCashInfo(null);
+                }
             }
         };
 
-        checkFam();
-        const interval = setInterval(checkFam, 30000);
+        loadPosContext();
+        const interval = setInterval(loadPosContext, 30000);
         return () => clearInterval(interval);
-    }, [famSystemId]);
+    }, [location.search]);
 
     const handleLogout = async () => {
         await logout();
@@ -195,14 +248,27 @@ const Sales = () => {
             }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
                     <Text strong style={{ color: 'white', fontSize: '18px' }}>
-                        PixiERP Dashboard v1.3.0 | POS - Értékesítés
+                        PixiERP Dashboard v1.3.0 | {posTerminalName} - Értékesítés
                     </Text>
                     <Space size={8}>
-                        <Text style={{ color: 'white' }}>FAM:</Text>
-                        <Tag color={famOnline ? 'green' : famOnline === false ? 'red' : 'default'} style={{ marginRight: 0 }}>
-                            {famOnline ? 'ONLINE' : famOnline === false ? 'OFFLINE' : 'ELLENŐRZÉS'}
+                        <Text style={{ color: 'white' }}>Kasszában:</Text>
+                        <Tag
+                            color={posCashInfo ? 'green' : 'default'}
+                            style={{
+                                marginRight: 0,
+                                fontSize: '36px',
+                                lineHeight: '44px',
+                                padding: '2px 14px',
+                                fontWeight: 700,
+                            }}
+                        >
+                            {posCashInfo
+                                ? `${new Intl.NumberFormat('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 }).format(Number(posCashInfo.current_balance || 0))} ${posCashInfo.currency_symbol || posCashInfo.currency_code || ''}`.trim()
+                                : 'Nincs beállítva'}
                         </Tag>
-                        <Text style={{ color: 'white', opacity: 0.85 }}>{famState || 'N/A'}</Text>
+                        {posCashInfo?.name && (
+                            <Text style={{ color: 'white', opacity: 0.85 }}>{posCashInfo.name}</Text>
+                        )}
                     </Space>
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -236,7 +302,7 @@ const Sales = () => {
                 </div>
             </Header>
             <div style={{ marginTop: '64px' }}>
-                <POS />
+                <POS showAllCategories={showAllCategories} allowedMaterialGroupIds={allowedMaterialGroupIds} />
             </div>
         </Layout>
     );

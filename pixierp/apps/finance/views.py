@@ -662,10 +662,19 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
 	serializer_class = CashRegisterSerializer
 	permission_classes = [AllowAny]
 	filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-	filterset_fields = ['is_active', 'currency']
+	filterset_fields = ['is_active', 'currency', 'is_pos_default']
 	search_fields = ['name', 'location']
 	ordering_fields = ['name', 'created_at']
 	ordering = ['name']
+
+	@action(detail=True, methods=['post'])
+	def set_pos_default(self, request, pk=None):
+		"""Set selected cash register as POS default (single selection)."""
+		cash_register = self.get_object()
+		CashRegister.objects.exclude(id=cash_register.id).update(is_pos_default=False)
+		cash_register.is_pos_default = True
+		cash_register.save(update_fields=['is_pos_default'])
+		return Response({'status': 'ok', 'cash_register_id': cash_register.id})
 
 	@action(detail=True, methods=['get'])
 	def balance(self, request, pk=None):

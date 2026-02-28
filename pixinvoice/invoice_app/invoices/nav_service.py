@@ -533,58 +533,108 @@ class NAVService:
 
         # customerInfo
         customerInfo = ET.SubElement(invoiceHead, '{%s}customerInfo' % NS_DATA)
-        ET.SubElement(customerInfo, '{%s}customerVatStatus' % NS_DATA).text = getattr(invoice.customer, 'vat_status', 'DOMESTIC')
-        customerVatData = ET.SubElement(customerInfo, '{%s}customerVatData' % NS_DATA)
-        
-        # Adószám meghatározása (belföldi, EU-s vagy harmadik országbeli)
         cust = invoice.customer
-        is_hungarian = getattr(cust, 'is_hungarian_taxpayer', True)
-        if is_hungarian:
-            customerTaxNumber = ET.SubElement(customerVatData, '{%s}customerTaxNumber' % NS_DATA)
-            try:
-                taxpayer_id_src = (getattr(cust, 'vat_group_id', None) or '').strip() or (getattr(cust, 'tax_number', None) or '').strip()
-            except Exception:
-                taxpayer_id_src = (invoice.customer.tax_number or '')
-            ET.SubElement(customerTaxNumber, '{%s}taxpayerId' % NS_BASE).text = taxpayer_id_src[:8]
-            ET.SubElement(customerTaxNumber, '{%s}vatCode' % NS_BASE).text = getattr(invoice.customer, 'vat_code', None) or '2'
-            ET.SubElement(customerTaxNumber, '{%s}countyCode' % NS_BASE).text = getattr(invoice.customer, 'county_code', None) or '02'
-        elif getattr(cust, 'eu_tax_number', None):
-             ET.SubElement(customerVatData, '{%s}communityVatNumber' % NS_DATA).text = cust.eu_tax_number
-        else:
-             # Harmadik ország
-             tax_id_val = (getattr(cust, 'tax_number', None) or 'UNKNOWN')
-             ET.SubElement(customerVatData, '{%s}thirdStateTaxId' % NS_DATA).text = tax_id_val
+        customer_vat_status = getattr(cust, 'vat_status', 'DOMESTIC') or 'DOMESTIC'
+        ET.SubElement(customerInfo, '{%s}customerVatStatus' % NS_DATA).text = customer_vat_status
 
-        ET.SubElement(customerInfo, '{%s}customerName' % NS_DATA).text = invoice.customer.name
-        custAddr = ET.SubElement(customerInfo, '{%s}customerAddress' % NS_DATA)
-        custDet = ET.SubElement(custAddr, '{%s}detailedAddress' % NS_BASE)
-        
-        # Determine country code
-        country_code = 'HU'
-        if invoice.customer.country:
-            c_upper = invoice.customer.country.upper()
-            if c_upper in ['MAGYARORSZÁG', 'HUNGARY', 'HU']:
-                country_code = 'HU'
-            elif c_upper in ['FRANCIAORSZÁG', 'FRANCE', 'FR']:
-                country_code = 'FR'
-            elif c_upper in ['NÉMETORSZÁG', 'GERMANY', 'DE']:
-                country_code = 'DE'
-            elif c_upper in ['AUSZTRIA', 'AUSTRIA', 'AT']:
-                country_code = 'AT'
-            elif len(c_upper) == 2:
-                country_code = c_upper
+        # PRIVATE_PERSON vevőnél a NAV felé nem küldünk customerVatData/customerName/customerAddress adatokat.
+        if customer_vat_status != 'PRIVATE_PERSON':
+            customerVatData = ET.SubElement(customerInfo, '{%s}customerVatData' % NS_DATA)
 
-        ET.SubElement(custDet, '{%s}countryCode' % NS_BASE).text = country_code
-        ET.SubElement(custDet, '{%s}postalCode' % NS_BASE).text = invoice.customer.postal_code or '0000'
-        ET.SubElement(custDet, '{%s}city' % NS_BASE).text = invoice.customer.city or 'Unknown'
-        
-        street_val = (invoice.customer.street_name or invoice.customer.address or '').strip()
-        # Sanitize street value (remove newlines, collapse spaces)
-        street_val = re.sub(r'\s+', ' ', street_val)
-        ET.SubElement(custDet, '{%s}streetName' % NS_BASE).text = street_val if street_val else 'Unknown Street'
-        
-        ET.SubElement(custDet, '{%s}publicPlaceCategory' % NS_BASE).text = (invoice.customer.public_place_category or 'utca')
-        ET.SubElement(custDet, '{%s}number' % NS_BASE).text = (invoice.customer.street_number or '1')
+            # Adószám meghatározása (belföldi, EU-s vagy harmadik országbeli)
+            is_hungarian = getattr(cust, 'is_hungarian_taxpayer', True)
+            if is_hungarian:
+                customerTaxNumber = ET.SubElement(customerVatData, '{%s}customerTaxNumber' % NS_DATA)
+                group_id = (getattr(cust, 'vat_group_id', None) or '').strip()
+                group_member_tax = (getattr(cust, 'vat_group_member_tax_number', None) or '').strip()
+                group_tax_full = (getattr(cust, 'group_tax_number', None) or '').strip()
+                is_group_member = bool(group_id or group_member_tax or group_tax_full)
+                if is_group_member:
+                    # Csoport tag: a külső taxpayerId a csoporté (vat_group_id vagy group_tax_number első 8 jegy)
+                    # vatCode=5 (mindig 5 a csoport adóalanyiságnál), countyCode a full_tax_number-ből ha elérhető
+                    if group_tax_full:
+                        parts = group_tax_full.split('-')
+                        outer_taxpayer_id = parts[0] if parts[0] else group_id[:8] if group_id else (cust.tax_number or '')[:8]
+                        outer_vat_code = parts[1] if len(parts) > 1 else '5'
+                        outer_county_code = parts[2] if len(parts) > 2 else None
+                    else:
+                        outer_taxpayer_id = group_id[:8] if group_id else (getattr(cust, 'tax_number', None) or '')[:8]
+                        outer_vat_code = '5'
+                        outer_county_code = None
+                    ET.SubElement(customerTaxNumber, '{%s}taxpayerId' % NS_BASE).text = outer_taxpayer_id
+                    ET.SubElement(customerTaxNumber, '{%s}vatCode' % NS_BASE).text = outer_vat_code
+                    if outer_county_code:
+                        ET.SubElement(customerTaxNumber, '{%s}countyCode' % NS_BASE).text = outer_county_code
+                    # groupMemberTaxNumber: a csoport tag saját adószáma (teljes formátum, pl. 87654321-2-41)
+                    member_tax_for_xml = group_member_tax or (getattr(cust, 'full_tax_number', None) or '').strip()
+                    if member_tax_for_xml:
+                        member_digits = ''.join(ch for ch in str(member_tax_for_xml) if ch.isdigit())
+                        member_taxpayer_id = ''
+                        member_vat_code = ''
+                        member_county_code = ''
+                        if len(member_digits) >= 11:
+                            member_taxpayer_id = member_digits[:8]
+                            member_vat_code = member_digits[8:9]
+                            member_county_code = member_digits[9:11]
+                        else:
+                            parts = str(member_tax_for_xml).split('-')
+                            if parts:
+                                member_taxpayer_id = (parts[0] or '').strip()[:8]
+                            if len(parts) > 1:
+                                member_vat_code = (parts[1] or '').strip()[:1]
+                            if len(parts) > 2:
+                                member_county_code = (parts[2] or '').strip()[:2]
+
+                        if member_taxpayer_id and member_vat_code and member_county_code:
+                            group_member_el = ET.SubElement(customerTaxNumber, '{%s}groupMemberTaxNumber' % NS_DATA)
+                            ET.SubElement(group_member_el, '{%s}taxpayerId' % NS_BASE).text = member_taxpayer_id
+                            ET.SubElement(group_member_el, '{%s}vatCode' % NS_BASE).text = member_vat_code
+                            ET.SubElement(group_member_el, '{%s}countyCode' % NS_BASE).text = member_county_code
+                else:
+                    try:
+                        taxpayer_id_src = (getattr(cust, 'tax_number', None) or '').strip()
+                    except Exception:
+                        taxpayer_id_src = (invoice.customer.tax_number or '')
+                    ET.SubElement(customerTaxNumber, '{%s}taxpayerId' % NS_BASE).text = taxpayer_id_src[:8]
+                    ET.SubElement(customerTaxNumber, '{%s}vatCode' % NS_BASE).text = getattr(invoice.customer, 'vat_code', None) or '2'
+                    ET.SubElement(customerTaxNumber, '{%s}countyCode' % NS_BASE).text = getattr(invoice.customer, 'county_code', None) or '02'
+            elif getattr(cust, 'eu_tax_number', None):
+                ET.SubElement(customerVatData, '{%s}communityVatNumber' % NS_DATA).text = cust.eu_tax_number
+            else:
+                # Harmadik ország
+                tax_id_val = (getattr(cust, 'tax_number', None) or 'UNKNOWN')
+                ET.SubElement(customerVatData, '{%s}thirdStateTaxId' % NS_DATA).text = tax_id_val
+
+            ET.SubElement(customerInfo, '{%s}customerName' % NS_DATA).text = invoice.customer.name
+            custAddr = ET.SubElement(customerInfo, '{%s}customerAddress' % NS_DATA)
+            custDet = ET.SubElement(custAddr, '{%s}detailedAddress' % NS_BASE)
+
+            # Determine country code
+            country_code = 'HU'
+            if invoice.customer.country:
+                c_upper = invoice.customer.country.upper()
+                if c_upper in ['MAGYARORSZÁG', 'HUNGARY', 'HU']:
+                    country_code = 'HU'
+                elif c_upper in ['FRANCIAORSZÁG', 'FRANCE', 'FR']:
+                    country_code = 'FR'
+                elif c_upper in ['NÉMETORSZÁG', 'GERMANY', 'DE']:
+                    country_code = 'DE'
+                elif c_upper in ['AUSZTRIA', 'AUSTRIA', 'AT']:
+                    country_code = 'AT'
+                elif len(c_upper) == 2:
+                    country_code = c_upper
+
+            ET.SubElement(custDet, '{%s}countryCode' % NS_BASE).text = country_code
+            ET.SubElement(custDet, '{%s}postalCode' % NS_BASE).text = invoice.customer.postal_code or '0000'
+            ET.SubElement(custDet, '{%s}city' % NS_BASE).text = invoice.customer.city or 'Unknown'
+
+            street_val = (invoice.customer.street_name or invoice.customer.address or '').strip()
+            # Sanitize street value (remove newlines, collapse spaces)
+            street_val = re.sub(r'\s+', ' ', street_val)
+            ET.SubElement(custDet, '{%s}streetName' % NS_BASE).text = street_val if street_val else 'Unknown Street'
+
+            ET.SubElement(custDet, '{%s}publicPlaceCategory' % NS_BASE).text = (invoice.customer.public_place_category or 'utca')
+            ET.SubElement(custDet, '{%s}number' % NS_BASE).text = (invoice.customer.street_number or '1')
 
         # invoiceDetail (fejléc részletei)
         invoiceDetail = ET.SubElement(invoiceHead, '{%s}invoiceDetail' % NS_DATA)

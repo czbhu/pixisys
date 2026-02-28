@@ -1,10 +1,7 @@
 import React, { useState } from 'react';
 import { useQuery } from 'react-query';
 import { 
-  BarChart3, 
   TrendingUp, 
-  Download,
-  Calendar,
   DollarSign,
   FileText,
   Users
@@ -21,8 +18,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  LineChart,
-  Line,
   Area,
   AreaChart
 } from 'recharts';

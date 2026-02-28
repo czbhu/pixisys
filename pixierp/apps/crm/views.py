@@ -86,26 +86,26 @@ class CompanyViewSet(viewsets.ViewSet):
             items = client.list_customers(company_id=company_id)
             items = _filter_by_query(items, request.query_params.get('q'))
 
-              is_supplier_filter = request.query_params.get('is_supplier') == 'true'
-              is_customer_filter = request.query_params.get('is_customer') == 'true'
-              compact_mode = request.query_params.get('compact') in ('1', 'true', 'True')
+            is_supplier_filter = request.query_params.get('is_supplier') == 'true'
+            is_customer_filter = request.query_params.get('is_customer') == 'true'
+            compact_mode = request.query_params.get('compact') in ('1', 'true', 'True')
 
             # Handle Supplier filtering and Sync
-              if is_supplier_filter:
-                 # Filter strictly based on the source data
-                 items = [i for i in items if i.get('is_supplier') is True]
-                 
-                 # Sync these suppliers to local DB and swap ID to local ID
-                 synced_items = []
-                 for item in items:
-                     local_comp = _sync_to_local_db(item)
-                     if local_comp:
-                         # Use local ID for the frontend to be compatible with ERP ForeignKeys
-                         item['external_id'] = item['id']  # Save PixInvoice UUID
-                         item['id'] = local_comp.id        # Swap to local Integer ID
-                         synced_items.append(item)
-                 
-                 items = synced_items
+            if is_supplier_filter:
+                # Filter strictly based on the source data
+                items = [i for i in items if i.get('is_supplier') is True]
+
+                # Sync these suppliers to local DB and swap ID to local ID
+                synced_items = []
+                for item in items:
+                    local_comp = _sync_to_local_db(item)
+                    if local_comp:
+                        # Use local ID for the frontend to be compatible with ERP ForeignKeys
+                        item['external_id'] = item['id']  # Save PixInvoice UUID
+                        item['id'] = local_comp.id        # Swap to local Integer ID
+                        synced_items.append(item)
+
+                items = synced_items
 
             if is_customer_filter:
                 items = [i for i in items if i.get('is_customer') is True]

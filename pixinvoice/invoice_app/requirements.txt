@@ -6,6 +6,8 @@ psycopg2-binary==2.9.9
 requests==2.31.0
 python-decouple==3.8
 Pillow==10.1.0
+pypdf==5.2.0
+pytesseract==0.3.13
 django-extensions==3.2.3
 lxml==4.9.3
 xmltodict==0.13.0

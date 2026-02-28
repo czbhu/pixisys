@@ -797,6 +797,7 @@ const CustomerForm = () => {
       county_code: '',
       vat_group_id: '',
       vat_group_member_tax_number: '',
+      group_tax_number: '',
       vat_status: 'DOMESTIC',
       is_hungarian_taxpayer: true,
       eu_tax_number: '',
@@ -806,6 +807,8 @@ const CustomerForm = () => {
       is_customer: true,
     },
   });
+
+  const watchedFullTaxNumber = watch('full_tax_number');
 
   // Load draft
   React.useEffect(() => {
@@ -1040,9 +1043,19 @@ const CustomerForm = () => {
           } else {
             setValue('vat_group_member_tax_number', '');
           }
+          // group_tax_number: prefill csoport adószám ha a csoport ID ismert (8 jegy)
+          // A felhasználó manuálisan egészíti ki a megye kóddal (pl. 12345678-5-42)
+          const currentGroupTax = getValues('group_tax_number') || '';
+          if (!currentGroupTax && navData.vat_group_membership.vatGroupId) {
+            const groupBase = String(navData.vat_group_membership.vatGroupId || '').replace(/\D/g, '').slice(0, 8);
+            if (groupBase.length === 8) {
+              setValue('group_tax_number', `${groupBase}-5-`);
+            }
+          }
         } else {
           setValue('vat_group_id', '');
           setValue('vat_group_member_tax_number', '');
+          setValue('group_tax_number', '');
         }
         
         if (navData.taxpayer_address_list && navData.taxpayer_address_list.length > 0) {
@@ -1247,6 +1260,7 @@ const CustomerForm = () => {
       setValue('county_code', '');
       setValue('vat_group_id', '');
       setValue('vat_group_member_tax_number', '');
+      setValue('group_tax_number', '');
       setValue('street_name', '');
       setValue('public_place_category', '');
       setValue('street_number', '');
@@ -1281,7 +1295,8 @@ const CustomerForm = () => {
       setValue('vat_code', c.vat_code || '');
       setValue('county_code', c.county_code || '');
       setValue('vat_group_id', c.vat_group_id || '');
-      setValue('vat_group_member_tax_number', c.vat_group_member_tax_number || '');
+      setValue('vat_group_member_tax_number', c.full_tax_number || c.vat_group_member_tax_number || '');
+      setValue('group_tax_number', c.group_tax_number || '');
       setValue('payment_due_days', c.payment_due_days ?? 8);
       setValue('payment_method', c.payment_method || 'CASH');
       setValue('default_currency', c.default_currency || 'HUF');
@@ -1300,6 +1315,14 @@ const CustomerForm = () => {
       setValue('eu_tax_number', c.eu_tax_number || '');
     }
   }, [customer, setValue, clearErrors]);
+
+  React.useEffect(() => {
+    const fullTax = String(getValues('full_tax_number') || '').trim();
+    const current = String(getValues('vat_group_member_tax_number') || '').trim();
+    if (fullTax !== current) {
+      setValue('vat_group_member_tax_number', fullTax);
+    }
+  }, [watchedFullTaxNumber, getValues, setValue]);
 
   React.useEffect(() => {
     if (lookupMessage) {
@@ -1356,6 +1379,8 @@ const CustomerForm = () => {
   };
 
   const onSubmit = (data) => {
+    const fullTax = String(data.full_tax_number || '').trim();
+    data.vat_group_member_tax_number = fullTax;
     console.log('CustomerForm onSubmit data:', data);
     
     // Közvetlenül mentjük - a backend kezeli a duplikációt
@@ -1612,13 +1637,13 @@ const CustomerForm = () => {
 
             <FormGrid>
               <FormGroup>
-                <Label htmlFor="vat_group_id">Csoport azonosító</Label>
+                <Label htmlFor="group_tax_number">Csoport adószám</Label>
                 <Input
-                  id="vat_group_id"
-                  {...register('vat_group_id')}
-                  placeholder="Csoport azonosító"
-                  readOnly
+                  id="group_tax_number"
+                  {...register('group_tax_number')}
+                  placeholder="12345678-5-42"
                 />
+                <small style={{ color: '#6b7280', fontSize: 12 }}>Csoport teljes adószáma (12345678-5-42 formátum)</small>
               </FormGroup>
 
               <FormGroup>
@@ -1626,9 +1651,25 @@ const CustomerForm = () => {
                 <Input
                   id="vat_group_member_tax_number"
                   {...register('vat_group_member_tax_number')}
-                  placeholder="Csoport tag adószáma"
-                  readOnly
+                  placeholder="12345678-2-41"
+                  disabled
+                  style={{ background: '#f9fafb', color: '#6b7280' }}
                 />
+                <small style={{ color: '#6b7280', fontSize: 12 }}>Automatikusan a Teljes adószám mezőből töltődik</small>
+              </FormGroup>
+            </FormGrid>
+
+            <FormGrid>
+              <FormGroup>
+                <Label htmlFor="vat_group_id" style={{ color: '#9ca3af' }}>Csoport azonosító (NAV)</Label>
+                <Input
+                  id="vat_group_id"
+                  {...register('vat_group_id')}
+                  placeholder="12345678"
+                  readOnly
+                  style={{ background: '#f9fafb', color: '#6b7280' }}
+                />
+                <small style={{ color: '#9ca3af', fontSize: 12 }}>Automatikusan töltődik NAV lekérdezésből</small>
               </FormGroup>
             </FormGrid>
 

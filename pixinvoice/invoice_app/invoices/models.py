@@ -2,6 +2,7 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import RegexValidator
 from django.contrib.auth.hashers import make_password, check_password
+from django.utils import timezone
 import uuid
 
 
@@ -34,6 +35,7 @@ class Customer(models.Model):
     county_code = models.CharField(max_length=10, blank=True, null=True, verbose_name="County Code")
     vat_group_id = models.CharField(max_length=50, blank=True, null=True, verbose_name="VAT Group ID")
     vat_group_member_tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="VAT Group Member Tax Number")
+    group_tax_number = models.CharField(max_length=20, blank=True, null=True, verbose_name="Csoport adószám", help_text="Csoport teljes adószáma, pl. 12345678-5-42")
     VAT_STATUS_CHOICES = [
         ('DOMESTIC', 'Magyar adószámos'),
         ('PRIVATE_PERSON', 'Magánszemély'),
@@ -145,6 +147,8 @@ class IncomingSyncState(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='incoming_sync_state')
     last_refreshed_at = models.DateTimeField(blank=True, null=True)
+    external_last_refreshed_at = models.DateTimeField(blank=True, null=True)
+    external_full_sync_at = models.DateTimeField(blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -244,6 +248,9 @@ class IncomingDocument(models.Model):
     TYPE_CHOICES = [
         ('IMAGE', 'Számlakép'),
         ('OTHER', 'Egyéb'),
+        ('CONTRACT', 'Szerződés'),
+        ('SUPPLIER', 'Szállító'),
+        ('PERFORMANCE_CERT', 'Teljesítés igazolás'),
     ]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_documents')
@@ -289,6 +296,17 @@ class CompanyEmailSettings(models.Model):
     default_body_template = models.TextField(blank=True, null=True, default='Tisztelt {customer_name}!\n\nKüldjük a(z) {invoice_number} számú számlát PDF csatolmányként.\n\nÜdvözlettel,\n{company_name}')
     subject_template_en = models.CharField(max_length=200, blank=True, null=True, default='Invoice {invoice_number}')
     body_template_en = models.TextField(blank=True, null=True, default='Dear {customer_name},\n\nPlease find attached invoice {invoice_number}.\n\nBest regards,\n{company_name}')
+    arrears_subject_template = models.CharField(max_length=250, blank=True, null=True, default='Kintlévőség értesítő - lejárt számlák')
+    arrears_body_template = models.TextField(
+        blank=True,
+        null=True,
+        default='''<p>Tisztelt Ügyfél!</p>
+<p>Nyilvántartásunk szerint {as_of_date} napjáig még nem egyenlítették ki az alábbi számlákat, amelynek hátraléka összesen {total_outstanding}.</p>
+{invoices_table}
+<p>Amennyiben az összeg az Önök nyilvántartásában szereplőtől eltér, kérem egyeztessenek velünk az elérhetőségeink egyikén.</p>
+<p>Ha a számlák kiegyenlítése időközben már megtörtént, kérjük jelen levelünket tekintse tárgytalannak!</p>
+<p>{today_city_date}</p>'''
+    )
     default_sender_name = models.CharField(max_length=200, blank=True, null=True)
     default_sender_phone = models.CharField(max_length=50, blank=True, null=True)
     # Desktop email client (Thunderbird) integration
@@ -303,6 +321,72 @@ class CompanyEmailSettings(models.Model):
 
     def __str__(self):
         return f"Email settings for {self.company.name}"
+
+
+class EmailTemplate(models.Model):
+    TEMPLATE_INVOICE_SEND = 'invoice_send'
+    TEMPLATE_ARREARS = 'arrears'
+    TEMPLATE_REMINDER_1 = 'reminder_1'
+    TEMPLATE_REMINDER_2 = 'reminder_2'
+    TEMPLATE_LEGAL = 'legal'
+    TEMPLATE_PAYMENT_ORDER = 'payment_order'
+    TEMPLATE_LITIGATION = 'litigation'
+
+    TEMPLATE_TYPE_CHOICES = [
+        (TEMPLATE_INVOICE_SEND, 'Számlaküldés'),
+        (TEMPLATE_ARREARS, 'Kintlévőségi'),
+        (TEMPLATE_REMINDER_1, '1. felszólítás'),
+        (TEMPLATE_REMINDER_2, '2. felszólítás'),
+        (TEMPLATE_LEGAL, 'Ügyvédi'),
+        (TEMPLATE_PAYMENT_ORDER, 'Fizetési meghagyás'),
+        (TEMPLATE_LITIGATION, 'Peresítés'),
+    ]
+
+    LANGUAGE_CHOICES = [
+        ('hu', 'Magyar'),
+        ('en', 'Angol'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='email_templates')
+    template_type = models.CharField(max_length=32, choices=TEMPLATE_TYPE_CHOICES)
+    language = models.CharField(max_length=5, choices=LANGUAGE_CHOICES, default='hu')
+    name = models.CharField(max_length=120)
+    subject_template = models.CharField(max_length=250, blank=True, null=True)
+    body_template = models.TextField(blank=True, null=True)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Email Template'
+        verbose_name_plural = 'Email Templates'
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'template_type', 'language'], name='unique_company_template_type_language')
+        ]
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.company.name} - {self.name}"
+
+
+class EmailSignature(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='email_signatures')
+    name = models.CharField(max_length=120)
+    content_html = models.TextField(blank=True, null=True)
+    is_default = models.BooleanField(default=False)
+    is_active = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Email Signature'
+        verbose_name_plural = 'Email Signatures'
+        ordering = ['-is_default', 'name']
+
+    def __str__(self):
+        return f"{self.company.name} - {self.name}"
 
 
 class CompanyBankAccount(models.Model):
@@ -421,6 +505,26 @@ class Invoice(models.Model):
         ('cod', 'Utánvét'),
         ('other', 'Egyéb'),
     ]
+    ARREARS_STATUS_OVERDUE = 'overdue'
+    ARREARS_STATUS_NOTICE = 'arrears_notice'
+    ARREARS_STATUS_REMINDER_1 = 'reminder_1'
+    ARREARS_STATUS_REMINDER_2 = 'reminder_2'
+    ARREARS_STATUS_LEGAL = 'legal_letter'
+    ARREARS_STATUS_PAYMENT_ORDER = 'payment_order'
+    ARREARS_STATUS_LITIGATION = 'litigation'
+    ARREARS_STATUS_WON = 'won'
+    ARREARS_STATUS_LOST = 'lost'
+    ARREARS_STATUS_CHOICES = [
+        (ARREARS_STATUS_OVERDUE, 'Lejárt'),
+        (ARREARS_STATUS_NOTICE, 'Kintlévőségi értesítő kiküldése'),
+        (ARREARS_STATUS_REMINDER_1, '1. Felszólítás'),
+        (ARREARS_STATUS_REMINDER_2, '2. Felszólítás'),
+        (ARREARS_STATUS_LEGAL, 'Ügyvédi levél'),
+        (ARREARS_STATUS_PAYMENT_ORDER, 'Fizetési meghagyás'),
+        (ARREARS_STATUS_LITIGATION, 'Peresítés'),
+        (ARREARS_STATUS_WON, 'Pert nyert'),
+        (ARREARS_STATUS_LOST, 'Pert vesztett'),
+    ]
     payment_method = models.CharField(max_length=20, choices=PAYMENT_METHOD_CHOICES, default='transfer', verbose_name="Fizetési mód")
     
     # Status and NAV integration
@@ -449,6 +553,8 @@ class Invoice(models.Model):
     invoice_appearance = models.CharField(max_length=20, choices=APPEARANCE_CHOICES, default='ELECTRONIC', verbose_name="Invoice Appearance")
     payment_date = models.DateField(blank=True, null=True, verbose_name="Payment Date")
     amount_paid = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Amount Paid")
+    arrears_status = models.CharField(max_length=32, choices=ARREARS_STATUS_CHOICES, blank=True, null=True, verbose_name='Kintlévőség státusz')
+    arrears_status_changed_at = models.DateTimeField(blank=True, null=True, verbose_name='Kintlévőség státuszváltás ideje')
     completeness_indicator = models.BooleanField(default=False, verbose_name="Completeness Indicator")
     order_reference = models.CharField(max_length=200, blank=True, null=True, verbose_name="Order Reference")
     # ERP integration
@@ -536,6 +642,75 @@ class BankStatementItem(models.Model):
         return f"{self.customer.name} - {self.amount} ({self.invoice and self.invoice.invoice_number or 'no invoice'})"
 
 
+class CashRegister(models.Model):
+    """Cash register master data per company."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='cash_registers', verbose_name="Company")
+    name = models.CharField(max_length=120, verbose_name="Cash Register Name")
+    code = models.CharField(max_length=40, blank=True, null=True, verbose_name="Code")
+    location = models.CharField(max_length=160, blank=True, null=True, verbose_name="Location")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
+    is_active = models.BooleanField(default=True, verbose_name="Active")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Created By")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Cash Register"
+        verbose_name_plural = "Cash Registers"
+        ordering = ['name']
+        constraints = [
+            models.UniqueConstraint(fields=['company', 'name'], name='unique_cash_register_name_per_company'),
+        ]
+
+    def __str__(self):
+        return f"{self.company.name} - {self.name}"
+
+
+class CashRegisterTransaction(models.Model):
+    """Cash in/out transaction linked to invoices."""
+    TYPE_IN = 'IN'
+    TYPE_OUT = 'OUT'
+    TYPE_CHOICES = [
+        (TYPE_IN, 'Befizetés'),
+        (TYPE_OUT, 'Kifizetés'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='cash_transactions', verbose_name="Company")
+    cash_register = models.ForeignKey(CashRegister, on_delete=models.CASCADE, related_name='transactions', verbose_name="Cash Register")
+    transaction_type = models.CharField(max_length=8, choices=TYPE_CHOICES, verbose_name="Transaction Type")
+    amount = models.DecimalField(max_digits=14, decimal_places=2, verbose_name="Amount")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Currency")
+    invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_transactions', verbose_name="Outgoing Invoice")
+    incoming_invoice = models.ForeignKey('IncomingInvoiceDigest', on_delete=models.SET_NULL, null=True, blank=True, related_name='cash_transactions', verbose_name="Incoming Invoice")
+    voucher_number = models.CharField(max_length=64, unique=True, blank=True, null=True, verbose_name="Voucher Number")
+    note = models.CharField(max_length=500, blank=True, null=True, verbose_name="Note")
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Created By")
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = "Cash Register Transaction"
+        verbose_name_plural = "Cash Register Transactions"
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['company', 'cash_register', 'created_at']),
+            models.Index(fields=['company', 'transaction_type', 'created_at']),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.voucher_number:
+            ts = timezone.now().strftime('%Y%m%d%H%M%S')
+            self.voucher_number = f"KP-{ts}-{str(self.id)[:8]}"
+        if not self.currency:
+            self.currency = (self.cash_register.currency if self.cash_register_id else 'HUF') or 'HUF'
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        label = 'IN' if self.transaction_type == self.TYPE_IN else 'OUT'
+        return f"{self.voucher_number or self.id} - {label} - {self.amount}"
+
+
 class ProformaInvoice(models.Model):
     """Pro forma invoice (Díjbekérő) model."""
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -572,6 +747,123 @@ class ProformaInvoice(models.Model):
     @property
     def total_gross_amount(self):
         return sum(item.gross_amount for item in self.items.all())
+
+
+class ScheduledInvoice(models.Model):
+    MODE_INTERVAL = 'interval'
+    MODE_WEEKDAY = 'weekday'
+    MODE_MONTHDAY = 'monthday'
+    MODE_CHOICES = [
+        (MODE_INTERVAL, 'Időalapú'),
+        (MODE_WEEKDAY, 'Heti naphoz kötött'),
+        (MODE_MONTHDAY, 'Havi naphoz kötött'),
+    ]
+
+    INTERVAL_DAY = 'day'
+    INTERVAL_WEEK = 'week'
+    INTERVAL_MONTH = 'month'
+    INTERVAL_YEAR = 'year'
+    INTERVAL_UNIT_CHOICES = [
+        (INTERVAL_DAY, 'Naponta'),
+        (INTERVAL_WEEK, 'Hetente'),
+        (INTERVAL_MONTH, 'Havonta'),
+        (INTERVAL_YEAR, 'Évente'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='scheduled_invoices')
+    customer = models.ForeignKey(Customer, on_delete=models.CASCADE, related_name='scheduled_invoices')
+    invoice_block = models.ForeignKey('InvoiceBlock', on_delete=models.SET_NULL, null=True, blank=True, related_name='scheduled_invoices')
+
+    schedule_mode = models.CharField(max_length=16, choices=MODE_CHOICES, default=MODE_INTERVAL)
+    interval_unit = models.CharField(max_length=12, choices=INTERVAL_UNIT_CHOICES, default=INTERVAL_MONTH)
+    interval_value = models.PositiveIntegerField(default=1)
+    weekday = models.PositiveSmallIntegerField(blank=True, null=True)  # 0=Hétfő ... 6=Vasárnap
+    month_day = models.PositiveSmallIntegerField(blank=True, null=True)
+    month_last_day = models.BooleanField(default=False)
+
+    next_issue_date = models.DateField()
+    last_issue_date = models.DateField(blank=True, null=True)
+
+    due_offset_days = models.IntegerField(default=0)
+    delivery_offset_days = models.IntegerField(default=0)
+
+    approval_required = models.BooleanField(default=False)
+    is_approved = models.BooleanField(default=False)
+    approved_at = models.DateTimeField(blank=True, null=True)
+    approved_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='approved_scheduled_invoices')
+
+    auto_send_email = models.BooleanField(default=False)
+    email_template_type = models.CharField(max_length=32, default=EmailTemplate.TEMPLATE_INVOICE_SEND)
+    extra_emails = models.JSONField(default=list, blank=True)
+
+    template_payload = models.JSONField(default=dict)
+    is_active = models.BooleanField(default=True)
+    last_error = models.TextField(blank=True, null=True)
+    last_generated_invoice = models.ForeignKey(Invoice, on_delete=models.SET_NULL, null=True, blank=True, related_name='scheduled_source_records')
+
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_scheduled_invoices')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Scheduled Invoice'
+        verbose_name_plural = 'Scheduled Invoices'
+        ordering = ['next_issue_date', 'created_at']
+        indexes = [
+            models.Index(fields=['company', 'is_active', 'next_issue_date']),
+            models.Index(fields=['company', 'customer']),
+        ]
+
+    def __str__(self):
+        return f"{self.customer.name} - {self.next_issue_date}"
+
+
+class ScheduledInvoiceRun(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    scheduled_invoice = models.ForeignKey(ScheduledInvoice, on_delete=models.CASCADE, related_name='runs')
+    invoice = models.ForeignKey(Invoice, on_delete=models.CASCADE, related_name='scheduled_runs')
+    issued_for_date = models.DateField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Scheduled Invoice Run'
+        verbose_name_plural = 'Scheduled Invoice Runs'
+        ordering = ['-created_at']
+        unique_together = (('scheduled_invoice', 'invoice'),)
+
+
+class CronJobConfiguration(models.Model):
+    STATUS_IDLE = 'idle'
+    STATUS_OK = 'ok'
+    STATUS_ERROR = 'error'
+    STATUS_CHOICES = [
+        (STATUS_IDLE, 'Még nem futott'),
+        (STATUS_OK, 'Sikeres'),
+        (STATUS_ERROR, 'Hibás'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    job_key = models.CharField(max_length=80, unique=True)
+    name = models.CharField(max_length=140)
+    description = models.TextField(blank=True, null=True)
+    command_name = models.CharField(max_length=140)
+    cron_expression = models.CharField(max_length=100, default='*/5 * * * *')
+    is_active = models.BooleanField(default=True)
+    last_run_at = models.DateTimeField(blank=True, null=True)
+    last_status = models.CharField(max_length=16, choices=STATUS_CHOICES, default=STATUS_IDLE)
+    last_message = models.TextField(blank=True, null=True)
+    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='updated_cron_jobs')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Cron Job Configuration'
+        verbose_name_plural = 'Cron Job Configurations'
+        ordering = ['name']
+
+    def __str__(self):
+        return f"{self.name} ({self.cron_expression})"
 
 
 class AdvanceAllocation(models.Model):
@@ -750,6 +1042,14 @@ class InvoiceBlock(models.Model):
         blank=True, 
         related_name='invoice_blocks',
         verbose_name="Default Bank Account"
+    )
+    default_vat_type = models.ForeignKey(
+        'VATType',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='invoice_blocks',
+        verbose_name="Default VAT Type"
     )
     
     footer_note = models.TextField(blank=True, null=True, verbose_name="Lábjegyzék")

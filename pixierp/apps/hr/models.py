@@ -2,6 +2,8 @@ from django.db import models
 from datetime import timedelta
 from django.contrib.auth import get_user_model
 from django.db.models import Max
+from django.utils import timezone
+from django.core.validators import MinValueValidator, MaxValueValidator
 from apps.core.models import BaseModel
 
 User = get_user_model()
@@ -198,6 +200,162 @@ class Employee(BaseModel):
             counter += 1
         
         return username
+
+
+class TaskConfiguration(models.Model):
+    """Dolgozói tevékenység emlékeztető feladat beállítás"""
+
+    SCHEDULE_TYPES = [
+        ('time', 'Idő alapú'),
+        ('count', 'Darab alapú'),
+        ('time_and_count', 'Idő és darab alapú'),
+    ]
+
+    FREQUENCY_TYPES = [
+        ('once', 'Egyszeri'),
+        ('daily', 'Napi'),
+        ('weekly', 'Heti'),
+        ('monthly', 'Havi'),
+        ('yearly', 'Éves'),
+        ('login', 'Belépés után'),
+    ]
+
+    TARGET_LEVELS = [
+        ('person', 'Személy szintű'),
+        ('department', 'Osztály szintű'),
+    ]
+
+    name = models.CharField(max_length=150, verbose_name='Feladat neve')
+    description = models.TextField(blank=True, null=True, verbose_name='Leírás')
+
+    schedule_type = models.CharField(
+        max_length=20,
+        choices=SCHEDULE_TYPES,
+        default='time',
+        verbose_name='Mikor? - Ütemezés típusa'
+    )
+    frequency_type = models.CharField(
+        max_length=20,
+        choices=FREQUENCY_TYPES,
+        default='login',
+        verbose_name='Mikor? - Gyakoriság'
+    )
+    interval_minutes = models.PositiveIntegerField(
+        null=True,
+        blank=True,
+        verbose_name='Intervallum (perc)'
+    )
+    required_count = models.PositiveIntegerField(default=1, verbose_name='Elvárt darabszám')
+    days_of_week = models.JSONField(default=list, blank=True, verbose_name='Napok (0=Hétfő ... 6=Vasárnap)')
+    due_day_of_month = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(31)],
+        verbose_name='Hónap napjáig'
+    )
+    due_month_of_year = models.PositiveSmallIntegerField(
+        null=True,
+        blank=True,
+        validators=[MinValueValidator(1), MaxValueValidator(12)],
+        verbose_name='Év hónapja'
+    )
+    flexibility_minutes = models.PositiveIntegerField(default=0, verbose_name='Rugalmasság (perc)')
+
+    target_level = models.CharField(
+        max_length=20,
+        choices=TARGET_LEVELS,
+        default='person',
+        verbose_name='Személy vagy Osztály szintű'
+    )
+    employees = models.ManyToManyField(Employee, blank=True, related_name='task_configurations', verbose_name='Kinek szól? - Alkalmazottak')
+    departments = models.ManyToManyField(Department, blank=True, related_name='task_configurations', verbose_name='Kinek szól? - Osztályok')
+
+    qr_code = models.CharField(max_length=255, blank=True, default='', verbose_name='QR kód')
+    qr_required = models.BooleanField(default=False, verbose_name='QR kód szükséges')
+    kiosk_required = models.BooleanField(default=False, verbose_name='KIOSK szükséges')
+
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    created_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='created_task_configurations')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'hr_task_configurations'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class TaskExecution(models.Model):
+    """Feladat végrehajtási állapot és időmérés"""
+
+    STATUS_CHOICES = [
+        ('in_progress', 'Folyamatban'),
+        ('paused', 'Szüneteltetve'),
+        ('completed', 'Befejezve'),
+    ]
+
+    task_configuration = models.ForeignKey(
+        TaskConfiguration,
+        on_delete=models.CASCADE,
+        related_name='executions',
+        verbose_name='Feladat konfiguráció'
+    )
+    employee = models.ForeignKey(
+        Employee,
+        on_delete=models.CASCADE,
+        related_name='task_executions',
+        verbose_name='Alkalmazott'
+    )
+    started_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='started_task_executions',
+        verbose_name='Elindította'
+    )
+    completed_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='completed_task_executions',
+        verbose_name='Befejezte'
+    )
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='in_progress', verbose_name='Státusz')
+    started_at = models.DateTimeField(verbose_name='Kezdés')
+    last_resumed_at = models.DateTimeField(null=True, blank=True, verbose_name='Utoljára folytatva')
+    paused_at = models.DateTimeField(null=True, blank=True, verbose_name='Szüneteltetve')
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name='Befejezve')
+    total_duration_seconds = models.PositiveIntegerField(default=0, verbose_name='Összes idő (másodperc)')
+    notes = models.TextField(blank=True, null=True, verbose_name='Munkavégzés leírása')
+    period_key = models.CharField(max_length=64, db_index=True, verbose_name='Ütemezési periódus kulcs')
+    qr_verified_code = models.CharField(max_length=255, blank=True, default='', verbose_name='Igazolt QR kód')
+    kiosk_verified = models.BooleanField(default=False, verbose_name='KIOSK igazolva')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = 'hr_task_executions'
+        ordering = ['-started_at']
+        indexes = [
+            models.Index(fields=['employee', 'status']),
+            models.Index(fields=['task_configuration', 'period_key']),
+            models.Index(fields=['completed_at']),
+        ]
+
+    def __str__(self):
+        return f"{self.task_configuration.name} - {self.employee.user.get_full_name()} ({self.get_status_display()})"
+
+    def get_total_duration_seconds(self, now=None):
+        total = int(self.total_duration_seconds or 0)
+        if self.status == 'in_progress' and self.last_resumed_at:
+            current_time = now or timezone.now()
+            delta = current_time - self.last_resumed_at
+            total += max(0, int(delta.total_seconds()))
+        return total
 
 
 class Attendance(BaseModel):

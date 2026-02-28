@@ -40,6 +40,17 @@
             width: 100%;
             border-collapse: collapse;
         }
+
+        /* Do not force the whole content row to next page.
+           Allow natural pagination between main layout rows/cells. */
+        .print-invoice .inv-main-table > tbody > tr {
+            page-break-inside: auto !important;
+            page-break-after: auto !important;
+        }
+
+        .print-invoice .inv-main-table > tbody > tr > td {
+            page-break-inside: auto !important;
+        }
         
         .print-invoice .inv-header-first-page {
             page-break-after: avoid !important;
@@ -123,6 +134,24 @@
 
         .print-invoice .inv-buyer-name {
             font-weight: 600;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            line-height: 1.2;
+            max-height: 2.4em;
+            overflow: hidden;
+        }
+
+        .print-invoice .inv-top-buyer-name {
+            display: block;
+            font-size: 7pt;
+            line-height: 1.2;
+            white-space: normal;
+            overflow-wrap: anywhere;
+            word-break: break-word;
+            max-height: 2.4em;
+            overflow: hidden;
+            text-align: right;
         }
 
         .print-invoice .inv-items {
@@ -276,7 +305,7 @@
                                         Kelt: {{ invoice.issue_date|date:"Y-m-d" }}
                                     </td>
                                     <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: right;">
-                                        <strong style="font-size: 7pt;">{% if invoice.customer %}{{ invoice.customer.name }}{% else %}—{% endif %}</strong><br/>
+                                        <strong class="inv-top-buyer-name">{% if invoice.customer %}{{ invoice.customer.name }}{% else %}—{% endif %}</strong><br/>
                                         Fizetendő: <strong>{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }} {{ invoice.currency }}</strong>
                                     </td>
                                 </tr>
@@ -304,6 +333,12 @@
                                         {% endif %}
                                         {% if invoice.company.eu_tax_number %}
                                             <div>EU adószám: {{ invoice.company.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.company.vat_group_id %}
+                                            <div>Csoport adószám: {{ invoice.company.vat_group_id|tax_number_full }}</div>
+                                        {% endif %}
+                                        {% if invoice.company.vat_group_member_tax_number %}
+                                            <div>Csoport tag adószám: {{ invoice.company.vat_group_member_tax_number|tax_number_full }}</div>
                                         {% endif %}
                                         {% if invoice.company.postal_code or invoice.company.city %}
                                             <div>{{ invoice.company.postal_code }} {{ invoice.company.city }}</div>
@@ -361,7 +396,7 @@
                                         <div class="inv-block-title">
                                             Vevő{% if bilingual %} <span class="secondary-label">/ Buyer</span>{% endif %}
                                         </div>
-                                        <div class="inv-buyer-name" style="font-size: 7pt; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ invoice.customer.name|default:"—" }}</div>
+                                        <div class="inv-buyer-name" style="font-size: 7pt;">{{ invoice.customer.name|default:"—" }}</div>
                                         {% if invoice.customer.full_tax_number %}
                                             <div>Adószám: {{ invoice.customer.full_tax_number }}</div>
                                         {% elif invoice.customer.tax_number %}
@@ -369,6 +404,12 @@
                                         {% endif %}
                                         {% if invoice.customer.eu_tax_number %}
                                             <div>EU adószám: {{ invoice.customer.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if invoice.customer.group_tax_number or invoice.customer.vat_group_id %}
+                                            <div>Csoport adószám: {{ invoice.customer.group_tax_number|default:invoice.customer.vat_group_id|tax_number_full }}</div>
+                                        {% endif %}
+                                        {% if invoice.customer.vat_group_member_tax_number %}
+                                            <div>Csoport tag adószám: {{ invoice.customer.vat_group_member_tax_number|tax_number_full }}</div>
                                         {% endif %}
                                         {% if invoice.customer.postal_code or invoice.customer.city %}
                                             <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}</div>
@@ -542,7 +583,7 @@
                             {% if invoice.notes %}
                             <div class="inv-notes">
                                 <div class="inv-block-title">Megjegyzés</div>
-                                <div>{{ invoice.notes }}</div>
+                                <div>{{ invoice.notes|safe }}</div>
                             </div>
                             {% endif %}
     

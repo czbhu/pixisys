@@ -94,6 +94,57 @@ force_kill_backend_processes() {
     fi
 }
 
+ensure_required_system_deps() {
+    local -a required_pkgs=(
+        python3
+        python3-pip
+        python3-venv
+        python3-dev
+        git
+        redis-server
+        nginx
+        curl
+        build-essential
+        libpq-dev
+        postgresql
+        postgresql-contrib
+        postgresql-client-16
+        libpango-1.0-0
+        libpangoft2-1.0-0
+        libcairo2
+        libgdk-pixbuf-2.0-0
+        shared-mime-info
+        fonts-dejavu-core
+        certbot
+        python3-certbot-nginx
+    )
+    local -a missing_pkgs=()
+
+    for pkg in "${required_pkgs[@]}"; do
+        if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            missing_pkgs+=("$pkg")
+        fi
+    done
+
+    if [ ${#missing_pkgs[@]} -eq 0 ]; then
+        echo -e "${GREEN}✓ Minden kötelező rendszercsomag telepítve van${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠️  Hiányzó rendszercsomagok: ${missing_pkgs[*]}${NC}"
+    echo -e "${BLUE}  • Hiányzó csomagok telepítése...${NC}"
+
+    if [ "$EUID" -eq 0 ]; then
+        apt-get update
+        DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_pkgs[@]}"
+    else
+        sudo apt-get update
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y "${missing_pkgs[@]}"
+    fi
+
+    echo -e "${GREEN}✓ Hiányzó rendszercsomagok telepítve${NC}"
+}
+
 # Logo
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════╗"
@@ -149,6 +200,9 @@ if [ ! -f "pixierp/manage.py" ] || [ ! -f "pixinvoice/invoice_app/manage.py" ]; 
 fi
 
 echo -e "${GREEN}✓ Környezet OK${NC}"
+
+echo -e "${BLUE}  • Rendszerfüggőségek ellenőrzése...${NC}"
+ensure_required_system_deps
 
 # Git status check
 echo -e "${BLUE}[2/10] Git állapot ellenőrzése...${NC}"

@@ -5,6 +5,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
@@ -23,6 +25,8 @@ from django.utils.translation import gettext as _
 from django.utils.encoding import force_bytes
 from django.core.management import call_command
 from django.db import transaction
+from django.db.models import Q
+from django.db.models import Avg, Count, F
 from django.http import HttpResponse
 from .serializers import (
     UserSerializer,
@@ -40,12 +44,22 @@ from .serializers import (
     PermissionSerializer,
     UserRoleSerializer,
     ActivityLogSerializer,
+    TicketTopicSerializer,
+    TicketTypeSerializer,
+    TicketSerializer,
+    TicketMessageSerializer,
+    PublicSiteConfigSerializer,
+    ClientPortalUserSerializer,
+    SiteFeatureSerializer,
+    SalesSiteSerializer,
 )
 from rest_framework import viewsets
 from .models import (
     Company, BankAccount, EmailServerConfig, HestiaConfig, EmailTemplate, 
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
-    BackupFile, UserPreference, Role, Permission, UserRole, ActivityLog
+    BackupFile, UserPreference, Role, Permission, UserRole, ActivityLog,
+    TicketTopic, TicketType, Ticket, TicketMessage, TicketAttachment, TicketStatusLog,
+    PublicSiteConfig, ClientPortalUser, ClientPortalSession, SiteFeature, SalesSite
 )
 from apps.hr.models import Employee
 import traceback
@@ -1859,6 +1873,556 @@ from .models import Notification
 from .serializers import NotificationSerializer
 
 
+class TicketTopicViewSet(viewsets.ModelViewSet):
+    queryset = TicketTopic.objects.all().order_by('sort_order', 'name')
+    serializer_class = TicketTopicSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+
+class TicketTypeViewSet(viewsets.ModelViewSet):
+    queryset = TicketType.objects.all().order_by('sort_order', 'name')
+    serializer_class = TicketTypeSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+
+class SiteFeatureViewSet(viewsets.ModelViewSet):
+    queryset = SiteFeature.objects.all().order_by('sort_order', 'name')
+    serializer_class = SiteFeatureSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+
+class SalesSiteViewSet(viewsets.ModelViewSet):
+    queryset = SalesSite.objects.all().prefetch_related('product_classes', 'calculators', 'features').order_by('name')
+    serializer_class = SalesSiteSerializer
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+
+class ClientPortalUserViewSet(viewsets.ModelViewSet):
+    queryset = ClientPortalUser.objects.select_related('company', 'contact').all().order_by('email')
+    serializer_class = ClientPortalUserSerializer
+    permission_classes = [IsAuthenticated]
+
+
+class TicketViewSet(viewsets.ModelViewSet):
+    queryset = Ticket.objects.all().select_related('topic', 'created_by').prefetch_related('departments', 'assigned_users', 'messages__attachments')
+    serializer_class = TicketSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def _resolve_frontend_base_url(self, request):
+        origin = (request.META.get('HTTP_ORIGIN') or '').rstrip('/')
+        referer = (request.META.get('HTTP_REFERER') or '').rstrip('/')
+
+        if origin:
+            return origin
+
+        if referer:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(referer)
+                if parsed.scheme and parsed.netloc:
+                    return f"{parsed.scheme}://{parsed.netloc}"
+            except Exception:
+                pass
+
+        frontend_base = (getattr(settings, 'FRONTEND_BASE_URL', '') or '').rstrip('/')
+        if frontend_base:
+            return frontend_base
+
+        return request.build_absolute_uri('/').rstrip('/')
+
+    def _send_public_ticket_email(self, request, ticket):
+        requester_email = (ticket.requester_email or '').strip()
+        if not requester_email:
+            return
+        if ticket.audience not in ('external', 'both'):
+            return
+        if not ticket.public_reply_enabled:
+            return
+
+        public_url = f"{self._resolve_frontend_base_url(request)}/public/ticket/{ticket.public_token}"
+
+        email_config = EmailServerConfig.objects.filter(is_active=True).first()
+        try:
+            if email_config:
+                connection = get_connection(
+                    backend='django.core.mail.backends.smtp.EmailBackend',
+                    host=email_config.smtp_host,
+                    port=email_config.smtp_port,
+                    username=email_config.smtp_username,
+                    password=email_config.smtp_password,
+                    use_tls=email_config.smtp_use_tls,
+                    use_ssl=email_config.smtp_use_ssl,
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = f"{email_config.from_name} <{email_config.from_email}>" if email_config.from_name else email_config.from_email
+            else:
+                logger.info('EmailServerConfig not found, using settings.py EMAIL_* variables for ticket email')
+                connection = get_connection(
+                    backend=getattr(settings, 'EMAIL_BACKEND', 'django.core.mail.backends.smtp.EmailBackend'),
+                    host=getattr(settings, 'EMAIL_HOST', ''),
+                    port=getattr(settings, 'EMAIL_PORT', 25),
+                    username=getattr(settings, 'EMAIL_HOST_USER', ''),
+                    password=getattr(settings, 'EMAIL_HOST_PASSWORD', ''),
+                    use_tls=getattr(settings, 'EMAIL_USE_TLS', False),
+                    use_ssl=getattr(settings, 'EMAIL_USE_SSL', False),
+                    fail_silently=False,
+                    timeout=10,
+                )
+                from_email = getattr(settings, 'DEFAULT_FROM_EMAIL', '')
+
+            requester_name = (ticket.requester_name or '').strip() or 'Ügyfelünk'
+            subject = f"[{ticket.ticket_number}] Jegy rögzítve: {ticket.title}"
+            text_body = (
+                f"Kedves {requester_name}!\n\n"
+                f"A jegyedet rögzítettük.\n"
+                f"Jegyszám: {ticket.ticket_number}\n"
+                f"Tárgy: {ticket.title}\n\n"
+                f"A jegyet itt tudod megtekinteni és követni:\n{public_url}\n\n"
+                f"Ez egy automatikusan generált üzenet a PixiERP rendszerből."
+            )
+            html_body = (
+                f"<p>Kedves {requester_name}!</p>"
+                f"<p>A jegyedet rögzítettük.</p>"
+                f"<p><strong>Jegyszám:</strong> {ticket.ticket_number}<br/>"
+                f"<strong>Tárgy:</strong> {ticket.title}</p>"
+                f"<p>A jegyet itt tudod megtekinteni és követni:<br/>"
+                f"<a href=\"{public_url}\">{public_url}</a></p>"
+                f"<p><small>Ez egy automatikusan generált üzenet a PixiERP rendszerből.</small></p>"
+            )
+
+            message = EmailMultiAlternatives(
+                subject=subject,
+                body=text_body,
+                from_email=from_email,
+                to=[requester_email],
+                connection=connection,
+            )
+            message.attach_alternative(html_body, 'text/html')
+            message.send()
+            logger.info(f'Ticket public link email sent to {requester_email} for {ticket.ticket_number}')
+        except Exception as exc:
+            logger.error(
+                f'Ticket public link email failed for {ticket.ticket_number} to {requester_email}: {exc}',
+                exc_info=True,
+            )
+
+    def _can_manage_status(self, user, ticket):
+        if not user or not user.is_authenticated:
+            return False
+        if user.is_superuser or user.is_staff:
+            return True
+        if ticket.created_by_id == user.id:
+            return True
+        return ticket.assigned_users.filter(id=user.id).exists()
+
+    def _can_reply(self, user, ticket):
+        return self._can_manage_status(user, ticket)
+
+    def _default_sla_hours(self, priority):
+        mapping = {
+            'low': (48, 120),
+            'normal': (24, 72),
+            'high': (8, 24),
+            'urgent': (2, 8),
+        }
+        return mapping.get(priority or 'normal', (24, 72))
+
+    def _notify_users(self, users, title, body, link='/tickets'):
+        unique_users = []
+        seen = set()
+        for user in users:
+            if not user or not getattr(user, 'id', None):
+                continue
+            if user.id in seen:
+                continue
+            seen.add(user.id)
+            unique_users.append(user)
+
+        for user in unique_users:
+            Notification.objects.create(
+                user=user,
+                title=title,
+                message=body,
+                link=link,
+                type='info',
+            )
+
+    def _apply_ticket_visibility(self, queryset):
+        user = self.request.user
+        if user.is_superuser or user.is_staff:
+            return queryset
+
+        visibility_query = Q(created_by=user) | Q(assigned_users=user)
+
+        try:
+            employee = user.employee_profile
+            department_ids = list(employee.departments.values_list('id', flat=True))
+            if department_ids:
+                visibility_query |= Q(departments__id__in=department_ids)
+        except Employee.DoesNotExist:
+            pass
+
+        return queryset.filter(visibility_query)
+
+    def _apply_ticket_filters(self, queryset, params, mine_only=False):
+        if mine_only:
+            queryset = queryset.filter(created_by=self.request.user)
+
+        status_filter = params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+
+        type_filter = params.get('ticket_type')
+        if type_filter:
+            queryset = queryset.filter(ticket_type=type_filter)
+
+        audience_filter = params.get('audience')
+        if audience_filter:
+            queryset = queryset.filter(audience=audience_filter)
+
+        topic_filter = params.get('topic')
+        if topic_filter:
+            queryset = queryset.filter(topic_id=topic_filter)
+
+        department_filter = params.get('department')
+        if department_filter:
+            queryset = queryset.filter(departments__id=department_filter)
+
+        assigned_to_me = params.get('assigned_to_me')
+        if assigned_to_me in ('1', 'true', 'True'):
+            queryset = queryset.filter(assigned_users=self.request.user)
+
+        query = (params.get('q') or '').strip()
+        if query:
+            queryset = queryset.filter(
+                Q(ticket_number__icontains=query)
+                | Q(title__icontains=query)
+                | Q(requester_name__icontains=query)
+                | Q(messages__body_html__icontains=query)
+            )
+
+        return queryset.distinct().order_by('-created_at')
+
+    def get_queryset(self):
+        queryset = self._apply_ticket_visibility(super().get_queryset())
+        params = self.request.query_params
+        mine_only = params.get('mine_only') in ('1', 'true', 'True')
+        return self._apply_ticket_filters(queryset, params, mine_only=mine_only)
+
+    def perform_create(self, serializer):
+        now = timezone.now()
+        first_response_hours, resolution_hours = self._default_sla_hours(self.request.data.get('priority') or 'normal')
+        ticket = serializer.save(
+            created_by=self.request.user,
+            first_response_due_at=now + timedelta(hours=first_response_hours),
+            resolution_due_at=now + timedelta(hours=resolution_hours),
+        )
+        initial_message_html = self.request.data.get('initial_message_html', '')
+        initial_message_html = (initial_message_html or '').strip()
+
+        if initial_message_html:
+            message = TicketMessage.objects.create(
+                ticket=ticket,
+                author=self.request.user,
+                body_html=initial_message_html,
+            )
+            for uploaded_file in self.request.FILES.getlist('files'):
+                TicketAttachment.objects.create(
+                    message=message,
+                    file=uploaded_file,
+                    uploaded_by=self.request.user,
+                )
+
+        assignees = list(ticket.assigned_users.all())
+        if assignees:
+            self._notify_users(
+                assignees,
+                f'Új jegy érkezett: {ticket.ticket_number}',
+                ticket.title,
+            )
+
+        self._send_public_ticket_email(self.request, ticket)
+
+    def perform_update(self, serializer):
+        ticket = self.get_object()
+        previous_status = ticket.status
+        next_status = self.request.data.get('status', previous_status)
+
+        if next_status != previous_status and not self._can_manage_status(self.request.user, ticket):
+            raise PermissionDenied('Nincs jogosultságod a jegy státuszát módosítani.')
+
+        updated_ticket = serializer.save()
+
+        if previous_status != updated_ticket.status:
+            TicketStatusLog.objects.create(
+                ticket=updated_ticket,
+                from_status=previous_status,
+                to_status=updated_ticket.status,
+                changed_by=self.request.user,
+            )
+
+            recipients = list(updated_ticket.assigned_users.all())
+            if updated_ticket.created_by:
+                recipients.append(updated_ticket.created_by)
+            self._notify_users(
+                recipients,
+                f'Jegy státusz változott: {updated_ticket.ticket_number}',
+                f'{previous_status} → {updated_ticket.status}',
+            )
+
+    @action(detail=True, methods=['post'], parser_classes=[MultiPartParser, FormParser, JSONParser])
+    def reply(self, request, pk=None):
+        ticket = self.get_object()
+        if not self._can_reply(request.user, ticket):
+            return Response({'error': 'Nincs jogosultságod válaszolni erre a jegyre.'}, status=status.HTTP_403_FORBIDDEN)
+        body_html = (request.data.get('body_html') or '').strip()
+        if not body_html:
+            return Response({'error': 'Az üzenet szövege kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        message_obj = TicketMessage.objects.create(
+            ticket=ticket,
+            author=request.user,
+            body_html=body_html,
+        )
+        for uploaded_file in request.FILES.getlist('files'):
+            TicketAttachment.objects.create(
+                message=message_obj,
+                file=uploaded_file,
+                uploaded_by=request.user,
+            )
+
+        if not ticket.first_responded_at and ticket.created_by_id and ticket.created_by_id != request.user.id:
+            ticket.first_responded_at = timezone.now()
+
+        old_status = ticket.status
+        if ticket.status == 'closed':
+            ticket.status = 'in_progress'
+        elif ticket.status in ('open', 'in_progress') and ticket.created_by_id != request.user.id:
+            ticket.status = 'answered'
+
+        update_fields = []
+        if ticket.status != old_status:
+            update_fields.extend(['status'])
+        if ticket.first_responded_at and not ticket.resolved_at and ticket.status in ('answered', 'closed'):
+            ticket.resolved_at = timezone.now()
+            update_fields.append('resolved_at')
+        if ticket.first_responded_at:
+            update_fields.append('first_responded_at')
+
+        if update_fields:
+            ticket.save(update_fields=list(set(update_fields)))
+
+        if old_status != ticket.status:
+            TicketStatusLog.objects.create(
+                ticket=ticket,
+                from_status=old_status,
+                to_status=ticket.status,
+                changed_by=request.user,
+                note='Automatikus státuszváltás válasz alapján',
+            )
+
+        recipients = list(ticket.assigned_users.all())
+        if ticket.created_by:
+            recipients.append(ticket.created_by)
+        self._notify_users(
+            recipients,
+            f'Új válasz érkezett: {ticket.ticket_number}',
+            ticket.title,
+        )
+
+        return Response(TicketMessageSerializer(message_obj, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def stats(self, request):
+        qs = self.get_queryset()
+        now = timezone.now()
+
+        total = qs.count()
+        open_count = qs.filter(status='open').count()
+        in_progress_count = qs.filter(status='in_progress').count()
+        answered_count = qs.filter(status='answered').count()
+        closed_count = qs.filter(status='closed').count()
+        overdue_count = qs.filter(
+            Q(first_responded_at__isnull=True, first_response_due_at__lt=now)
+            | Q(resolved_at__isnull=True, resolution_due_at__lt=now)
+        ).count()
+
+        first_response_avg = qs.exclude(first_responded_at__isnull=True).exclude(created_at__isnull=True).annotate(
+            diff=F('first_responded_at') - F('created_at')
+        ).aggregate(avg=Avg('diff'))['avg']
+
+        resolution_avg = qs.exclude(resolved_at__isnull=True).exclude(created_at__isnull=True).annotate(
+            diff=F('resolved_at') - F('created_at')
+        ).aggregate(avg=Avg('diff'))['avg']
+
+        def duration_to_hours(value):
+            if not value:
+                return None
+            return round(value.total_seconds() / 3600, 2)
+
+        by_type = list(qs.values('ticket_type').annotate(count=Count('id')).order_by('-count'))
+
+        return Response({
+            'total': total,
+            'open': open_count,
+            'in_progress': in_progress_count,
+            'answered': answered_count,
+            'closed': closed_count,
+            'overdue': overdue_count,
+            'avg_first_response_hours': duration_to_hours(first_response_avg),
+            'avg_resolution_hours': duration_to_hours(resolution_avg),
+            'by_type': by_type,
+        })
+
+    @action(detail=False, methods=['get'])
+    def my(self, request):
+        queryset = self._apply_ticket_filters(super().get_queryset(), request.query_params, mine_only=True)
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def set_status(self, request, pk=None):
+        ticket = self.get_object()
+        if not self._can_manage_status(request.user, ticket):
+            return Response({'error': 'Nincs jogosultságod státusz módosítására.'}, status=status.HTTP_403_FORBIDDEN)
+
+        new_status = (request.data.get('status') or '').strip()
+        valid_statuses = {choice[0] for choice in Ticket.STATUS_CHOICES}
+        if new_status not in valid_statuses:
+            return Response({'error': 'Érvénytelen státusz.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        old_status = ticket.status
+        if old_status == new_status:
+            return Response(TicketSerializer(ticket, context={'request': request}).data)
+
+        ticket.status = new_status
+        ticket.save()
+
+        TicketStatusLog.objects.create(
+            ticket=ticket,
+            from_status=old_status,
+            to_status=new_status,
+            changed_by=request.user,
+            note=request.data.get('note', ''),
+        )
+
+        recipients = list(ticket.assigned_users.all())
+        if ticket.created_by:
+            recipients.append(ticket.created_by)
+        self._notify_users(
+            recipients,
+            f'Jegy státusz frissítve: {ticket.ticket_number}',
+            f'{old_status} → {new_status}',
+        )
+
+        return Response(TicketSerializer(ticket, context={'request': request}).data)
+
+
+class PublicTicketView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            ticket = Ticket.objects.select_related('topic').prefetch_related('messages__attachments').get(public_token=token)
+        except Ticket.DoesNotExist:
+            return Response({'error': 'Jegy nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+        serializer = TicketSerializer(ticket, context={'request': request})
+        return Response(serializer.data)
+
+
+class PublicTicketReplyView(APIView):
+    permission_classes = [AllowAny]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request, token):
+        try:
+            ticket = Ticket.objects.get(public_token=token)
+        except Ticket.DoesNotExist:
+            return Response({'error': 'Jegy nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+        if not ticket.public_reply_enabled:
+            return Response({'error': 'Erre a jegyre publikus válasz nem engedélyezett.'}, status=status.HTTP_403_FORBIDDEN)
+
+        body_html = (request.data.get('body_html') or '').strip()
+        if not body_html:
+            return Response({'error': 'Az üzenet szövege kötelező.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        author_name = (request.data.get('author_name') or '').strip()
+        author_email = (request.data.get('author_email') or '').strip()
+
+        message_obj = TicketMessage.objects.create(
+            ticket=ticket,
+            author=None,
+            author_name=author_name,
+            author_email=author_email,
+            body_html=body_html,
+        )
+
+        for uploaded_file in request.FILES.getlist('files'):
+            TicketAttachment.objects.create(
+                message=message_obj,
+                file=uploaded_file,
+                uploaded_by=None,
+            )
+
+        if not ticket.first_responded_at:
+            ticket.first_responded_at = timezone.now()
+
+        old_status = ticket.status
+        if ticket.status == 'closed':
+            ticket.status = 'in_progress'
+        elif ticket.status in ('open', 'in_progress'):
+            ticket.status = 'answered'
+
+        ticket.save()
+
+        if old_status != ticket.status:
+            TicketStatusLog.objects.create(
+                ticket=ticket,
+                from_status=old_status,
+                to_status=ticket.status,
+                changed_by=None,
+                note='Publikus válasz alapján',
+            )
+
+        recipients = list(ticket.assigned_users.all())
+        if ticket.created_by:
+            recipients.append(ticket.created_by)
+
+        seen_user_ids = set()
+        deduped_recipients = []
+        for user in recipients:
+            if not user:
+                continue
+            if user.id in seen_user_ids:
+                continue
+            seen_user_ids.add(user.id)
+            deduped_recipients.append(user)
+
+        for user in deduped_recipients:
+            Notification.objects.create(
+                user=user,
+                title=f'Külsős válasz érkezett: {ticket.ticket_number}',
+                message=ticket.title,
+                link='/tickets',
+                type='info',
+            )
+
+        return Response(TicketMessageSerializer(message_obj, context={'request': request}).data)
+
+
 class NotificationViewSet(viewsets.ModelViewSet):
     """Értesítések kezelése"""
     queryset = Notification.objects.all()
@@ -2092,3 +2656,254 @@ class UserViewSet(viewsets.ReadOnlyModelViewSet):
     
     def get_queryset(self):
         return User.objects.filter(is_active=True).order_by('username')
+
+
+class PublicSiteConfigView(APIView):
+    permission_classes = [AllowAny]
+
+    def _get_or_create(self):
+        cfg = PublicSiteConfig.objects.filter(is_active=True).first()
+        if cfg:
+            return cfg
+        return PublicSiteConfig.objects.create(is_active=True)
+
+    def get(self, request):
+        cfg = self._get_or_create()
+        return Response(PublicSiteConfigSerializer(cfg).data)
+
+    def put(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return Response({'error': 'Hitelesítés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        cfg = self._get_or_create()
+        serializer = PublicSiteConfigSerializer(cfg, data=request.data, partial=False)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+    def patch(self, request):
+        if not request.user or not request.user.is_authenticated:
+            return Response({'error': 'Hitelesítés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        cfg = self._get_or_create()
+        serializer = PublicSiteConfigSerializer(cfg, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data)
+
+
+class PublicSiteResolveView(APIView):
+    permission_classes = [AllowAny]
+
+    def _normalize_domain(self, value):
+        domain = (value or '').strip().lower()
+        if not domain:
+            return ''
+        if '://' in domain:
+            try:
+                from urllib.parse import urlparse
+                parsed = urlparse(domain)
+                domain = parsed.netloc or parsed.path
+            except Exception:
+                pass
+        if ':' in domain:
+            domain = domain.split(':')[0]
+        return domain
+
+    def _resolve_site(self, host_or_key):
+        normalized_key = self._normalize_domain(host_or_key)
+        raw_key = (host_or_key or '').strip().lower()
+        active_sites = SalesSite.objects.filter(is_active=True).prefetch_related('product_classes', 'calculators', 'features')
+        for site in active_sites:
+            site_slug = (site.slug or '').strip().lower()
+            if raw_key and site_slug == raw_key:
+                return site
+
+            domains = site.domains if isinstance(site.domains, list) else []
+            normalized_domains = [self._normalize_domain(item) for item in domains if item]
+            if normalized_key and normalized_key in normalized_domains:
+                return site
+        return active_sites.first()
+
+    def get(self, request):
+        query_key = request.query_params.get('key')
+        host = request.query_params.get('host') or request.META.get('HTTP_HOST') or request.get_host()
+        site = self._resolve_site(query_key or host)
+        if site:
+            return Response({
+                'mode': 'sales_site',
+                'site': SalesSiteSerializer(site).data,
+            })
+
+        cfg = PublicSiteConfig.objects.filter(is_active=True).first()
+        if cfg:
+            return Response({
+                'mode': 'legacy_config',
+                'site': PublicSiteConfigSerializer(cfg).data,
+            })
+
+        return Response({'mode': 'empty', 'site': None})
+
+
+class ClientPortalSessionMixin:
+    def _extract_token(self, request):
+        auth = (request.META.get('HTTP_AUTHORIZATION') or '').strip()
+        if auth.lower().startswith('bearer '):
+            return auth[7:].strip()
+        return (request.META.get('HTTP_X_PORTAL_TOKEN') or '').strip()
+
+    def get_portal_session(self, request):
+        token = self._extract_token(request)
+        if not token:
+            return None
+        try:
+            session = ClientPortalSession.objects.select_related('user', 'user__company', 'user__contact').get(token=token)
+        except ClientPortalSession.DoesNotExist:
+            return None
+        if not session.is_active or not session.user.is_active:
+            return None
+        return session
+
+
+class ClientPortalLoginView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        email = (request.data.get('email') or '').strip().lower()
+        password = request.data.get('password') or ''
+        if not email or not password:
+            return Response({'error': 'E-mail és jelszó kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = ClientPortalUser.objects.filter(email__iexact=email, is_active=True).first()
+        if not user or not user.check_password(password):
+            return Response({'error': 'Hibás e-mail vagy jelszó'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        expires_at = timezone.now() + timedelta(days=7)
+        session = ClientPortalSession.objects.create(user=user, expires_at=expires_at)
+        user.last_login = timezone.now()
+        user.save(update_fields=['last_login'])
+
+        return Response({
+            'token': str(session.token),
+            'expires_at': session.expires_at,
+            'user': ClientPortalUserSerializer(user).data,
+        })
+
+
+class ClientPortalMeView(APIView, ClientPortalSessionMixin):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        session = self.get_portal_session(request)
+        if not session:
+            return Response({'error': 'Érvénytelen vagy lejárt portál session'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        cfg = PublicSiteConfig.objects.filter(is_active=True).first()
+        return Response({
+            'user': ClientPortalUserSerializer(session.user).data,
+            'site': PublicSiteConfigSerializer(cfg).data if cfg else None,
+        })
+
+
+class ClientPortalLogoutView(APIView, ClientPortalSessionMixin):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        session = self.get_portal_session(request)
+        if session and not session.revoked_at:
+            session.revoked_at = timezone.now()
+            session.save(update_fields=['revoked_at'])
+        return Response({'message': 'Kijelentkezve'})
+
+
+class ClientPortalDashboardView(APIView, ClientPortalSessionMixin):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.sales.models import QuoteRequest, CustomerOrder, DeliveryNote
+
+        session = self.get_portal_session(request)
+        if not session:
+            return Response({'error': 'Érvénytelen vagy lejárt portál session'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        portal_user = session.user
+        quote_q = Q()
+        if portal_user.company_id:
+            quote_q |= Q(company_id=portal_user.company_id)
+        if portal_user.contact_id:
+            quote_q |= Q(contacts__id=portal_user.contact_id)
+        if portal_user.email:
+            quote_q |= Q(contacts__email__iexact=portal_user.email)
+
+        quotes_qs = QuoteRequest.objects.filter(quote_q).distinct().order_by('-created_at') if quote_q else QuoteRequest.objects.none()
+        orders_qs = CustomerOrder.objects.filter(quote_request__in=quotes_qs).select_related('quote_request').distinct().order_by('-created_at')
+
+        delivery_q = Q()
+        if portal_user.company_id:
+            delivery_q |= Q(customer_id=portal_user.company_id)
+        if portal_user.contact_id:
+            delivery_q |= Q(contact_id=portal_user.contact_id)
+        if portal_user.email:
+            delivery_q |= Q(contact__email__iexact=portal_user.email)
+        delivery_qs = DeliveryNote.objects.filter(delivery_q).distinct().order_by('-created_at') if delivery_q else DeliveryNote.objects.none()
+
+        invoices = []
+        for order in orders_qs.exclude(invoice_number__isnull=True).exclude(invoice_number='')[:50]:
+            invoices.append({
+                'order_number': order.order_number,
+                'invoice_number': order.invoice_number,
+                'status': order.status,
+                'order_date': order.order_date,
+            })
+
+        tickets_qs = Ticket.objects.filter(requester_email__iexact=portal_user.email).order_by('-created_at')
+
+        return Response({
+            'quotes': list(quotes_qs.values('id', 'number', 'request_number', 'title', 'status', 'issue_date')[:50]),
+            'orders': list(orders_qs.values('id', 'order_number', 'status', 'order_date', 'delivery_note_number', 'invoice_number')[:50]),
+            'delivery_notes': list(delivery_qs.values('id', 'delivery_note_number', 'issue_date', 'delivery_date', 'is_confirmed', 'public_token')[:50]),
+            'invoices': invoices,
+            'tickets': list(tickets_qs.values('id', 'ticket_number', 'title', 'status', 'priority', 'created_at')[:50]),
+        })
+
+
+class ClientPortalTicketCreateView(APIView, ClientPortalSessionMixin):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        session = self.get_portal_session(request)
+        if not session:
+            return Response({'error': 'Érvénytelen vagy lejárt portál session'}, status=status.HTTP_401_UNAUTHORIZED)
+
+        title = (request.data.get('title') or '').strip()
+        body_html = (request.data.get('body_html') or '').strip()
+        ticket_type = (request.data.get('ticket_type') or 'other').strip() or 'other'
+        priority = (request.data.get('priority') or 'normal').strip() or 'normal'
+
+        if not title or not body_html:
+            return Response({'error': 'Cím és üzenet kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        portal_user = session.user
+        now = timezone.now()
+        first_response_due_at = now + timedelta(hours=24)
+        resolution_due_at = now + timedelta(hours=72)
+
+        ticket = Ticket.objects.create(
+            title=title,
+            ticket_type=ticket_type,
+            priority=priority,
+            audience='external',
+            requester_name=portal_user.full_name,
+            requester_email=portal_user.email,
+            public_reply_enabled=True,
+            first_response_due_at=first_response_due_at,
+            resolution_due_at=resolution_due_at,
+        )
+
+        TicketMessage.objects.create(
+            ticket=ticket,
+            author=None,
+            author_name=portal_user.full_name,
+            author_email=portal_user.email,
+            body_html=body_html,
+        )
+
+        return Response(TicketSerializer(ticket, context={'request': request}).data, status=status.HTTP_201_CREATED)

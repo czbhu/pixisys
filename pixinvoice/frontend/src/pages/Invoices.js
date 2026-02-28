@@ -1,15 +1,10 @@
 import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
-  Search, 
   Plus, 
-  Edit, 
   Trash2, 
-  Send, 
   Eye,
-  Filter,
-  Download,
   Copy,
   FileDiff,
   Mail,
@@ -20,7 +15,7 @@ import {
 import styled from 'styled-components';
 import { Tooltip } from 'antd';
 import { toast } from 'react-toastify';
-import { invoiceAPI, invoiceBlockAPI, emailSettingsAPI } from '../services/api';
+import { invoiceAPI, invoiceBlockAPI, emailSettingsAPI, emailTemplateAPI } from '../services/api';
 import EmailModal from '../components/EmailModal';
 import Modal from '../components/Modal';
 
@@ -39,6 +34,11 @@ const InvoicesHeader = styled.div`
   align-items: center;
   flex-wrap: wrap;
   gap: 16px;
+
+  @media (max-width: 768px) {
+    padding: 12px;
+    gap: 10px;
+  }
 `;
 
 const Title = styled.h1`
@@ -46,6 +46,11 @@ const Title = styled.h1`
   font-weight: 600;
   margin: 0;
   color: #2c3e50;
+
+  @media (max-width: 768px) {
+    font-size: 20px;
+    width: 100%;
+  }
 `;
 
 const SearchContainer = styled.div`
@@ -53,6 +58,15 @@ const SearchContainer = styled.div`
   gap: 12px;
   flex-wrap: wrap;
   align-items: center;
+
+  @media (max-width: 768px) {
+    width: 100%;
+    gap: 8px;
+
+    > * {
+      width: 100%;
+    }
+  }
 `;
 
 const SearchInput = styled.input`
@@ -60,7 +74,12 @@ const SearchInput = styled.input`
   border: 1px solid #ddd;
   border-radius: 4px;
   font-size: 14px;
-  min-width: 200px;
+  min-width: 360px;
+
+  @media (max-width: 768px) {
+    min-width: 0;
+    width: 100%;
+  }
 `;
 
 const FilterSelect = styled.select`
@@ -69,6 +88,10 @@ const FilterSelect = styled.select`
   border-radius: 4px;
   font-size: 14px;
   background: white;
+
+  @media (max-width: 768px) {
+    width: 100%;
+  }
 `;
 
 const DateInput = styled.input`
@@ -89,14 +112,11 @@ const FilterButton = styled.button`
   cursor: pointer;
   font-size: 13px;
   &:hover { background: #e9ecef; }
-`;
 
-const FilterGroup = styled.div`
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  border-left: 1px solid #ddd;
-  padding-left: 12px;
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
 
 const ActionButton = styled(Link)`
@@ -115,15 +135,28 @@ const ActionButton = styled(Link)`
   &:hover {
     background-color: #2980b9;
   }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
 `;
 
 const TableContainer = styled.div`
   overflow-x: auto;
+
+  @media (max-width: 768px) {
+    overflow-x: hidden;
+  }
 `;
 
 const Table = styled.table`
   width: 100%;
   border-collapse: collapse;
+
+  @media (max-width: 768px) {
+    table-layout: fixed;
+  }
 `;
 
 const TableHeader = styled.thead`
@@ -136,6 +169,42 @@ const TableHeaderCell = styled.th`
   font-weight: 600;
   color: #2c3e50;
   border-bottom: 1px solid #ecf0f1;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: break-word;
+
+    &:nth-child(1) {
+      width: 28px;
+      padding-left: 6px;
+      padding-right: 4px;
+    }
+
+    &:nth-child(8) {
+      width: 96px;
+      text-align: right;
+    }
+
+    &:nth-child(2) {
+      width: 32%;
+    }
+
+    &:nth-child(3) {
+      width: calc(68% - 124px);
+    }
+
+    &:nth-child(4),
+    &:nth-child(5),
+    &:nth-child(6),
+    &:nth-child(7),
+    &:nth-child(9),
+    &:nth-child(10) {
+      display: none;
+    }
+  }
 `;
 
 const TableBody = styled.tbody``;
@@ -154,6 +223,62 @@ const TableCell = styled.td`
   padding: 16px;
   border-bottom: 1px solid #ecf0f1;
   color: #2c3e50;
+
+  @media (max-width: 768px) {
+    padding: 10px 8px;
+    font-size: 12px;
+    white-space: normal;
+    word-break: normal;
+    overflow-wrap: break-word;
+
+    &:nth-child(1) {
+      width: 28px;
+      padding-left: 6px;
+      padding-right: 4px;
+    }
+
+    &:nth-child(8) {
+      width: 96px;
+      text-align: right;
+      white-space: nowrap;
+    }
+
+    &:nth-child(2) {
+      width: 32%;
+    }
+
+    &:nth-child(3) {
+      width: calc(68% - 124px);
+    }
+
+    &:nth-child(4),
+    &:nth-child(5),
+    &:nth-child(6),
+    &:nth-child(7),
+    &:nth-child(9),
+    &:nth-child(10) {
+      display: none;
+    }
+  }
+`;
+
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px 6px;
+    border-bottom: 1px solid #ecf0f1;
+    background: #fff;
+  }
 `;
 
 const StatusBadge = styled.span`
@@ -180,6 +305,19 @@ const StatusBadge = styled.span`
 const ActionButtons = styled.div`
   display: flex;
   gap: 8px;
+
+  @media (max-width: 768px) {
+    gap: 6px;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+
+    &::-webkit-scrollbar {
+      display: none;
+    }
+
+    scrollbar-width: none;
+  }
 `;
 
 const IconButton = styled.button`
@@ -213,6 +351,11 @@ const IconButton = styled.button`
 
   &:hover {
     opacity: 0.8;
+  }
+
+  @media (max-width: 768px) {
+    width: 28px;
+    height: 28px;
   }
 `;
 
@@ -264,6 +407,61 @@ const EmptyState = styled.div`
   color: #7f8c8d;
 `;
 
+const SelectionSummaryBar = styled.div`
+  margin: 12px 16px 0;
+  padding: 10px 12px;
+  border: 1px solid #d6eaf8;
+  background: #f4f9fe;
+  border-radius: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+  align-items: center;
+`;
+
+const SelectionSummaryItem = styled.div`
+  font-size: 14px;
+  color: #2c3e50;
+`;
+const parseDateOnly = (value) => {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+const applyTemplateVars = (template, vars = {}) => {
+  let out = String(template || '');
+  Object.entries(vars || {}).forEach(([key, value]) => {
+    const rendered = value == null ? '' : String(value);
+    const escapedKey = String(key).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    out = out.replace(new RegExp(`\\{\\{\\s*${escapedKey}\\s*\\}\\}`, 'g'), rendered);
+    out = out.replace(new RegExp(`\\{${escapedKey}\\}`, 'g'), rendered);
+  });
+  return out;
+};
+
+const calcSettlementState = (invoice) => {
+  const totalGross = Number(invoice?.total_gross_amount || 0);
+  const paidAmount = Number(invoice?.amount_paid || 0);
+  const currency = String(invoice?.currency || 'HUF').toUpperCase();
+  const paymentMethod = String(invoice?.payment_method || '').toLowerCase();
+  const roundedPayable = (currency === 'HUF' && (paymentMethod === 'cash' || paymentMethod === 'cod'))
+    ? (Math.round(Math.round(totalGross) / 5) * 5)
+    : totalGross;
+  const tolerance = currency === 'HUF' ? 5 : 0.01;
+  const remainingAmount = Math.max(roundedPayable - paidAmount, 0);
+  const isSettled = roundedPayable > 0 && remainingAmount < tolerance;
+  return {
+    isSettled,
+    remainingAmount,
+    roundedPayable,
+    currency,
+    paymentMethod,
+  };
+};
+
 const Invoices = () => {
   const getNavErrorMessage = (response) => {
     if (!response) return null;
@@ -302,6 +500,16 @@ const Invoices = () => {
   const [stornoInvoice, setStornoInvoice] = useState(null);
   const [stornoProcessing, setStornoProcessing] = useState(false);
   const [dateModalOpen, setDateModalOpen] = useState(false);
+  const [navLogModalOpen, setNavLogModalOpen] = useState(false);
+  const [navLogInvoice, setNavLogInvoice] = useState(null);
+  const [mobileActionsInvoiceId, setMobileActionsInvoiceId] = useState(null);
+  const navigate = useNavigate();
+  const headerSelectRef = React.useRef(null);
+
+  const openNavLogModal = (invoice) => {
+    setNavLogInvoice(invoice || null);
+    setNavLogModalOpen(true);
+  };
 
   // Helper for quick dates
   const applyQuickDate = (field, type) => {
@@ -372,7 +580,7 @@ const Invoices = () => {
     }],
     () => invoiceAPI.getInvoices({
       search: searchTerm || undefined,
-      status: statusFilter || undefined,
+      status: (statusFilter && !['due', 'overdue'].includes(statusFilter)) ? statusFilter : undefined,
       invoice_block: blockFilter || undefined,
       issue_date_from: issueDateFrom || undefined,
       issue_date_to: issueDateTo || undefined,
@@ -387,18 +595,75 @@ const Invoices = () => {
     }
   );
 
-  const deleteInvoiceMutation = useMutation(
-    (id) => invoiceAPI.deleteInvoice(id),
-    {
-      onSuccess: () => {
-        queryClient.invalidateQueries('invoices');
-        toast.success('Számla törölve');
-      },
-      onError: () => {
-        toast.error('Hiba történt a számla törlése során');
-      },
-    }
+  const filteredInvoices = React.useMemo(() => {
+    const list = invoices?.results || [];
+    if (!['due', 'overdue'].includes(statusFilter)) return list;
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    return list.filter((inv) => {
+      const settlement = calcSettlementState(inv);
+      if (settlement.isSettled) return false;
+      const dueDate = parseDateOnly(inv?.due_date);
+      if (!dueDate) return false;
+      if (statusFilter === 'overdue') return dueDate < today;
+      return dueDate >= today;
+    });
+  }, [invoices, statusFilter]);
+
+  const visibleInvoices = filteredInvoices || [];
+  const selectedVisibleCount = visibleInvoices.filter(inv => selectedIds.has(inv.id)).length;
+  const allVisibleSelected = visibleInvoices.length > 0 && selectedVisibleCount === visibleInvoices.length;
+  const selectedVisibleInvoices = React.useMemo(
+    () => visibleInvoices.filter((inv) => selectedIds.has(inv.id)),
+    [visibleInvoices, selectedIds]
   );
+  const selectedTotalsByCurrency = React.useMemo(() => {
+    return selectedVisibleInvoices.reduce((acc, inv) => {
+      const currency = (inv?.currency || 'HUF').toUpperCase();
+      if (!acc[currency]) {
+        acc[currency] = { net: 0, vat: 0, gross: 0 };
+      }
+      acc[currency].net += Number(inv?.total_net_amount || 0);
+      acc[currency].vat += Number(inv?.total_vat_amount || 0);
+      acc[currency].gross += Number(inv?.total_gross_amount || 0);
+      return acc;
+    }, {});
+  }, [selectedVisibleInvoices]);
+
+  React.useEffect(() => {
+    if (!headerSelectRef.current) return;
+    headerSelectRef.current.indeterminate = selectedVisibleCount > 0 && !allVisibleSelected;
+  }, [selectedVisibleCount, allVisibleSelected]);
+
+  const isMobileViewport = () => {
+    try {
+      return window.matchMedia('(max-width: 768px)').matches;
+    } catch {
+      return false;
+    }
+  };
+
+  const toggleMobileActionsForInvoice = React.useCallback((invoiceId) => {
+    setMobileActionsInvoiceId((prev) => (prev === invoiceId ? null : invoiceId));
+  }, []);
+
+  const handleRowTouchTap = React.useCallback((event, invoiceId) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) {
+      return;
+    }
+    event.preventDefault();
+    toggleMobileActionsForInvoice(invoiceId);
+  }, [toggleMobileActionsForInvoice]);
+
+  const handleRowContextMenu = React.useCallback((event, invoiceId) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForInvoice(invoiceId);
+  }, [toggleMobileActionsForInvoice]);
 
   const submitToNAVMutation = useMutation(
     (id) => invoiceAPI.submitToNAV(id),
@@ -418,12 +683,6 @@ const Invoices = () => {
       },
     }
   );
-
-  const handleDelete = (id) => {
-    if (window.confirm('Biztosan törölni szeretné ezt a számlát?')) {
-      deleteInvoiceMutation.mutate(id);
-    }
-  };
 
   const handleSubmitToNAV = (id) => {
     if (window.confirm('Biztosan elküldi ezt a számlát a NAV-nak?')) {
@@ -516,7 +775,25 @@ const Invoices = () => {
   const companyWebsite = company.website || '';
   const companyAddr = [company.postal_code, company.city, [company.street_name, company.street_number].filter(Boolean).join(' ')].filter(Boolean).join(', ');
   const companyTax = company.full_tax_number || company.tax_number || '';
+  const todayIso = new Date().toISOString().slice(0, 10);
+  const totalStr = `${(invoice.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${invoice.currency || ''}`;
   const row = `${invoice.invoice_number}\t${invoice.issue_date}\t${(invoice.total_net_amount||0).toLocaleString('hu-HU', {minimumFractionDigits: 0, maximumFractionDigits: 0})} (HUF)\t${(invoice.total_vat_amount||0).toLocaleString('hu-HU', {minimumFractionDigits: 0, maximumFractionDigits: 0})} (HUF)`;
+  const templateVars = {
+    customer_name: customer.name || 'Ügyfelünk',
+    company_name: company.name || '',
+    invoice_number: invoice.invoice_number || '',
+    due_date: invoice.due_date || '',
+    total: totalStr,
+    invoice_items_table: row,
+    as_of_date: todayIso,
+    today_date: todayIso,
+    today_city_date: `${company.city ? `${company.city}, ` : ''}${todayIso}`,
+    total_outstanding: totalStr,
+    invoice_count: '1',
+    currency: invoice.currency || 'HUF',
+    invoices_table: `${invoice.issue_date || ''} - ${invoice.invoice_number || ''}`,
+    signature_html: '',
+  };
   let body = [
     `Tisztelt ${customer.name || 'Ügyfelünk'}!`,
     '',
@@ -541,20 +818,27 @@ const Invoices = () => {
   ].join('<br>');
     let defaultFrom = invoice?.company?.email || '';
     let defaultReplyTo = defaultFrom;
-    let defaultUseThunderbird = false;
-    let defaultThunderbirdPath = '';
     try {
       const companyId = invoice?.company?.id || localStorage.getItem('selectedCompanyId');
       if (companyId) {
-        const res = await emailSettingsAPI.getSettings({ company_id: companyId });
+        const [res, templateRes] = await Promise.all([
+          emailSettingsAPI.getSettings({ company_id: companyId }),
+          emailTemplateAPI.list({ company_id: companyId, template_type: 'invoice_send' }).catch(() => ({ data: [] })),
+        ]);
         const s = (res.data?.results && res.data.results[0]) || (Array.isArray(res.data) ? res.data[0] : res.data);
+        const templateRowsRaw = Array.isArray(templateRes?.data) ? templateRes.data : (templateRes?.data?.results || []);
+        const templateRows = templateRowsRaw.filter((t) => String(t?.template_type || '') === 'invoice_send');
+        const huTemplate = templateRows.find((t) => String(t?.language || 'hu') === 'hu' && t?.is_active !== false)
+          || templateRows.find((t) => String(t?.language || 'hu') === 'hu')
+          || null;
+        const enTemplate = templateRows.find((t) => String(t?.language || '') === 'en' && t?.is_active !== false)
+          || templateRows.find((t) => String(t?.language || '') === 'en')
+          || null;
         if (s) {
           if (s.smtp_from) {
              defaultFrom = s.smtp_from;
              defaultReplyTo = s.smtp_from;
           }
-          defaultUseThunderbird = !!s.use_thunderbird;
-          defaultThunderbirdPath = s.thunderbird_path || '';
           const bilingual = (invoice.currency || '').toUpperCase() !== 'HUF';
 
           // Generate items table string
@@ -570,22 +854,27 @@ const Invoices = () => {
              if (lines.length > 0) itemsTable += '\n' + lines.join('\n');
           }
 
-          const fill = (tpl) => (tpl || '')
-            .replace(/{invoice_number}/g, invoice.invoice_number || '')
-            .replace(/{customer_name}/g, invoice.customer?.name || '')
-            .replace(/{company_name}/g, invoice.company?.name || '')
-            .replace(/{due_date}/g, invoice.due_date || '')
-            .replace(/{total}/g, `${(invoice.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${invoice.currency || ''}`)
-            .replace(/{invoice_items_table}/g, itemsTable);
+          const fill = (tpl) => applyTemplateVars(tpl, {
+            ...templateVars,
+            invoice_items_table: itemsTable,
+          });
 
-          if (s.default_subject_template) subject = fill(s.default_subject_template);
-          if (s.default_body_template) body = fill(s.default_body_template);
+          if (huTemplate?.subject_template) subject = fill(huTemplate.subject_template);
+          else if (s.default_subject_template) subject = fill(s.default_subject_template);
+
+          if (huTemplate?.body_template) body = fill(huTemplate.body_template);
+          else if (s.default_body_template) body = fill(s.default_body_template);
+
           if (bilingual) {
-            const enSubj = fill(s.subject_template_en) || `Invoice ${invoice.invoice_number}`;
-            const enBody = fill(s.body_template_en) || `Dear ${invoice.customer?.name || 'Customer'},\n\nPlease find attached invoice ${invoice.invoice_number}.\n\nBest regards,\n${invoice.company?.name || ''}`;
+            const enSubj = fill(enTemplate?.subject_template || s.subject_template_en) || `Invoice ${invoice.invoice_number}`;
+            const enBody = fill(enTemplate?.body_template || s.body_template_en) || `Dear ${invoice.customer?.name || 'Customer'},\n\nPlease find attached invoice ${invoice.invoice_number}.\n\nBest regards,\n${invoice.company?.name || ''}`;
             subject = `${enSubj} / ${subject}`;
             body = `${enBody}\n\n---\n\n${body}`;
           }
+        } else {
+          const fill = (tpl) => applyTemplateVars(tpl, templateVars);
+          if (huTemplate?.subject_template) subject = fill(huTemplate.subject_template);
+          if (huTemplate?.body_template) body = fill(huTemplate.body_template);
         }
       }
     } catch (e) {}
@@ -618,10 +907,40 @@ const Invoices = () => {
     let body = '';
     let defaultUseThunderbird = false;
     let defaultThunderbirdPath = '';
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const invoicesTable = list.map(inv => `${inv.issue_date || ''} - ${inv.invoice_number || ''}`).join('\n');
+    const totalOutstandingValue = list.reduce((sum, inv) => sum + Number(inv.total_gross_amount || 0), 0);
+    const bulkVarsBase = {
+      customer_name: list[0]?.customer?.name || '',
+      company_name: list[0]?.company?.name || '',
+      invoice_number: list[0]?.invoice_number || '',
+      due_date: list[0]?.due_date || '',
+      total: `${(list[0]?.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${list[0]?.currency || ''}`,
+      as_of_date: todayIso,
+      today_date: todayIso,
+      today_city_date: `${list[0]?.company?.city ? `${list[0].company.city}, ` : ''}${todayIso}`,
+      total_outstanding: `${totalOutstandingValue.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${list[0]?.currency || ''}`,
+      invoice_count: String(list.length),
+      currency: list[0]?.currency || 'HUF',
+      invoices_table: invoicesTable,
+      invoice_items_table: invoicesTable,
+      signature_html: '',
+    };
     try {
       if (companyId) {
-        const res = await emailSettingsAPI.getSettings({ company_id: companyId });
+        const [res, templateRes] = await Promise.all([
+          emailSettingsAPI.getSettings({ company_id: companyId }),
+          emailTemplateAPI.list({ company_id: companyId, template_type: 'invoice_send' }).catch(() => ({ data: [] })),
+        ]);
         const s = (res.data?.results && res.data.results[0]) || (Array.isArray(res.data) ? res.data[0] : res.data);
+        const templateRowsRaw = Array.isArray(templateRes?.data) ? templateRes.data : (templateRes?.data?.results || []);
+        const templateRows = templateRowsRaw.filter((t) => String(t?.template_type || '') === 'invoice_send');
+        const huTemplate = templateRows.find((t) => String(t?.language || 'hu') === 'hu' && t?.is_active !== false)
+          || templateRows.find((t) => String(t?.language || 'hu') === 'hu')
+          || null;
+        const enTemplate = templateRows.find((t) => String(t?.language || '') === 'en' && t?.is_active !== false)
+          || templateRows.find((t) => String(t?.language || '') === 'en')
+          || null;
         if (s) {
           if (s.smtp_from) {
              defaultFrom = s.smtp_from;
@@ -629,21 +948,29 @@ const Invoices = () => {
           }
           defaultUseThunderbird = !!s.use_thunderbird;
           defaultThunderbirdPath = s.thunderbird_path || '';
-          const fill = (tpl, inv) => (tpl || '')
-            .replace('{invoice_number}', (inv?.invoice_number) || '')
-            .replace('{customer_name}', (inv?.customer?.name) || list[0]?.customer?.name || '')
-            .replace('{company_name}', list[0]?.company?.name || '');
-          if (s.default_subject_template) subject = fill(s.default_subject_template, list[0]);
+          const fill = (tpl, inv) => applyTemplateVars(tpl, {
+            ...bulkVarsBase,
+            invoice_number: inv?.invoice_number || bulkVarsBase.invoice_number,
+            customer_name: inv?.customer?.name || bulkVarsBase.customer_name,
+            due_date: inv?.due_date || bulkVarsBase.due_date,
+            total: `${(inv?.total_gross_amount || 0).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} ${inv?.currency || bulkVarsBase.currency}`,
+            currency: inv?.currency || bulkVarsBase.currency,
+          });
+          if (huTemplate?.subject_template) subject = fill(huTemplate.subject_template, list[0]);
+          else if (s.default_subject_template) subject = fill(s.default_subject_template, list[0]);
           // Csak akkor használjuk a sablont, ha EGYETLEN számlát küldünk.
           // Több számla esetén a generált listát használjuk.
-          if (s.default_body_template && list.length === 1) body = fill(s.default_body_template, list[0]);
+          if (list.length === 1) {
+            if (huTemplate?.body_template) body = fill(huTemplate.body_template, list[0]);
+            else if (s.default_body_template) body = fill(s.default_body_template, list[0]);
+          }
           const anyFx = list.some(inv => (inv.currency || '').toUpperCase() !== 'HUF');
           if (anyFx) {
-            const enSubj = fill(s.subject_template_en, list[0]) || `Invoice ${list[0]?.invoice_number || ''}`;
+            const enSubj = fill(enTemplate?.subject_template || s.subject_template_en, list[0]) || `Invoice ${list[0]?.invoice_number || ''}`;
             // Angol törzs: csak akkor használjuk a sablont, ha 1 db számla van.
             let enBody = '';
             if (list.length === 1) {
-                enBody = fill(s.body_template_en, list[0]) || `Dear ${list[0]?.customer?.name || 'Customer'},\n\nPlease find attached invoice(s).\n\nBest regards,\n${list[0]?.company?.name || ''}`;
+                enBody = fill(enTemplate?.body_template || s.body_template_en, list[0]) || `Dear ${list[0]?.customer?.name || 'Customer'},\n\nPlease find attached invoice(s).\n\nBest regards,\n${list[0]?.company?.name || ''}`;
             }
             
             subject = subject ? `${subject} / ${enSubj}` : enSubj;
@@ -751,6 +1078,57 @@ const Invoices = () => {
     }
   };
 
+  const exportSelectedInvoicesCsv = () => {
+    const list = (invoices?.results || []).filter(inv => selectedIds.has(inv.id));
+    if (!list.length) {
+      toast.info('Nincs kijelölt tétel');
+      return;
+    }
+    const headers = [
+      'szamlaszam',
+      'ugyfel',
+      'kelt',
+      'teljesites',
+      'esedekesseg',
+      'fizetesi_mod',
+      'statusz',
+      'deviza',
+      'netto',
+      'afa',
+      'brutto',
+      'tipus',
+    ];
+    const escapeCell = (value) => {
+      const str = value == null ? '' : String(value);
+      return `"${str.replace(/"/g, '""')}"`;
+    };
+    const rows = list.map((invoice) => [
+      invoice.invoice_number || '',
+      invoice.customer?.name || '',
+      invoice.issue_date || '',
+      invoice.delivery_date || '',
+      invoice.due_date || '',
+      invoice.payment_method || '',
+      invoice.status || '',
+      invoice.currency || 'HUF',
+      invoice.total_net_amount ?? '',
+      invoice.total_vat_amount ?? '',
+      invoice.total_gross_amount ?? '',
+      'Számlák',
+    ]);
+    const csv = [headers, ...rows].map(cols => cols.map(escapeCell).join(';')).join('\n');
+    const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `kijelolt_szamlak_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    toast.success(`CSV export elkészült (${list.length} tétel)`);
+  };
+
   const formatCurrency = (amount, currency = 'HUF') => {
     return new Intl.NumberFormat('hu-HU', {
       style: 'currency',
@@ -758,6 +1136,27 @@ const Invoices = () => {
       minimumFractionDigits: currency === 'HUF' ? 0 : 2,
       maximumFractionDigits: currency === 'HUF' ? 0 : 2,
     }).format(amount);
+  };
+
+  const formatNumberPlain = (value, { min = 0, max = 2 } = {}) => {
+    const num = Number(value);
+    if (!Number.isFinite(num)) return '0';
+    return new Intl.NumberFormat('hu-HU', {
+      minimumFractionDigits: min,
+      maximumFractionDigits: max,
+    }).format(num);
+  };
+
+  const getItemsTooltipText = (invoice) => {
+    const items = Array.isArray(invoice?.items) ? invoice.items : [];
+    if (!items.length) return '';
+    return items.map((item) => {
+      const name = String(item?.description || item?.name || '-').trim() || '-';
+      const quantity = formatNumberPlain(item?.quantity, { min: 0, max: 4 });
+      const unitNet = formatNumberPlain(item?.unit_price, { min: 0, max: 2 });
+      const rowNet = formatNumberPlain(item?.net_amount, { min: 0, max: 2 });
+      return `${name}|${quantity}|${unitNet}|${rowNet}`;
+    }).join('\n');
   };
 
   const formatDate = (dateString) => {
@@ -806,6 +1205,8 @@ const Invoices = () => {
             onChange={(e) => setStatusFilter(e.target.value)}
           >
             <option value="">Összes státusz</option>
+            <option value="due">Esedékes</option>
+            <option value="overdue">Lejárt</option>
             <option value="draft">Draft</option>
             <option value="sent">Elküldve</option>
             <option value="paid">Fizetve</option>
@@ -838,8 +1239,37 @@ const Invoices = () => {
             <Plus size={16} />
             Új számla
           </ActionButton>
+          {statusFilter === 'overdue' && (
+            <button
+              onClick={() => navigate('/arrears')}
+              style={{
+                padding: '8px 14px',
+                border: 'none',
+                borderRadius: 4,
+                background: '#e67e22',
+                color: '#fff',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Kintlévőség kezelése
+            </button>
+          )}
         </SearchContainer>
       </InvoicesHeader>
+
+      {selectedVisibleInvoices.length > 0 && (
+        <SelectionSummaryBar>
+          <SelectionSummaryItem>
+            <strong>{selectedVisibleInvoices.length}</strong> kijelölt számla összesen:
+          </SelectionSummaryItem>
+          {Object.entries(selectedTotalsByCurrency).map(([currency, totals]) => (
+            <SelectionSummaryItem key={currency}>
+              <strong>{currency}</strong> — Nettó: {formatCurrency(totals.net, currency)}, ÁFA: {formatCurrency(totals.vat, currency)}, Bruttó: {formatCurrency(totals.gross, currency)}
+            </SelectionSummaryItem>
+          ))}
+        </SelectionSummaryBar>
+      )}
 
       <TableContainer>
         <Table>
@@ -847,16 +1277,19 @@ const Invoices = () => {
             <tr>
               <TableHeaderCell>
                 <input
+                  ref={headerSelectRef}
                   type="checkbox"
-                  onChange={(e)=>{
-                    const checked = e.target.checked;
-                    const set = new Set(selectedIds);
-                    const rows = invoices?.results || [];
-                    if (checked) rows.forEach(inv=>set.add(inv.id));
-                    else rows.forEach(inv=>set.delete(inv.id));
+                  onChange={()=>{
+                    if (selectedIds.size > 0) {
+                      setSelectedIds(new Set());
+                      return;
+                    }
+                    const set = new Set();
+                    const rows = visibleInvoices;
+                    rows.forEach(inv=>set.add(inv.id));
                     setSelectedIds(set);
                   }}
-                  checked={(invoices?.results || []).length>0 && (invoices?.results || []).every(inv=>selectedIds.has(inv.id))}
+                  checked={allVisibleSelected}
                 />
               </TableHeaderCell>
               <TableHeaderCell>Számlaszám</TableHeaderCell>
@@ -872,7 +1305,7 @@ const Invoices = () => {
           </TableHeader>
           <TableBody>
             {(() => {
-              const list = invoices?.results || [];
+              const list = filteredInvoices;
               const isStorno = (inv) => (inv?.notes || '').toLowerCase().includes('sztornó');
               // Gyűjtsük az eredeti -> sztornó számlák mappingot, és az eredetik készletét
               const stornoByOriginal = new Map();
@@ -899,104 +1332,20 @@ const Invoices = () => {
 
               return list.map((invoice) => {
                 const isSt = isStorno(invoice) || stornoOriginals.has(invoice.invoice_number);
-                const isPaid = (invoice.status === 'paid') || (invoice.payment_method && !['transfer','cod'].includes(invoice.payment_method));
+                const settlement = calcSettlementState(invoice);
+                const isSettled = settlement.isSettled;
+                const remainingAmount = settlement.remainingAmount;
+                const paidAmount = Number(invoice.amount_paid || 0);
+                const isPaid = isSettled || (invoice.status === 'paid') || (invoice.payment_method && !['transfer','cod'].includes(invoice.payment_method));
                 const isCancelled = invoice.status === 'cancelled';
                 const isUnpaid = !isPaid && !isCancelled; // minden nem-fizetett (draft, sent, részben fizetett, stb.)
-                return (
-              <TableRow key={invoice.id} $storno={isSt} $cancelled={isCancelled} $paid={isPaid} $unpaid={isUnpaid}>
-                <TableCell>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(invoice.id)}
-                    onChange={(e)=>{
-                      const set = new Set(selectedIds);
-                      if (e.target.checked) set.add(invoice.id); else set.delete(invoice.id);
-                      setSelectedIds(set);
-                    }}
-                  />
-                </TableCell>
-                <TableCell>
-                  <div>{invoice.invoice_number}</div>
-                  {invoice.invoice_category === 'ADVANCE' && (
-                    <div style={{ fontSize: 12, color: '#8e44ad' }}>
-                      előleg
-                    </div>
-                  )}
-                  {invoice.invoice_category === 'FINAL' && Array.isArray(invoice.advances_used) && invoice.advances_used.length > 0 && (
-                    <div style={{ fontSize: 12, color: '#2c3e50' }}>
-                      Felhasznált előlegek: {invoice.advances_used.map(a => a.invoice_number).join(', ')}
-                    </div>
-                  )}
-                  {isStorno(invoice) && (
-                    <div style={{ fontSize: 12, color: '#e74c3c' }}>
-                      Eredeti: {invoice.original_invoice_number || invoice.order_reference || '—'}
-                    </div>
-                  )}
-                  {(!isStorno(invoice) && stornoByOriginal.has(invoice.invoice_number)) && (
-                    <div style={{ fontSize: 12, color: '#e74c3c' }}>
-                      Sztornózott: {stornoByOriginal.get(invoice.invoice_number).join(', ')}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <span title={invoice.customer.name}>
-                    {(() => { const n = invoice.customer.name || ''; return n.length > 30 ? (n.slice(0,30) + '…') : n; })()}
-                  </span>
-                </TableCell>
-                <TableCell>{formatDate(invoice.issue_date)}</TableCell>
-                <TableCell>{invoice.delivery_date ? formatDate(invoice.delivery_date) : '—'}</TableCell>
-                <TableCell>{formatDate(invoice.due_date)}</TableCell>
-                <TableCell>{payLabel(invoice.payment_method)}</TableCell>
-                <TableCell>
-                  {(() => {
-                    const amount = parseFloat(invoice.total_gross_amount || 0);
-                    const curr = invoice.currency || 'HUF';
-                    const rate = parseFloat(invoice.exchange_rate || 1);
-                    return (
-                      <>
-                        <div style={{ fontWeight: 500 }}>{formatCurrency(amount, curr)}</div>
-                        {curr !== 'HUF' && (
-                          <div style={{ fontSize: 12, color: '#7f8c8d', marginTop: 2 }}>
-                            {formatCurrency(amount * rate, 'HUF')}
-                          </div>
-                        )}
-                      </>
-                    );
-                  })()}
-                </TableCell>
-                <TableCell>
-                  {invoice.status === 'nav_rejected' && invoice.nav_response ? (
-                    <Tooltip title={getNavErrorMessage(invoice.nav_response)}>
-                      <StatusBadge status={invoice.status}>
-                        {getStatusLabel(invoice.status)}
-                      </StatusBadge>
-                    </Tooltip>
-                  ) : (
-                    <StatusBadge status={invoice.status}>
-                      {getStatusLabel(invoice.status)}
-                    </StatusBadge>
-                  )}
-                  {navStatusLoading[invoice.id] && (
-                    <span style={{ marginLeft: 8, fontSize: 12, color: '#7f8c8d' }}>
-                      (lekérdezés...)
-                    </span>
-                  )}
-                  {navStatusMap[invoice.id] && (
-                    <div style={{ marginTop: 4 }}>
-                      <span style={{ fontSize: 12, color: '#2c3e50' }}>
-                        NAV: {navStatusMap[invoice.id].processing_status}
-                      </span>
-                      {navStatusMap[invoice.id].error && (
-                        <div style={{ fontSize: 12, color: '#e74c3c' }}>
-                          Hiba: {navStatusMap[invoice.id].error}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </TableCell>
-                <TableCell>
+                const dueDate = parseDateOnly(invoice.due_date);
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const isOverdue = !isSettled && !!dueDate && dueDate < today;
+                const overdueDays = isOverdue ? Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                const actionButtons = (
                   <ActionButtons>
-                    {/* Előnézet (nyomtatási kép) gomb eltávolítva kérésre */}
                     <IconButton
                       variant="view"
                       title="Megnyitás (olvasás)"
@@ -1073,10 +1422,139 @@ const Invoices = () => {
                     >
                       <Mail size={16} />
                     </IconButton>
-                    {/* Törlés letiltva: csak sztornó */}
                   </ActionButtons>
+                );
+                return (
+              <React.Fragment key={invoice.id}>
+              <TableRow
+                $storno={isSt}
+                $cancelled={isCancelled}
+                $paid={isPaid}
+                $unpaid={isUnpaid}
+                title={getItemsTooltipText(invoice) || undefined}
+                onContextMenu={(event) => handleRowContextMenu(event, invoice.id)}
+                onTouchEnd={(event) => handleRowTouchTap(event, invoice.id)}
+              >
+                <TableCell>
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(invoice.id)}
+                    onChange={(e)=>{
+                      const set = new Set(selectedIds);
+                      if (e.target.checked) set.add(invoice.id); else set.delete(invoice.id);
+                      setSelectedIds(set);
+                    }}
+                  />
+                </TableCell>
+                <TableCell>
+                  <div>{invoice.invoice_number}</div>
+                  {isSettled && (
+                    <div style={{ fontSize: 12, color: '#1e824c', marginTop: 2 }}>
+                      Rendezve: {invoice.payment_date ? formatDate(invoice.payment_date) : '—'}
+                    </div>
+                  )}
+                  {!isSettled && paidAmount > 0 && (
+                    <div style={{ fontSize: 12, color: '#b42318', marginTop: 2 }}>
+                      Hátralék: {formatCurrency(remainingAmount, invoice.currency || 'HUF')}
+                    </div>
+                  )}
+                  {isOverdue && (
+                    <div style={{ fontSize: 12, color: '#b42318', marginTop: 2 }}>
+                      Lejárt: {overdueDays} nappal
+                    </div>
+                  )}
+                  {invoice.invoice_category === 'ADVANCE' && (
+                    <div style={{ fontSize: 12, color: '#8e44ad' }}>
+                      előleg
+                    </div>
+                  )}
+                  {invoice.invoice_category === 'FINAL' && Array.isArray(invoice.advances_used) && invoice.advances_used.length > 0 && (
+                    <div style={{ fontSize: 12, color: '#2c3e50' }}>
+                      Felhasznált előlegek: {invoice.advances_used.map(a => a.invoice_number).join(', ')}
+                    </div>
+                  )}
+                  {isStorno(invoice) && (
+                    <div style={{ fontSize: 12, color: '#e74c3c' }}>
+                      Eredeti: {invoice.original_invoice_number || invoice.order_reference || '—'}
+                    </div>
+                  )}
+                  {(!isStorno(invoice) && stornoByOriginal.has(invoice.invoice_number)) && (
+                    <div style={{ fontSize: 12, color: '#e74c3c' }}>
+                      Sztornózott: {stornoByOriginal.get(invoice.invoice_number).join(', ')}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span title={invoice.customer.name}>
+                    {(() => { const n = invoice.customer.name || ''; return n.length > 30 ? (n.slice(0,30) + '…') : n; })()}
+                  </span>
+                </TableCell>
+                <TableCell>{formatDate(invoice.issue_date)}</TableCell>
+                <TableCell>{invoice.delivery_date ? formatDate(invoice.delivery_date) : '—'}</TableCell>
+                <TableCell>{formatDate(invoice.due_date)}</TableCell>
+                <TableCell>{payLabel(invoice.payment_method)}</TableCell>
+                <TableCell>
+                  {(() => {
+                    const amount = parseFloat(invoice.total_gross_amount || 0);
+                    const curr = invoice.currency || 'HUF';
+                    const rate = parseFloat(invoice.exchange_rate || 1);
+                    return (
+                      <>
+                        <div style={{ fontWeight: 500, whiteSpace: 'nowrap' }}>{formatCurrency(amount, curr)}</div>
+                        {curr !== 'HUF' && (
+                          <div style={{ fontSize: 12, color: '#7f8c8d', marginTop: 2, whiteSpace: 'nowrap' }}>
+                            {formatCurrency(amount * rate, 'HUF')}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </TableCell>
+                <TableCell>
+                  {invoice.status === 'nav_rejected' ? (
+                    <Tooltip title={getNavErrorMessage(invoice.nav_response)}>
+                      <StatusBadge
+                        status={invoice.status}
+                        onClick={() => openNavLogModal(invoice)}
+                        style={{ cursor: 'pointer' }}
+                        title="Napló megnyitása"
+                      >
+                        {getStatusLabel(invoice.status)}
+                      </StatusBadge>
+                    </Tooltip>
+                  ) : (
+                    <StatusBadge status={invoice.status}>
+                      {getStatusLabel(invoice.status)}
+                    </StatusBadge>
+                  )}
+                  {navStatusLoading[invoice.id] && (
+                    <span style={{ marginLeft: 8, fontSize: 12, color: '#7f8c8d' }}>
+                      (lekérdezés...)
+                    </span>
+                  )}
+                  {navStatusMap[invoice.id] && (
+                    <div style={{ marginTop: 4 }}>
+                      <span style={{ fontSize: 12, color: '#2c3e50' }}>
+                        NAV: {navStatusMap[invoice.id].processing_status}
+                      </span>
+                      {navStatusMap[invoice.id].error && (
+                        <div style={{ fontSize: 12, color: '#e74c3c' }}>
+                          Hiba: {navStatusMap[invoice.id].error}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </TableCell>
+                <TableCell>
+                  {actionButtons}
                 </TableCell>
               </TableRow>
+              <MobileActionsRow $open={mobileActionsInvoiceId === invoice.id}>
+                <MobileActionsCell colSpan={3}>
+                  {actionButtons}
+                </MobileActionsCell>
+              </MobileActionsRow>
+              </React.Fragment>
               );});
             })()}
           </TableBody>
@@ -1084,14 +1562,17 @@ const Invoices = () => {
       </TableContainer>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px' }}>
         <div>{selectedIds.size} kiválasztva</div>
-        <div>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button onClick={exportSelectedInvoicesCsv} disabled={selectedIds.size===0} style={{ padding: '8px 12px' }}>
+            Kijelöltek CSV
+          </button>
           <button onClick={openBulkEmailModal} disabled={selectedIds.size===0} style={{ padding: '8px 12px' }}>
             Kijelöltek e-mailben küldése
           </button>
         </div>
       </div>
 
-      {(!invoices?.results || invoices.results.length === 0) && (
+      {(!filteredInvoices || filteredInvoices.length === 0) && (
         <EmptyState>
           <p>Nincsenek számlák</p>
           <ActionButton to="/invoices/new" style={{ marginTop: '16px' }}>
@@ -1258,6 +1739,40 @@ const Invoices = () => {
         </div>
       </Modal>
     )}
+
+    <Modal
+      title={navLogInvoice ? `NAV napló - ${navLogInvoice.invoice_number}` : 'NAV napló'}
+      isOpen={navLogModalOpen}
+      onClose={() => setNavLogModalOpen(false)}
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minWidth: 480, maxWidth: '80vw' }}>
+        <div style={{ fontSize: 14, color: '#2c3e50' }}>
+          <strong>Számlaszám:</strong> {navLogInvoice?.invoice_number || '—'}
+        </div>
+        <div style={{ fontSize: 14, color: '#2c3e50' }}>
+          <strong>Státusz:</strong> {navLogInvoice ? getStatusLabel(navLogInvoice.status) : '—'}
+        </div>
+        <div style={{ fontSize: 14, color: '#2c3e50' }}>
+          <strong>NAV hiba:</strong> {getNavErrorMessage(navLogInvoice?.nav_response) || 'Nincs hibaüzenet'}
+        </div>
+        <div style={{ fontSize: 13, color: '#7f8c8d' }}>Teljes napló:</div>
+        <pre style={{
+          margin: 0,
+          padding: 12,
+          background: '#f8f9fa',
+          border: '1px solid #e5e7eb',
+          borderRadius: 6,
+          maxHeight: '50vh',
+          overflow: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          fontSize: 12,
+          lineHeight: 1.45,
+        }}>
+          {navLogInvoice?.nav_response || 'Nincs elérhető NAV napló.'}
+        </pre>
+      </div>
+    </Modal>
 
       <Modal
         title="Dátum szűrés"

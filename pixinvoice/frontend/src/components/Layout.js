@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Home, 
   Users, 
@@ -23,10 +23,11 @@ const LayoutContainer = styled.div`
   display: flex;
   min-height: 100vh;
   background-color: #f5f5f5;
+  overflow-x: hidden;
 `;
 
 const Sidebar = styled.aside`
-  width: ${(p) => (p.$collapsed ? '74px' : '250px')};
+  width: ${(p) => (p.$isMobile ? '250px' : (p.$collapsed ? '74px' : '250px'))};
   background-color: #2c3e50;
   color: white;
   position: fixed;
@@ -35,7 +36,8 @@ const Sidebar = styled.aside`
   height: 100vh;
   overflow: visible;
   z-index: 5000;
-  transform: translateX(0);
+  transform: ${(p) => (p.$isMobile ? (p.$mobileOpen ? 'translateX(0)' : 'translateX(-100%)') : 'translateX(0)')};
+  transition: transform 0.2s ease, width 0.2s ease;
 `;
 
 const SidebarHeader = styled.div`
@@ -66,6 +68,14 @@ const NavScroll = styled.div`
   overflow-y: auto;
   overflow-x: visible;
   max-height: calc(100vh - 220px);
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
 `;
 
 const IconBase = ({ children, label, ...rest }) => (
@@ -146,9 +156,11 @@ const NavItem = styled(Link)`
 
 const MainContent = styled.main`
   flex: 1;
-  margin-left: ${(p) => (p.$collapsed ? '74px' : '250px')};
+  margin-left: ${(p) => (p.$isMobile ? '0' : (p.$collapsed ? '74px' : '250px'))};
   padding: 12px;
   transition: margin-left 0.2s ease;
+  overflow-x: hidden;
+  min-width: 0;
 `;
 
 const Header = styled.header`
@@ -160,6 +172,22 @@ const Header = styled.header`
   display: flex;
   justify-content: space-between;
   align-items: center;
+
+  @media (max-width: 768px) {
+    flex-wrap: nowrap;
+    gap: 6px;
+  }
+`;
+
+const HeaderCenter = styled.div`
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-start;
+
+  @media (max-width: 768px) {
+    justify-content: center;
+  }
 `;
 
 const MobileMenuButton = styled.button`
@@ -193,10 +221,13 @@ const Overlay = styled.div`
 const QuickActions = styled.div`
   display: flex;
   gap: 12px;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  align-items: center;
 
   @media (max-width: 768px) {
-    flex-direction: column;
+    flex-wrap: nowrap;
+    gap: 4px;
+    min-width: 0;
   }
 `;
 
@@ -221,6 +252,18 @@ const QuickActionButton = styled(Link)`
     width: 16px;
     height: 16px;
   }
+
+  @media (max-width: 768px) {
+    width: auto;
+    justify-content: center;
+    padding: 4px 6px;
+    font-size: 11px;
+    white-space: nowrap;
+
+    svg {
+      display: none;
+    }
+  }
 `;
 
 const UserMenu = styled.div`
@@ -228,11 +271,21 @@ const UserMenu = styled.div`
   align-items: center;
   gap: 12px;
   cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+
+  @media (max-width: 768px) {
+    gap: 0;
+    padding: 0;
+    white-space: nowrap;
+    border: none;
+  }
 `;
 
 const UserInfo = styled.div`
   text-align: right;
-  
+
   @media (max-width: 768px) {
     display: none;
   }
@@ -254,11 +307,85 @@ const Layout = ({ children }) => {
     try { return localStorage.getItem('sidebarCollapsed') === '1'; } catch { return false; }
   });
   const [selectedCompany, setSelectedCompany] = useState(null);
+  const [isMobile, setIsMobile] = useState(() => {
+    try { return window.innerWidth < 768; } catch { return false; }
+  });
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const location = useLocation();
+  const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const isSidebarVisuallyCollapsed = !isMobile && isCollapsed;
+
+  // Global ESC key: close the topmost open modal/drawer, or navigate back if none are open.
+  const handleGlobalEsc = useCallback((e) => {
+    if (e.key !== 'Escape') return;
+
+    // Don't interfere while typing in an input / textarea / rich-text field.
+    const tag = (document.activeElement?.tagName || '').toUpperCase();
+    if (tag === 'INPUT' || tag === 'TEXTAREA' || document.activeElement?.isContentEditable) return;
+
+    // Detect any visible Ant Design overlay so we don't double-act.
+    const antdOverlayOpen = () => {
+      // Modal: Ant Design sets this class on <body> when a modal is open.
+      if (document.body.classList.contains('ant-scrolling-effect')) return true;
+      // Fallback: any .ant-modal-wrap that isn't hidden.
+      const wraps = document.querySelectorAll('.ant-modal-wrap');
+      for (const wrap of wraps) {
+        if (wrap.style.display !== 'none' && wrap.offsetParent !== null) return true;
+      }
+      // Open Drawer.
+      if (document.querySelector('.ant-drawer-open')) return true;
+      // Open Select / AutoComplete / DatePicker dropdown.
+      if (document.querySelector(
+        '.ant-select-dropdown:not(.ant-select-dropdown-hidden),' +
+        '.ant-picker-dropdown:not(.ant-picker-dropdown-hidden),' +
+        '.ant-dropdown:not(.ant-dropdown-hidden)'
+      )) return true;
+      return false;
+    };
+
+    if (antdOverlayOpen()) {
+      // Ant Design's own keyboard handler will close the overlay — don't navigate.
+      return;
+    }
+
+    // No overlay open: go back in history.
+    navigate(-1);
+  }, [navigate]);
+
+  useEffect(() => {
+    document.addEventListener('keydown', handleGlobalEsc);
+    return () => document.removeEventListener('keydown', handleGlobalEsc);
+  }, [handleGlobalEsc]);
 
   const allowedMenus = user?.allowed_menus || [];
   const canSee = (key) => !allowedMenus.length || allowedMenus.includes(key);
+
+  useEffect(() => {
+    const onResize = () => {
+      const mobile = window.innerWidth < 768;
+      setIsMobile(mobile);
+      if (!mobile) setIsMobileSidebarOpen(false);
+    };
+    onResize();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
+  useEffect(() => {
+    if (isMobile) {
+      document.body.style.overflowX = 'hidden';
+    }
+    return () => {
+      document.body.style.overflowX = '';
+    };
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (isMobile) {
+      setIsMobileSidebarOpen(false);
+    }
+  }, [location.pathname, isMobile]);
 
   const navigation = [
     { path: '/', label: 'Dashboard', icon: Home, key: 'dashboard' },
@@ -269,8 +396,20 @@ const Layout = ({ children }) => {
       iconNode: <OutgoingInvoiceIcon />
     },
     {
+      path: '/scheduled-invoices',
+      label: 'Időzített számlák',
+      key: 'scheduled_invoices',
+      iconNode: <OutgoingInvoiceIcon />
+    },
+    {
       path: '/incoming-invoices',
       label: 'Bejövő számlák',
+      key: 'incoming_invoices',
+      iconNode: <IncomingInvoiceIcon />
+    },
+    {
+      path: '/incoming-invoices-external',
+      label: 'Kimenő számlák (külső)',
       key: 'incoming_invoices',
       iconNode: <IncomingInvoiceIcon />
     },
@@ -281,6 +420,8 @@ const Layout = ({ children }) => {
       iconNode: <ProformaIcon />
     },
     { path: '/bank-statements', label: 'Bank', icon: CreditCard, key: 'bank_statements' },
+    { path: '/cash-registers', label: 'Kassza', icon: CreditCard, key: 'bank_statements' },
+    { path: '/arrears', label: 'Kintlévőség', icon: CreditCard, key: 'arrears' },
     { path: '/customers', label: 'Ügyfelek', icon: Users, key: 'customers' },
     { path: '/contacts', label: 'Kapcsolattartók', icon: UserCheck, key: 'contacts' },
     { path: '/settings', label: 'Beállítások', icon: Settings, key: 'settings' },
@@ -320,17 +461,25 @@ const Layout = ({ children }) => {
   ];
 
   const toggleCollapse = () => {
+    if (isMobile) {
+      setIsMobileSidebarOpen(false);
+      return;
+    }
     const next = !isCollapsed;
     setIsCollapsed(next);
     try { localStorage.setItem('sidebarCollapsed', next ? '1' : '0'); } catch {}
   };
 
+  const toggleMobileSidebar = () => {
+    setIsMobileSidebarOpen((prev) => !prev);
+  };
+
   return (
     <LayoutContainer>
-      <Overlay isOpen={false} />
-      <Sidebar $collapsed={isCollapsed}>
-        <SidebarHeader $collapsed={isCollapsed}>
-          <Logo $collapsed={isCollapsed}>Számlázó</Logo>
+      <Overlay isOpen={isMobileSidebarOpen} onClick={() => setIsMobileSidebarOpen(false)} />
+      <Sidebar $collapsed={isSidebarVisuallyCollapsed} $isMobile={isMobile} $mobileOpen={isMobileSidebarOpen}>
+        <SidebarHeader $collapsed={isSidebarVisuallyCollapsed}>
+          <Logo $collapsed={isSidebarVisuallyCollapsed}>Számlázó</Logo>
           <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
             <button
               type="button"
@@ -343,16 +492,16 @@ const Layout = ({ children }) => {
                 padding: '6px',
                 cursor: 'pointer'
               }}
-              title={isCollapsed ? 'Menü kinyitása' : 'Menü becsukása'}
+              title={isMobile ? 'Menü bezárása' : (isCollapsed ? 'Menü kinyitása' : 'Menü becsukása')}
             >
-              {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
+              {isMobile ? <ChevronLeft size={18} /> : (isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />)}
             </button>
           </div>
         </SidebarHeader>
         <CompanySelector 
           selectedCompany={selectedCompany}
           onCompanyChange={setSelectedCompany}
-          collapsed={isCollapsed}
+          collapsed={isSidebarVisuallyCollapsed}
         />
         <NavScroll>
           <SidebarNav>
@@ -365,11 +514,11 @@ const Layout = ({ children }) => {
                   to={item.path}
                   className={isActive ? 'active' : ''}
                   onClick={() => {}}
-                  $collapsed={isCollapsed}
-                  title={isCollapsed ? item.label : undefined}
+                  $collapsed={isSidebarVisuallyCollapsed}
+                  title={isSidebarVisuallyCollapsed ? item.label : undefined}
                 >
                   {item.iconNode ? item.iconNode : <IconComp />}
-                  {!isCollapsed && item.label}
+                  {!isSidebarVisuallyCollapsed && item.label}
                 </NavItem>
               );
             })}
@@ -377,22 +526,24 @@ const Layout = ({ children }) => {
         </NavScroll>
       </Sidebar>
       
-      <MainContent $collapsed={isCollapsed}>
+      <MainContent $collapsed={isCollapsed} $isMobile={isMobile}>
         <Header>
-          <MobileMenuButton onClick={() => {}}>
+          <MobileMenuButton onClick={toggleMobileSidebar}>
             <Menu />
           </MobileMenuButton>
-          <QuickActions>
-            {quickActions.filter((action) => canSee(action.key)).map((action) => {
-              const Icon = action.icon;
-              return (
-                <QuickActionButton key={action.path} to={action.path}>
-                  <Icon />
-                  {action.label}
-                </QuickActionButton>
-              );
-            })}
-          </QuickActions>
+          <HeaderCenter>
+            <QuickActions>
+              {quickActions.filter((action) => canSee(action.key)).map((action) => {
+                const Icon = action.icon;
+                return (
+                  <QuickActionButton key={action.path} to={action.path}>
+                    <Icon />
+                    {action.label}
+                  </QuickActionButton>
+                );
+              })}
+            </QuickActions>
+          </HeaderCenter>
           <Dropdown menu={{ items: userMenuItems }} placement="bottomRight" trigger={['click']}>
             <UserMenu>
               <UserInfo>

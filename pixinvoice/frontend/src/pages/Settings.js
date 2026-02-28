@@ -8,7 +8,9 @@ import {
   ChevronRight,
   Database,
   Upload,
-  Coins
+  Coins,
+  PenLine,
+  Clock3
 } from 'lucide-react';
 import styled from 'styled-components';
 
@@ -146,6 +148,18 @@ const Settings = () => {
       description: 'SMTP/IMAP beállítások és e-mail sablonok cég szerint'
     },
     {
+      path: '/settings/email-templates',
+      icon: FileText,
+      title: 'E-mail sablonok',
+      description: 'Kintlévőségi és egyéb e-mail sablonok kezelése'
+    },
+    {
+      path: '/settings/email-signatures',
+      icon: PenLine,
+      title: 'Aláírások',
+      description: 'E-mail aláírások kezelése cég szinten'
+    },
+    {
       path: '/settings/backup',
       icon: Database,
       title: 'Backup - Visszaállítás',
@@ -168,6 +182,12 @@ const Settings = () => {
       icon: Coins,
       title: 'Deviza árfolyamok',
       description: 'Devizák és árfolyamok kezelése, MNB szinkronizáció'
+    },
+    {
+      path: '/settings/cron-jobs',
+      icon: Clock3,
+      title: 'Időzítés',
+      description: 'CronJobok ütemezése, aktiválása/inaktiválása és szolgáltatás leírások'
     }
   ];
 

@@ -3,7 +3,7 @@ import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -12,7 +12,6 @@ import { OrderItemsDrawer } from './OrderItemsDrawer';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 
-const { Search } = Input;
 const { useBreakpoint } = Grid;
 
 interface PendingApproval {
@@ -65,6 +64,7 @@ interface CustomerOrder {
   const [emailSending, setEmailSending] = useState(false);
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState('');
+  const [debouncedSearchText, setDebouncedSearchText] = useState('');
   
   // Load settings from localStorage
   const savedSettings = useMemo(() => {
@@ -131,7 +131,7 @@ interface CustomerOrder {
 
       const response = await api.get('/sales/customer-orders/', {
         params: {
-          include_items: isItemsView ? 'true' : undefined,
+          include_items: 'true',
           status: nonInvoicedStatuses.length > 0 ? nonInvoicedStatuses.join(',') : undefined,
           invoiced: invoicedMode,
         },
@@ -150,6 +150,14 @@ interface CustomerOrder {
   useEffect(() => {
     fetchOrders();
   }, [isItemsView, statusFilter]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setDebouncedSearchText(searchText);
+    }, 300);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchText]);
 
   const handleWorkflowStatusChange = async (orderId: number, newStatus: string, record?: CustomerOrder) => {
     const doUpdate = async (sendEmail: boolean = false) => {
@@ -795,6 +803,106 @@ interface CustomerOrder {
     return Array.from(new Set(names)).sort();
   }, [orders]);
 
+  const normalizeSearchValue = (value: unknown): string => {
+    return String(value ?? '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g, ' ')
+      .trim();
+  };
+
+  const compactSearchValue = (value: string): string => value.replace(/[^a-z0-9]+/g, '');
+
+  const collectSearchTokens = (value: unknown): string[] => {
+    if (value === null || value === undefined) return [];
+
+    if (typeof value === 'number') {
+      return [
+        String(value),
+        new Intl.NumberFormat('hu-HU', { maximumFractionDigits: 2 }).format(value),
+        new Intl.NumberFormat('hu-HU', { useGrouping: false, maximumFractionDigits: 2 }).format(value),
+      ];
+    }
+
+    if (typeof value === 'string' || typeof value === 'boolean') {
+      return [String(value)];
+    }
+
+    return [];
+  };
+
+  const orderMatchesSearch = (order: CustomerOrder, rawSearch: string): boolean => {
+    const normalizedSearch = normalizeSearchValue(rawSearch.trim());
+    const compactSearch = compactSearchValue(normalizedSearch);
+    const searchTerms = normalizedSearch
+      .split(/\s+/)
+      .filter(Boolean);
+    if (searchTerms.length === 0) return true;
+
+    const tokens: string[] = [];
+    const addValue = (value: unknown) => tokens.push(...collectSearchTokens(value));
+
+    [
+      order.order_number,
+      order.quote_request_title,
+      order.customer_name,
+      order.contact_names,
+      order.contact_email,
+      order.created_by_name,
+      order.notes,
+      order.status,
+      order.delivery_note_number,
+      order.invoice_number,
+      order.total_amount,
+      (order as any).total_net_amount,
+      (order as any).total_gross_amount,
+    ].forEach(addValue);
+
+    const orderItems = [
+      order.items,
+      (order as any).order_items,
+      (order as any).customer_order_items,
+      (order as any).items_data,
+    ].find((value) => Array.isArray(value)) as any[] | undefined;
+
+    if (Array.isArray(orderItems)) {
+      orderItems.forEach((item: any) => {
+        [
+          item.product_name,
+          item.manufacturing_product_name,
+          item.material_name,
+          item.service_name,
+          item.product_code,
+          item.material_code,
+          item.service_code,
+          item.product_description,
+          item.internal_description,
+          item.description,
+          item.note,
+          item.notes,
+          item.supplier_name,
+          item.status,
+          item.quantity,
+          item.unit_price,
+          item.net_total,
+          item.gross_total,
+          item.total,
+          item.total_amount,
+          item.discount_amount,
+          item.discount_percent,
+        ].forEach(addValue);
+      });
+    }
+
+    const haystack = normalizeSearchValue(tokens.join(' '));
+    const compactHaystack = compactSearchValue(haystack);
+    return (
+      searchTerms.every((term) => haystack.includes(term)) ||
+      compactHaystack.includes(compactSearch)
+    );
+  };
+
   const filteredOrders = orders.filter((order) => {
     // Status filter
     if (statusFilter && statusFilter.length > 0) {
@@ -825,15 +933,7 @@ interface CustomerOrder {
     // Creator filter
     if (creatorFilter && order.created_by_name !== creatorFilter) return false;
     
-    // Text search
-    if (!searchText) return true;
-    const search = searchText.toLowerCase();
-    return (
-      order.order_number.toLowerCase().includes(search) ||
-      order.quote_request_title?.toLowerCase().includes(search) ||
-      order.customer_name?.toLowerCase().includes(search) ||
-      (order.created_by_name || '').toLowerCase().includes(search)
-    );
+    return orderMatchesSearch(order, debouncedSearchText);
   });
 
   const flattenedItems = useMemo(() => {
@@ -864,7 +964,19 @@ interface CustomerOrder {
 
   return (
     <Card
-      title="Megrendelések"
+      title={
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <span>Megrendelések</span>
+          <Input
+            placeholder="Keresés..."
+            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+            allowClear
+            style={{ width: screens.md ? 360 : 240 }}
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+          />
+        </div>
+      }
       extra={
         <Space>
            <Switch 
@@ -937,13 +1049,6 @@ interface CustomerOrder {
               { value: 'cancelled', label: 'Törölve' },
             ]}
             maxTagCount="responsive"
-          />
-          <Search
-            placeholder="Keresés..."
-            allowClear
-            style={{ width: 250 }}
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
           />
         </Space>
       }

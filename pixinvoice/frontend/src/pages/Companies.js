@@ -5,8 +5,6 @@ import { toast } from 'react-toastify';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import { 
   Plus, 
-  Search, 
-  Filter, 
   Edit, 
   Trash2, 
   Building2,
@@ -287,18 +285,6 @@ const Companies = () => {
     }
   };
 
-  const { data: companies_IGNORED, isLoading: isLoading_IGNORED, error: error_IGNORED } = useQuery(
-    ['companies', { search: searchTerm, is_active: statusFilter }],
-    () => companyAPI.getCompanies({
-      search: searchTerm || undefined,
-      is_active: statusFilter || undefined,
-    }),
-    {
-      select: (response) => response.data?.results || [],
-      enabled: false // We use the one defined above
-    }
-  );
-
   const deleteCompanyMutation = useMutation(
     (id) => companyAPI.deleteCompany(id),
     {
@@ -399,7 +385,7 @@ const Companies = () => {
   if (error) {
     return (
       <Container>
-        <div>Hiba történt a cégek betöltése során: {error_IGNORED?.message || error?.message}</div>
+        <div>Hiba történt a cégek betöltése során: {error?.message}</div>
       </Container>
     );
   }

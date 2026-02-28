@@ -27,6 +27,7 @@ import HestiaPage from './pages/HestiaPage';
 import CompanySettings from './CompanySettings';
 import Backup from './Backup';
 import Zones from './Zones';
+import PublicSitePage from './pages/PublicSitePage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
@@ -44,6 +45,7 @@ const SettingsModule: React.FC = () => {
       { key: '/settings/pixinvoice', label: 'PIXINVOICE', icon: <CloudServerOutlined /> },
       { key: '/settings/hestia', label: 'Hestia', icon: <CloudServerOutlined /> },
       { key: '/settings/backup', label: 'Backup', icon: <HddOutlined /> },
+        { key: '/settings/public-site', label: 'Publikus oldal', icon: <GlobalOutlined /> },
   ];
 
   return (
@@ -62,6 +64,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/hestia" element={<HestiaPage />} />
       <Route path="/attendance-kiosk" element={<AttendanceKioskSettingsPage />} />
       <Route path="/backup" element={<Backup />} />
+      <Route path="/public-site" element={<PublicSitePage />} />
     </Routes>
   );
 };

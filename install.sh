@@ -15,6 +15,14 @@ export DEBIAN_FRONTEND=noninteractive
 export APT_LISTCHANGES_FRONTEND=none
 APT_NONINTERACTIVE_OPTS=("-y" "-o" "Dpkg::Options::=--force-confdef" "-o" "Dpkg::Options::=--force-confold")
 
+REQUIRED_SYSTEM_PACKAGES=(
+    python3 python3-pip python3-venv python3-dev
+    git redis-server nginx curl build-essential
+    libpq-dev postgresql postgresql-contrib postgresql-client-16
+    libpango-1.0-0 libpangoft2-1.0-0 libcairo2 libgdk-pixbuf-2.0-0 shared-mime-info fonts-dejavu-core
+    certbot python3-certbot-nginx
+)
+
 # Színek definiálása
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -70,14 +78,22 @@ install_system_deps() {
     sudo sh -c 'echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
     sudo apt-get update
 
+    local -a missing_pkgs=()
+    for pkg in "${REQUIRED_SYSTEM_PACKAGES[@]}"; do
+        if ! dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null | grep -q "install ok installed"; then
+            missing_pkgs+=("$pkg")
+        fi
+    done
+
+    if [ ${#missing_pkgs[@]} -eq 0 ]; then
+        echo -e "${GREEN}✓ Minden rendszerfüggőség telepítve van${NC}"
+        return 0
+    fi
+
+    echo -e "${YELLOW}Hiányzó rendszercsomagok: ${missing_pkgs[*]}${NC}"
     # Use non-interactive apt options to prevent interactive prompts during install
     sudo DEBIAN_FRONTEND=${DEBIAN_FRONTEND} APT_LISTCHANGES_FRONTEND=${APT_LISTCHANGES_FRONTEND} \
-         apt-get "${APT_NONINTERACTIVE_OPTS[@]}" install \
-            python3 python3-pip python3-venv python3-dev \
-            git redis-server nginx curl build-essential \
-            libpq-dev postgresql postgresql-contrib \
-            postgresql-client-16 \
-            certbot python3-certbot-nginx
+         apt-get "${APT_NONINTERACTIVE_OPTS[@]}" install "${missing_pkgs[@]}"
 }
 
 setup_nodejs() {

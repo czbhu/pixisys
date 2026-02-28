@@ -346,6 +346,17 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
     if supplier_data and supplier_data.get('bank_account'):
         return supplier_data['bank_account']
     
+    def _normalized_bank_value(bank):
+        if not bank:
+            return None
+        iban = (getattr(bank, 'iban', None) or '').strip()
+        if iban:
+            return iban.replace(' ', '').replace('-', '')
+        account_number = (getattr(bank, 'account_number', None) or '').strip()
+        if account_number:
+            return account_number.replace(' ', '').replace('-', '')
+        return None
+
     # Ha nincs XML-ben, ügyféltörzsből
     if supplier_tax_number:
         customer = Customer.objects.filter(tax_number=supplier_tax_number).first()
@@ -354,17 +365,21 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
             if preferred_currency:
                 # Prefer primary in desired currency, then any in currency, else fall back
                 bank = qs.filter(currency=preferred_currency, is_primary=True).first()
-                if bank and bank.account_number:
-                    return bank.account_number.replace(' ', '').replace('-', '')
+                normalized = _normalized_bank_value(bank)
+                if normalized:
+                    return normalized
                 bank = qs.filter(currency=preferred_currency).first()
-                if bank and bank.account_number:
-                    return bank.account_number.replace(' ', '').replace('-', '')
+                normalized = _normalized_bank_value(bank)
+                if normalized:
+                    return normalized
             # If no currency match, pick primary
             bank = qs.filter(is_primary=True).first()
-            if bank and bank.account_number:
-                return bank.account_number.replace(' ', '').replace('-', '')
+            normalized = _normalized_bank_value(bank)
+            if normalized:
+                return normalized
             bank = qs.first()
-            if bank and bank.account_number:
-                return bank.account_number.replace(' ', '').replace('-', '')
+            normalized = _normalized_bank_value(bank)
+            if normalized:
+                return normalized
     
     return None

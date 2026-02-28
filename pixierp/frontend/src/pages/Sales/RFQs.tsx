@@ -34,6 +34,7 @@ const RFQs: React.FC = () => {
   const [nextNumber, setNextNumber] = useState<string>('');
   const [currentUserName, setCurrentUserName] = useState<string>('');
   const [form] = Form.useForm();
+  const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [newItems, setNewItems] = useState<any[]>([]);
@@ -58,6 +59,27 @@ const RFQs: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
+
+  const normalizeForCompare = (value: any): any => {
+    if (value === null || value === undefined) return undefined;
+    if (typeof value === 'string') return value.trim();
+    if (Array.isArray(value)) return value.map(normalizeForCompare);
+    if (value instanceof Date) return value.toISOString();
+    if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
+    if (typeof value === 'object') {
+      return Object.keys(value)
+        .sort()
+        .reduce((acc: any, key: string) => {
+          const normalized = normalizeForCompare(value[key]);
+          if (normalized !== undefined) acc[key] = normalized;
+          return acc;
+        }, {} as any);
+    }
+    return value;
+  };
+
+  const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
+  const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
 
   useEffect(() => {
     loadData();
@@ -615,6 +637,14 @@ const RFQs: React.FC = () => {
     }
   }, [searchParams, loading]); // Trigger when params change or loading finishes
 
+  useEffect(() => {
+    if (!createOpen) return;
+    const timer = setTimeout(() => {
+      setInitialFormSnapshot(getFormSnapshot());
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [createOpen]);
+
 
   const handleCancel = () => {
     const clearParams = () => {
@@ -623,7 +653,7 @@ const RFQs: React.FC = () => {
          }
     };
 
-    if (form.isFieldsTouched()) {
+    if (hasFormChanges()) {
       Modal.confirm({
         title: 'Biztos, hogy mentés nélkül be akarja zárni?',
         icon: <ExclamationCircleOutlined />,

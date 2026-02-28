@@ -1,8 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { useQuery, useQueryClient } from 'react-query';
-import { Link, useNavigate, useLocation } from 'react-router-dom';
+import React, { useState, useEffect, useCallback } from 'react';
+import { useQuery } from 'react-query';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
-  Search, 
   Plus, 
   Edit, 
   Eye,
@@ -331,6 +330,12 @@ const TableHead = styled.th`
   font-weight: 600;
   color: #2c3e50;
   font-size: 14px;
+
+  @media (max-width: 768px) {
+    &:last-child {
+      display: none;
+    }
+  }
 `;
 
 const TableCell = styled.td`
@@ -341,11 +346,32 @@ const TableCell = styled.td`
 
 const TableActions = styled(TableCell)`
   text-align: right;
+
+  @media (max-width: 768px) {
+    display: none;
+  }
+`;
+
+const MobileActionsRow = styled.tr`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: ${props => (props.$open ? 'table-row' : 'none')};
+  }
+`;
+
+const MobileActionsCell = styled.td`
+  display: none;
+
+  @media (max-width: 768px) {
+    display: table-cell;
+    padding: 8px 24px 12px;
+    border-bottom: 1px solid #ecf0f1;
+  }
 `;
 
 const Customers = () => {
   const navigate = useNavigate();
-  const location = useLocation();
   
   // Load saved preferences from localStorage
   const getSavedPreferences = () => {
@@ -372,9 +398,36 @@ const Customers = () => {
   const [viewMode, setViewMode] = useState(savedPrefs.viewMode);
   const [pageSize, setPageSize] = useState(savedPrefs.pageSize);
   const [customerTypeFilter, setCustomerTypeFilter] = useState(savedPrefs.customerTypeFilter || 'all');
+  const [mobileActionsCustomerId, setMobileActionsCustomerId] = useState(null);
   const hasActiveFilters = Boolean((searchTerm && searchTerm.length > 0) || (customerTypeFilter && customerTypeFilter !== 'all'));
   
-  const queryClient = useQueryClient();
+  const isMobileViewport = () => {
+    try {
+      return window.matchMedia('(max-width: 768px)').matches;
+    } catch {
+      return false;
+    }
+  };
+
+  const toggleMobileActionsForCustomer = useCallback((customerId) => {
+    setMobileActionsCustomerId((prev) => (prev === customerId ? null : customerId));
+  }, []);
+
+  const handleRowTouchTap = useCallback((event, customerId) => {
+    if (!isMobileViewport()) return;
+    const target = event.target;
+    if (target && typeof target.closest === 'function' && target.closest('input,button,a,label,select,textarea,[role="button"]')) {
+      return;
+    }
+    event.preventDefault();
+    toggleMobileActionsForCustomer(customerId);
+  }, [toggleMobileActionsForCustomer]);
+
+  const handleRowContextMenu = useCallback((event, customerId) => {
+    if (!isMobileViewport()) return;
+    event.preventDefault();
+    toggleMobileActionsForCustomer(customerId);
+  }, [toggleMobileActionsForCustomer]);
 
   // Save preferences to localStorage whenever they change
   useEffect(() => {
@@ -633,10 +686,33 @@ const Customers = () => {
               </tr>
             </TableHeader>
             <tbody>
-              {customers?.results?.map((customer) => (
+              {customers?.results?.map((customer) => {
+                const actionButtons = (
+                  <ActionButtons>
+                    <IconButton
+                      variant="view"
+                      title="Megtekintés"
+                      as={Link}
+                      to={`/customers/${customer.id}`}
+                    >
+                      <Eye size={16} />
+                    </IconButton>
+                    <IconButton
+                      variant="edit"
+                      title="Szerkesztés"
+                      as={Link}
+                      to={`/customers/${customer.id}/edit`}
+                    >
+                      <Edit size={16} />
+                    </IconButton>
+                  </ActionButtons>
+                );
+                return (
+                <React.Fragment key={customer.id}>
                 <TableRow 
-                  key={customer.id}
                   onDoubleClick={() => handleDoubleClick(customer.id)}
+                  onContextMenu={(event) => handleRowContextMenu(event, customer.id)}
+                  onTouchEnd={(event) => handleRowTouchTap(event, customer.id)}
                   style={{ cursor: 'pointer' }}
                 >
                   <TableCell>
@@ -647,27 +723,16 @@ const Customers = () => {
                   <TableCell>{customer.email || '-'}</TableCell>
                   <TableCell>{customer.phone || '-'}</TableCell>
                   <TableActions>
-                    <ActionButtons>
-                      <IconButton
-                        variant="view"
-                        title="Megtekintés"
-                        as={Link}
-                        to={`/customers/${customer.id}`}
-                      >
-                        <Eye size={16} />
-                      </IconButton>
-                      <IconButton
-                        variant="edit"
-                        title="Szerkesztés"
-                        as={Link}
-                        to={`/customers/${customer.id}/edit`}
-                      >
-                        <Edit size={16} />
-                      </IconButton>
-                    </ActionButtons>
+                    {actionButtons}
                   </TableActions>
                 </TableRow>
-              ))}
+                <MobileActionsRow $open={mobileActionsCustomerId === customer.id}>
+                  <MobileActionsCell colSpan={6}>
+                    {actionButtons}
+                  </MobileActionsCell>
+                </MobileActionsRow>
+                </React.Fragment>
+              );})}
             </tbody>
           </ListTable>
         </ListView>

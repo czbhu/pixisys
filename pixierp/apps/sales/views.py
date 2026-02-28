@@ -11,7 +11,7 @@ from django.utils import timezone
 from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
-    Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog,
+    Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog, ApprovalRequest,
     ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
     DeliveryNote, DeliveryNoteItem,
     POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment

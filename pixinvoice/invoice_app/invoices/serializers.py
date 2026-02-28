@@ -1,10 +1,17 @@
+import json
+import re
+import decimal
+
 from rest_framework import serializers
 from django.db import models
+from django.db import transaction
+from django.utils import timezone
 from .models import (
     Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role,
     InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType,
     BankStatement, BankStatementItem, ProformaInvoice, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingDocument,
-    BackupConfiguration, BackupFile, Currency
+    BackupConfiguration, BackupFile, Currency, EmailTemplate, EmailSignature, CashRegister, CashRegisterTransaction, IncomingInvoiceDigest,
+    CronJobConfiguration
 )
 
 
@@ -13,6 +20,99 @@ class CurrencySerializer(serializers.ModelSerializer):
         model = Currency
         fields = '__all__'
         read_only_fields = ['id', 'last_updated']
+
+
+def _validate_cron_expression(value):
+    raw = str(value or '').strip()
+    parts = raw.split()
+    if len(parts) != 5:
+        raise serializers.ValidationError('A cron kifejezésnek 5 mezőből kell állnia (perc óra nap hónap hétköznap).')
+
+    allowed_chars = set('0123456789*,-/')
+    ranges = [
+        (0, 59),
+        (0, 23),
+        (1, 31),
+        (1, 12),
+        (0, 6),
+    ]
+
+    def _validate_item(token, minimum, maximum):
+        if token == '*':
+            return
+        if set(token) - allowed_chars:
+            raise serializers.ValidationError(f'Hibás karakter a cron mezőben: {token}')
+
+        for part in token.split(','):
+            part = part.strip()
+            if not part:
+                raise serializers.ValidationError('Üres cron rész nem megengedett.')
+
+            if '/' in part:
+                left, step = part.split('/', 1)
+                if not step.isdigit() or int(step) <= 0:
+                    raise serializers.ValidationError(f'Hibás lépésérték: {part}')
+                if left in ('*', ''):
+                    continue
+                part = left
+
+            if part == '*':
+                continue
+            if '-' in part:
+                start_str, end_str = part.split('-', 1)
+                if not start_str.isdigit() or not end_str.isdigit():
+                    raise serializers.ValidationError(f'Hibás tartomány: {part}')
+                start = int(start_str)
+                end = int(end_str)
+                if start > end or start < minimum or end > maximum:
+                    raise serializers.ValidationError(f'Tartomány kívül esik a megengedett határon: {part}')
+                continue
+            if not part.isdigit():
+                raise serializers.ValidationError(f'Hibás érték: {part}')
+            num = int(part)
+            if num < minimum or num > maximum:
+                raise serializers.ValidationError(f'Érték kívül esik a megengedett határon: {part}')
+
+    for idx, token in enumerate(parts):
+        min_v, max_v = ranges[idx]
+        _validate_item(token, min_v, max_v)
+
+    return raw
+
+
+class CronJobConfigurationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = CronJobConfiguration
+        fields = [
+            'id', 'job_key', 'name', 'description', 'command_name',
+            'cron_expression', 'is_active', 'last_run_at', 'last_status', 'last_message',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'job_key', 'name', 'description', 'command_name',
+            'last_run_at', 'last_status', 'last_message', 'created_at', 'updated_at',
+        ]
+
+    def validate_cron_expression(self, value):
+        return _validate_cron_expression(value)
+
+
+NAV_PROGRESS_STATUSES = {'submitted_to_nav', 'nav_processed', 'nav_rejected'}
+
+
+def _is_effectively_paid(invoice, paid_amount):
+    try:
+        gross = decimal.Decimal(str(invoice.total_gross_amount or 0))
+        paid = decimal.Decimal(str(paid_amount or 0))
+    except Exception:
+        return False
+    currency = str(getattr(invoice, 'currency', '')).upper()
+    payment_method = str(getattr(invoice, 'payment_method', '')).lower()
+    payable = gross
+    if currency == 'HUF' and payment_method in ('cash', 'cod'):
+        payable = (gross / decimal.Decimal('5')).quantize(decimal.Decimal('1'), rounding=decimal.ROUND_HALF_UP) * decimal.Decimal('5')
+    tolerance = decimal.Decimal('5.0') if currency == 'HUF' else decimal.Decimal('0.01')
+    return (payable - paid) < tolerance
 
 
 class InvoiceItemSerializer(serializers.ModelSerializer):
@@ -67,7 +167,7 @@ class CustomerSerializer(serializers.ModelSerializer):
             'id', 'name', 'short_name', 'tax_number', 'full_tax_number', 'address',
             'street_name', 'public_place_category', 'street_number', 'building', 'staircase', 'floor', 'door',
             'city', 'postal_code', 'country', 'email', 'phone', 'vat_code', 'county_code', 
-            'vat_group_id', 'vat_group_member_tax_number', 'vat_status', 'is_hungarian_taxpayer', 'eu_tax_number', 'created_at', 'updated_at',
+            'vat_group_id', 'vat_group_member_tax_number', 'group_tax_number', 'vat_status', 'is_hungarian_taxpayer', 'eu_tax_number', 'created_at', 'updated_at',
             'payment_due_days', 'is_supplier', 'is_customer', 'bank_accounts', 'payment_method', 'default_currency'
         ]
 
@@ -128,32 +228,77 @@ class CompanyMiniSerializer(serializers.ModelSerializer):
 class BankStatementItemSerializer(serializers.ModelSerializer):
     invoice_number = serializers.SerializerMethodField(read_only=True)
     customer_name = serializers.SerializerMethodField(read_only=True)
+    invoice_type = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = BankStatementItem
-        fields = ['id', 'bank_statement', 'customer', 'invoice', 'invoice_number', 'customer_name', 'amount', 'note', 'created_at']
+        fields = ['id', 'bank_statement', 'customer', 'invoice', 'incoming_invoice', 'invoice_type', 'invoice_number', 'customer_name', 'amount', 'note', 'created_at']
         read_only_fields = ['id', 'created_at', 'invoice_number', 'customer_name', 'bank_statement']
 
     def get_invoice_number(self, obj):
-        return obj.invoice.invoice_number if obj.invoice else None
+        if obj.invoice:
+            return obj.invoice.invoice_number
+        if getattr(obj, 'incoming_invoice', None):
+            return obj.incoming_invoice.invoice_number
+        note = str(getattr(obj, 'note', '') or '').strip()
+        if note:
+            patterns = [
+                r'[A-Z]{1,6}\s?\d{4}[/\-]\d{1,8}',
+                r'[A-Z]{2,8}\d{5,20}',
+                r'\d{4}[/\-]\d{3,12}',
+            ]
+            upper_note = note.upper()
+            for pattern in patterns:
+                match = re.search(pattern, upper_note)
+                if match:
+                    return match.group(0).strip()
+        return None
 
     def get_customer_name(self, obj):
         return obj.customer.name if obj.customer else None
 
+    def get_invoice_type(self, obj):
+        if obj.invoice_id:
+            return 'outgoing'
+        if getattr(obj, 'incoming_invoice_id', None):
+            return 'incoming'
+        return None
+
 
 class BankStatementSerializer(serializers.ModelSerializer):
     items = BankStatementItemSerializer(many=True, required=False)
-    total_amount = serializers.ReadOnlyField()
+    total_amount = serializers.SerializerMethodField(read_only=True)
     company_name = serializers.SerializerMethodField(read_only=True)
     bank_account_name = serializers.SerializerMethodField(read_only=True)
+    source_file_name = serializers.SerializerMethodField(read_only=True)
+    source_file_download_url = serializers.SerializerMethodField(read_only=True)
+    saved_items_count = serializers.SerializerMethodField(read_only=True)
+    total_items_count = serializers.SerializerMethodField(read_only=True)
+    import_preview_items = serializers.SerializerMethodField(read_only=True)
+    display_note = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = BankStatement
         fields = [
             'id', 'company', 'company_name', 'bank_account', 'bank_account_name', 'statement_date', 'sequence_number', 'currency', 'note',
+            'display_note', 'source_file_name', 'source_file_download_url', 'saved_items_count', 'total_items_count', 'import_preview_items',
             'created_by', 'created_at', 'updated_at', 'items', 'total_amount'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'total_amount']
+
+    def _extract_import_meta(self, obj):
+        note = str(getattr(obj, 'note', '') or '')
+        match = re.search(r'\[\[IMPORT_META:(.*?)\]\]', note, flags=re.S)
+        if not match:
+            return {}, note
+        try:
+            meta = json.loads(match.group(1))
+            if not isinstance(meta, dict):
+                meta = {}
+        except Exception:
+            meta = {}
+        clean_note = (note[:match.start()] + note[match.end():]).strip()
+        return meta, clean_note
 
     def get_company_name(self, obj):
         try:
@@ -170,6 +315,428 @@ class BankStatementSerializer(serializers.ModelSerializer):
             return f"{label}{acc.iban or acc.account_number or ''}"
         except Exception:
             return None
+
+    def get_source_file_name(self, obj):
+        meta, _ = self._extract_import_meta(obj)
+        value = meta.get('xml')
+        return str(value).strip() if value else None
+
+    def get_source_file_download_url(self, obj):
+        meta, _ = self._extract_import_meta(obj)
+        token = str(meta.get('xml_file_token') or '').strip()
+        if not token:
+            return None
+        return f"/api/bank-statements/{obj.id}/download-source-xml/"
+
+    def get_saved_items_count(self, obj):
+        meta, _ = self._extract_import_meta(obj)
+        value = meta.get('saved_items')
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                pass
+        return obj.items.count()
+
+    def get_total_items_count(self, obj):
+        meta, _ = self._extract_import_meta(obj)
+        value = meta.get('total_items')
+        if value is not None:
+            try:
+                return int(value)
+            except Exception:
+                pass
+        return obj.items.count()
+
+    def get_import_preview_items(self, obj):
+        meta, _ = self._extract_import_meta(obj)
+        value = meta.get('preview_items')
+        return value if isinstance(value, list) else None
+
+    def get_display_note(self, obj):
+        _, clean_note = self._extract_import_meta(obj)
+        return clean_note
+
+    def get_total_amount(self, obj):
+        total = decimal.Decimal('0')
+        for item in obj.items.all():
+            try:
+                total += decimal.Decimal(str(item.amount or 0))
+            except Exception:
+                continue
+        return float(total)
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        try:
+            _, clean_note = self._extract_import_meta(instance)
+            data['note'] = clean_note
+            if 'display_note' in data:
+                data['display_note'] = clean_note
+        except Exception:
+            pass
+        return data
+
+    def create(self, validated_data):
+        items_data = validated_data.pop('items', [])
+        bank_acc = validated_data.get('bank_account')
+        company = validated_data.get('company')
+        if bank_acc and not company:
+            try:
+                validated_data['company'] = bank_acc.company
+            except Exception:
+                pass
+        if bank_acc and company and getattr(bank_acc, 'company_id', None) and bank_acc.company_id != company.id:
+            raise serializers.ValidationError({'bank_account': 'A kiválasztott bankszámla nem ehhez a céghez tartozik'})
+
+        request = self.context.get('request')
+        if request and request.user and request.user.is_authenticated:
+            validated_data['created_by'] = request.user
+
+        with transaction.atomic():
+            statement = BankStatement.objects.create(**validated_data)
+            for item in (items_data or []):
+                invoice = item.get('invoice')
+                if invoice and not isinstance(invoice, Invoice):
+                    invoice = Invoice.objects.filter(id=invoice).first()
+
+                incoming_invoice = item.get('incoming_invoice')
+                if incoming_invoice and not isinstance(incoming_invoice, IncomingInvoiceDigest):
+                    incoming_invoice = IncomingInvoiceDigest.objects.filter(id=incoming_invoice).first()
+
+                customer = item.get('customer')
+                if customer and not isinstance(customer, Customer):
+                    customer = Customer.objects.filter(id=customer).first()
+                if invoice and not customer:
+                    customer = invoice.customer
+
+                amount_raw = item.get('amount') if isinstance(item, dict) else None
+                try:
+                    amount = decimal.Decimal(str(amount_raw if amount_raw not in (None, '') else 0))
+                except Exception:
+                    amount = decimal.Decimal('0')
+
+                BankStatementItem.objects.create(
+                    bank_statement=statement,
+                    customer=customer,
+                    invoice=invoice,
+                    incoming_invoice=incoming_invoice,
+                    amount=amount,
+                    note=item.get('note') or '',
+                )
+
+        return statement
+
+    def update(self, instance, validated_data):
+        items_data = validated_data.pop('items', None)
+
+        touched_outgoing_ids = set()
+        touched_incoming_ids = set()
+        if items_data is not None:
+            for old in instance.items.only('invoice_id', 'incoming_invoice_id'):
+                if old.invoice_id:
+                    touched_outgoing_ids.add(str(old.invoice_id))
+                if old.incoming_invoice_id:
+                    touched_incoming_ids.add(str(old.incoming_invoice_id))
+
+        if 'note' in validated_data:
+            existing_note = str(getattr(instance, 'note', '') or '')
+            match = re.search(r'\[\[IMPORT_META:.*?\]\]', existing_note, flags=re.S)
+            if match:
+                meta_prefix = f"{match.group(0)}\n"
+                clean_note = str(validated_data.get('note') or '').strip()
+                validated_data['note'] = f"{meta_prefix}{clean_note}".strip()
+
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+
+        with transaction.atomic():
+            instance.save()
+
+            if items_data is not None:
+                existing = {str(it.id): it for it in instance.items.all()}
+                seen_ids = set()
+
+                def to_decimal_amount(value, fallback=decimal.Decimal('0')):
+                    if value is None or value == '':
+                        return fallback
+                    try:
+                        return decimal.Decimal(str(value))
+                    except Exception:
+                        return fallback
+
+                for item in items_data:
+                    item_id = str(item.get('id') or '')
+                    if item_id and item_id in existing:
+                        obj = existing[item_id]
+                        if obj.invoice_id:
+                            touched_outgoing_ids.add(str(obj.invoice_id))
+                        if obj.incoming_invoice_id:
+                            touched_incoming_ids.add(str(obj.incoming_invoice_id))
+                        old_amount = to_decimal_amount(obj.amount)
+                        new_amount = to_decimal_amount(item.get('amount', old_amount), old_amount)
+                        note = item.get('note', obj.note)
+                        if new_amount != old_amount or note != obj.note:
+                            obj.amount = new_amount
+                            obj.note = note
+                            obj.save(update_fields=['amount', 'note'])
+                        seen_ids.add(item_id)
+                        continue
+
+                    invoice = item.get('invoice')
+                    if invoice and not isinstance(invoice, Invoice):
+                        invoice = Invoice.objects.filter(id=invoice).first()
+
+                    incoming_invoice = item.get('incoming_invoice')
+                    if incoming_invoice and not isinstance(incoming_invoice, IncomingInvoiceDigest):
+                        incoming_invoice = IncomingInvoiceDigest.objects.filter(id=incoming_invoice).first()
+
+                    customer = item.get('customer')
+                    if customer and not isinstance(customer, Customer):
+                        customer = Customer.objects.filter(id=customer).first()
+                    if invoice and not customer:
+                        customer = invoice.customer
+
+                    amount = to_decimal_amount(item.get('amount'), decimal.Decimal('0'))
+                    note = item.get('note') or ''
+                    new_obj = BankStatementItem.objects.create(
+                        bank_statement=instance,
+                        customer=customer,
+                        invoice=invoice,
+                        incoming_invoice=incoming_invoice,
+                        amount=amount,
+                        note=note,
+                    )
+                    if new_obj.invoice_id:
+                        touched_outgoing_ids.add(str(new_obj.invoice_id))
+                    if new_obj.incoming_invoice_id:
+                        touched_incoming_ids.add(str(new_obj.incoming_invoice_id))
+                    seen_ids.add(str(new_obj.id))
+
+                for ex_id, ex in existing.items():
+                    if ex_id not in seen_ids:
+                        if ex.invoice_id:
+                            touched_outgoing_ids.add(str(ex.invoice_id))
+                        if ex.incoming_invoice_id:
+                            touched_incoming_ids.add(str(ex.incoming_invoice_id))
+                        ex.delete()
+
+                company = getattr(instance, 'company', None)
+                if company and touched_outgoing_ids:
+                    for inv in Invoice.objects.filter(company=company, id__in=list(touched_outgoing_ids)):
+                        agg = BankStatementItem.objects.filter(bank_statement__company=company, invoice=inv).aggregate(
+                            total=models.Sum('amount'),
+                            last_date=models.Max('bank_statement__statement_date')
+                        )
+                        paid_amount = decimal.Decimal(str(agg.get('total') or 0))
+                        if paid_amount < 0:
+                            paid_amount = decimal.Decimal('0')
+
+                        is_nav_status = inv.status in NAV_PROGRESS_STATUSES
+                        if _is_effectively_paid(inv, paid_amount):
+                            new_status = inv.status if is_nav_status else 'paid'
+                        elif paid_amount > 0:
+                            new_status = inv.status if is_nav_status else 'partially_paid'
+                        elif inv.status in ('paid', 'partially_paid'):
+                            new_status = 'sent'
+                        else:
+                            new_status = inv.status
+
+                        new_payment_date = agg.get('last_date') if paid_amount > 0 else None
+                        update_fields = []
+                        if inv.amount_paid != paid_amount:
+                            inv.amount_paid = paid_amount
+                            update_fields.append('amount_paid')
+                        if inv.status != new_status:
+                            inv.status = new_status
+                            update_fields.append('status')
+                        if inv.payment_date != new_payment_date:
+                            inv.payment_date = new_payment_date
+                            update_fields.append('payment_date')
+                        if update_fields:
+                            inv.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+                if company and touched_incoming_ids:
+                    for inc in IncomingInvoiceDigest.objects.filter(company=company, id__in=list(touched_incoming_ids)):
+                        qs = BankStatementItem.objects.filter(bank_statement__company=company, incoming_invoice=inc).select_related('bank_statement')
+                        agg = qs.aggregate(last_date=models.Max('bank_statement__statement_date'))
+                        paid_amount = decimal.Decimal('0')
+                        for row in qs:
+                            try:
+                                paid_amount += abs(decimal.Decimal(str(row.amount or 0)))
+                            except Exception:
+                                continue
+                        gross = decimal.Decimal(str((inc.invoice_net_amount or 0) + (inc.invoice_vat_amount or 0)))
+
+                        if paid_amount >= (gross - decimal.Decimal('1.0')) and gross > 0:
+                            payment_status = 'paid'
+                        elif paid_amount > 0:
+                            payment_status = 'partially_paid'
+                        else:
+                            payment_status = 'unpaid'
+
+                        seqs = []
+                        seen_seq = set()
+                        for row in qs:
+                            seq = str(getattr(row.bank_statement, 'sequence_number', '') or '').strip()
+                            if seq and seq not in seen_seq:
+                                seen_seq.add(seq)
+                                seqs.append(seq)
+                        payment_reference = ', '.join(seqs)[:100] if seqs else None
+                        payment_date = agg.get('last_date') if paid_amount > 0 else None
+
+                        update_fields = []
+                        if inc.amount_paid != paid_amount:
+                            inc.amount_paid = paid_amount
+                            update_fields.append('amount_paid')
+                        if inc.payment_status != payment_status:
+                            inc.payment_status = payment_status
+                            update_fields.append('payment_status')
+                        if inc.payment_date != payment_date:
+                            inc.payment_date = payment_date
+                            update_fields.append('payment_date')
+                        if (inc.payment_reference or None) != payment_reference:
+                            inc.payment_reference = payment_reference
+                            update_fields.append('payment_reference')
+                        if update_fields:
+                            inc.save(update_fields=update_fields)
+
+        return instance
+
+
+class CashRegisterSerializer(serializers.ModelSerializer):
+    company_name = serializers.SerializerMethodField(read_only=True)
+    balance = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = CashRegister
+        fields = [
+            'id', 'company', 'company_name', 'name', 'code', 'location', 'currency', 'is_active',
+            'created_by', 'created_at', 'updated_at', 'balance'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at', 'created_by', 'balance']
+
+    def get_company_name(self, obj):
+        return getattr(obj.company, 'name', None)
+
+    def get_balance(self, obj):
+        agg = obj.transactions.aggregate(
+            total_in=models.Sum('amount', filter=models.Q(transaction_type=CashRegisterTransaction.TYPE_IN)),
+            total_out=models.Sum('amount', filter=models.Q(transaction_type=CashRegisterTransaction.TYPE_OUT)),
+        )
+        total_in = decimal.Decimal(str(agg.get('total_in') or 0))
+        total_out = decimal.Decimal(str(agg.get('total_out') or 0))
+        return float(total_in - total_out)
+
+
+class CashRegisterTransactionSerializer(serializers.ModelSerializer):
+    cash_register_name = serializers.SerializerMethodField(read_only=True)
+    invoice_number = serializers.SerializerMethodField(read_only=True)
+    incoming_invoice_number = serializers.SerializerMethodField(read_only=True)
+    company_name = serializers.SerializerMethodField(read_only=True)
+
+    class Meta:
+        model = CashRegisterTransaction
+        fields = [
+            'id', 'company', 'company_name', 'cash_register', 'cash_register_name', 'transaction_type',
+            'amount', 'currency', 'invoice', 'invoice_number', 'incoming_invoice', 'incoming_invoice_number',
+            'voucher_number', 'note', 'created_by', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'created_by', 'voucher_number', 'currency']
+
+    def get_cash_register_name(self, obj):
+        return getattr(obj.cash_register, 'name', None)
+
+    def get_invoice_number(self, obj):
+        return getattr(obj.invoice, 'invoice_number', None)
+
+    def get_incoming_invoice_number(self, obj):
+        return getattr(obj.incoming_invoice, 'invoice_number', None)
+
+    def get_company_name(self, obj):
+        return getattr(obj.company, 'name', None)
+
+    def validate(self, attrs):
+        tx_type = attrs.get('transaction_type')
+        amount = decimal.Decimal(str(attrs.get('amount') or 0))
+        company = attrs.get('company')
+        register = attrs.get('cash_register')
+        invoice = attrs.get('invoice')
+        incoming_invoice = attrs.get('incoming_invoice')
+
+        if amount <= 0:
+            raise serializers.ValidationError({'amount': 'Az összegnek pozitívnak kell lennie.'})
+
+        if not company or not register:
+            raise serializers.ValidationError('Cég és kassza megadása kötelező.')
+
+        if str(register.company_id) != str(company.id):
+            raise serializers.ValidationError({'cash_register': 'A kassza nem ehhez a céghez tartozik.'})
+
+        if tx_type == CashRegisterTransaction.TYPE_IN:
+            if not invoice:
+                raise serializers.ValidationError({'invoice': 'Befizetéshez kimenő számla kötelező.'})
+            if incoming_invoice:
+                raise serializers.ValidationError({'incoming_invoice': 'Befizetéshez bejövő számla nem adható meg.'})
+            if str(invoice.company_id) != str(company.id):
+                raise serializers.ValidationError({'invoice': 'A számla nem ehhez a céghez tartozik.'})
+
+            outstanding = decimal.Decimal(str(invoice.total_gross_amount or 0)) - decimal.Decimal(str(invoice.amount_paid or 0))
+            if amount > max(decimal.Decimal('0'), outstanding):
+                raise serializers.ValidationError({'amount': 'A befizetés nem lehet nagyobb a számla hátralékánál.'})
+
+        elif tx_type == CashRegisterTransaction.TYPE_OUT:
+            if not incoming_invoice:
+                raise serializers.ValidationError({'incoming_invoice': 'Kifizetéshez bejövő számla kötelező.'})
+            if invoice:
+                raise serializers.ValidationError({'invoice': 'Kifizetéshez kimenő számla nem adható meg.'})
+            if str(incoming_invoice.company_id) != str(company.id):
+                raise serializers.ValidationError({'incoming_invoice': 'A bejövő számla nem ehhez a céghez tartozik.'})
+
+            gross = decimal.Decimal(str((incoming_invoice.invoice_net_amount or 0) + (incoming_invoice.invoice_vat_amount or 0)))
+            outstanding = gross - decimal.Decimal(str(incoming_invoice.amount_paid or 0))
+            if amount > max(decimal.Decimal('0'), outstanding):
+                raise serializers.ValidationError({'amount': 'A kifizetés nem lehet nagyobb a bejövő számla hátralékánál.'})
+        else:
+            raise serializers.ValidationError({'transaction_type': 'Érvénytelen tranzakció típus.'})
+
+        return attrs
+
+    def create(self, validated_data):
+        with transaction.atomic():
+            tx = super().create(validated_data)
+            tx.currency = (tx.cash_register.currency or tx.currency or 'HUF')
+            tx.save(update_fields=['currency'])
+
+            if tx.transaction_type == CashRegisterTransaction.TYPE_IN and tx.invoice:
+                inv = tx.invoice
+                add = decimal.Decimal(str(tx.amount or 0))
+                outstanding = decimal.Decimal(str(inv.total_gross_amount or 0)) - decimal.Decimal(str(inv.amount_paid or 0))
+                if add > outstanding:
+                    add = max(decimal.Decimal('0'), outstanding)
+                new_paid = decimal.Decimal(str(inv.amount_paid or 0)) + add
+                inv.amount_paid = new_paid
+                if _is_effectively_paid(inv, new_paid):
+                    inv.status = 'paid'
+                    inv.payment_date = timezone.now().date()
+                elif new_paid > 0:
+                    inv.status = 'partially_paid'
+                inv.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
+
+            if tx.transaction_type == CashRegisterTransaction.TYPE_OUT and tx.incoming_invoice:
+                inc = tx.incoming_invoice
+                add = decimal.Decimal(str(tx.amount or 0))
+                new_paid = decimal.Decimal(str(inc.amount_paid or 0)) + add
+                gross = decimal.Decimal(str((inc.invoice_net_amount or 0) + (inc.invoice_vat_amount or 0)))
+                inc.amount_paid = new_paid
+                if new_paid >= (gross - decimal.Decimal('1.0')):
+                    inc.payment_status = 'paid'
+                    inc.payment_date = timezone.now().date()
+                elif new_paid > 0:
+                    inc.payment_status = 'partially_paid'
+                inc.save(update_fields=['amount_paid', 'payment_status', 'payment_date'])
+
+            return tx
 
     def create(self, validated_data):
         items_data = validated_data.pop('items', [])
@@ -253,11 +820,14 @@ class BankStatementSerializer(serializers.ModelSerializer):
                     except Exception:
                         pass
                     invoice.amount_paid = (invoice.amount_paid or 0) + add
-                    if invoice.amount_paid >= invoice.total_gross_amount:
-                        invoice.status = 'paid'
+                    is_nav_status = invoice.status in NAV_PROGRESS_STATUSES
+                    if _is_effectively_paid(invoice, invoice.amount_paid):
+                        if not is_nav_status:
+                            invoice.status = 'paid'
                         invoice.payment_date = statement.statement_date
                     elif invoice.amount_paid > 0:
-                        invoice.status = 'partially_paid'
+                        if not is_nav_status:
+                            invoice.status = 'partially_paid'
                     invoice.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
         return statement
 
@@ -285,11 +855,14 @@ class BankStatementSerializer(serializers.ModelSerializer):
                     except Exception:
                         pass
                     inv.amount_paid = (inv.amount_paid or 0) + delta
-                    if inv.amount_paid >= inv.total_gross_amount:
-                        inv.status = 'paid'
+                    is_nav_status = inv.status in NAV_PROGRESS_STATUSES
+                    if _is_effectively_paid(inv, inv.amount_paid):
+                        if not is_nav_status:
+                            inv.status = 'paid'
                         inv.payment_date = instance.statement_date
                     elif inv.amount_paid > 0:
-                        inv.status = 'partially_paid'
+                        if not is_nav_status:
+                            inv.status = 'partially_paid'
                     else:
                         # If previously marked paid/partial but now zero or less, set to 'sent'
                         if inv.status in ('paid', 'partially_paid'):
@@ -297,13 +870,21 @@ class BankStatementSerializer(serializers.ModelSerializer):
                         inv.payment_date = None
                     inv.save(update_fields=['amount_paid', 'status', 'payment_date', 'updated_at'])
 
+                def to_decimal_amount(value, fallback=decimal.Decimal('0')):
+                    if value is None or value == '':
+                        return fallback
+                    try:
+                        return decimal.Decimal(str(value))
+                    except Exception:
+                        return fallback
+
                 for item in items_data:
                     # Existing item update by id
                     item_id = str(item.get('id') or '')
                     if item_id and item_id in existing:
                         obj = existing[item_id]
-                        old_amount = obj.amount
-                        new_amount = item.get('amount', old_amount)
+                        old_amount = to_decimal_amount(obj.amount)
+                        new_amount = to_decimal_amount(item.get('amount', old_amount), old_amount)
                         note = item.get('note', obj.note)
                         if new_amount != old_amount or note != obj.note:
                             obj.amount = new_amount
@@ -322,7 +903,7 @@ class BankStatementSerializer(serializers.ModelSerializer):
                         customer = Customer.objects.filter(id=customer).first()
                     if invoice and not customer:
                         customer = invoice.customer
-                    amount = item.get('amount')
+                    amount = to_decimal_amount(item.get('amount'), decimal.Decimal('0'))
                     note = item.get('note')
                     new_obj = BankStatementItem.objects.create(
                         bank_statement=instance,
@@ -514,6 +1095,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
     created_by = serializers.StringRelatedField(read_only=True)
     amount_paid = serializers.ReadOnlyField()
     advances_used = serializers.SerializerMethodField(read_only=True)
+    settlement_details = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Invoice
@@ -524,7 +1106,7 @@ class InvoiceSerializer(serializers.ModelSerializer):
             'status', 'nav_transaction_id', 'invoice_block',
             'nav_submission_date', 'nav_response', 'notes', 'created_by',
             'created_at', 'updated_at', 'total_net_amount', 'total_vat_amount',
-            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used', 'erp_order_ids'
+            'total_gross_amount', 'amount_paid', 'print_snapshot', 'advances_used', 'settlement_details', 'erp_order_ids'
         ]
 
     def create(self, validated_data):
@@ -563,6 +1145,51 @@ class InvoiceSerializer(serializers.ModelSerializer):
             return out
         except Exception:
             return []
+
+    def get_settlement_details(self, obj):
+        rows = []
+        try:
+            from decimal import Decimal
+            paid_total = Decimal(str(obj.amount_paid or 0))
+            bank_total = Decimal('0')
+
+            bank_items = (
+                obj.bank_statement_items
+                .select_related('bank_statement__bank_account')
+                .order_by('bank_statement__statement_date', 'created_at')
+            )
+            for bsi in bank_items:
+                amount_val = Decimal(str(bsi.amount or 0)).copy_abs()
+                if amount_val <= 0:
+                    continue
+                bank_total += amount_val
+                statement = bsi.bank_statement
+                account = getattr(statement, 'bank_account', None)
+                account_no = (getattr(account, 'iban', None) or getattr(account, 'account_number', None) or '') if account else ''
+                rows.append({
+                    'date': str(getattr(statement, 'statement_date', None) or bsi.created_at.date()),
+                    'amount': float(amount_val),
+                    'currency': obj.currency,
+                    'bank_account_number': account_no,
+                    'source_label': getattr(statement, 'sequence_number', None) or '',
+                    'source_type': 'bank_statement',
+                })
+
+            # Cash-style fallback: if invoice has paid amount not covered by bank statement links,
+            # expose it as a cash settlement row (e.g. kassza befizetés).
+            remaining_paid = paid_total - bank_total
+            if remaining_paid > Decimal('0.0001') and obj.payment_method in ('cash', 'cod'):
+                rows.append({
+                    'date': str(obj.payment_date or obj.updated_at.date()),
+                    'amount': float(remaining_paid),
+                    'currency': obj.currency,
+                    'bank_account_number': '',
+                    'source_label': 'Készpénz',
+                    'source_type': 'cash',
+                })
+        except Exception:
+            return []
+        return rows
 
 
 class InvoiceCreateSerializer(serializers.ModelSerializer):
@@ -857,7 +1484,8 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
 
             # If payment method is not transfer or COD, mark as fully paid by default
             try:
-                if invoice.payment_method not in ('transfer', 'cod'):
+                payment_method = str(getattr(invoice, 'payment_method', '') or '').strip().lower()
+                if payment_method not in ('transfer', 'cod'):
                     total_gross = invoice.total_gross_amount
                     invoice.amount_paid = total_gross
                     invoice.status = 'paid'
@@ -893,6 +1521,7 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
                 'delivery_date': str(invoice.delivery_date) if invoice.delivery_date else None,
                 'due_date': str(invoice.due_date),
                 'currency': invoice.currency,
+                'bilingual': bool(invoice.invoice_block and invoice.invoice_block.second_language),
                 'payment_method': invoice.payment_method,
                 'company': company_payload,
                 'customer': customer_payload,
@@ -1029,9 +1658,33 @@ class CompanyEmailSettingsSerializer(serializers.ModelSerializer):
             'imap_host', 'imap_user', 'imap_password', 'imap_port', 'imap_sent_folder',
             'default_subject_template', 'default_body_template',
             'subject_template_en', 'body_template_en',
+            'arrears_subject_template', 'arrears_body_template',
             'default_sender_name', 'default_sender_phone',
             'use_thunderbird', 'thunderbird_path',
             'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class EmailTemplateSerializer(serializers.ModelSerializer):
+    template_type_label = serializers.CharField(source='get_template_type_display', read_only=True)
+    language_label = serializers.CharField(source='get_language_display', read_only=True)
+
+    class Meta:
+        model = EmailTemplate
+        fields = [
+            'id', 'company', 'template_type', 'template_type_label', 'name',
+            'language', 'language_label',
+            'subject_template', 'body_template', 'is_active', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+
+class EmailSignatureSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmailSignature
+        fields = [
+            'id', 'company', 'name', 'content_html', 'is_default', 'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
 
@@ -1158,7 +1811,7 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
             'current_number', 'is_active', 'invoice_count', 'cancelled_count',
             'total_net_amount', 'total_vat_amount', 'nav_configuration',
             'nav_configuration_name', 'nav_configuration_id', 'company_id', 'invoice_appearance', 
-            'default_currency', 'default_bank_account', 'language', 'second_language', 'footer_note',
+            'default_currency', 'default_bank_account', 'default_vat_type', 'language', 'second_language', 'footer_note',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'company', 'created_at', 'updated_at']
@@ -1200,6 +1853,11 @@ class InvoiceBlockSerializer(serializers.ModelSerializer):
         elif nav_config_id is None:
             # Explicitly set to None to clear association
             attrs['nav_configuration'] = None
+
+        if not self.instance and not attrs.get('default_vat_type'):
+            default_vat = VATType.objects.filter(active=True).order_by('sort_order', 'name').first() or VATType.objects.order_by('sort_order', 'name').first()
+            if default_vat:
+                attrs['default_vat_type'] = default_vat
         return attrs
 
 
@@ -1282,6 +1940,20 @@ class CompanyNAVConfigurationSerializer(serializers.ModelSerializer):
                 "Érvénytelen softwareId. Pontosan 18 karakter, csak szám (0-9), nagybetű (A-Z) és kötőjel (-) engedélyezett. Példa: 123456789123456789"
             )
         return v
+
+    def validate(self, attrs):
+        attrs = super().validate(attrs)
+        if self.instance is not None:
+            for field in ('password', 'sign_key', 'exchange_key'):
+                if field not in attrs:
+                    continue
+                value = attrs.get(field)
+                if value is None:
+                    attrs.pop(field, None)
+                    continue
+                if isinstance(value, str) and value.strip() == '':
+                    attrs.pop(field, None)
+        return attrs
 
 
 class IncomingDocumentSerializer(serializers.ModelSerializer):

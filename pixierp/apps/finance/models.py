@@ -95,6 +95,7 @@ class CashRegister(models.Model):
     initial_balance = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Kezdő egyenleg")
     current_balance = models.DecimalField(max_digits=14, decimal_places=2, default=0, verbose_name="Jelenlegi egyenleg")
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    is_pos_default = models.BooleanField(default=False, verbose_name="POS alapértelmezett kassza")
     email_notify_on_deposit = models.BooleanField(default=False, verbose_name="E-mail értesítés betétről")
     email_notify_on_withdrawal = models.BooleanField(default=False, verbose_name="E-mail értesítés kivétről")
     notify_users = models.ManyToManyField(Employee, blank=True, related_name='cash_register_notifications', verbose_name="Értesítendő alkalmazottak")
