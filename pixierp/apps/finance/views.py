@@ -38,6 +38,23 @@ class PixinvoiceClient:
 			raise ValueError('PIXINVOICE_API_KEY not configured')
 		self.headers = {'X-Api-Key': self.key, 'Accept': 'application/json'}
 
+	def _normalize_customer_roles(self, item: dict):
+		if not isinstance(item, dict):
+			return item
+
+		def _to_bool(value, default):
+			if value is None:
+				return default
+			if isinstance(value, bool):
+				return value
+			if isinstance(value, (int, float)):
+				return value != 0
+			return str(value).strip().lower() in {'1', 'true', 'yes', 'y', 'on'}
+
+		item['is_customer'] = _to_bool(item.get('is_customer'), True)
+		item['is_supplier'] = _to_bool(item.get('is_supplier'), False)
+		return item
+
 	def _fetch_all(self, path: str, company_id=None):
 		url = f"{self.base}/{path.strip('/')}/"
 		cid = company_id or self.company_id
@@ -82,14 +99,15 @@ class PixinvoiceClient:
 		return self._fetch_all('companies', company_id=company_id)
 
 	def list_customers(self, company_id=None):
-		return self._fetch_all('customers', company_id=company_id)
+		items = self._fetch_all('customers', company_id=company_id)
+		return [self._normalize_customer_roles(i) for i in items]
 
 	def get_customer(self, customer_id: str, company_id=None):
 		url = f"{self.base}/customers/{customer_id}/"
 		params = {'company_id': company_id or self.company_id} if (company_id or self.company_id) else None
 		r = requests.get(url, headers=self.headers, params=params, timeout=20)
 		r.raise_for_status()
-		return r.json()
+		return self._normalize_customer_roles(r.json())
 
 	def list_customer_bank_accounts(self, customer_id: str, company_id=None):
 		url = f"{self.base}/customer-bank-accounts/"
@@ -153,7 +171,7 @@ class PixinvoiceClient:
 			data['company_id'] = company_id or self.company_id
 		r = requests.put(url, headers=self.headers, json=data, timeout=20) if customer_id else requests.post(url, headers=self.headers, json=data, timeout=20)
 		r.raise_for_status()
-		return r.json()
+		return self._normalize_customer_roles(r.json())
 
 	def delete_customer(self, customer_id: str, company_id=None):
 		if not customer_id:

@@ -51,6 +51,16 @@ def _filter_by_query(items, query):
     return filtered
 
 
+def _is_truthy_flag(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return value != 0
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'y', 'on')
+
+
 def _ensure_company_id(client):
     """Return a usable company_id: prefer explicit client.company_id, otherwise first company from PixInvoice."""
     if getattr(client, 'company_id', None):
@@ -108,15 +118,20 @@ class CompanyViewSet(viewsets.ViewSet):
                 items = synced_items
 
             if is_customer_filter:
-                items = [i for i in items if i.get('is_customer') is True]
+                filtered_items = []
+                for item in items:
+                    flag = _is_truthy_flag(item.get('is_customer'))
+                    if flag is not False:
+                        filtered_items.append(item)
+                items = filtered_items
 
             if compact_mode:
                 items = [
                     {
                         'id': item.get('id'),
                         'name': item.get('name') or item.get('full_name') or '',
-                        'is_customer': bool(item.get('is_customer')),
-                        'is_supplier': bool(item.get('is_supplier')),
+                        'is_customer': _is_truthy_flag(item.get('is_customer')) is not False,
+                        'is_supplier': _is_truthy_flag(item.get('is_supplier')) is True,
                     }
                     for item in items
                 ]
