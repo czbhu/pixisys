@@ -1069,11 +1069,40 @@ const RFQs: React.FC = () => {
                         
                         const all: any[] = list.results ?? list;
                         const top: any[] = Array.isArray(topList) ? topList : [];
-                        
-                        const topIds = new Set(top.map((c) => c.id));
-                        const rest = all.filter((c) => !topIds.has(c.id));
-                        
-                        setCompanies([...top, ...rest]);
+
+                        const normalize = (value: any) => (value ?? '').toString().trim().toLowerCase();
+                        const normalizeTax = (value: any) => (value ?? '').toString().replace(/\D+/g, '').slice(0, 8);
+                        const companyKey = (c: any) => {
+                          const tax = normalizeTax(c?.tax_number || c?.full_tax_number || c?.taxNumber || c?.fullTaxNumber);
+                          const name = normalize(c?.name || c?.full_name);
+                          return `${tax}|${name}`;
+                        };
+
+                        const allByKey = new Map<string, any>();
+                        for (const company of all) {
+                          allByKey.set(companyKey(company), company);
+                        }
+
+                        const ordered: any[] = [];
+                        const seenKeys = new Set<string>();
+
+                        for (const topCompany of top) {
+                          const key = companyKey(topCompany);
+                          const canonical = allByKey.get(key) || topCompany;
+                          const dedupeKey = companyKey(canonical) || `id:${canonical?.id}`;
+                          if (seenKeys.has(dedupeKey)) continue;
+                          seenKeys.add(dedupeKey);
+                          ordered.push(canonical);
+                        }
+
+                        for (const company of all) {
+                          const dedupeKey = companyKey(company) || `id:${company?.id}`;
+                          if (seenKeys.has(dedupeKey)) continue;
+                          seenKeys.add(dedupeKey);
+                          ordered.push(company);
+                        }
+
+                        setCompanies(ordered);
                       } catch (err) {
                         console.error(err);
                         const list = await crmService.getCompanies({ is_customer: true, compact: true });

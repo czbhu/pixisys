@@ -130,6 +130,8 @@ class CompanyViewSet(viewsets.ViewSet):
                     {
                         'id': item.get('id'),
                         'name': item.get('name') or item.get('full_name') or '',
+                        'tax_number': item.get('tax_number') or item.get('taxNumber') or '',
+                        'full_tax_number': item.get('full_tax_number') or item.get('fullTaxNumber') or '',
                         'is_customer': _is_truthy_flag(item.get('is_customer')) is not False,
                         'is_supplier': _is_truthy_flag(item.get('is_supplier')) is True,
                     }
