@@ -55,9 +55,9 @@ class PixinvoiceClient:
 		item['is_supplier'] = _to_bool(item.get('is_supplier'), False)
 		return item
 
-	def _fetch_all(self, path: str, company_id=None):
+	def _fetch_all(self, path: str, company_id=None, use_default_company=True):
 		url = f"{self.base}/{path.strip('/')}/"
-		cid = company_id or self.company_id
+		cid = company_id if company_id is not None else (self.company_id if use_default_company else None)
 		base_params = {'page_size': 500, 'limit': 500, 'per_page': 500}
 		if cid:
 			base_params['company_id'] = cid
@@ -99,7 +99,7 @@ class PixinvoiceClient:
 		return self._fetch_all('companies', company_id=company_id)
 
 	def list_customers(self, company_id=None):
-		items = self._fetch_all('customers', company_id=company_id)
+		items = self._fetch_all('customers', company_id=company_id, use_default_company=(company_id is not None))
 		return [self._normalize_customer_roles(i) for i in items]
 
 	def get_customer(self, customer_id: str, company_id=None):
