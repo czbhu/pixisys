@@ -85,15 +85,42 @@ class CompanyViewSet(viewsets.ViewSet):
 
     def list(self, request):
         try:
-            company_id = _resolve_company_id(request)
             client = PixinvoiceClient()
-            if not company_id:
-                company_id = _ensure_company_id(client)
-            if not company_id:
-                return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            
+            explicit_company_id = request.query_params.get('company_id')
+
             # Use PixInvoice as the Source of Truth
-            items = client.list_customers(company_id=company_id)
+            if explicit_company_id:
+                items = client.list_customers(company_id=explicit_company_id)
+            else:
+                items = []
+                seen_ids = set()
+
+                company_ids = []
+                try:
+                    companies = client.list_companies()
+                    company_ids = [
+                        (c.get('id') or c.get('company_id'))
+                        for c in companies
+                        if (c.get('id') or c.get('company_id'))
+                    ]
+                except Exception:
+                    company_ids = []
+
+                if company_ids:
+                    for company_id in company_ids:
+                        for item in client.list_customers(company_id=company_id):
+                            item_id = str(item.get('id') or '')
+                            if item_id and item_id in seen_ids:
+                                continue
+                            if item_id:
+                                seen_ids.add(item_id)
+                            items.append(item)
+                else:
+                    fallback_company_id = _resolve_company_id(request) or _ensure_company_id(client)
+                    if not fallback_company_id:
+                        return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
+                    items = client.list_customers(company_id=fallback_company_id)
+
             items = _filter_by_query(items, request.query_params.get('q'))
 
             is_supplier_filter = request.query_params.get('is_supplier') == 'true'
