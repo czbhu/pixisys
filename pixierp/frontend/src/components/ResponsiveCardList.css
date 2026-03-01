@@ -1,0 +1,113 @@
+/* ============================================================ */
+/*  Responsive Card Layout — shared across all table pages      */
+/* ============================================================ */
+
+.responsive-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.responsive-card {
+  background: #fff;
+  border: 1px solid #f0f0f0;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  transition: box-shadow 0.2s;
+}
+
+.responsive-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+/* Each row inside a card */
+.rc-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.rc-cell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.rc-label {
+  font-size: 10px;
+  color: #999;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.rc-value {
+  font-size: 13px;
+  color: #333;
+  line-height: 1.4;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rc-value a {
+  color: #1677ff;
+  font-weight: 500;
+}
+
+/* Bottom row: status + actions side by side */
+.rc-row-bottom {
+  padding-top: 4px;
+  border-top: 1px solid #f0f0f0;
+  align-items: center;
+}
+
+/* ============================================================ */
+/*  Narrower mobile: stack rows into 2-column grid              */
+/* ============================================================ */
+@media (max-width: 600px) {
+  .responsive-card {
+    padding: 10px 10px;
+    gap: 4px;
+  }
+
+  .rc-cell {
+    flex: 1 1 45%;
+    min-width: 80px;
+  }
+
+  .rc-value {
+    font-size: 12px;
+  }
+
+  .rc-label {
+    font-size: 9px;
+  }
+}
+
+/* Very narrow: single column stack */
+@media (max-width: 400px) {
+  .rc-cell {
+    flex: 1 1 100%;
+  }
+
+  .rc-row-bottom {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+  }
+
+  .responsive-card {
+    padding: 8px 8px;
+  }
+
+  .rc-value {
+    font-size: 11px;
+  }
+}

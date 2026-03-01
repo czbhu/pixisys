@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Card, Table, Button, Space, Modal, Form, Input, Spin, Alert, message, Tooltip, Popconfirm } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 
@@ -171,11 +172,13 @@ const Leads: React.FC = () => {
                     />
                 )}
 
-                <Table
+                <EnhancedTable
+                    tableKey="leads"
                     columns={columns}
                     dataSource={customers}
                     pagination={{ pageSize: 10 }}
                     rowKey="id"
+                    cardBreakpoint={750}
                 />
             </Card>
 

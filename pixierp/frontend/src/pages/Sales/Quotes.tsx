@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Popconfirm, Input, Select } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { PlusOutlined, EditOutlined, DeleteOutlined, EyeOutlined, CheckOutlined, SearchOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import { useNavigate } from 'react-router-dom';
@@ -270,33 +271,29 @@ const Quotes: React.FC = () => {
                     />
                 )}
 
-                <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
-                    <Input
-                        placeholder="Keresés (ajánlatszám, igényszám, ügyfél, felelős, résztevők)..."
-                        prefix={<SearchOutlined />}
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        style={{ flex: 1 }}
-                        allowClear
-                    />
-                    <Select
-                        placeholder="Szűrés rögzítőre"
-                        allowClear
-                        style={{ width: 200 }}
-                        onChange={setCreatorFilter}
-                        value={creatorFilter}
-                    >
-                        {creators.map((name: string) => (
-                            <Select.Option key={name} value={name}>{name}</Select.Option>
-                        ))}
-                    </Select>
-                </div>
-
-                <Table
+                <EnhancedTable
+                    tableKey="quotes"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés (ajánlatszám, igényszám, ügyfél, felelős, résztevők)..."
+                    toolbarExtra={
+                        <Select
+                            placeholder="Szűrés rögzítőre"
+                            allowClear
+                            style={{ width: 200 }}
+                            onChange={setCreatorFilter}
+                            value={creatorFilter}
+                        >
+                            {creators.map((name: string) => (
+                                <Select.Option key={name} value={name}>{name}</Select.Option>
+                            ))}
+                        </Select>
+                    }
                     columns={columns}
                     dataSource={filtered}
                     pagination={{ pageSize: 10 }}
                     rowKey="id"
+                    cardBreakpoint={850}
                 />
             </Card>
         </div>

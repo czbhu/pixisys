@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Tag, Space, Button, message, Input, Tooltip } from 'antd';
-import { SearchOutlined } from '@ant-design/icons';
+import { Card, Tag, Space, Button, message, Tooltip } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const MyInvitations: React.FC = () => {
   const navigate = useNavigate();
@@ -26,17 +27,9 @@ const MyInvitations: React.FC = () => {
   useEffect(() => { load(); }, []);
 
   // Keresési logika
-  const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   useEffect(() => {
-    const q = normalize(query);
-    if (!q) { setFiltered(rows); return; }
-    const next = rows.filter(inv => {
-      const hay = [
-        inv.quote_request_number || '',
-        inv.status || ''
-      ].join(' \u0001 ');
-      return normalize(hay).includes(q);
-    });
+    if (!query?.trim()) { setFiltered(rows); return; }
+    const next = rows.filter(inv => deepSearchMatch(query, inv));
     setFiltered(next);
   }, [query, rows]);
 
@@ -73,15 +66,19 @@ const MyInvitations: React.FC = () => {
 
   return (
     <Card title="Meghívásaim">
-      <Input
-        placeholder="Keresés (ajánlatkérő, státusz)..."
-        prefix={<SearchOutlined />}
-        value={query}
-        onChange={(e) => setQuery(e.target.value)}
-        style={{ marginBottom: 16 }}
-        allowClear
+      <EnhancedTable
+        tableKey="myInvitations"
+        rowKey="id"
+        loading={loading}
+        columns={columns as any}
+        dataSource={filtered}
+        searchValue={query}
+        onSearchChange={setQuery}
+        searchPlaceholder="Keresés (ajánlatkérő, státusz)..."
+        pagination={{ pageSize: 10 }}
+        size="small"
+        cardBreakpoint={600}
       />
-      <Table rowKey="id" loading={loading} columns={columns as any} dataSource={filtered} pagination={{ pageSize: 10 }} size="small" />
     </Card>
   );
 };

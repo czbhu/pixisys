@@ -1,11 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import {
     Card,
-    Table,
     Button,
     Space,
     Tag,
-    Input,
     Select,
     Row,
     Col,
@@ -13,11 +11,13 @@ import {
     Alert,
 } from 'antd';
 import {
-    SearchOutlined,
     InboxOutlined,
     WarningOutlined,
 } from '@ant-design/icons';
 import { warehouseService } from '../../services/warehouseService';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Option } = Select;
 
@@ -78,6 +78,7 @@ const Inventory: React.FC = () => {
         {
             title: 'Alapanyag',
             key: 'material',
+            sorter: (a: InventoryItem, b: InventoryItem) => a.material_name.localeCompare(b.material_name),
             render: (record: InventoryItem) => (
                 <div>
                     <div style={{ fontWeight: 'bold' }}>{record.material_name}</div>
@@ -89,15 +90,18 @@ const Inventory: React.FC = () => {
             title: 'Raktár',
             dataIndex: 'warehouse_name',
             key: 'warehouse_name',
+            sorter: (a: InventoryItem, b: InventoryItem) => (a.warehouse_name || '').localeCompare(b.warehouse_name || ''),
         },
         {
             title: 'Polc',
             dataIndex: 'shelf_name',
             key: 'shelf_name',
+            sorter: (a: InventoryItem, b: InventoryItem) => (a.shelf_name || '').localeCompare(b.shelf_name || ''),
         },
         {
             title: 'Mennyiség',
             key: 'quantity',
+            sorter: (a: InventoryItem, b: InventoryItem) => a.quantity - b.quantity,
             render: (record: InventoryItem) => (
                 <div>
                     <div style={{ fontWeight: 'bold' }}>
@@ -124,12 +128,7 @@ const Inventory: React.FC = () => {
         },
     ];
 
-    const filteredInventory = inventory.filter(item =>
-        item.material_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.material_code.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.warehouse_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        item.shelf_name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredInventory = inventory.filter(item => deepSearchMatch(searchQuery, item));
 
     const totalItems = filteredInventory.length;
     const lowStockItems = filteredInventory.filter(item => item.quantity < 10).length;
@@ -186,16 +185,14 @@ const Inventory: React.FC = () => {
             )}
 
             <Card
-                title="Készlet"
+                title={<UnifiedQuickSearchHeader
+                    title="Készlet"
+                    searchValue={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    placeholder="Keresés..."
+                />}
                 extra={
                     <Space>
-                        <Input
-                            placeholder="Keresés..."
-                            prefix={<SearchOutlined />}
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            style={{ width: 200 }}
-                        />
                         <Select
                             placeholder="Raktár szűrő"
                             value={warehouseFilter}
@@ -218,12 +215,14 @@ const Inventory: React.FC = () => {
                     </Space>
                 }
             >
-                <Table
+                <EnhancedTable
+                    tableKey="inventory"
                     size="small"
-                    columns={columns}
+                    columns={columns as any}
                     dataSource={filteredInventory}
                     rowKey="id"
                     loading={loading}
+                    cardBreakpoint={650}
                     pagination={{ pageSize: 10 }}
                 />
             </Card>

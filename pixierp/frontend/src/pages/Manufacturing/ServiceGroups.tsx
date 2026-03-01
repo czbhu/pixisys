@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
   Table,
   Button,
@@ -22,6 +23,8 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { TextArea } = Input;
 
@@ -43,6 +46,7 @@ const ServiceGroups: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingGroup, setEditingGroup] = useState<ServiceGroup | null>(null);
+  const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
   const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
 
@@ -226,18 +230,21 @@ const ServiceGroups: React.FC = () => {
       title: 'Csoport neve',
       dataIndex: 'name',
       key: 'name',
+      sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '', 'hu'),
     },
     {
       title: 'Leírás',
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
+      sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
     },
     {
       title: 'Elemek',
       dataIndex: 'services_count',
       key: 'services_count',
       width: 120,
+      sorter: (a: any, b: any) => (a.services_count || 0) - (b.services_count || 0),
       render: (count: number) => (
         <Tag color={(count || 0) > 0 ? 'blue' : 'default'}>{count || 0} db</Tag>
       ),
@@ -247,6 +254,7 @@ const ServiceGroups: React.FC = () => {
       dataIndex: 'is_active',
       key: 'is_active',
       width: 100,
+      sorter: (a: any, b: any) => (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1),
       render: (isActive: boolean) => (
         <Tag color={isActive ? 'green' : 'red'}>
           {isActive ? 'Aktív' : 'Inaktív'}
@@ -258,6 +266,7 @@ const ServiceGroups: React.FC = () => {
       dataIndex: 'created_by_name',
       key: 'created_by_name',
       width: 150,
+      sorter: (a: any, b: any) => (a.created_by_name || '').localeCompare(b.created_by_name || '', 'hu'),
     },
     {
       title: 'Műveletek',
@@ -294,6 +303,11 @@ const ServiceGroups: React.FC = () => {
     },
   ];
 
+  const filteredGroups = useMemo(() => {
+    if (!searchText?.trim()) return groups;
+    return groups.filter((group) => deepSearchMatch(searchText, group));
+  }, [groups, searchText]);
+
   return (
     <div style={{ padding: 24 }}>
       <Card
@@ -308,11 +322,16 @@ const ServiceGroups: React.FC = () => {
           </Button>
         }
       >
-        <Table
+        <EnhancedTable
+          tableKey="serviceGroups"
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Gyorskereső..."
           columns={columns}
-          dataSource={groups}
+          dataSource={filteredGroups}
           rowKey="id"
           loading={loading}
+          cardBreakpoint={750}
           pagination={false}
           expandable={{
               defaultExpandAllRows: true,

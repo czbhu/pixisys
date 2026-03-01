@@ -30,10 +30,31 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
                 } else {
                     console.log('[AuthContext] No token, skipping profile fetch');
                 }
-            } catch (error) {
+            } catch (error: any) {
                 console.error('[AuthContext] Auth initialization error:', error);
-                localStorage.removeItem('access_token');
-                localStorage.removeItem('refresh_token');
+                // Only clear tokens on explicit authentication failure (401/403)
+                // Do NOT clear on network errors, timeouts, etc. — keep the user logged in
+                const status = error?.response?.status;
+                if (status === 401 || status === 403) {
+                    // Try refresh one more time before giving up
+                    const refreshToken = localStorage.getItem('refresh_token');
+                    if (refreshToken) {
+                        try {
+                            const { access } = await authService.refreshToken();
+                            localStorage.setItem('access_token', access);
+                            const userData = await authService.getProfile();
+                            setUser(userData);
+                        } catch {
+                            localStorage.removeItem('access_token');
+                            localStorage.removeItem('refresh_token');
+                        }
+                    } else {
+                        localStorage.removeItem('access_token');
+                        localStorage.removeItem('refresh_token');
+                    }
+                }
+                // For network errors / timeouts: leave tokens intact, user stays "logged in"
+                // They will get an error when they try to load data
             } finally {
                 console.log('[AuthContext] Auth initialization complete, setting loading=false');
                 setLoading(false);

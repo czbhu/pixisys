@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Select, Space, Switch, Table, Tag, message } from 'antd';
+import { Button, Card, Form, Input, Modal, Select, Space, Switch, Tag, message } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { EditOutlined, PlusOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 interface CashRegisterOption {
   id: number;
@@ -46,6 +48,7 @@ const Registration: React.FC = () => {
   const [cashRegisters, setCashRegisters] = useState<CashRegisterOption[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroupOption[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [form] = Form.useForm();
 
   useEffect(() => {
@@ -129,13 +132,14 @@ const Registration: React.FC = () => {
   };
 
   const columns: ColumnsType<POSTerminal> = [
-    { title: 'POS név', dataIndex: 'name', key: 'name' },
-    { title: 'Helye', dataIndex: 'location', key: 'location' },
-    { title: 'HePG', dataIndex: 'hepg', key: 'hepg' },
+    { title: 'POS név', dataIndex: 'name', key: 'name', sorter: (a, b) => a.name.localeCompare(b.name) },
+    { title: 'Helye', dataIndex: 'location', key: 'location', sorter: (a, b) => (a.location || '').localeCompare(b.location || '') },
+    { title: 'HePG', dataIndex: 'hepg', key: 'hepg', sorter: (a, b) => (a.hepg || '').localeCompare(b.hepg || '') },
     {
       title: 'Kassza',
       dataIndex: 'cash_register_name',
       key: 'cash_register_name',
+      sorter: (a, b) => (a.cash_register_name || '').localeCompare(b.cash_register_name || ''),
       render: (value?: string) => value || '-',
     },
     {
@@ -176,17 +180,27 @@ const Registration: React.FC = () => {
   ];
 
   const showAllCategories = Form.useWatch('show_all_categories', form);
+  const filteredTerminals = terminals.filter(t => deepSearchMatch(searchText, t));
 
   return (
-    <Card
-      title="POS regisztráció"
-      extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          Új POS
-        </Button>
-      }
-    >
-      <Table rowKey="id" loading={loading} dataSource={terminals} columns={columns} pagination={{ pageSize: 10 }} />
+    <Card title="POS regisztráció">
+      <EnhancedTable
+        tableKey="posRegistration"
+        rowKey="id"
+        loading={loading}
+        dataSource={filteredTerminals}
+        columns={columns as any}
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Keresés..."
+        toolbarExtra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            Új POS
+          </Button>
+        }
+        pagination={{ pageSize: 10 }}
+        cardBreakpoint={500}
+      />
 
       <Modal
         title={editing ? 'POS szerkesztése' : 'Új POS'}

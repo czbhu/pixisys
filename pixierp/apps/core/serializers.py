@@ -186,7 +186,8 @@ class UserPreferenceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'user', 
             'first_name', 'last_name', 'name', 'email', 'phone_number',
-            'default_signature', 'default_signature_name', 'default_signature_key'
+            'default_signature', 'default_signature_name', 'default_signature_key',
+            'ui_preferences',
         ]
         read_only_fields = ['id', 'user']
     

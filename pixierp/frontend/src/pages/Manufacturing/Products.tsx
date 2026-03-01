@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
     Table,
@@ -24,16 +25,16 @@ import {
     DeleteOutlined,
     EyeOutlined,
     FilterOutlined,
-    ReloadOutlined,
-    SearchOutlined
+    ReloadOutlined
 } from '@ant-design/icons';
 import { useSearchParams, useLocation, useNavigate } from 'react-router-dom';
 import dayjs from 'dayjs';
 import { manufacturingService, ManufacturingProduct, ProductClass, Project, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
 import HungarianDatePicker from '../../components/HungarianDatePicker';
-import { createIntelligentFilter } from '../../utils/searchUtils';
+import { createIntelligentFilter, deepSearchMatch } from '../../utils/searchUtils';
 import ManufacturingProductEditorModal from '../../components/Editors/ManufacturingProductEditorModal';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -372,22 +373,8 @@ const Products: React.FC = () => {
             : products;
         
         // Utána keresés
-        const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-        const q = normalize(query);
-        if (q) {
-            result = result.filter(prod => {
-                const hay = [
-                    prod.name || '',
-                    prod.description || '',
-                    prod.product_class_name || '',
-                    prod.project_name || '',
-                    prod.contact_name || '',
-                    prod.contact_company_name || '',
-                    prod.status_display || '',
-                    prod.allowed_companies_data?.map(c => c.name).join(' ') || ''
-                ].join(' \u0001 ');
-                return normalize(hay).includes(q);
-            });
+        if (query?.trim()) {
+            result = result.filter((prod) => deepSearchMatch(query, prod));
         }
         return result;
     })();
@@ -566,17 +553,11 @@ const Products: React.FC = () => {
                     </Space>
                 }
             >
-                <Space style={{ marginBottom: 16, width: '100%' }} direction="vertical">
-                    <Input
-                        placeholder="Keresés (név, leírás, termékosztály, projekt, ügyfél)..."
-                        prefix={<SearchOutlined />}
-                        value={query}
-                        onChange={(e) => setQuery(e.target.value)}
-                        allowClear
-                    />
-                </Space>
-
-                <Table
+                <EnhancedTable
+                    tableKey="manufacturingProducts"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés (név, leírás, termékosztály, projekt, ügyfél)..."
                     columns={columns}
                     dataSource={filteredProducts}
                     pagination={{
@@ -587,7 +568,7 @@ const Products: React.FC = () => {
                         showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} termék`,
                     }}
                     rowKey="id"
-                    scroll={{ x: 1500 }}
+                    cardBreakpoint={950}
                     rowClassName={(record) => {
                         const statusColor = STATUS_COLORS[record.status] || 'default';
                         return `status-row-${statusColor}`;

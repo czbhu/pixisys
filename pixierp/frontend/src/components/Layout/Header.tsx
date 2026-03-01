@@ -468,8 +468,8 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
 
     return (
         <AntHeader style={{
-            padding: isMobile ? '0 12px' : '0 16px',
-            background: '#fff',
+            padding: isMobile ? '0 10px' : '0 12px',
+            background: '#f5f6f8',
             display: 'flex',
             justifyContent: 'space-between',
             alignItems: 'center',
@@ -625,7 +625,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
                     )}
                 </div>
 
-                {!isMobile && <span>Üdvözöljük, {user?.first_name || user?.username}!</span>}
+                {!isMobile && <span>{user?.first_name || user?.username}</span>}
                 <Dropdown
                     menu={{
                         items: userMenuItems,

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox, Row, Col } from 'antd';
+import { Table, Card, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox, Row, Col } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -1442,6 +1443,7 @@ const Materials: React.FC = () => {
     {
       title: 'Anyag',
       key: 'main_details',
+      sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '', 'hu'),
       render: (record: Material) => (
          <div style={{ lineHeight: '1.2' }}>
             <div style={{ fontWeight: 500 }}>{record.name}</div>
@@ -1453,6 +1455,11 @@ const Materials: React.FC = () => {
       title: 'Típus',
       key: 'type',
       width: 90,
+      sorter: (a: any, b: any) => {
+        const aStr = [a.is_material ? 'Alapanyag' : '', a.is_product ? 'Termék' : ''].filter(Boolean).join(',');
+        const bStr = [b.is_material ? 'Alapanyag' : '', b.is_product ? 'Termék' : ''].filter(Boolean).join(',');
+        return aStr.localeCompare(bStr, 'hu');
+      },
       render: (record: Material) => (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
           {record.is_material && <Tag color="blue" style={{ margin: 0, fontSize: '11px', textAlign: 'center' }}>Alapanyag</Tag>}
@@ -1466,6 +1473,7 @@ const Materials: React.FC = () => {
       key: 'material_group_name',
       width: 150,
       responsive: ['lg'] as any,
+      sorter: (a: any, b: any) => (a.material_group_name || '').localeCompare(b.material_group_name || '', 'hu'),
       render: (groupName: string | undefined) => 
         groupName ? <Tag color="purple" style={{ margin: 0, maxWidth: '140px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{groupName}</Tag> : '-',
     },
@@ -1475,6 +1483,7 @@ const Materials: React.FC = () => {
       key: 'material_format',
       width: 110,
       responsive: ['xl'] as any,
+      sorter: (a: any, b: any) => (a.material_format || '').localeCompare(b.material_format || ''),
       render: (format: string) => {
         const formatMap: Record<string, string> = {
           'sheet': 'Táblás/Íves',
@@ -1492,6 +1501,7 @@ const Materials: React.FC = () => {
       key: 'unit_selling_price',
       width: 120,
       align: 'right' as const,
+      sorter: (a: any, b: any) => (Number(a.unit_selling_price) || 0) - (Number(b.unit_selling_price) || 0),
       render: (record: Material) => (
          <div style={{ whiteSpace: 'nowrap' }}>
            {record.unit_selling_price ? `${Number(record.unit_selling_price).toLocaleString()} Ft` : '-'}
@@ -1504,12 +1514,18 @@ const Materials: React.FC = () => {
       key: 'unit_display',
       width: 80,
       responsive: ['sm'] as any,
+      sorter: (a: any, b: any) => (a.unit_display || '').localeCompare(b.unit_display || '', 'hu'),
     },
     {
       title: 'Beszállító',
       key: 'source',
       width: 130,
       responsive: ['lg'] as any,
+      sorter: (a: any, b: any) => {
+        const aName = a.internal_production_department_name || a.default_supplier_name || '';
+        const bName = b.internal_production_department_name || b.default_supplier_name || '';
+        return aName.localeCompare(bName, 'hu');
+      },
       render: (_: any, record: Material) => {
         return record.is_internal_production && record.internal_production_department_name ? (
           <Tag color="green" style={{ margin: 0, maxWidth: '120px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{record.internal_production_department_name}</Tag>
@@ -1526,6 +1542,7 @@ const Materials: React.FC = () => {
       key: 'is_active',
       width: 80,
       responsive: ['sm'] as any,
+      sorter: (a: any, b: any) => (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1),
       render: (is_active: boolean) => (
         <Tag color={is_active ? 'green' : 'red'} style={{ margin: 0 }}>
           {is_active ? 'Aktív' : 'Inaktív'}
@@ -1621,46 +1638,42 @@ const Materials: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
-        <h2 style={{ margin: 0 }}>Alapanyagok/Termékek</h2>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Input
-            placeholder="Keresés név, kód vagy leírás alapján..."
-            prefix={<SearchOutlined />}
-            value={searchText}
-            onChange={(e) => setSearchText(e.target.value)}
-            style={{ width: 300, maxWidth: '100%' }}
-            allowClear
-          />
-          <Select
-            value={filterType}
-            onChange={setFilterType}
-            style={{ width: 150 }}
-          >
-            <Option value="all">Mind</Option>
-            <Option value="materials">Alapanyagok</Option>
-            <Option value="products">Termékek</Option>
-          </Select>
-          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-            Új elem
-          </Button>
-        </div>
-      </div>
-
-      <Table
+      <Card title="Alapanyagok/Termékek" style={{ marginBottom: 0 }}>
+      <EnhancedTable
+        tableKey="materials"
         size="small"
-        columns={columns}
+        columns={columns as any}
         dataSource={materials}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 'max-content' }}
+        cardBreakpoint={800}
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Keresés név, kód vagy leírás alapján..."
+        toolbarExtra={
+          <Space>
+            <Select
+              value={filterType}
+              onChange={setFilterType}
+              style={{ width: 150 }}
+            >
+              <Option value="all">Mind</Option>
+              <Option value="materials">Alapanyagok</Option>
+              <Option value="products">Termékek</Option>
+            </Select>
+            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
+              Új elem
+            </Button>
+          </Space>
+        }
         pagination={{
           pageSize: 20,
           showSizeChanger: true,
           pageSizeOptions: ['10', '20', '50', '100', '200'],
-          showTotal: (total, range) => `${range[0]}-${range[1]} / ${total}`,
+          showTotal: (total: number, range: [number, number]) => `${range[0]}-${range[1]} / ${total}`,
         }}
       />
+      </Card>
 
       <Modal
         title={editingMaterial ? 'Alapanyag/Termék szerkesztése' : 'Új alapanyag/termék'}

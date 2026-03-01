@@ -4,6 +4,7 @@ import {
 } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CopyOutlined, MenuOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
+import EnhancedTable from '../../components/EnhancedTable';
 import api from '../../services/api';
 import { manufacturingService } from '../../services/manufacturingService';
 
@@ -319,16 +320,19 @@ const CashRegisterSetup: React.FC = () => {
             title: 'Kassza neve',
             dataIndex: 'name',
             key: 'name',
+            sorter: (a: CashRegister, b: CashRegister) => (a.name || '').localeCompare(b.name || '', 'hu'),
         },
         {
             title: 'Kassza helye',
             dataIndex: 'location',
             key: 'location',
+            sorter: (a: CashRegister, b: CashRegister) => (a.location || '').localeCompare(b.location || '', 'hu'),
         },
         {
             title: 'Kassza tartalma',
             dataIndex: 'current_balance',
             key: 'current_balance',
+            sorter: (a: CashRegister, b: CashRegister) => Number(a.current_balance || 0) - Number(b.current_balance || 0),
             render: (balance: number, record: CashRegister) => {
                 return `${formatCashAmount(balance)} ${record.currency_code}`;
             },
@@ -337,10 +341,12 @@ const CashRegisterSetup: React.FC = () => {
             title: 'Kassza devizaneme',
             dataIndex: 'currency_code',
             key: 'currency_code',
+            sorter: (a: CashRegister, b: CashRegister) => (a.currency_code || '').localeCompare(b.currency_code || ''),
         },
         {
             title: 'POS kassza',
             key: 'pos_name',
+            sorter: (a: CashRegister, b: CashRegister) => (a.pos_name || '').localeCompare(b.pos_name || '', 'hu'),
             render: (_: any, record: CashRegister) => record.pos_name || '-',
         },
         {
@@ -444,12 +450,14 @@ const CashRegisterSetup: React.FC = () => {
                     </Button>
                 }
             >
-                <Table
-                    columns={cashRegisterColumns}
+                <EnhancedTable
+                    tableKey="cashRegisters"
+                    columns={cashRegisterColumns as any}
                     dataSource={cashRegisters}
                     rowKey="id"
                     loading={loading}
                     pagination={{ pageSize: 10 }}
+                    cardBreakpoint={700}
                 />
             </Card>
 

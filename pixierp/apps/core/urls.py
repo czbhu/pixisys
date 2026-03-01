@@ -39,6 +39,7 @@ urlpatterns = [
     path('auth/password-reset/', views.password_reset_request_view, name='password_reset_request'),
     path('auth/password-reset/confirm/', views.password_reset_confirm_view, name='password_reset_confirm'),
     path('auth/sso-token/', views.generate_sso_token_view, name='generate_sso_token'),
+    path('auth/ui-preferences/', views.ui_preferences_view, name='ui_preferences'),
     path('currencies/update-rates/', views.update_exchange_rates_view, name='update_exchange_rates'),
     path('backup/export/', views.export_database_view, name='export_database'),
     path('backup/import/', views.import_database_view, name='import_database'),

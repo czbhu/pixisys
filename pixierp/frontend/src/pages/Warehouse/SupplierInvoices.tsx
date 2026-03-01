@@ -12,12 +12,12 @@ import {
   message,
   Tag,
   Card,
+  Typography,
   Row,
   Col,
   Popconfirm,
   Alert,
   Divider,
-  Typography,
   Upload,
   Image,
 } from 'antd';
@@ -38,10 +38,11 @@ import type { ColumnsType } from 'antd/es/table';
 import type { UploadFile, UploadProps } from 'antd/es/upload';
 import dayjs, { Dayjs } from 'dayjs';
 import api from '../../services/api';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Option } = Select;
 const { TextArea } = Input;
-const { Title } = Typography;
 
 interface Company {
   id: number;
@@ -149,6 +150,7 @@ interface NavInvoiceItem {
 
 const SupplierInvoices: React.FC = () => {
   const [invoices, setInvoices] = useState<SupplierInvoice[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<SupplierInvoice | null>(null);
@@ -824,18 +826,21 @@ const SupplierInvoices: React.FC = () => {
       dataIndex: 'invoice_number',
       key: 'invoice_number',
       width: 150,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => a.invoice_number.localeCompare(b.invoice_number),
     },
     {
       title: 'Beszállító',
       dataIndex: 'supplier_name',
       key: 'supplier_name',
       width: 200,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => (a.supplier_name || '').localeCompare(b.supplier_name || ''),
     },
     {
       title: 'Dátum',
       dataIndex: 'invoice_date',
       key: 'invoice_date',
       width: 120,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => a.invoice_date.localeCompare(b.invoice_date),
       render: (date: string) => dayjs(date).format('YYYY.MM.DD'),
     },
     {
@@ -843,6 +848,7 @@ const SupplierInvoices: React.FC = () => {
       dataIndex: 'total_amount',
       key: 'total_amount',
       width: 120,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => (a.total_amount || 0) - (b.total_amount || 0),
       render: (amount: number, record: SupplierInvoice) => 
         `${amount?.toLocaleString()} ${record.currency}`,
     },
@@ -851,12 +857,14 @@ const SupplierInvoices: React.FC = () => {
       dataIndex: 'payment_method_display',
       key: 'payment_method',
       width: 120,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => (a.payment_method_display || '').localeCompare(b.payment_method_display || ''),
     },
     {
       title: 'Státusz',
       dataIndex: 'status',
       key: 'status',
       width: 100,
+      sorter: (a: SupplierInvoice, b: SupplierInvoice) => a.status.localeCompare(b.status),
       render: (status: string) => getStatusTag(status),
     },
     {
@@ -1008,33 +1016,39 @@ const SupplierInvoices: React.FC = () => {
     },
   ];
 
+  const filteredInvoices = invoices.filter((invoice) => deepSearchMatch(searchText, invoice));
+
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Title level={2}>Beszállítói számlák</Title>
-        <Space>
-          <Button icon={<FileImageOutlined />} onClick={showNavSearch}>
-            Bejövő számla keresés
-          </Button>
-          <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
-            Új számla
-          </Button>
-        </Space>
-      </div>
-
-      <Table
-        size="small"
-        columns={columns}
-        dataSource={invoices}
-        rowKey="id"
-        loading={loading}
-        scroll={{ x: 1200 }}
-        pagination={{
-          pageSize: 20,
-          showSizeChanger: true,
-          showTotal: (total) => `Összesen: ${total}`,
-        }}
-      />
+      <Card title="Beszállítói számlák">
+        <EnhancedTable
+          tableKey="supplierInvoices"
+          size="small"
+          columns={columns}
+          dataSource={filteredInvoices}
+          rowKey="id"
+          loading={loading}
+          cardBreakpoint={900}
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Gyorskereső..."
+          toolbarExtra={
+            <Space className="pixi-unified-card-actions">
+              <Button icon={<FileImageOutlined />} onClick={showNavSearch}>
+                Bejövő számla keresés
+              </Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={showCreateModal}>
+                Új számla
+              </Button>
+            </Space>
+          }
+          pagination={{
+            pageSize: 20,
+            showSizeChanger: true,
+            showTotal: (total) => `Összesen: ${total}`,
+          }}
+        />
+      </Card>
 
       <Modal
         title={editingInvoice ? 'Számla szerkesztése' : 'Új számla'}

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { Table, Button, Space, message, Tag, Input, Select, Modal, Tooltip } from 'antd';
 import { CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
@@ -138,29 +139,30 @@ const Approvals: React.FC = () => {
     return (
         <div style={{ padding: 24, background: 'white', minHeight: '100%' }}>
             <h1 style={{fontSize: 24, marginBottom: 24}}>Jóváhagyások</h1>
-            <div style={{ marginBottom: 16 }}>
-                <Space>
-                    <Select
-                        mode="multiple"
-                        style={{ width: 400 }}
-                        placeholder="Státusz szűrés"
-                        value={statusFilter}
-                        onChange={setStatusFilter}
-                    >
-                        <Option value="pending">Jóváhagyásra vár</Option>
-                        <Option value="rejected">Visszaküldve</Option>
-                        <Option value="approved">Jóváhagyva</Option>
-                        <Option value="all">Mind</Option>
-                    </Select>
-                    <Button onClick={fetchApprovals} icon={<SearchOutlined />}>Frissítés</Button>
-                </Space>
-            </div>
-            
-            <Table
+            <EnhancedTable
+                tableKey="approvals"
+                toolbarExtra={
+                    <Space>
+                        <Select
+                            mode="multiple"
+                            style={{ width: 400 }}
+                            placeholder="Státusz szűrés"
+                            value={statusFilter}
+                            onChange={setStatusFilter}
+                        >
+                            <Option value="pending">Jóváhagyásra vár</Option>
+                            <Option value="rejected">Visszaküldve</Option>
+                            <Option value="approved">Jóváhagyva</Option>
+                            <Option value="all">Mind</Option>
+                        </Select>
+                        <Button onClick={fetchApprovals} icon={<SearchOutlined />}>Frissítés</Button>
+                    </Space>
+                }
                 columns={columns}
                 dataSource={filteredData}
                 rowKey="id"
                 loading={loading}
+                cardBreakpoint={800}
             />
 
             <Modal

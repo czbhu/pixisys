@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
     Table,
@@ -26,7 +27,6 @@ import {
     SaveOutlined,
     CloseOutlined,
     IdcardOutlined,
-    SearchOutlined,
     SafetyOutlined,
     MailOutlined,
     ExclamationCircleOutlined
@@ -40,6 +40,8 @@ import { useSettings } from '../../contexts/SettingsContext';
 import HungarianDatePicker from '../../components/HungarianDatePicker';
 import AccessCredentialsModal from '../../components/AccessCredentialsModal';
 import { useNavigate } from 'react-router-dom';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -154,21 +156,9 @@ const Employees: React.FC = () => {
     }, [isModalVisible, formKey]);
 
     // Keresési logika
-    const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     useEffect(() => {
-        const q = normalize(query);
-        if (!q) { setFiltered(employees); return; }
-        const next = employees.filter(emp => {
-            const hay = [
-                emp.employee_id || '',
-                emp.full_name || '',
-                (emp.department_names || []).join(' '),
-                emp.position_name || '',
-                emp.user_email || '',
-                emp.phone || ''
-            ].join(' \u0001 ');
-            return normalize(hay).includes(q);
-        });
+        if (!query?.trim()) { setFiltered(employees); return; }
+        const next = employees.filter(emp => deepSearchMatch(query, emp));
         setFiltered(next);
     }, [query, employees]);
 
@@ -893,9 +883,10 @@ const Employees: React.FC = () => {
     return (
         <div>
             <Card
-                title="Alkalmazottak"
-                extra={
-                    <Space>
+                title={
+                    <UnifiedQuickSearchHeader
+                        title="Alkalmazottak"
+                        actions={<Space>
                         <span>Inaktívak megjelenítése:</span>
                         <Button
                             type={showInactive ? "primary" : "default"}
@@ -915,21 +906,17 @@ const Employees: React.FC = () => {
                         >
                             Új alkalmazott
                         </Button>
-                    </Space>
+                        </Space>}
+                    />
                 }
             >
                 {error && <Alert message={error} type="error" style={{ marginBottom: 16 }} />}
 
-                <Input
-                    placeholder="Keresés (név, azonosító, osztály, pozíció, email, telefon)..."
-                    prefix={<SearchOutlined />}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                    allowClear
-                />
-
-                <Table
+                <EnhancedTable
+                    tableKey="employees"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés (név, azonosító, osztály, pozíció, email, telefon)..."
                     columns={columns}
                     dataSource={filtered}
                     pagination={{
@@ -941,7 +928,7 @@ const Employees: React.FC = () => {
                         onShowSizeChange: (current, size) => setTablePageSize('employees', size)
                     }}
                     rowKey="id"
-                    scroll={{ x: 'max-content' }}
+                    cardBreakpoint={660}
                     size="small"
                     loading={loading}
                     onRow={(record) => ({

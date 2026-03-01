@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Row, Col, Card, Statistic, Table, Progress, Typography, Spin, Alert } from 'antd';
+import ResponsiveTable from '../components/ResponsiveTable';
 import {
     UserOutlined,
     ShoppingCartOutlined,
@@ -221,13 +222,13 @@ const Dashboard = () => {
                 {/* Recent Orders */}
                 <Col xs={24} lg={16}>
                     <Card title="Legutóbbi megrendelések">
-                        <Table
+                        <ResponsiveTable
                             dataSource={recentOrders}
                             columns={columns}
                             pagination={false}
                             size="small"
                             rowKey="id"
-                            scroll={{ x: 'max-content' }}
+                            cardBreakpoint={500}
                         />
                     </Card>
                 </Col>

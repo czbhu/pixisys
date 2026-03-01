@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
     Table,
@@ -767,7 +768,8 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
                 )}
 
                 {/* Attendance Table */}
-                <Table
+                <EnhancedTable
+                    tableKey="attendanceReport"
                     size="small"
                     columns={columns}
                     dataSource={attendanceData}
@@ -777,7 +779,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
                         pageSize: 31,
                         showTotal: (total) => `Összesen ${total} rekord`,
                     }}
-                    scroll={{ x: 1200 }}
+                    cardBreakpoint={850}
                     bordered
                 />
             </Card>

@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -16,6 +17,8 @@ import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { TextArea } = Input;
 
@@ -106,8 +109,6 @@ const RFQs: React.FC = () => {
     }
   };
 
-  const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  
   const creators = useMemo(() => {
     const names = rfqs.map(r => r.created_by_name).filter(Boolean);
     return Array.from(new Set(names)).sort();
@@ -129,19 +130,8 @@ const RFQs: React.FC = () => {
     }
     
     // Text search
-    const q = normalize(query);
-    if (q) {
-      filtered = filtered.filter(r => {
-        const hay = [
-          r.number || r.request_number || '',
-          r.title || '',
-          r.company?.name || r.company_name || '',
-          r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '),
-          (r.items || []).map((it: any) => it.product?.name || it.manufacturing_product?.name || it.service?.name || it.description || '').join(' '),
-          r.created_by_name || ''
-        ].join(' \u0001 ');
-        return normalize(hay).includes(q);
-      });
+    if (query?.trim()) {
+      filtered = filtered.filter((rfq) => deepSearchMatch(query, rfq));
     }
     
     setFiltered(filtered);
@@ -175,19 +165,41 @@ const RFQs: React.FC = () => {
   { 
     title: 'Ajánlat', 
     key: 'main_info', 
+    width: 230,
     sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || ''),
-    render: (_: any, r: any) => (
-      <div style={{ lineHeight: '1.2' }}>
-        <div style={{ fontWeight: 600 }}>{r.number || r.request_number}</div>
-        <div style={{ fontSize: '0.85em', color: '#1890ff' }}>{r.company?.name || r.company_name || 'Magánszemély'}</div>
-        {r.title && <div style={{ fontSize: '0.75em', color: '#666' }}>{r.title}</div>}
-      </div>
-    )
+    render: (_: any, r: any) => {
+      const items: any[] = r.items || [];
+      const tooltipContent = items.length === 0 ? 'Nincsenek tételek' : (
+        <div style={{ maxWidth: 320 }}>
+          {items.map((it: any, idx: number) => (
+            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0', borderBottom: idx < items.length - 1 ? '1px solid rgba(255,255,255,0.15)' : 'none' }}>
+              <span style={{ flex: 1 }}>{it.product_name || it.manufacturing_product_name || it.service_name || it.name || it.description || `Tétel #${idx + 1}`}</span>
+              <span style={{ whiteSpace: 'nowrap', opacity: 0.85 }}>{it.quantity} {it.quantity_unit || 'db'}</span>
+            </div>
+          ))}
+        </div>
+      );
+      return (
+        <Tooltip title={tooltipContent} placement="right" color="#1d2939">
+          <div style={{ lineHeight: '1.3', cursor: 'default' }}>
+            {r.title && <div style={{ fontWeight: 600 }}>{r.title}</div>}
+            {(r.company?.name || r.company_name)
+              ? <div style={{ fontSize: '0.85em', color: '#1890ff' }}>{r.company?.name || r.company_name}</div>
+              : <div style={{ fontSize: '0.85em', color: '#d48806', fontWeight: 500 }}>
+                  {(r.contacts && r.contacts[0]?.name) || r.contact_names?.split(',')[0]?.trim() || 'Magánszemély'}
+                </div>
+            }
+            <div style={{ fontSize: '0.75em', color: '#888' }}>{r.number || r.request_number}</div>
+          </div>
+        </Tooltip>
+      );
+    }
   },
   { 
     title: 'Keltezés', 
     dataIndex: 'issue_date', 
     key: 'issue_date', 
+    width: 100,
     responsive: ['lg'], 
     render: (d: string, r: any): React.ReactNode => (
       <div>
@@ -201,10 +213,11 @@ const RFQs: React.FC = () => {
     ), 
     sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') 
   },
-  { title: 'Kapcsolattartó', key: 'contact_names', responsive: ['xl'], render: (_: any, r: any): React.ReactNode => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
+  { title: 'Kapcsolattartó', key: 'contact_names', width: 140, responsive: ['xl'], render: (_: any, r: any): React.ReactNode => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
     { 
       title: 'Nettó összeg', 
       key: 'total_net_amount', 
+      width: 120,
       render: (_: any, r: any): React.ReactNode => {
         const amount = r.total_net_amount || 0;
         const currencySymbol = r.currency_symbol || 'Ft';
@@ -213,16 +226,16 @@ const RFQs: React.FC = () => {
       sorter: (a: any, b: any) => (a.total_net_amount || 0) - (b.total_net_amount || 0),
       align: 'right' as const
     },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
-    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
+    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 120, render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
+    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', width: 100, responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
-      title: 'Műveletek', key: 'actions', render: (record: any): React.ReactNode => (
+      title: 'Műveletek', key: 'actions', width: 270, render: (record: any): React.ReactNode => (
         <Space size="small" wrap>
           <Tooltip title="Szerkesztés">
-            <Button icon={<EditOutlined />} size="small" onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
+            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
           <Tooltip title="Kiküldés e-mailben">
-            <Button icon={<SendOutlined />} size="small" onClick={async () => {
+            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={async () => {
               setSendOpenId(record.id);
               setSendPreview(null);
               
@@ -318,16 +331,16 @@ const RFQs: React.FC = () => {
           </Tooltip>
           {record.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
-              <Button icon={<UnlockOutlined />} size="small" onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
+              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
             </Tooltip>
           )}
           {record.status !== 'quoted' && (
             <Tooltip title="Zárás (Árazva)">
-              <Button icon={<LockOutlined />} size="small" onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'quoted'); message.success('Lezárva'); loadData(); }} />
+              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'quoted'); message.success('Lezárva'); loadData(); }} />
             </Tooltip>
           )}
           <Tooltip title="Másolás">
-            <Button icon={<CopyOutlined />} size="small" onClick={async () => {
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async () => {
               try {
                 const res = await salesService.copyQuoteRequest(record.id);
                 message.success(`Árajánlat másolva: ${res.number}`);
@@ -338,7 +351,7 @@ const RFQs: React.FC = () => {
             }} />
           </Tooltip>
           <Tooltip title="Összes tétel megrendelése">
-            <Button size="small" type="primary" onClick={async () => {
+            <Button size="small" type="primary" style={{ height: 'auto', padding: '3px 10px', lineHeight: 1 }} onClick={async () => {
               try {
                 const res = await salesService.orderAllFromRfq(record.id);
                 message.success(`Megrendelés létrehozva: ${res.order_number}`);
@@ -348,13 +361,23 @@ const RFQs: React.FC = () => {
               } catch (e: any) {
                 message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
               }
-            }}>Rendel (összes)</Button>
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
+                <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Összes</span>
+              </div>
+            </Button>
           </Tooltip>
           <Tooltip title="Részleges megrendelés">
-            <Button size="small" onClick={() => {
+            <Button size="small" style={{ height: 'auto', padding: '3px 10px', lineHeight: 1, background: '#e6f4ff', borderColor: '#91caff', color: '#1677ff' }} onClick={() => {
               setPartialOrderOpenId(record.id);
               setPartialSelection((record.items || []).map((it: any) => it.id));
-            }}>Részleges</Button>
+            }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
+                <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Részleges</span>
+              </div>
+            </Button>
           </Tooltip>
         </Space>
       )
@@ -708,40 +731,41 @@ const RFQs: React.FC = () => {
       <Card
         title="Árajánlatok"
         extra={
-          <Space wrap style={{ justifyContent: 'flex-end', maxWidth: '100%' }}>
-            <Select
-              value={statusFilter}
-              onChange={(value) => setStatusFilter(value)}
-              style={{ width: 150 }}
-              popupMatchSelectWidth={false}
-            >
-              <Select.Option value="all">Mind</Select.Option>
-              <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
-              <Select.Option value="new">Új</Select.Option>
-              <Select.Option value="quoted">Árazva</Select.Option>
-              <Select.Option value="rejected">Elutasítva</Select.Option>
-              <Select.Option value="accepted">Elfogadva</Select.Option>
-              <Select.Option value="archived">Archív</Select.Option>
-            </Select>
-            <Select
-              placeholder="Szűrés rögzítőre"
-              allowClear
-              style={{ width: 170 }}
-              value={creatorFilter}
-              onChange={setCreatorFilter}
-            >
-              {creators.map((name: any) => (
-                <Select.Option key={name} value={name}>{name}</Select.Option>
-              ))}
-            </Select>
-            <Input allowClear prefix={<SearchOutlined />} placeholder="Keresés…" value={query} onChange={(e) => setQuery(e.target.value)} style={{ width: 200 }} />
-            <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új</Button>
-          </Space>
+            <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
+              <Select
+                className="rfqs-status-select"
+                value={statusFilter}
+                onChange={(value) => setStatusFilter(value)}
+                style={{ width: 150 }}
+                popupMatchSelectWidth={false}
+              >
+                <Select.Option value="all">Mind</Select.Option>
+                <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
+                <Select.Option value="new">Új</Select.Option>
+                <Select.Option value="quoted">Árazva</Select.Option>
+                <Select.Option value="rejected">Elutasítva</Select.Option>
+                <Select.Option value="accepted">Elfogadva</Select.Option>
+                <Select.Option value="archived">Archív</Select.Option>
+              </Select>
+              <Select
+                className="rfqs-creator-select"
+                placeholder="Szűrés rögzítőre"
+                allowClear
+                style={{ width: 170 }}
+                value={creatorFilter}
+                onChange={setCreatorFilter}
+              >
+                {creators.map((name: any) => (
+                  <Select.Option key={name} value={name}>{name}</Select.Option>
+                ))}
+              </Select>
+              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új</Button>
+            </Space>
         }
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <Table columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} scroll={{ x: 'max-content' }} size="small" />
+        <EnhancedTable tableKey="rfqs" searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} />
       </Card>
       <Modal 
         title={`Ajánlat kérő kiküldése: ${(() => {

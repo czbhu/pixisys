@@ -38,6 +38,8 @@ import {
 import dayjs from 'dayjs';
 import type { Dayjs } from 'dayjs';
 import { hrService } from '../../services/hrService';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { RangePicker } = DatePicker;
 const { Option } = Select;
@@ -50,6 +52,7 @@ const EmployeePerformance: React.FC = () => {
         dayjs().endOf('month')
     ]);
     const [selectedEmployee, setSelectedEmployee] = useState<number | null>(null);
+    const [searchText, setSearchText] = useState('');
     const [employees, setEmployees] = useState<any[]>([]);
     
     // Analytics data
@@ -110,6 +113,11 @@ const EmployeePerformance: React.FC = () => {
         if (dates) {
             setDateRange([dates[0], dates[1]]);
         }
+    };
+
+    const filterRows = (rows: any[] = []) => {
+        if (!searchText?.trim()) return rows;
+        return rows.filter((row) => deepSearchMatch(searchText, row));
     };
 
     // Profit Share Tab
@@ -206,7 +214,7 @@ const EmployeePerformance: React.FC = () => {
                     <Col span={24}>
                         <Card title="Összesített adatok">
                             <Table
-                                dataSource={profitShareData.summary}
+                                dataSource={filterRows(profitShareData.summary)}
                                 columns={profitColumns}
                                 rowKey="employee_id"
                                 pagination={false}
@@ -219,7 +227,7 @@ const EmployeePerformance: React.FC = () => {
                     <Col span={24}>
                         <Card title="Részletes projekt adatok">
                             <Table
-                                dataSource={profitShareData.details}
+                                dataSource={filterRows(profitShareData.details)}
                                 columns={projectColumns}
                                 rowKey={(record: any) => `${record.employee_id}-${record.project_id}`}
                             />
@@ -362,7 +370,7 @@ const EmployeePerformance: React.FC = () => {
                     <Col span={12}>
                         <Card title="Alkalmazotti összesítés">
                             <Table
-                                dataSource={by_employee}
+                                dataSource={filterRows(by_employee)}
                                 columns={timeColumns}
                                 rowKey="employee_id"
                                 size="small"
@@ -372,7 +380,7 @@ const EmployeePerformance: React.FC = () => {
                     <Col span={12}>
                         <Card title="Projekt összesítés">
                             <Table
-                                dataSource={by_project}
+                                dataSource={filterRows(by_project)}
                                 columns={projectTimeColumns}
                                 rowKey="project_id"
                                 size="small"
@@ -506,7 +514,7 @@ const EmployeePerformance: React.FC = () => {
                     <Col span={24}>
                         <Card title="Alkalmazotti jelenlét">
                             <Table
-                                dataSource={by_employee}
+                                dataSource={filterRows(by_employee)}
                                 columns={attendanceColumns}
                                 rowKey="employee_id"
                             />
@@ -520,12 +528,15 @@ const EmployeePerformance: React.FC = () => {
     return (
         <div style={{ padding: '24px' }}>
             <Card
-                title={
-                    <Space>
+                title={<UnifiedQuickSearchHeader
+                    title={<Space>
                         <BarChartOutlined />
                         <span>Alkalmazotti Tevékenység Mérés</span>
-                    </Space>
-                }
+                    </Space>}
+                    searchValue={searchText}
+                    onSearchChange={setSearchText}
+                    placeholder="Gyorskereső..."
+                />}
                 extra={
                     <Space>
                         <Select

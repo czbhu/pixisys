@@ -72,27 +72,27 @@
   margin: 0;
 }
 
-/* Touch-friendly buttons */
-.ant-btn {
+/* Touch-friendly buttons — scoped to POS page */
+.pos-content .ant-btn {
   min-height: 48px;
   font-size: 16px;
 }
 
-.ant-btn-lg {
+.pos-content .ant-btn-lg {
   min-height: 56px;
   font-size: 18px;
 }
 
-/* Touch-friendly inputs */
-.ant-input,
-.ant-input-number,
-.ant-select-selector {
+/* Touch-friendly inputs — scoped to POS page */
+.pos-content .ant-input,
+.pos-content .ant-input-number,
+.pos-content .ant-select-selector {
   min-height: 48px !important;
   font-size: 16px !important;
 }
 
-/* Touch-friendly table rows */
-.ant-table-tbody > tr > td {
+/* Touch-friendly table rows — scoped to POS page */
+.pos-content .ant-table-tbody > tr > td {
   padding: 16px !important;
   font-size: 16px !important;
 }

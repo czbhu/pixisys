@@ -13,6 +13,7 @@ import {
     Collapse,
     Popconfirm,
     Switch,
+    Tooltip,
 } from 'antd';
 import {
     PlusOutlined,
@@ -27,6 +28,9 @@ import {
 import { warehouseService } from '../../services/warehouseService';
 import api from '../../services/api';
 import QRLabelModal from '../../components/Warehouse/QRLabelModal';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { TextArea } = Input;
 const { Panel } = Collapse;
@@ -69,6 +73,7 @@ const Warehouses: React.FC = () => {
     const [inventoryList, setInventoryList] = useState<any[]>([]);
     const [inventoryLoading, setInventoryLoading] = useState(false);
     const [inventoryTitle, setInventoryTitle] = useState('');
+    const [searchText, setSearchText] = useState('');
     const [form] = Form.useForm();
     const [shelfForm] = Form.useForm();
 
@@ -368,30 +373,41 @@ const Warehouses: React.FC = () => {
                         Polcok
                     </Button>
                     <Button
-                        type="link"
+                        size="small"
                         icon={<EyeOutlined />}
                         onClick={() => showViewModal(record)}
                     />
-                    <Button
-                        type="link"
-                        icon={<EditOutlined />}
-                        onClick={() => showEditModal(record)}
-                    />
-                    <Button
-                        type="link"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => handleDelete(record.id)}
-                    />
+                    <Tooltip title="Szerkesztés">
+                        <Button
+                            size="small"
+                            icon={<EditOutlined />}
+                            onClick={() => showEditModal(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Törlés">
+                        <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => handleDelete(record.id)}
+                        />
+                    </Tooltip>
                 </Space>
             ),
         },
     ];
 
+    const filteredWarehouses = warehouses.filter((warehouse) => deepSearchMatch(searchText, warehouse));
+
     return (
         <div>
             <Card
-                title="Raktárak kezelése"
+                title={<UnifiedQuickSearchHeader
+                    title="Raktárak kezelése"
+                    searchValue={searchText}
+                    onSearchChange={setSearchText}
+                    placeholder="Gyorskereső..."
+                />}
                 extra={
                     <Button
                         type="primary"
@@ -402,12 +418,14 @@ const Warehouses: React.FC = () => {
                     </Button>
                 }
             >
-                <Table
+                <EnhancedTable
+                    tableKey="warehouses"
                     size="small"
-                    columns={columns}
-                    dataSource={warehouses}
+                    columns={columns as any}
+                    dataSource={filteredWarehouses}
                     rowKey="id"
                     loading={loading}
+                    cardBreakpoint={650}
                     pagination={{ pageSize: 10 }}
                     onRow={(record) => ({
                         onDoubleClick: () => showEditModal(record),

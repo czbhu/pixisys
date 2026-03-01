@@ -1,8 +1,10 @@
-import React, { useEffect, useState } from 'react';
-import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, message } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Button, Card, Form, Input, Modal, Popconfirm, Select, Space, Switch, message } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, QrcodeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 interface TaskConfiguration {
   id: number;
@@ -56,9 +58,15 @@ const TaskSettings: React.FC = () => {
   const [tasks, setTasks] = useState<TaskConfiguration[]>([]);
   const [employees, setEmployees] = useState<EmployeeOption[]>([]);
   const [departments, setDepartments] = useState<DepartmentOption[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskConfiguration | null>(null);
   const [form] = Form.useForm();
+
+  const filteredTasks = useMemo(() => {
+    if (!searchText?.trim()) return tasks;
+    return tasks.filter((task) => deepSearchMatch(searchText, task));
+  }, [tasks, searchText]);
 
   useEffect(() => {
     fetchAll();
@@ -249,6 +257,7 @@ const TaskSettings: React.FC = () => {
       title: 'Feladat neve',
       dataIndex: 'name',
       key: 'name',
+      sorter: (a: TaskConfiguration, b: TaskConfiguration) => a.name.localeCompare(b.name),
       render: (value: string, record: TaskConfiguration) => (
         <a onClick={() => openEdit(record)}>{value}</a>
       ),
@@ -257,12 +266,14 @@ const TaskSettings: React.FC = () => {
       title: 'Leírás',
       dataIndex: 'description',
       key: 'description',
+      sorter: (a: TaskConfiguration, b: TaskConfiguration) => (a.description || '').localeCompare(b.description || ''),
       render: (value?: string) => value || '-',
     },
     {
       title: 'Mikor?',
       dataIndex: 'schedule_summary',
       key: 'schedule_summary',
+      sorter: (a: TaskConfiguration, b: TaskConfiguration) => (a.schedule_summary || '').localeCompare(b.schedule_summary || ''),
       render: (value?: string) => value || '-',
     },
     {
@@ -286,6 +297,7 @@ const TaskSettings: React.FC = () => {
       title: 'Személy vagy Osztály szintű',
       dataIndex: 'target_level_display',
       key: 'target_level_display',
+      sorter: (a: TaskConfiguration, b: TaskConfiguration) => (a.target_level_display || '').localeCompare(b.target_level_display || ''),
     },
     {
       title: 'Műveletek',
@@ -312,20 +324,23 @@ const TaskSettings: React.FC = () => {
   const qrRequired = Form.useWatch('qr_required', form);
 
   return (
-    <Card
-      title="Feladatok beállítása"
-      extra={
-        <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
-          Új tevékenység
-        </Button>
-      }
-    >
-      <Table
+    <Card title="Feladatok beállítása">
+      <EnhancedTable
+        tableKey="taskSettings"
         rowKey="id"
         loading={loading}
-        dataSource={tasks}
-        columns={columns}
+        dataSource={filteredTasks}
+        columns={columns as any}
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Gyorskereső..."
+        toolbarExtra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>
+            Új tevékenység
+          </Button>
+        }
         pagination={{ pageSize: 10 }}
+        cardBreakpoint={750}
       />
 
       <Modal

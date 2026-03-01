@@ -1,7 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Row, Col, Card, List, Checkbox } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -137,6 +140,7 @@ const CALCULATOR_TYPES = [
 
 const CalculatorTemplates: React.FC = () => {
   const [templates, setTemplates] = useState<CalculatorTemplate[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [materials, setMaterials] = useState<Material[]>([]);
   const [services, setServices] = useState<Service[]>([]);
   const [loading, setLoading] = useState(false);
@@ -348,21 +352,28 @@ const CalculatorTemplates: React.FC = () => {
     },
   ];
 
+  const filteredTemplates = useMemo(() => {
+    if (!searchText?.trim()) return templates;
+    return templates.filter((template) => deepSearchMatch(searchText, template));
+  }, [templates, searchText]);
+
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h2>Kalkulátor sablonok</h2>
-        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
-          Új sablon
-        </Button>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <h2 style={{ margin: 0 }}>Kalkulátor sablonok</h2>
+        <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>Új sablon</Button>
       </div>
 
-      <Table
+      <EnhancedTable
+        tableKey="calculatorTemplates"
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Gyorskereső..."
         columns={columns}
-        dataSource={templates}
+        dataSource={filteredTemplates}
         rowKey="id"
         loading={loading}
-        scroll={{ x: 1200 }}
+        cardBreakpoint={900}
       />
 
       <Modal

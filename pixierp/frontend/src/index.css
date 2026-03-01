@@ -41,6 +41,305 @@ body,
   font-weight: 600;
 }
 
+.pixi-unified-card-header {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  width: 100%;
+}
+
+.pixi-unified-card-title {
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pixi-unified-card-search {
+  flex: 1;
+  min-width: 220px;
+}
+
+.pixi-unified-card-actions {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.ant-card .ant-card-head {
+  padding: 0 16px;
+}
+
+.ant-card .ant-card-body {
+  padding: 12px 16px;
+}
+
+.pixi-unified-card-actions .ant-space {
+  align-items: stretch;
+}
+
+.pixi-unified-card-actions .ant-space-item {
+  display: inline-flex;
+  align-items: stretch;
+}
+
+.pixi-unified-card-search.ant-input-affix-wrapper {
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  align-items: center;
+}
+
+.pixi-unified-card-search.ant-input-affix-wrapper .ant-input {
+  height: 38px;
+  line-height: 38px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.pixi-unified-card-search.ant-input-affix-wrapper .ant-input::placeholder,
+.pixi-unified-card-actions .ant-input::placeholder {
+  line-height: 38px;
+}
+
+.pixi-unified-card-actions .ant-btn {
+  height: 40px;
+  min-height: 40px;
+  max-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+}
+
+.pixi-unified-card-actions > *,
+.pixi-unified-card-actions .ant-space-item > * {
+  min-height: 40px;
+}
+
+.pixi-unified-card-actions .ant-select-single .ant-select-selector,
+.pixi-unified-card-actions .ant-picker,
+.pixi-unified-card-actions .ant-input-affix-wrapper,
+.pixi-unified-card-actions .ant-input,
+.pixi-unified-card-actions .ant-input-number {
+  min-height: 40px;
+  height: 40px;
+  max-height: 40px;
+}
+
+.pixi-unified-card-actions .ant-input,
+.pixi-unified-card-actions .ant-input-affix-wrapper .ant-input,
+.pixi-unified-card-actions .ant-picker input {
+  line-height: 38px;
+  padding-top: 0;
+  padding-bottom: 0;
+}
+
+.pixi-unified-card-actions .ant-select-single .ant-select-selection-item,
+.pixi-unified-card-actions .ant-select-single .ant-select-selection-placeholder {
+  line-height: 38px;
+}
+
+.pixi-unified-card-actions .ant-select-multiple .ant-select-selector {
+  min-height: 40px !important;
+  height: 40px !important;
+  max-height: 40px !important;
+  align-items: center;
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+}
+
+.pixi-unified-card-actions .ant-select-multiple .ant-select-selection-overflow {
+  align-items: center;
+  flex-wrap: nowrap;
+}
+
+.pixi-unified-card-actions .ant-select-multiple .ant-select-selection-item {
+  height: 26px;
+  line-height: 24px;
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.pixi-unified-card-actions .ant-select-multiple .ant-select-selection-search {
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+}
+
+.pixi-unified-card-actions .ant-select-multiple .ant-select-selection-search-input {
+  height: 26px;
+}
+
+.pixi-unified-card-actions .ant-picker,
+.pixi-unified-card-actions .ant-input-affix-wrapper,
+.pixi-unified-card-actions .ant-select {
+  display: inline-flex;
+  align-items: center;
+}
+
+.rfqs-toolbar-actions .rfqs-status-select .ant-select-selector {
+  box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+}
+
+.rfqs-toolbar-actions .rfqs-creator-select .ant-select-selector {
+  background-color: #f1f3f5 !important;
+}
+
+.rfqs-toolbar-actions .rfqs-creator-select .ant-select-selection-placeholder {
+  color: #5f6670 !important;
+}
+
+/* RFQ toolbar selects: match search field height (38px) */
+.rfqs-toolbar-actions .ant-select-single .ant-select-selector {
+  height: 38px !important;
+  min-height: 38px !important;
+  max-height: 38px !important;
+}
+
+.rfqs-toolbar-actions .ant-select-single .ant-select-selection-item,
+.rfqs-toolbar-actions .ant-select-single .ant-select-selection-placeholder {
+  line-height: 36px !important;
+}
+
+/* Table action buttons: shadow */
+.ant-table-cell .ant-btn {
+  box-shadow: 0 1px 6px rgba(15, 23, 42, 0.13);
+}
+
+/* ===== Global pastel table action button colors ===== */
+/* Eye / Megtekintés */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-eye) {
+  background: #e6f4ff !important;
+  border-color: #91caff !important;
+  color: #1677ff !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-eye) .anticon { color: #1677ff !important; }
+
+/* Edit / Szerkesztés */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):not(.ant-btn-dangerous):has(.anticon-edit) {
+  background: #f5f5f5 !important;
+  border-color: #d9d9d9 !important;
+  color: #595959 !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):not(.ant-btn-dangerous):has(.anticon-edit) .anticon { color: #595959 !important; }
+
+/* Delete / Törlés */
+.ant-table-cell .ant-btn:has(.anticon-delete),
+.ant-table-cell .ant-btn:has(.anticon-close-circle) {
+  background: #fff1f0 !important;
+  border-color: #ffa39e !important;
+  color: #cf1322 !important;
+}
+.ant-table-cell .ant-btn:has(.anticon-delete) .anticon,
+.ant-table-cell .ant-btn:has(.anticon-close-circle) .anticon { color: #cf1322 !important; }
+
+/* Copy / Másol */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-copy) {
+  background: #f5f0ff !important;
+  border-color: #d3adf7 !important;
+  color: #5c3bc2 !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-copy) .anticon { color: #5c3bc2 !important; }
+
+/* Mail / Boríték */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-mail) {
+  background: #fff7e6 !important;
+  border-color: #ffd591 !important;
+  color: #b45309 !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-mail) .anticon { color: #b45309 !important; }
+
+/* Check / Jóváhagy */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-check) {
+  background: #f6ffed !important;
+  border-color: #b7eb8f !important;
+  color: #389e0d !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-check) .anticon { color: #389e0d !important; }
+
+/* Unlock / Nyitás */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-unlock) {
+  background: #eaf6ee !important;
+  border-color: #b7dfc3 !important;
+  color: #2d7d46 !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-unlock) .anticon { color: #2d7d46 !important; }
+
+/* Lock / Zárolás */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-lock) {
+  background: #fff1f0 !important;
+  border-color: #ffa39e !important;
+  color: #cf1322 !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-lock) .anticon { color: #cf1322 !important; }
+
+/* Printer / Nyomtatás */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-printer) {
+  background: #f0f5ff !important;
+  border-color: #adc6ff !important;
+  color: #2f54eb !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-printer) .anticon { color: #2f54eb !important; }
+
+/* Unordered-list / Tételek */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-unordered-list) {
+  background: #f0f5ff !important;
+  border-color: #adc6ff !important;
+  color: #2f54eb !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-unordered-list) .anticon { color: #2f54eb !important; }
+
+/* Plus / Új elem */
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-plus):not([disabled]) {
+  background: #f6ffed !important;
+  border-color: #b7eb8f !important;
+  color: #389e0d !important;
+}
+.ant-table-cell .ant-btn:not(.ant-btn-primary):has(.anticon-plus):not([disabled]) .anticon { color: #389e0d !important; }
+
+/* Table: row padding */
+.ant-table.ant-table-small .ant-table-tbody > tr > td {
+  padding: 7px 8px !important;
+}
+
+/* Table: zebra striping – every second data row slightly darker */
+.ant-table.ant-table-small .ant-table-tbody > tr:nth-child(even):not(.ant-table-measure-row) > td {
+  background-color: #f6f7f9 !important;
+}
+
+.ant-table-tbody > tr.ant-table-measure-row {
+  visibility: collapse;
+  height: 0 !important;
+  line-height: 0 !important;
+  font-size: 0 !important;
+}
+
+.ant-table-tbody > tr.ant-table-measure-row > td {
+  padding: 0 !important;
+  border: none !important;
+  height: 0 !important;
+}
+
+.pixi-unified-card-actions .ant-switch {
+  align-self: center;
+  margin: 0;
+}
+
+@media (max-width: 992px) {
+  .pixi-unified-card-header {
+    flex-wrap: wrap;
+  }
+
+  .pixi-unified-card-title,
+  .pixi-unified-card-search,
+  .pixi-unified-card-actions {
+    width: 100%;
+  }
+
+  .pixi-unified-card-title {
+    white-space: normal;
+  }
+}
+
 /* Custom scrollbar */
 ::-webkit-scrollbar {
   width: 8px;

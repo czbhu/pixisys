@@ -3,6 +3,19 @@
 # PixiSys Status Script
 echo "🔍 Checking PixiSys services status..."
 
+# Get the directory where this script is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Load config if available
+if [ -f "$SCRIPT_DIR/config.sh" ]; then
+    source "$SCRIPT_DIR/config.sh" --load-only
+fi
+
+ERP_BACKEND_PORT="${ERP_BACKEND_PORT:-8003}"
+INV_BACKEND_PORT="${INV_BACKEND_PORT:-4001}"
+ERP_FRONTEND_PORT="${ERP_FRONTEND_PORT:-3000}"
+INV_FRONTEND_PORT="${INV_FRONTEND_PORT:-3001}"
+
 # Colors for output
 GREEN='\033[0;32m'
 RED='\033[0;31m'
@@ -47,20 +60,20 @@ check_port() {
 echo ""
 echo -e "${BLUE}=== Backend Services ===${NC}"
 check_by_pidfile "/tmp/pixierp_backend.pid" "ERP Backend"
-check_port 8003 "ERP Backend"
+check_port "$ERP_BACKEND_PORT" "ERP Backend"
 
 echo ""
 check_by_pidfile "/tmp/pixinvoice_backend.pid" "Invoice Backend"
-check_port 4001 "Invoice Backend"
+check_port "$INV_BACKEND_PORT" "Invoice Backend"
 
 echo ""
 echo -e "${BLUE}=== Frontend Services ===${NC}"
 check_by_pidfile "/tmp/pixierp_frontend.pid" "ERP Frontend"
-check_port 3000 "ERP Frontend"
+check_port "$ERP_FRONTEND_PORT" "ERP Frontend"
 
 echo ""
 check_by_pidfile "/tmp/pixinvoice_frontend.pid" "Invoice Frontend"
-check_port 4000 "Invoice Frontend"
+check_port "$INV_FRONTEND_PORT" "Invoice Frontend"
 
 echo ""
 echo -e "${BLUE}=== Logs ===${NC}"

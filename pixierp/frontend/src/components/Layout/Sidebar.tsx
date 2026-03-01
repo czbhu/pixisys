@@ -820,19 +820,34 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       }}
     >
       <div style={{
-        height: 64,
-        margin: '4px',
+        height: 56,
+        margin: '4px 8px 0',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        overflow: 'hidden'
+        overflow: 'hidden',
+        color: '#ffffff',
+        fontSize: collapsed ? 13 : 36,
+        fontWeight: 700,
+        letterSpacing: 1
       }}>
-        {collapsed ? (
-           <img src="/favicon.svg" alt="PixiERP" style={{ maxHeight: '32px' }} />
-        ) : (
-           <img src="/pixi_logo.png" alt="PixiERP" style={{ maxHeight: '50px', maxWidth: '100%', objectFit: 'contain' }} />
-        )}
+        {collapsed ? 'P' : 'PixiERP'}
       </div>
+      {process.env.REACT_APP_DEV_MODE === 'true' && (
+        <div style={{
+          textAlign: 'center',
+          color: '#faad14',
+          fontSize: 11,
+          fontWeight: 600,
+          letterSpacing: 1,
+          lineHeight: 1,
+          marginBottom: 4,
+          opacity: collapsed ? 0 : 1,
+          transition: 'opacity 0.2s',
+        }}>
+          DEV MODE
+        </div>
+      )}
       <div style={{ paddingBottom: '80px' }}>
         <Menu
           theme="dark"

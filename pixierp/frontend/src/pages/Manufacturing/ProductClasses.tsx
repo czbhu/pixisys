@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
     Table,
@@ -347,16 +348,11 @@ const ProductClasses: React.FC = () => {
                     </Button>
                 }
             >
-                <Input
-                    placeholder="Keresés (név, kalkulátorok, osztályok)..."
-                    prefix={<SearchOutlined />}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                    allowClear
-                />
-
-                <Table
+                <EnhancedTable
+                    tableKey="productClasses"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés (név, kalkulátorok, osztályok)..."
                     columns={columns}
                     dataSource={filtered}
                     expandable={{ defaultExpandAllRows: true }}
@@ -368,7 +364,7 @@ const ProductClasses: React.FC = () => {
                         showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} termék osztály`,
                     }}
                     rowKey="id"
-                    scroll={{ x: 1200 }}
+                    cardBreakpoint={700}
                     size="small"
                     loading={loading}
                     onRow={(record) => ({

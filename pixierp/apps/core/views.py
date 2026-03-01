@@ -1433,6 +1433,28 @@ class UserPreferenceViewSet(viewsets.ModelViewSet):
             return Response(serializer.data)
 
 
+@api_view(['GET', 'PATCH'])
+@permission_classes([IsAuthenticated])
+def ui_preferences_view(request):
+    """Get or merge-update the ui_preferences JSON blob for the current user.
+    
+    GET  → returns the full ui_preferences dict
+    PATCH { "key": value, ... } → deep-merges the provided keys into ui_preferences
+    """
+    preference, _ = UserPreference.objects.get_or_create(user=request.user)
+    if request.method == 'GET':
+        return Response(preference.ui_preferences or {})
+    # PATCH: merge top-level keys
+    updates = request.data
+    if not isinstance(updates, dict):
+        return Response({'error': 'Expected a JSON object'}, status=status.HTTP_400_BAD_REQUEST)
+    current = preference.ui_preferences or {}
+    current.update(updates)
+    preference.ui_preferences = current
+    preference.save(update_fields=['ui_preferences'])
+    return Response(preference.ui_preferences)
+
+
 class PixinvoiceConfigViewSet(viewsets.ModelViewSet):
     queryset = PixinvoiceConfig.objects.all()
     serializer_class = PixinvoiceConfigSerializer

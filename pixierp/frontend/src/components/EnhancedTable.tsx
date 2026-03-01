@@ -1,0 +1,516 @@
+/**
+ * EnhancedTable – felváltja a sima Ant Design <Table>-t az alábbi extra funkciókkal:
+ *  - Oszlop láthatóság ki/bekapcsolás (Oszlopok dropdown)
+ *  - Oszlop sorrend drag-and-drop (hosszú nyomás 400ms)
+ *  - Rendezés törlése gomb
+ *  - Felhasználóhoz kötött szerver-oldali mentés (useUserPreference)
+ *
+ * Ügyfélnév helper: renderCustomerName(record) – magánszemély kezelés
+ */
+
+import React, { useMemo, useState } from 'react';
+import { Table, Button, Dropdown, Tooltip, Space, Input, Pagination, Select, Card } from 'antd';
+import type { TableProps, TableColumnType } from 'antd';
+import {
+  AppstoreOutlined,
+  CheckOutlined,
+  CloseOutlined,
+  ReloadOutlined,
+  SearchOutlined,
+  SortAscendingOutlined,
+  SortDescendingOutlined,
+} from '@ant-design/icons';
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  closestCenter,
+} from '@dnd-kit/core';
+import type { DragEndEvent } from '@dnd-kit/core';
+import {
+  SortableContext,
+  horizontalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import useUserPreference from '../hooks/useUserPreference';
+import { useResponsiveTable } from '../hooks/useResponsiveTable';
+import ResponsiveCardList from './ResponsiveCardList';
+
+// ─── Drag-and-drop header cell ────────────────────────────────────────────────
+
+const DraggableHeaderCell: React.FC<any> = ({ id, children, ...props }) => {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: id || 'noop' });
+
+  const style: React.CSSProperties = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    cursor: isDragging ? 'grabbing' : 'default',
+    userSelect: 'none',
+  };
+
+  if (!id) return <th {...props}>{children}</th>;
+  return (
+    <th {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      {children}
+    </th>
+  );
+};
+
+// ─── Customer name helper ─────────────────────────────────────────────────────
+
+export interface CustomerRecord {
+  customer_name?: string;
+  contact_names?: string;
+  is_private?: boolean;
+}
+
+/**
+ * Ügyfél cella renderer:
+ * - Magánszemély: kapcsolattartó neve félkövéren + "Magánszemély" kicsiben
+ * - Cég: cég neve félkövéren + kapcsolattartó kicsiben
+ */
+export function renderCustomerName(record: CustomerRecord): React.ReactNode {
+  const { customer_name, contact_names, is_private } = record;
+
+  const primaryName = is_private
+    ? contact_names || 'Magánszemély'
+    : customer_name || '-';
+
+  const tooltipText = is_private
+    ? contact_names
+    : [customer_name, contact_names].filter(Boolean).join(' – ');
+
+  return (
+    <Tooltip title={tooltipText}>
+      <div>
+        <div
+          style={{
+            fontWeight: 'bold',
+            display: '-webkit-box',
+            WebkitLineClamp: is_private || contact_names ? 2 : 3,
+            WebkitBoxOrient: 'vertical',
+            overflow: 'hidden',
+          }}
+        >
+          {primaryName}
+        </div>
+        {is_private && (
+          <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>
+            Magánszemély
+          </div>
+        )}
+        {!is_private && contact_names && (
+          <div
+            style={{
+              fontSize: 11,
+              color: '#666',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {contact_names}
+          </div>
+        )}
+      </div>
+    </Tooltip>
+  );
+}
+
+// ─── EnhancedTable props ──────────────────────────────────────────────────────
+
+export interface EnhancedTableProps<T = any> extends Omit<TableProps<T>, 'components'> {
+  /** Egyedi kulcs – a felhasználói beállítások tárolásához (pl. "quotes", "employees") */
+  tableKey: string;
+  /**
+   * Oszlop megnevezések a dropdownban.
+   * Ha nincs megadva, a column.title-t használja.
+   */
+  colLabels?: Record<string, string>;
+  /**
+   * Alapértelmezetten rejtett oszlopkulcsok.
+   * Ha nincs megadva, minden oszlop látható.
+   */
+  defaultHiddenKeys?: string[];
+  /** Extra gomb / elem a toolbar-ban (kereső Input mellett, oszlopok ikon előtt) */
+  toolbarExtra?: React.ReactNode;
+  /** Ha true, az Oszlopok gomb nem jelenik meg (pl. egyszerű kis táblákhoz) */
+  noColumnManager?: boolean;
+  /** Beépített kereső: érték */
+  searchValue?: string;
+  /** Beépített kereső: callback */
+  onSearchChange?: (value: string) => void;
+  /** Beépített kereső: placeholder */
+  searchPlaceholder?: string;
+  /** Ha true, soha nem vált kártyás nézetre (pl. POS) */
+  disableCardLayout?: boolean;
+  /** Explicit container-width threshold (px) at which to switch to card layout */
+  cardBreakpoint?: number;
+  /** Custom body-level table components (e.g., { body: { row: DraggableRow } }). Merged with EnhancedTable’s header override. */
+  bodyComponents?: TableProps<T>['components'];
+  /** Ha megadva, EnhancedTable egy Card-ba csomagolja magát, és a toolbar a Card fejlécébe (extra) kerül */
+  cardTitle?: React.ReactNode;
+  /** Tartalom a Card fejléc és a tábla között (pl. szűrő sorok) – csak cardTitle esetén */
+  innerHeader?: React.ReactNode;
+}
+
+// ─── EnhancedTable component ──────────────────────────────────────────────────
+
+function EnhancedTable<T extends object = any>({
+  tableKey,
+  columns: rawColumns = [],
+  colLabels,
+  defaultHiddenKeys = [],
+  toolbarExtra,
+  noColumnManager = false,
+  searchValue,
+  onSearchChange,
+  searchPlaceholder = 'Keresés...',
+  disableCardLayout = false,
+  cardBreakpoint,
+  bodyComponents,
+  cardTitle,
+  innerHeader,
+  ...tableProps
+}: EnhancedTableProps<T>) {
+  // Derive default order and visibility maps from the column definitions ────
+  const allKeys = useMemo(
+    () => (rawColumns as TableColumnType<T>[]).map((c) => String(c.key ?? c.dataIndex ?? '')).filter(Boolean),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  );
+
+  const defaultVisibility = useMemo<Record<string, boolean>>(() => {
+    const vis: Record<string, boolean> = {};
+    allKeys.forEach((k) => {
+      vis[k] = !defaultHiddenKeys.includes(k);
+    });
+    return vis;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const labelFor = (col: TableColumnType<T>): string => {
+    const key = String(col.key ?? col.dataIndex ?? '');
+    if (colLabels?.[key]) return colLabels[key];
+    if (typeof col.title === 'string') return col.title;
+    return key;
+  };
+
+  // Preferences: visibility ─────────────────────────────────────────────────
+  const [colVis, setColVis] = useUserPreference<Record<string, boolean>>(
+    `${tableKey}_colVis`,
+    defaultVisibility
+  );
+  const mergedColVis: Record<string, boolean> = { ...defaultVisibility, ...colVis };
+  const toggleCol = (key: string) =>
+    setColVis((prev) => ({ ...(prev || defaultVisibility), [key]: !mergedColVis[key] }));
+
+  // Preferences: column order ───────────────────────────────────────────────
+  const [colOrderRaw, setColOrder] = useUserPreference<string[]>(
+    `${tableKey}_colOrder`,
+    allKeys
+  );
+  const colOrder = useMemo(() => {
+    const saved = colOrderRaw || allKeys;
+    return [
+      ...saved.filter((k: string) => allKeys.includes(k)),
+      ...allKeys.filter((k) => !saved.includes(k)),
+    ];
+  }, [colOrderRaw, allKeys]);
+
+  // Sort reset ──────────────────────────────────────────────────────────────
+  const [tableResetKey, setTableResetKey] = useState(0);
+
+  // ─── Card-mode sort state ────────────────────────────────────────────────
+  const [cardSortKey, setCardSortKey] = useState<string>('');
+  const [cardSortDir, setCardSortDir] = useState<'asc' | 'desc'>('asc');
+
+  // Columns that have a sorter function (used for the card-mode sort dropdown)
+  const sortableColumns = useMemo(
+    () => (rawColumns as TableColumnType<T>[]).filter(
+      (c) => typeof (c as any).sorter === 'function' && String(c.key ?? c.dataIndex ?? '') !== 'actions'
+    ),
+    [rawColumns]
+  );
+
+  // Sorted data for card mode (Table mode lets Ant Design handle sorting natively)
+  const cardSortedData = useMemo(() => {
+    const data = (tableProps.dataSource ?? []) as any[];
+    if (!cardSortKey) return data;
+    const col = (rawColumns as TableColumnType<T>[]).find(
+      (c) => String(c.key ?? c.dataIndex ?? '') === cardSortKey
+    );
+    if (!col || typeof (col as any).sorter !== 'function') return data;
+    const sorterFn = (col as any).sorter as (a: any, b: any) => number;
+    return [...data].sort((a, b) => {
+      const result = sorterFn(a, b);
+      return cardSortDir === 'asc' ? result : -result;
+    });
+  }, [tableProps.dataSource, cardSortKey, cardSortDir, rawColumns]);
+
+  // DnD sensors ─────────────────────────────────────────────────────────────
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } })
+  );
+
+  const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    setColOrder((prev) => {
+      const src = prev || allKeys;
+      const oldIdx = src.indexOf(active.id as string);
+      const newIdx = src.indexOf(over.id as string);
+      return arrayMove(src, oldIdx, newIdx);
+    });
+  };
+
+  // Build the final column list ─────────────────────────────────────────────
+  const processedColumns = useMemo(() => {
+    const colMap = new Map(
+      (rawColumns as TableColumnType<T>[]).map((c) => [
+        String(c.key ?? c.dataIndex ?? ''),
+        c,
+      ])
+    );
+    return colOrder
+      .filter((k) => mergedColVis[k] !== false)
+      .map((k) => colMap.get(k))
+      .filter(Boolean)
+      .map((c) => ({
+        ...c,
+        onHeaderCell: () => ({ id: String((c as any).key ?? (c as any).dataIndex ?? '') }),
+      }));
+  }, [rawColumns, colOrder, mergedColVis]);
+
+  // ─── Responsive card layout ────────────────────────────────────────────────
+  const { containerRef, useCardLayout } = useResponsiveTable(
+    rawColumns as any[],
+    mergedColVis,
+    cardBreakpoint
+  );
+
+  // Columns dropdown menu ───────────────────────────────────────────────────
+  const dropdownItems = useMemo(() => {
+    if (noColumnManager) return [];
+    const toggleItems = (rawColumns as TableColumnType<T>[])
+      .filter((c) => String(c.key ?? c.dataIndex ?? '') !== 'actions')
+      .map((c) => {
+        const key = String(c.key ?? c.dataIndex ?? '');
+        const visible = mergedColVis[key] !== false;
+        return {
+          key,
+          label: (
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 160 }}>
+              {visible ? (
+                <CheckOutlined style={{ color: '#1677ff' }} />
+              ) : (
+                <CloseOutlined style={{ color: '#bbb' }} />
+              )}
+              {labelFor(c)}
+            </span>
+          ),
+          onClick: () => toggleCol(key),
+        };
+      });
+
+    return [
+      ...toggleItems,
+      { type: 'divider' as const },
+      {
+        key: '__reset_vis',
+        label: (
+          <span style={{ color: '#888', fontSize: 12 }}>
+            <ReloadOutlined style={{ marginRight: 6 }} />Láthatóság alaphelyzete
+          </span>
+        ),
+        onClick: () => setColVis(defaultVisibility),
+      },
+      {
+        key: '__reset_order',
+        label: (
+          <span style={{ color: '#888', fontSize: 12 }}>
+            <ReloadOutlined style={{ marginRight: 6 }} />Sorrend alaphelyzete
+          </span>
+        ),
+        onClick: () => setColOrder(allKeys),
+      },
+      {
+        key: '__reset_sort',
+        label: (
+          <span style={{ color: '#888', fontSize: 12 }}>
+            <ReloadOutlined style={{ marginRight: 6 }} />Rendezés törlése
+          </span>
+        ),
+        onClick: () => setTableResetKey((k) => k + 1),
+      },
+    ];
+  }, [rawColumns, mergedColVis, defaultVisibility, allKeys, noColumnManager]);
+
+  const colButton = !noColumnManager && (
+    <Tooltip title="Oszlopok kezelése">
+      <Dropdown menu={{ items: dropdownItems }} trigger={['click']}>
+        <Button icon={<AppstoreOutlined />} />
+      </Dropdown>
+    </Tooltip>
+  );
+
+  const hasSearch = searchValue !== undefined && onSearchChange;
+  const showCardSort = !disableCardLayout && useCardLayout && sortableColumns.length > 0;
+  const showToolbar = !noColumnManager || toolbarExtra || hasSearch || showCardSort;
+
+  // ─── Pagination state (centered top + footer with row selector) ──────────
+  const pag = tableProps.pagination;
+  const origPageSize = (pag && typeof pag === 'object') ? ((pag as any).pageSize ?? 20) : 20;
+  const origCurrent = (pag && typeof pag === 'object') ? (pag as any).current : undefined;
+  const origOnChange = (pag && typeof pag === 'object') ? (pag as any).onChange : undefined;
+  const dataLen = (tableProps.dataSource ?? []).length;
+
+  const [intPage, setIntPage] = useState(1);
+  const [intPageSize, setIntPageSize] = useState(origPageSize);
+  const page = origCurrent ?? intPage;
+  const size = intPageSize;
+  const handlePageChange = (p: number) => { setIntPage(p); origOnChange?.(p, size); };
+  const handleSizeChange = (s: number) => { setIntPageSize(s); setIntPage(1); origOnChange?.(1, s); };
+
+  const topPag = pag !== false ? {
+    ...(typeof pag === 'object' ? pag : {}),
+    pageSize: size,
+    current: page,
+    onChange: handlePageChange,
+    showSizeChanger: false,
+    position: ['topCenter'] as any,
+  } : false;
+
+  const footerFn = pag !== false && dataLen > size ? () => (
+    <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
+      <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={[{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }]} />
+    </div>
+  ) : undefined;
+
+  const toolbarNode = showToolbar ? (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        ...(cardTitle ? { flex: 1, minWidth: 0 } : { marginBottom: 8 }),
+      }}
+    >
+      {hasSearch && (
+        <Input
+          prefix={<SearchOutlined />}
+          placeholder={searchPlaceholder}
+          value={searchValue}
+          onChange={(e) => onSearchChange(e.target.value)}
+          allowClear
+          style={{ flex: 1 }}
+        />
+      )}
+      {colButton}
+      {showCardSort && (
+        <Space size={4}>
+          <Select
+            size="small"
+            placeholder="Rendezés..."
+            allowClear
+            popupMatchSelectWidth={false}
+            style={{ minWidth: 130 }}
+            value={cardSortKey || undefined}
+            onChange={(v: string | undefined) => { setCardSortKey(v ?? ''); }}
+          >
+            {sortableColumns.map((col) => {
+              const key = String(col.key ?? (col as any).dataIndex ?? '');
+              return <Select.Option key={key} value={key}>{labelFor(col)}</Select.Option>;
+            })}
+          </Select>
+          {cardSortKey && (
+            <Tooltip title={cardSortDir === 'asc' ? 'Növekvő sorrend' : 'Csökkenő sorrend'}>
+              <Button
+                size="small"
+                icon={cardSortDir === 'asc' ? <SortAscendingOutlined /> : <SortDescendingOutlined />}
+                onClick={() => setCardSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))}
+              />
+            </Tooltip>
+          )}
+        </Space>
+      )}
+      {toolbarExtra}
+    </div>
+  ) : null;
+
+  const tableContent = (
+    <>
+      {!disableCardLayout && useCardLayout ? (
+        <ResponsiveCardList
+          columns={processedColumns as any[]}
+          dataSource={cardSortedData as any[]}
+          rowKey={(tableProps.rowKey as any) ?? 'id'}
+          loading={tableProps.loading as boolean}
+          colVisibility={mergedColVis}
+          currentPage={page}
+          pageSize={size}
+          onPageChange={handlePageChange}
+          onPageSizeChange={handleSizeChange}
+        />
+      ) : (
+        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+          <SortableContext items={colOrder} strategy={horizontalListSortingStrategy}>
+            <Table<T>
+              key={tableResetKey}
+              {...tableProps}
+              pagination={topPag}
+              footer={footerFn}
+              columns={processedColumns as TableColumnType<T>[]}
+              components={{
+                ...(bodyComponents || {}),
+                header: {
+                  row: ({ children, ...rowProps }: any) => (
+                    <tr {...rowProps}>{children}</tr>
+                  ),
+                  cell: DraggableHeaderCell,
+                },
+              }}
+            />
+          </SortableContext>
+        </DndContext>
+      )}
+    </>
+  );
+
+  if (cardTitle !== undefined) {
+    const cardHeader = (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span style={{ flexShrink: 0, fontWeight: 600 }}>{cardTitle}</span>
+        {toolbarNode}
+      </div>
+    );
+    return (
+      <Card title={cardHeader}>
+        {innerHeader}
+        <div ref={containerRef}>
+          {tableContent}
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <div ref={containerRef}>
+      {toolbarNode}
+      {tableContent}
+    </div>
+  );
+}
+
+export default EnhancedTable;

@@ -26,6 +26,8 @@ import 'react-quill/dist/quill.snow.css';
 import api from '../../services/api';
 import { ticketsService } from '../../services/ticketsService';
 import { useAuth } from '../../contexts/AuthContext';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Dragger } = Upload;
 
@@ -160,7 +162,6 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
   }, [isPersonalMode]);
 
   const sortedTickets = useMemo(() => {
-    const query = (searchText || '').trim().toLowerCase();
     let filtered = [...tickets];
 
     if (isPersonalMode && user?.id) {
@@ -187,22 +188,8 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
       filtered = filtered.filter((ticket) => ticket.audience === 'external' || ticket.audience === 'both');
     }
 
-    if (query) {
-      filtered = filtered.filter((ticket) => {
-        const haystack = [
-          ticket.ticket_number,
-          ticket.title,
-          ticket.topic_name,
-          ticket.requester_name,
-          ticket.requester_email,
-          (ticket.assigned_user_names || []).join(' '),
-          (ticket.department_names || []).join(' '),
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
-        return haystack.includes(query);
-      });
+    if (searchText?.trim()) {
+      filtered = filtered.filter((ticket) => deepSearchMatch(searchText, ticket));
     }
 
     return filtered.sort((left, right) => new Date(right.created_at).getTime() - new Date(left.created_at).getTime());
@@ -377,24 +364,28 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
       dataIndex: 'ticket_number',
       key: 'ticket_number',
       width: 130,
+      sorter: (a: any, b: any) => (a.ticket_number || '').localeCompare(b.ticket_number || ''),
     },
     {
       title: 'Cím',
       dataIndex: 'title',
       key: 'title',
       ellipsis: true,
+      sorter: (a: any, b: any) => (a.title || '').localeCompare(b.title || ''),
     },
     {
       title: 'Típus',
       dataIndex: 'ticket_type_display',
       key: 'ticket_type_display',
       width: 120,
+      sorter: (a: any, b: any) => (a.ticket_type_display || '').localeCompare(b.ticket_type_display || ''),
     },
     {
       title: 'Státusz',
       dataIndex: 'status',
       key: 'status',
       width: 120,
+      sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || ''),
       render: (status: string, record: TicketItem) => (
         <Space>
           <Tag color={statusColor[status] || 'default'}>{record.status_display}</Tag>
@@ -405,6 +396,7 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
     {
       title: 'Témakör',
       dataIndex: 'topic_name',
+      sorter: (a: any, b: any) => (a.topic_name || '').localeCompare(b.topic_name || ''),
       key: 'topic_name',
       width: 140,
       render: (name: string) => name || '-',
@@ -422,6 +414,7 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
     {
       title: 'Létrehozta',
       dataIndex: 'created_by_name',
+      sorter: (a: any, b: any) => (a.created_by_name || '').localeCompare(b.created_by_name || ''),
       key: 'created_by_name',
       width: 150,
       render: (name: string) => name || '-',
@@ -429,6 +422,7 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
     {
       title: 'Dátum',
       dataIndex: 'created_at',
+      sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || ''),
       key: 'created_at',
       width: 160,
       render: (value: string) => new Date(value).toLocaleString('hu-HU'),
@@ -522,70 +516,68 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
   }
 
   return (
-    <Card
-      title={isPersonalMode ? 'Saját jegyeim' : 'Jegyek'}
-      extra={
-        <Space>
-          <Input
-            allowClear
-            value={searchText}
-            onChange={(event) => setSearchText(event.target.value)}
-            placeholder="Keresés jegyek között"
-            style={{ width: 260 }}
-          />
-          <Select
-            value={statusFilter}
-            onChange={setStatusFilter}
-            style={{ width: 160 }}
-            options={[
-              { value: 'all', label: 'Minden státusz' },
-              { value: 'open', label: 'Nyitott' },
-              { value: 'in_progress', label: 'Folyamatban' },
-              { value: 'answered', label: 'Megválaszolva' },
-              { value: 'closed', label: 'Lezárt' },
-            ]}
-          />
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
-            Új jegy
-          </Button>
-        </Space>
-      }
-    >
-      {!isPersonalMode && (
-        <Row gutter={12} style={{ marginBottom: 12 }}>
-          <Col><Tag color="blue">Összes: {stats?.total ?? 0}</Tag></Col>
-          <Col><Tag color="processing">Nyitott: {stats?.open ?? 0}</Tag></Col>
-          <Col><Tag color="orange">Folyamatban: {stats?.in_progress ?? 0}</Tag></Col>
-          <Col><Tag color="green">Megválaszolva: {stats?.answered ?? 0}</Tag></Col>
-          <Col><Tag color="default">Lezárt: {stats?.closed ?? 0}</Tag></Col>
-          <Col><Tag color="red">Lejárt: {stats?.overdue ?? 0}</Tag></Col>
-        </Row>
-      )}
-
-      {!isPersonalMode && (
-        <div style={{ marginBottom: 12 }}>
-          <Segmented
-            value={quickFilter}
-            onChange={(value) => setQuickFilter(value as any)}
-            options={[
-              { value: 'all', label: 'Összes' },
-              { value: 'mine', label: 'Saját' },
-              { value: 'assigned', label: 'Nekem kiosztott' },
-              { value: 'open', label: 'Nyitott' },
-              { value: 'overdue', label: 'Lejárt' },
-              { value: 'external', label: 'Külsős' },
-            ]}
-          />
-        </div>
-      )}
-
-      <Table
+    <>
+      <EnhancedTable
+        tableKey="tickets"
         rowKey="id"
         loading={loading}
         columns={columns as any}
         dataSource={sortedTickets}
+        cardTitle={isPersonalMode ? 'Saját jegyeim' : 'Jegyek'}
+        innerHeader={
+          <>
+            {!isPersonalMode && (
+              <Row gutter={12} style={{ marginBottom: 12 }}>
+                <Col><Tag color="blue">Összes: {stats?.total ?? 0}</Tag></Col>
+                <Col><Tag color="processing">Nyitott: {stats?.open ?? 0}</Tag></Col>
+                <Col><Tag color="orange">Folyamatban: {stats?.in_progress ?? 0}</Tag></Col>
+                <Col><Tag color="green">Megválaszolva: {stats?.answered ?? 0}</Tag></Col>
+                <Col><Tag color="default">Lezárt: {stats?.closed ?? 0}</Tag></Col>
+                <Col><Tag color="red">Lejárt: {stats?.overdue ?? 0}</Tag></Col>
+              </Row>
+            )}
+            {!isPersonalMode && (
+              <div style={{ marginBottom: 12 }}>
+                <Segmented
+                  value={quickFilter}
+                  onChange={(value) => setQuickFilter(value as any)}
+                  options={[
+                    { value: 'all', label: 'Összes' },
+                    { value: 'mine', label: 'Saját' },
+                    { value: 'assigned', label: 'Nekem kiosztott' },
+                    { value: 'open', label: 'Nyitott' },
+                    { value: 'overdue', label: 'Lejárt' },
+                    { value: 'external', label: 'Külsős' },
+                  ]}
+                />
+              </div>
+            )}
+          </>
+        }
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Keresés jegyek között"
+        toolbarExtra={
+          <Space>
+            <Select
+              value={statusFilter}
+              onChange={setStatusFilter}
+              style={{ width: 160 }}
+              options={[
+                { value: 'all', label: 'Minden státusz' },
+                { value: 'open', label: 'Nyitott' },
+                { value: 'in_progress', label: 'Folyamatban' },
+                { value: 'answered', label: 'Megválaszolva' },
+                { value: 'closed', label: 'Lezárt' },
+              ]}
+            />
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>
+              Új jegy
+            </Button>
+          </Space>
+        }
         pagination={{ pageSize: 20 }}
-        scroll={{ x: 'max-content' }}
+        cardBreakpoint={950}
       />
 
       <Modal
@@ -802,7 +794,7 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
         )}
       </Modal>
 
-    </Card>
+    </>
   );
 };
 

@@ -432,6 +432,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     total_amount = serializers.SerializerMethodField()
     total_net_amount = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    is_private = serializers.SerializerMethodField()
     quote_request_title = serializers.SerializerMethodField()
     project_id = serializers.SerializerMethodField()
     project_name = serializers.SerializerMethodField()
@@ -445,7 +446,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerOrder
         fields = [
-            'id', 'quote_request', 'quote_request_id', 'quote_request_title', 'customer_name',
+            'id', 'quote_request', 'quote_request_id', 'quote_request_title', 'customer_name', 'is_private',
             'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount', 'total_net_amount',
             'project_id', 'project_name', 'created_by_name',
             'contact_names', 'contact_email', 'deadline',
@@ -504,7 +505,19 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
         elif obj.quote_request.customer:
             return obj.quote_request.customer.name
         return ''
-    
+
+    def get_is_private(self, obj):
+        try:
+            if not obj.quote_request:
+                return False
+            qr = obj.quote_request
+            if qr.company:
+                return qr.company.vat_status == 'PRIVATE_PERSON'
+            # No company, no old customer → private person (contact only)
+            return not qr.customer_id
+        except Exception:
+            return False
+
     def get_quote_request_id(self, obj):
         """Get quote_request ID for navigation"""
         return obj.quote_request.id if obj.quote_request else None
@@ -619,6 +632,7 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
     total_amount = serializers.SerializerMethodField()
     total_net_amount = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
+    is_private = serializers.SerializerMethodField()
     quote_request_title = serializers.SerializerMethodField()
     project_id = serializers.SerializerMethodField()
     project_name = serializers.SerializerMethodField()
@@ -632,7 +646,7 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerOrder
         fields = [
-            'id', 'quote_request_id', 'quote_request_title', 'customer_name',
+            'id', 'quote_request_id', 'quote_request_title', 'customer_name', 'is_private',
             'order_number', 'delivery_note_number', 'status', 'order_date', 'total_amount', 'total_net_amount',
             'project_id', 'project_name', 'created_by_name',
             'contact_names', 'contact_email', 'deadline',
@@ -688,6 +702,18 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
         if obj.quote_request.customer:
             return obj.quote_request.customer.name
         return ''
+
+    def get_is_private(self, obj):
+        try:
+            if not obj.quote_request:
+                return False
+            qr = obj.quote_request
+            if qr.company:
+                return qr.company.vat_status == 'PRIVATE_PERSON'
+            # No company, no old customer → private person (contact only)
+            return not qr.customer_id
+        except Exception:
+            return False
 
     def get_quote_request_id(self, obj):
         return obj.quote_request.id if obj.quote_request else None
@@ -763,6 +789,7 @@ class InvoiceableOrderItemSerializer(serializers.ModelSerializer):
 class InvoiceableOrderSerializer(serializers.ModelSerializer):
     customer_name = serializers.SerializerMethodField()
     contact_names = serializers.SerializerMethodField()
+    is_private = serializers.SerializerMethodField()
     company = serializers.SerializerMethodField()
     customer = serializers.SerializerMethodField()
     net_total = serializers.SerializerMethodField()
@@ -772,7 +799,7 @@ class InvoiceableOrderSerializer(serializers.ModelSerializer):
         model = CustomerOrder
         fields = [
             'id', 'order_number', 'order_date', 'invoice_number',
-            'customer_name', 'contact_names', 'company', 'customer', 'net_total', 'items'
+            'customer_name', 'contact_names', 'is_private', 'company', 'customer', 'net_total', 'items'
         ]
 
     def get_customer_name(self, obj):
@@ -793,6 +820,17 @@ class InvoiceableOrderSerializer(serializers.ModelSerializer):
             return ', '.join([c.name for c in qr.contacts.all()])
         except Exception:
             return ''
+
+    def get_is_private(self, obj):
+        try:
+            if not obj.quote_request:
+                return False
+            qr = obj.quote_request
+            if qr.company:
+                return qr.company.vat_status == 'PRIVATE_PERSON'
+            return not qr.customer_id
+        except Exception:
+            return False
 
     def get_company(self, obj):
         qr = getattr(obj, 'quote_request', None)

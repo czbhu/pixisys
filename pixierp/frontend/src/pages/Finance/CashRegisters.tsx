@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { 
     Card, Table, Button, Modal, Form, Input, Select, DatePicker, Space, Grid,
     InputNumber, message, Tag, Row, Col, Statistic, Alert 
@@ -266,6 +267,7 @@ const CashRegisters: React.FC = () => {
             title: 'Időpont',
             dataIndex: 'timestamp',
             key: 'timestamp',
+            sorter: (a: CashTransaction, b: CashTransaction) => (a.timestamp || '').localeCompare(b.timestamp || ''),
             render: (timestamp: string) => dayjs(timestamp).format('YYYY-MM-DD HH:mm'),
             width: 150,
         },
@@ -273,6 +275,7 @@ const CashRegisters: React.FC = () => {
             title: 'Összeg',
             dataIndex: 'amount',
             key: 'amount',
+            sorter: (a: CashTransaction, b: CashTransaction) => Number(a.amount || 0) - Number(b.amount || 0),
             render: (amount: number) => {
                 const amountNum = parseAmount(amount);
                 const isPositive = amountNum >= 0;
@@ -288,6 +291,7 @@ const CashRegisters: React.FC = () => {
             title: 'Miért?',
             dataIndex: 'reason_name',
             key: 'reason_name',
+            sorter: (a: CashTransaction, b: CashTransaction) => (a.reason_name || '').localeCompare(b.reason_name || ''),
             render: (reason: string | null) => reason || '-',
             width: 150,
         },
@@ -295,12 +299,14 @@ const CashRegisters: React.FC = () => {
             title: 'Megjegyzés',
             dataIndex: 'note',
             key: 'note',
+            sorter: (a: CashTransaction, b: CashTransaction) => (a.note || '').localeCompare(b.note || ''),
             render: (note: string) => note || '-',
         },
         {
             title: 'Kassza tartalma',
             dataIndex: 'balance_after',
             key: 'balance_after',
+            sorter: (a: CashTransaction, b: CashTransaction) => Number(a.balance_after || 0) - Number(b.balance_after || 0),
             render: (balance: number) => {
                 return <span>{formatCashAmount(balance)}</span>;
             },
@@ -310,6 +316,7 @@ const CashRegisters: React.FC = () => {
             title: 'Alkalmazott',
             dataIndex: 'employee_name',
             key: 'employee_name',
+            sorter: (a: CashTransaction, b: CashTransaction) => (a.employee_name || '').localeCompare(b.employee_name || ''),
             render: (name: string, record: CashTransaction) => name || record.employee_username,
             width: 150,
         },
@@ -359,7 +366,7 @@ const CashRegisters: React.FC = () => {
                                 </Card>
                             )}
 
-                            <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                            <Space className="pixi-unified-card-actions" style={{ width: '100%', justifyContent: 'space-between' }}>
                                 <Button
                                     type="primary"
                                     icon={<PlusOutlined />}
@@ -379,7 +386,7 @@ const CashRegisters: React.FC = () => {
                             </Space>
 
                             {hasFullCashPermission && (
-                                <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                                <Space className="pixi-unified-card-actions" direction="vertical" size="middle" style={{ width: '100%' }}>
                                     <Input
                                         placeholder="Gyorskereső..."
                                         prefix={<SearchOutlined />}
@@ -414,7 +421,7 @@ const CashRegisters: React.FC = () => {
                     ) : (
                         <>
                             {/* Filters */}
-                            <Row gutter={16} align="middle">
+                            <Row className="pixi-unified-card-actions" gutter={16} align="middle">
                                 {hasFullCashPermission && (
                                     <>
                                         <Col>
@@ -508,11 +515,13 @@ const CashRegisters: React.FC = () => {
 
                     {/* Transactions Table */}
                     {canViewTransactions && (
-                        <Table
+                        <EnhancedTable
+                            tableKey="cashRegisters"
                             columns={columns}
                             dataSource={transactions}
                             rowKey="id"
                             loading={loading}
+                            cardBreakpoint={800}
                             pagination={{ pageSize: 20 }}
                         />
                     )}

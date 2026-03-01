@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, message, Tag, Space, DatePicker, Input } from 'antd';
-import { PlusOutlined, EyeOutlined, CheckOutlined } from '@ant-design/icons';
+import { Card, Button, Modal, message, Tag, Space, DatePicker } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
+import { EyeOutlined, CheckOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 
 const { RangePicker } = DatePicker;
-const { Search } = Input;
 
 interface ScrapRecord {
   id: number;
@@ -94,6 +94,7 @@ const Scraps: React.FC = () => {
       dataIndex: 'scrap_date',
       key: 'scrap_date',
       width: 120,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => a.scrap_date.localeCompare(b.scrap_date),
       render: (date: string) => dayjs(date).format('YYYY-MM-DD'),
     },
     {
@@ -101,23 +102,27 @@ const Scraps: React.FC = () => {
       dataIndex: 'scrap_number',
       key: 'scrap_number',
       width: 180,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => a.scrap_number.localeCompare(b.scrap_number),
     },
     {
       title: 'Rögzítette',
       dataIndex: 'created_by_name',
       key: 'created_by_name',
       width: 150,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => a.created_by_name.localeCompare(b.created_by_name),
     },
     {
       title: 'Selejtezett termékek',
       dataIndex: 'materials_summary',
       key: 'materials_summary',
       ellipsis: true,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => (a.materials_summary || '').localeCompare(b.materials_summary || ''),
     },
     {
       title: 'Beszerzési érték',
       key: 'cost_value',
       width: 150,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => a.total_cost_value - b.total_cost_value,
       render: (_: any, record: ScrapRecord) => 
         `${record.total_cost_value.toLocaleString()} ${record.currency}`,
     },
@@ -125,6 +130,7 @@ const Scraps: React.FC = () => {
       title: 'Eladási érték',
       key: 'selling_value',
       width: 150,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => a.total_selling_value - b.total_selling_value,
       render: (_: any, record: ScrapRecord) => 
         `${record.total_selling_value.toLocaleString()} ${record.currency}`,
     },
@@ -132,6 +138,7 @@ const Scraps: React.FC = () => {
       title: 'Státusz',
       key: 'status',
       width: 120,
+      sorter: (a: ScrapRecord, b: ScrapRecord) => Number(a.is_approved) - Number(b.is_approved),
       render: (_: any, record: ScrapRecord) => (
         <Tag color={record.is_approved ? 'green' : 'orange'}>
           {record.is_approved ? 'Jóváhagyva' : 'Függőben'}
@@ -169,45 +176,39 @@ const Scraps: React.FC = () => {
 
   return (
     <div>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', gap: 16 }}>
-        <div style={{ display: 'flex', gap: 16, flex: 1 }}>
-          <RangePicker
-            style={{ width: 300 }}
-            onChange={(dates) => {
-              if (dates && dates[0] && dates[1]) {
-                setDateRange([
-                  dates[0].format('YYYY-MM-DD'),
-                  dates[1].format('YYYY-MM-DD')
-                ]);
-              } else {
-                setDateRange(null);
-              }
-            }}
-            placeholder={['Dátum -tól', 'Dátum -ig']}
-          />
-          <Search
-            placeholder="Keresés selejtezési szám vagy indok alapján"
-            onSearch={setSearchText}
-            onChange={(e) => {
-              if (!e.target.value) {
-                setSearchText('');
-              }
-            }}
-            style={{ width: 400 }}
-            allowClear
-          />
-        </div>
-      </div>
-
-      <Table
-        size="small"
-        columns={columns}
-        dataSource={scraps}
-        loading={loading}
-        rowKey="id"
-        scroll={{ x: 1200 }}
-        pagination={{ pageSize: 20 }}
-      />
+      <Card title="Selejtezések">
+        <EnhancedTable
+          tableKey="scraps"
+          size="small"
+          columns={columns as any}
+          dataSource={scraps}
+          loading={loading}
+          rowKey="id"
+          cardBreakpoint={900}
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Keresés selejtezési szám vagy indok alapján"
+          toolbarExtra={
+            <Space className="pixi-unified-card-actions">
+              <RangePicker
+                style={{ width: 300 }}
+                onChange={(dates) => {
+                  if (dates && dates[0] && dates[1]) {
+                    setDateRange([
+                      dates[0].format('YYYY-MM-DD'),
+                      dates[1].format('YYYY-MM-DD')
+                    ]);
+                  } else {
+                    setDateRange(null);
+                  }
+                }}
+                placeholder={['Dátum -tól', 'Dátum -ig']}
+              />
+            </Space>
+          }
+          pagination={{ pageSize: 20 }}
+        />
+      </Card>
 
       {/* Részletek Modal */}
       <Modal

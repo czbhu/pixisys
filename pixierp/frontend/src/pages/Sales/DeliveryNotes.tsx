@@ -3,13 +3,13 @@ import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, 
 import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
+import EnhancedTable from '../../components/EnhancedTable';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-
-const { Search } = Input;
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 
 interface DeliveryNoteItemRow {
   id: number;
@@ -417,16 +417,19 @@ const DeliveryNotes: React.FC = () => {
       dataIndex: 'issue_date',
       key: 'issue_date',
       width: 110,
+      sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || ''),
     },
     {
       title: 'Szállítólevél',
       dataIndex: 'delivery_note_number',
       key: 'delivery_note_number',
-      render: (text) => <a onClick={() => setFilterNoteNumber(filterNoteNumber === text ? '' : text)}>{text}</a>
+      render: (text) => <a onClick={() => setFilterNoteNumber(filterNoteNumber === text ? '' : text)}>{text}</a>,
+      sorter: (a: any, b: any) => (a.delivery_note_number || '').localeCompare(b.delivery_note_number || ''),
     },
     {
       title: 'Megnevezés',
       key: 'item_name',
+      sorter: (a: any, b: any) => (a.item_name || '').localeCompare(b.item_name || '', 'hu'),
       render: (_, record) => (
         <span>
             <a onClick={() => setFilterItemName(filterItemName === record.item_name ? '' : record.item_name)}>
@@ -445,6 +448,7 @@ const DeliveryNotes: React.FC = () => {
       title: 'Ügyfél',
       key: 'customer',
       width: 200,
+      sorter: (a: any, b: any) => (a.customer_name || a.contact_name || '').localeCompare(b.customer_name || b.contact_name || '', 'hu'),
       render: (_, record) => {
           const name = record.customer_name || record.contact_name || '-';
           const contacts = record.contact_names || record.contact_name;
@@ -466,6 +470,7 @@ const DeliveryNotes: React.FC = () => {
     {
       title: 'Mennyiség',
       key: 'quantity',
+      sorter: (a: any, b: any) => (a.quantity || 0) - (b.quantity || 0),
       render: (_, record) => <span>{record.quantity} {record.unit}</span>
     },
     {
@@ -473,11 +478,13 @@ const DeliveryNotes: React.FC = () => {
       dataIndex: 'notes',
       key: 'notes',
       ellipsis: true,
-      responsive: ['lg']
+      responsive: ['lg'],
+      sorter: (a: any, b: any) => (a.notes || '').localeCompare(b.notes || '', 'hu'),
     },
     {
       title: 'Visszaigazolta',
       key: 'confirmed',
+      sorter: (a: any, b: any) => (a.is_confirmed === b.is_confirmed ? 0 : a.is_confirmed ? -1 : 1),
       render: (_, record) => {
         if (!record.is_confirmed) return <Tag color="orange">Nincs</Tag>;
         
@@ -621,9 +628,10 @@ const DeliveryNotes: React.FC = () => {
 
   return (
     <div style={{ padding: 24 }}>
-      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <h1>Szállítólevél Tételek</h1>
-        <Space>
+            <div style={{ marginBottom: 16 }}>
+                <UnifiedQuickSearchHeader
+                        title={<h1 style={{ margin: 0 }}>Szállítólevél Tételek</h1>}
+                        actions={<Space className="pixi-unified-card-actions">
              {(filterNoteNumber || filterOrderNumber || filterItemName) && (
                  <Button onClick={() => {
                      setFilterNoteNumber('');
@@ -631,24 +639,24 @@ const DeliveryNotes: React.FC = () => {
                      setFilterItemName('');
                  }}>Szűrők törlése</Button>
              )}
-            <Search 
-                placeholder="Keresés..." 
-                onSearch={handleSearch} 
-                onChange={(e) => setSearchText(e.target.value)} 
-                style={{ width: 250 }} 
-            />
             <Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>
             Új szállítólevél
             </Button>
-        </Space>
+                        </Space>}
+                />
       </div>
 
-      <Table 
-        columns={columns} 
-        dataSource={data} 
-        rowKey="id" 
+      <EnhancedTable
+        tableKey="deliveryNotes"
+        searchValue={searchText}
+        onSearchChange={handleSearch}
+        searchPlaceholder="Keresés..."
+        columns={columns}
+        dataSource={data}
+        rowKey="id"
         loading={loading}
         size="small"
+        cardBreakpoint={850}
       />
 
       <Modal

@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Button, Checkbox, message, Card, Select, Tag } from 'antd';
 import { FileTextOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
+import EnhancedTable, { renderCustomerName } from '../../components/EnhancedTable';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Option } = Select;
 
@@ -14,6 +17,7 @@ interface InvoiceableOrder {
   order_number: string;
   customer_name: string;
   contact_names: string;
+  is_private: boolean;
   order_date: string;
   invoice_number: string | null;
   net_total: number;
@@ -59,6 +63,7 @@ const Invoicing: React.FC = () => {
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus>('to_invoice');
+  const [searchText, setSearchText] = useState('');
 
   const calculateNetTotal = (order: InvoiceableOrder): number => {
     return Number(order.net_total || 0);
@@ -272,27 +277,25 @@ const Invoicing: React.FC = () => {
       title: 'Megrendelés szám',
       dataIndex: 'order_number',
       key: 'order_number',
+      sorter: (a, b) => (a.order_number || '').localeCompare(b.order_number || ''),
     },
     {
       title: 'Nettó összesen',
       key: 'net_total',
+      sorter: (a, b) => calculateNetTotal(a) - calculateNetTotal(b),
       render: (_, record) => `${Math.round(calculateNetTotal(record)).toLocaleString('hu-HU')} Ft`,
     },
     {
       title: 'Ügyfél',
-      dataIndex: 'customer_name',
       key: 'customer_name',
-      render: (text: string) => text || 'Magánszemély',
-    },
-    {
-      title: 'Kapcsolattartó',
-      dataIndex: 'contact_names',
-      key: 'contact_names',
+      sorter: (a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''),
+      render: (_, record) => renderCustomerName(record),
     },
     {
       title: 'Dátum',
       dataIndex: 'order_date',
       key: 'order_date',
+      sorter: (a, b) => (a.order_date || '').localeCompare(b.order_date || ''),
       render: (date: string) => new Date(date).toLocaleDateString('hu-HU'),
     },
     {
@@ -328,12 +331,17 @@ const Invoicing: React.FC = () => {
     },
   ];
 
+  const filteredOrders = useMemo(() => {
+    if (!searchText?.trim()) return orders;
+    return orders.filter((order) => deepSearchMatch(searchText, order));
+  }, [orders, searchText]);
+
   return (
     <div style={{ padding: 24 }}>
       <Card
         title="Számlázás"
         extra={
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="pixi-unified-card-actions" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
             <Select
               value={statusFilter}
               onChange={(value) => {
@@ -357,16 +365,21 @@ const Invoicing: React.FC = () => {
           </div>
         }
       >
-        <Table
-          dataSource={orders}
+        <EnhancedTable
+          tableKey="invoicing"
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Gyorskereső..."
+          dataSource={filteredOrders}
           columns={columns}
           rowKey="id"
           loading={loading}
           size="small"
+          cardBreakpoint={800}
           pagination={{ pageSize: 20 }}
           onRow={(record, index) => ({
             onClick: (event) => handleRowClick(record, index!, event),
-            style: { 
+            style: {
               cursor: record.invoice_number ? 'default' : 'pointer',
               opacity: record.invoice_number ? 0.7 : 1,
             },

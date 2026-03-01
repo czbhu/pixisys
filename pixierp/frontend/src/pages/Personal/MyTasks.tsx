@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { Button, Card, Form, Input, Modal, Segmented, Space, Statistic, Table, Tag, Tooltip, Typography, message } from 'antd';
 import type { ColumnsType } from 'antd/es/table';
 import { PauseCircleOutlined, PlayCircleOutlined, StopOutlined } from '@ant-design/icons';
 import { hrService } from '../../services/hrService';
 import QRScannerModal from '../../components/QRScannerModal';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 interface ActiveExecution {
   id: number;
@@ -56,6 +59,7 @@ const MyTasks: React.FC = () => {
   const [rows, setRows] = useState<MyTaskRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [quickFilter, setQuickFilter] = useState<'not_done' | 'done' | 'all'>('not_done');
+  const [searchText, setSearchText] = useState('');
 
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [timerModalOpen, setTimerModalOpen] = useState(false);
@@ -317,14 +321,18 @@ const MyTasks: React.FC = () => {
   ];
 
   const filteredRows = useMemo(() => {
+    let filtered = rows;
     if (quickFilter === 'done') {
-      return rows.filter((row) => row.is_completed);
+      filtered = filtered.filter((row) => row.is_completed);
     }
     if (quickFilter === 'not_done') {
-      return rows.filter((row) => !row.is_completed);
+      filtered = filtered.filter((row) => !row.is_completed);
     }
-    return rows;
-  }, [rows, quickFilter]);
+    if (searchText?.trim()) {
+      filtered = filtered.filter((row) => deepSearchMatch(searchText, row));
+    }
+    return filtered;
+  }, [rows, quickFilter, searchText]);
 
   const doneCount = useMemo(() => rows.filter((row) => row.is_completed).length, [rows]);
   const notDoneCount = useMemo(() => rows.filter((row) => !row.is_completed).length, [rows]);
@@ -360,9 +368,14 @@ const MyTasks: React.FC = () => {
         </Space>
       )}
     >
-      <Table
+      <EnhancedTable
+        tableKey="myTasks"
+        searchValue={searchText}
+        onSearchChange={setSearchText}
+        searchPlaceholder="Gyorskereső..."
         rowKey="task_id"
         loading={loading}
+        cardBreakpoint={750}
         dataSource={filteredRows}
         columns={columns}
         pagination={{ pageSize: 10 }}

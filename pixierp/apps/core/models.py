@@ -261,6 +261,7 @@ class UserPreference(models.Model):
     user = models.OneToOneField('auth.User', on_delete=models.CASCADE, related_name='preferences')
     default_signature = models.ForeignKey(SignatureTemplate, on_delete=models.SET_NULL, null=True, blank=True, verbose_name='Alapértelmezett aláírás')
     previous_password_hash = models.CharField(max_length=255, blank=True, null=True, verbose_name="Előző jelszó hash")
+    ui_preferences = models.JSONField(default=dict, blank=True, verbose_name='UI beállítások')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

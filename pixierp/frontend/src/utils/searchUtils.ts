@@ -49,3 +49,37 @@ export const searchInMultipleFields = (searchText: string, fields: (string | nul
         return normalizedField.includes(normalizedInput);
     });
 };
+
+const collectDeepSearchValues = (value: unknown, collected: string[]): void => {
+    if (value === null || value === undefined) return;
+
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+        collected.push(String(value));
+        return;
+    }
+
+    if (value instanceof Date) {
+        collected.push(value.toISOString());
+        return;
+    }
+
+    if (Array.isArray(value)) {
+        value.forEach((item) => collectDeepSearchValues(item, collected));
+        return;
+    }
+
+    if (typeof value === 'object') {
+        Object.values(value as Record<string, unknown>).forEach((nestedValue) => {
+            collectDeepSearchValues(nestedValue, collected);
+        });
+    }
+};
+
+export const deepSearchMatch = (searchText: string, value: unknown): boolean => {
+    if (!searchText || !searchText.trim()) return true;
+
+    const searchableValues: string[] = [];
+    collectDeepSearchValues(value, searchableValues);
+
+    return searchInMultipleFields(searchText, searchableValues);
+};

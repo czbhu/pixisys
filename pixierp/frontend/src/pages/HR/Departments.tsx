@@ -24,7 +24,6 @@ import {
     DeleteOutlined,
     EyeOutlined,
     UserOutlined,
-    SearchOutlined,
     ExclamationCircleOutlined,
     MenuOutlined
 } from '@ant-design/icons';
@@ -33,6 +32,8 @@ import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSo
 import { CSS } from '@dnd-kit/utilities';
 import { hrService } from '../../services/hrService';
 import { rolesService } from '../../services/rolesService';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -173,19 +174,9 @@ const Departments: React.FC = () => {
     }, [isModalVisible]);
 
     // Keresési logika
-    const normalize = (s: any) => (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
     useEffect(() => {
-        const q = normalize(query);
-        if (!q) { setFiltered(departments); return; }
-        const next = departments.filter(dept => {
-            const hay = [
-                dept.name || '',
-                dept.description || '',
-                dept.email_domain || '',
-                (dept.manager_names || []).join(' ') || ''
-            ].join(' \u0001 ');
-            return normalize(hay).includes(q);
-        });
+        if (!query?.trim()) { setFiltered(departments); return; }
+        const next = departments.filter(dept => deepSearchMatch(query, dept));
         setFiltered(next);
     }, [query, departments]);
 
@@ -503,18 +494,7 @@ const Departments: React.FC = () => {
 
     return (
         <div>
-            <Card
-                title="Osztályok kezelése"
-                extra={
-                    <Button
-                        type="primary"
-                        icon={<PlusOutlined />}
-                        onClick={showCreateModal}
-                    >
-                        Új osztály
-                    </Button>
-                }
-            >
+            <Card title="Osztályok kezelése">
                 {error && (
                     <Alert
                         message="Hiba"
@@ -525,22 +505,26 @@ const Departments: React.FC = () => {
                     />
                 )}
 
-                <Input
-                    placeholder="Keresés (név, domain, leírás, vezető)..."
-                    prefix={<SearchOutlined />}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                    allowClear
-                />
-
                 <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
                     <SortableContext items={filtered.map((dept) => dept.id)} strategy={verticalListSortingStrategy}>
-                        <Table
-                            columns={columns}
+                        <EnhancedTable
+                            tableKey="departments"
+                            columns={columns as any}
                             dataSource={filtered}
                             rowKey="id"
                             loading={savingOrder}
+                            searchValue={query}
+                            onSearchChange={setQuery}
+                            searchPlaceholder="Keresés (név, domain, leírás, vezető)..."
+                            toolbarExtra={
+                                <Button
+                                    type="primary"
+                                    icon={<PlusOutlined />}
+                                    onClick={showCreateModal}
+                                >
+                                    Új osztály
+                                </Button>
+                            }
                             pagination={{
                                 pageSize: 10,
                                 showSizeChanger: true,
@@ -548,14 +532,14 @@ const Departments: React.FC = () => {
                                 showQuickJumper: true,
                                 showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} osztály`,
                             }}
-                            scroll={{ x: 1000 }}
+                            cardBreakpoint={950}
                             size="small"
-                            components={{
+                            bodyComponents={{
                                 body: {
                                     row: DraggableRow,
                                 },
                             }}
-                            onRow={(record) => ({
+                            onRow={(record: any) => ({
                                 onDoubleClick: () => showEditModal(record),
                                 style: { cursor: 'pointer' }
                             })}

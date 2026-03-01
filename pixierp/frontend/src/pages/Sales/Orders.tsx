@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, Table, Tag, Space, Button, message, Tooltip, Popconfirm, Input } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { EyeOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined, ReloadOutlined, PlayCircleOutlined, SearchOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 
@@ -93,15 +94,11 @@ const Orders: React.FC = () => {
 
     return (
         <Card title="Megrendelések" extra={<Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>}>
-            <Input
-                placeholder="Keresés (rendelésszám, ügyfél, felelős, státusz)..."
-                prefix={<SearchOutlined />}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                style={{ marginBottom: 16 }}
-                allowClear
+            <EnhancedTable tableKey="orders" columns={columns as any} dataSource={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 10 }} cardBreakpoint={850}
+                searchValue={query}
+                onSearchChange={setQuery}
+                searchPlaceholder="Keresés (rendelésszám, ügyfél, felelős, státusz)..."
             />
-            <Table columns={columns as any} dataSource={filtered} loading={loading} rowKey="id" pagination={{ pageSize: 10 }} />
         </Card>
     );
 };

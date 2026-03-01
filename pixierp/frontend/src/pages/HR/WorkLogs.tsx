@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Card, Table, Form, DatePicker, Select, Input, Row, Col, Space, Button, message, Statistic } from 'antd';
+import EnhancedTable from '../../components/EnhancedTable';
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import 'dayjs/locale/hu';
@@ -67,6 +68,7 @@ const WorkLogs: React.FC = () => {
         {
             title: '-tól',
             dataIndex: 'started_at',
+            sorter: (a: any, b: any) => (a.started_at || '').localeCompare(b.started_at || ''),
             render: (d: string) => d ? dayjs(d).format('YYYY-MM-DD HH:mm') : '-',
             width: 140,
         },
@@ -85,11 +87,11 @@ const WorkLogs: React.FC = () => {
             },
             width: 80,
         },
-        { title: 'Alkalmazott', dataIndex: 'user_name', width: 150 },
-        { title: 'Rendelés', dataIndex: 'customer_order_number', width: 100 },
-        { title: 'Megrendelő', dataIndex: 'customer_name', width: 150 },
-        { title: 'Tétel', dataIndex: 'item_name', width: 200 },
-        { title: 'Folyamat', dataIndex: 'workflow_name', width: 150 },
+        { title: 'Alkalmazott', dataIndex: 'user_name', width: 150, sorter: (a: any, b: any) => (a.user_name || '').localeCompare(b.user_name || '') },
+        { title: 'Rendelés', dataIndex: 'customer_order_number', width: 100, sorter: (a: any, b: any) => (a.customer_order_number || '').localeCompare(b.customer_order_number || '') },
+        { title: 'Megrendelő', dataIndex: 'customer_name', width: 150, sorter: (a: any, b: any) => (a.customer_name || '').localeCompare(b.customer_name || '') },
+        { title: 'Tétel', dataIndex: 'item_name', width: 200, sorter: (a: any, b: any) => (a.item_name || '').localeCompare(b.item_name || '') },
+        { title: 'Folyamat', dataIndex: 'workflow_name', width: 150, sorter: (a: any, b: any) => (a.workflow_name || '').localeCompare(b.workflow_name || '') },
     ];
 
     const selectedTotal = useMemo(() => {
@@ -152,17 +154,18 @@ const WorkLogs: React.FC = () => {
                 </Row>
             </Form>
 
-            <Table 
-                dataSource={logs} 
-                columns={columns} 
-                rowKey="id" 
+            <EnhancedTable
+                tableKey="workLogs"
+                dataSource={logs}
+                columns={columns}
+                rowKey="id"
                 loading={loading}
                 rowSelection={{
                     selectedRowKeys,
                     onChange: setSelectedRowKeys
                 }}
                 pagination={{ defaultPageSize: 50, showSizeChanger: true }}
-                scroll={{ x: 1200 }}
+                cardBreakpoint={900}
             />
         </Card>
     );

@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { Card, Table, Button, Space, message, Tag } from 'antd';
 import { ReloadOutlined, PlayCircleOutlined, EyeOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 const MyOrders: React.FC = () => {
     const [orders, setOrders] = useState<any[]>([]);
+    const [searchText, setSearchText] = useState('');
     const [loading, setLoading] = useState(false);
     const { setModalOpen } = useTimeTracker();
     const navigate = useNavigate();
@@ -49,13 +53,23 @@ const MyOrders: React.FC = () => {
         )}
     ];
 
+    const filteredOrders = orders.filter((order) => deepSearchMatch(searchText, order));
+
     return (
-        <Card title="Saját megrendelések" extra={<Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>}>
-            <Table
-                dataSource={orders}
+        <Card
+            title="Saját megrendelések"
+            extra={<Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>}
+        >
+            <EnhancedTable
+                tableKey="myOrders"
+                searchValue={searchText}
+                onSearchChange={setSearchText}
+                searchPlaceholder="Keresés..."
+                dataSource={filteredOrders}
                 columns={columns}
                 rowKey="id"
                 loading={loading}
+                cardBreakpoint={600}
                 onRow={(record) => ({
                     onDoubleClick: () => {
                         navigate(`/sales/customer-orders/${record.id}`, { state: { hidePrices: true } });

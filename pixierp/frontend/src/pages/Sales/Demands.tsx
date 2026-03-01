@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Modal, Popconfirm, Tooltip } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -95,7 +96,7 @@ const Demands: React.FC = () => {
         <Button onClick={async () => { await loadDeleted(); setDeletedOpen(true); }}>Törölt ajánlatkérők</Button>
       </Space>}>
         {error && <Alert type="error" message={error} style={{ marginBottom: 12 }} />}
-        <Table rowKey="id" columns={columns as any} dataSource={rows} pagination={{ pageSize: 10 }} />
+        <EnhancedTable tableKey="demands" rowKey="id" columns={columns as any} dataSource={rows} pagination={{ pageSize: 10 }} cardBreakpoint={800} />
       </Card>
 
       <Modal

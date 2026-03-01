@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
     Table,
@@ -330,16 +331,11 @@ const Projects: React.FC = () => {
                     </Button>
                 }
             >
-                <Input
-                    placeholder="Keresés (név, leírás, kapcsolattartók, projektmenedzser)..."
-                    prefix={<SearchOutlined />}
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ marginBottom: 16 }}
-                    allowClear
-                />
-
-                <Table
+                <EnhancedTable
+                    tableKey="projects"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés (név, leírás, kapcsolattartók, projektmenedzser)..."
                     columns={columns}
                     dataSource={filtered}
                     pagination={{
@@ -350,7 +346,7 @@ const Projects: React.FC = () => {
                         showTotal: (total, range) => `${range[0]}-${range[1]} / ${total} projekt`,
                     }}
                     rowKey="id"
-                    scroll={{ x: 1500 }}
+                    cardBreakpoint={950}
                     size="small"
                     loading={loading}
                     onRow={(record) => ({

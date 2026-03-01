@@ -1,13 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import {
   Table,
-  Input,
   Select,
   DatePicker,
   Card,
   Space,
   Tag,
-  Typography,
   Button,
   Row,
   Col,
@@ -16,8 +15,8 @@ import {
 import { ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import dayjs, { Dayjs } from 'dayjs';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 
-const { Title } = Typography;
 const { RangePicker } = DatePicker;
 
 interface ActivityLog {
@@ -197,8 +196,19 @@ const ActivityLogPage: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Card>
-        <Title level={4}>Tevékenység napló</Title>
+      <Card
+        title={<UnifiedQuickSearchHeader
+          title="Tevékenység napló"
+          actions={<Space className="pixi-unified-card-actions">
+            <Button type="primary" onClick={handleSearch} icon={<SearchOutlined />}>
+              Keresés
+            </Button>
+            <Button onClick={handleReset} icon={<ReloadOutlined />}>
+              Alaphelyzet
+            </Button>
+          </Space>}
+        />}
+      >
         
         <Space direction="vertical" size="middle" style={{ width: '100%', marginBottom: 16 }}>
           <Row gutter={16}>
@@ -231,38 +241,21 @@ const ActivityLogPage: React.FC = () => {
                 ]}
               />
             </Col>
-            <Col span={8}>
-              <Input
-                placeholder="Keresés leírásban..."
-                prefix={<SearchOutlined />}
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                onPressEnter={handleSearch}
-              />
-            </Col>
-          </Row>
-          <Row gutter={16}>
-            <Col>
-              <Button type="primary" onClick={handleSearch} icon={<SearchOutlined />}>
-                Keresés
-              </Button>
-            </Col>
-            <Col>
-              <Button onClick={handleReset} icon={<ReloadOutlined />}>
-                Alaphelyzet
-              </Button>
-            </Col>
           </Row>
         </Space>
 
-        <Table
+        <EnhancedTable
+          tableKey="activityLog"
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Keresés leírásban..."
           columns={columns}
           dataSource={logs}
           loading={loading}
           rowKey="id"
           pagination={pagination}
           onChange={handleTableChange}
-          scroll={{ x: 'max-content' }}
+          cardBreakpoint={620}
         />
       </Card>
     </div>

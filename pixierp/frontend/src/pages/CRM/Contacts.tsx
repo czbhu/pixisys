@@ -26,11 +26,12 @@ import {
     ReloadOutlined,
     AppstoreOutlined,
     UnorderedListOutlined,
-    SearchOutlined,
     ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { useLocation } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 type Contact = {
     id: number | string;
@@ -196,27 +197,10 @@ const Contacts: React.FC = () => {
     }, [contactParam, contacts]);
 
     const filteredContacts = useMemo(() => {
-        const q = (searchQuery || '').trim().toLowerCase();
         return contacts.filter((c) => {
             const matchesType = typeFilter ? c.contact_type === typeFilter : true;
             const matchesStatus = statusFilter === 'active' ? c.is_active !== false : statusFilter === 'inactive' ? c.is_active === false : true;
-            const matchesSearch = !q
-                ? true
-                : [
-                    c.full_name,
-                    c.name,
-                    c.email,
-                    c.phone,
-                    c.mobile,
-                    c.position,
-                    c.department,
-                    c.company_name,
-                    c.customer_name,
-                ]
-                    .filter(Boolean)
-                    .join(' ') 
-                    .toLowerCase()
-                    .includes(q);
+            const matchesSearch = deepSearchMatch(searchQuery, c);
             return matchesType && matchesStatus && matchesSearch;
         });
     }, [contacts, typeFilter, statusFilter, searchQuery]);
@@ -342,22 +326,18 @@ const Contacts: React.FC = () => {
     return (
         <Card
             title={
-                <Space size="large">
-                    <Title level={4} style={{ margin: 0 }}>Kapcsolattartók</Title>
-                    <Tag color="blue">PixInvoice CRM</Tag>
-                </Space>
+                <UnifiedQuickSearchHeader
+                    title={<Space size="large">
+                        <Title level={4} style={{ margin: 0 }}>Kapcsolattartók</Title>
+                        <Tag color="blue">PixInvoice CRM</Tag>
+                    </Space>}
+                    searchValue={searchQuery}
+                    onSearchChange={(value) => { setSearchQuery(value); setPage(1); }}
+                    placeholder="Keresés név vagy e-mail alapján"
+                />
             }
             extra={
                 <Space wrap>
-                    <Input.Search
-                        allowClear
-                        placeholder="Keresés név vagy e-mail alapján"
-                        value={searchQuery}
-                        enterButton={<SearchOutlined />}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onSearch={() => { setPage(1); loadData(); }}
-                        style={{ width: 280 }}
-                    />
                     <Select
                         value={typeFilter}
                         style={{ width: 180 }}

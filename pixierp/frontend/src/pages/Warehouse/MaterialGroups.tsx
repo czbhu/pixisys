@@ -1,6 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
-  Table,
   Button,
   Modal,
   Form,
@@ -21,6 +20,8 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { TextArea } = Input;
 
@@ -48,6 +49,7 @@ interface MaterialGroupFormValues {
 
 const MaterialGroups: React.FC = () => {
   const [groups, setGroups] = useState<MaterialGroup[]>([]);
+  const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(false);
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [editingGroup, setEditingGroup] = useState<MaterialGroup | null>(null);
@@ -233,18 +235,21 @@ const MaterialGroups: React.FC = () => {
       title: 'Gyűjtő neve',
       dataIndex: 'name',
       key: 'name',
+      sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '', 'hu'),
     },
     {
       title: 'Leírás',
       dataIndex: 'description',
       key: 'description',
       ellipsis: true,
+      sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
     },
     {
       title: 'Alapanyagok',
       dataIndex: 'materials_count',
       key: 'materials_count',
       width: 120,
+      sorter: (a: any, b: any) => (a.materials_count || 0) - (b.materials_count || 0),
       render: (count: number) => (
         <Tag color={count > 0 ? 'blue' : 'default'}>{count} db</Tag>
       ),
@@ -254,6 +259,7 @@ const MaterialGroups: React.FC = () => {
       dataIndex: 'is_active',
       key: 'is_active',
       width: 100,
+      sorter: (a: any, b: any) => (a.is_active === b.is_active ? 0 : a.is_active ? -1 : 1),
       render: (isActive: boolean) => (
         <Tag color={isActive ? 'green' : 'red'}>
           {isActive ? 'Aktív' : 'Inaktív'}
@@ -265,6 +271,7 @@ const MaterialGroups: React.FC = () => {
       dataIndex: 'created_by_name',
       key: 'created_by_name',
       width: 150,
+      sorter: (a: any, b: any) => (a.created_by_name || '').localeCompare(b.created_by_name || '', 'hu'),
     },
     {
       title: 'Műveletek',
@@ -300,28 +307,36 @@ const MaterialGroups: React.FC = () => {
     },
   ];
 
+  const filteredGroups = useMemo(() => {
+    if (!searchText?.trim()) return groups;
+    return groups.filter((group) => deepSearchMatch(searchText, group));
+  }, [groups, searchText]);
+
   return (
     <div style={{ padding: 24 }}>
-      <Card
-        title="Alapanyag kategóriák"
-        extra={
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
-            onClick={showCreateModal}
-          >
-            Új kategória
-          </Button>
-        }
-      >
-        <Table
-          columns={columns}
-          dataSource={groups}
+      <Card title="Alapanyag kategóriák">
+        <EnhancedTable
+          tableKey="materialGroups"
+          columns={columns as any}
+          dataSource={filteredGroups}
           rowKey="id"
           loading={loading}
+          cardBreakpoint={750}
+          searchValue={searchText}
+          onSearchChange={setSearchText}
+          searchPlaceholder="Gyorskereső..."
+          toolbarExtra={
+            <Button
+              type="primary"
+              icon={<PlusOutlined />}
+              onClick={showCreateModal}
+            >
+              Új kategória
+            </Button>
+          }
           pagination={false}
           expandable={{
-              defaultExpandAllRows: true, // Optional: expand all by default
+              defaultExpandAllRows: true,
           }}
         />
       </Card>

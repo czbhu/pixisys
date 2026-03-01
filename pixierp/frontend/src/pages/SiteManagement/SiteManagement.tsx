@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Button, Card, Col, Form, Input, Modal, Popconfirm, Row, Select, Space, Switch, Table, Tag, message } from 'antd';
+import { Button, Card, Col, Form, Input, Modal, Popconfirm, Row, Select, Space, Switch, Tag, message } from 'antd';
 import api from '../../services/api';
+import EnhancedTable from '../../components/EnhancedTable';
+import { deepSearchMatch } from '../../utils/searchUtils';
 import { siteManagementService } from '../../services/siteManagementService';
 
 const SiteManagement: React.FC = () => {
@@ -13,6 +15,8 @@ const SiteManagement: React.FC = () => {
   const [featureModalOpen, setFeatureModalOpen] = useState(false);
   const [editingSite, setEditingSite] = useState<any | null>(null);
   const [editingFeature, setEditingFeature] = useState<any | null>(null);
+  const [siteSearch, setSiteSearch] = useState('');
+  const [featureSearch, setFeatureSearch] = useState('');
   const [siteForm] = Form.useForm();
   const [featureForm] = Form.useForm();
 
@@ -145,15 +149,20 @@ const SiteManagement: React.FC = () => {
 
   return (
     <Space direction="vertical" size="large" style={{ width: '100%' }}>
-      <Card title="Sales/Marketing oldalak" extra={<Button type="primary" onClick={openCreateSite}>Új oldal</Button>}>
-        <Table
+      <Card title="Sales/Marketing oldalak">
+        <EnhancedTable
+          tableKey="siteManagementSites"
           rowKey="id"
           loading={loading}
-          dataSource={sites}
+          dataSource={sites.filter(s => deepSearchMatch(siteSearch, s))}
+          searchValue={siteSearch}
+          onSearchChange={setSiteSearch}
+          searchPlaceholder="Keresés..."
+          toolbarExtra={<Button type="primary" onClick={openCreateSite}>Új oldal</Button>}
           pagination={{ pageSize: 12 }}
           columns={[
-            { title: 'Név', dataIndex: 'name', key: 'name', width: 180 },
-            { title: 'Slug', dataIndex: 'slug', key: 'slug', width: 130 },
+            { title: 'Név', dataIndex: 'name', key: 'name', width: 180, sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '') },
+            { title: 'Slug', dataIndex: 'slug', key: 'slug', width: 130, sorter: (a: any, b: any) => (a.slug || '').localeCompare(b.slug || '') },
             {
               title: 'Domainek',
               key: 'domains',
@@ -163,7 +172,7 @@ const SiteManagement: React.FC = () => {
                 </Space>
               ),
             },
-            { title: 'Típus', dataIndex: 'site_type', key: 'site_type', width: 120 },
+            { title: 'Típus', dataIndex: 'site_type', key: 'site_type', width: 120, sorter: (a: any, b: any) => (a.site_type || '').localeCompare(b.site_type || '') },
             {
               title: 'Kategóriák',
               key: 'product_class_names',
@@ -187,6 +196,7 @@ const SiteManagement: React.FC = () => {
               dataIndex: 'is_active',
               key: 'is_active',
               width: 90,
+              sorter: (a: any, b: any) => Number(a.is_active) - Number(b.is_active),
               render: (v: boolean) => (v ? <Tag color="green">Igen</Tag> : <Tag>Nem</Tag>),
             },
             {
@@ -213,42 +223,44 @@ const SiteManagement: React.FC = () => {
         />
       </Card>
 
-      <Card title="Elérhető funkciók" extra={<Button onClick={openCreateFeature}>Új funkció</Button>}>
-        <Row gutter={16}>
-          <Col span={24}>
-            <Table
-              rowKey="id"
-              loading={loading}
-              dataSource={features}
-              pagination={false}
-              columns={[
-                { title: 'Kód', dataIndex: 'code', key: 'code', width: 140 },
-                { title: 'Név', dataIndex: 'name', key: 'name' },
-                { title: 'Sorrend', dataIndex: 'sort_order', key: 'sort_order', width: 90 },
-                {
-                  title: 'Aktív',
-                  dataIndex: 'is_active',
-                  key: 'is_active',
-                  width: 90,
-                  render: (v: boolean) => (v ? 'Igen' : 'Nem'),
-                },
-                {
-                  title: 'Műveletek',
-                  key: 'actions',
-                  width: 180,
-                  render: (_: any, record: any) => (
-                    <Space>
-                      <Button size="small" onClick={() => openEditFeature(record)}>Szerkeszt</Button>
-                      <Popconfirm title="Biztosan törlöd ezt a funkciót?" onConfirm={() => deleteFeature(record.id)} okText="Igen" cancelText="Mégse">
-                        <Button size="small" danger>Törlés</Button>
-                      </Popconfirm>
-                    </Space>
-                  ),
-                },
-              ]}
-            />
-          </Col>
-        </Row>
+      <Card title="Elérhető funkciók">
+        <EnhancedTable
+          tableKey="siteManagementFeatures"
+          rowKey="id"
+          loading={loading}
+          dataSource={features.filter(f => deepSearchMatch(featureSearch, f))}
+          searchValue={featureSearch}
+          onSearchChange={setFeatureSearch}
+          searchPlaceholder="Keresés..."
+          toolbarExtra={<Button onClick={openCreateFeature}>Új funkció</Button>}
+          pagination={false}
+          columns={[
+            { title: 'Kód', dataIndex: 'code', key: 'code', width: 140, sorter: (a: any, b: any) => (a.code || '').localeCompare(b.code || '') },
+            { title: 'Név', dataIndex: 'name', key: 'name', sorter: (a: any, b: any) => (a.name || '').localeCompare(b.name || '') },
+            { title: 'Sorrend', dataIndex: 'sort_order', key: 'sort_order', width: 90, sorter: (a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0) },
+            {
+              title: 'Aktív',
+              dataIndex: 'is_active',
+              key: 'is_active',
+              width: 90,
+              sorter: (a: any, b: any) => Number(a.is_active) - Number(b.is_active),
+              render: (v: boolean) => (v ? 'Igen' : 'Nem'),
+            },
+            {
+              title: 'Műveletek',
+              key: 'actions',
+              width: 180,
+              render: (_: any, record: any) => (
+                <Space>
+                  <Button size="small" onClick={() => openEditFeature(record)}>Szerkeszt</Button>
+                  <Popconfirm title="Biztosan törlöd ezt a funkciót?" onConfirm={() => deleteFeature(record.id)} okText="Igen" cancelText="Mégse">
+                    <Button size="small" danger>Törlés</Button>
+                  </Popconfirm>
+                </Space>
+              ),
+            },
+          ]}
+        />
       </Card>
 
       <Modal

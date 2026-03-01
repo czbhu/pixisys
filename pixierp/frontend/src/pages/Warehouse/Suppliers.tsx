@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
     Card,
-    Table,
     Button,
     Space,
     Tag,
@@ -13,16 +12,19 @@ import {
     Row,
     Col,
     InputNumber,
+    Tooltip,
 } from 'antd';
 import {
     PlusOutlined,
     EditOutlined,
     DeleteOutlined,
     EyeOutlined,
-    SearchOutlined,
 } from '@ant-design/icons';
 import { warehouseService } from '../../services/warehouseService';
 import { crmService } from '../../services/crmService';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
+import EnhancedTable from '../../components/EnhancedTable';
 
 const { Option } = Select;
 
@@ -199,46 +201,46 @@ const Suppliers: React.FC = () => {
             key: 'actions',
             render: (record: MaterialSupplier) => (
                 <Space>
-                    <Button
-                        type="link"
-                        icon={<EyeOutlined />}
-                        onClick={() => showViewModal(record)}
-                    />
-                    <Button
-                        type="link"
-                        icon={<EditOutlined />}
-                        onClick={() => showEditModal(record)}
-                    />
-                    <Button
-                        type="link"
-                        danger
-                        icon={<DeleteOutlined />}
-                        onClick={() => handleDelete(record.id)}
-                    />
+                    <Tooltip title="Megtekintés">
+                        <Button
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => showViewModal(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Szerkesztés">
+                        <Button
+                            size="small"
+                            icon={<EditOutlined />}
+                            onClick={() => showEditModal(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Törlés">
+                        <Button
+                            size="small"
+                            danger
+                            icon={<DeleteOutlined />}
+                            onClick={() => handleDelete(record.id)}
+                        />
+                    </Tooltip>
                 </Space>
             ),
         },
     ];
 
-    const filteredSuppliers = suppliers.filter(supplier =>
-        supplier.material_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        supplier.supplier_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        supplier.supplier_code.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const filteredSuppliers = suppliers.filter((supplier) => deepSearchMatch(searchQuery, supplier));
 
     return (
         <div>
             <Card
-                title="Alapanyag beszállítók"
+                title={<UnifiedQuickSearchHeader
+                    title="Alapanyag beszállítók"
+                    searchValue={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    placeholder="Keresés..."
+                />}
                 extra={
                     <Space>
-                        <Input
-                            placeholder="Keresés..."
-                            prefix={<SearchOutlined />}
-                            value={searchQuery}
-                            onChange={(e) => setSearchQuery(e.target.value)}
-                            style={{ width: 200 }}
-                        />
                         <Select
                             placeholder="Alapanyag szűrő"
                             value={materialFilter}
@@ -262,12 +264,14 @@ const Suppliers: React.FC = () => {
                     </Space>
                 }
             >
-                <Table
+                <EnhancedTable
+                    tableKey="suppliers"
                     size="small"
-                    columns={columns}
+                    columns={columns as any}
                     dataSource={filteredSuppliers}
                     rowKey="id"
                     loading={loading}
+                    cardBreakpoint={750}
                     pagination={{ pageSize: 10 }}
                     onRow={(record) => ({
                         onDoubleClick: () => showEditModal(record),

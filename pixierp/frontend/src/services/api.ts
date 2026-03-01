@@ -1,20 +1,20 @@
 import axios from 'axios';
 
-// Default to local dev backend; fall back to relative path in prod
-const DEFAULT_DEV_API_BASE_URL = 'http://localhost:8003/api/v1';
+// Prefer configured URL in all modes; in dev default to proxy-friendly relative path
+const DEFAULT_DEV_API_BASE_URL = '/api/v1';
 const DEFAULT_PROD_API_BASE_URL = '/api/v1';
 
 const configuredApiUrl = process.env.REACT_APP_API_URL;
 
 const API_BASE_URL =
     process.env.NODE_ENV === 'development'
-        ? (configuredApiUrl && configuredApiUrl.startsWith('http') ? configuredApiUrl : DEFAULT_DEV_API_BASE_URL)
+        ? (configuredApiUrl || DEFAULT_DEV_API_BASE_URL)
         : (configuredApiUrl || DEFAULT_PROD_API_BASE_URL);
 
 // Create axios instance
 const api = axios.create({
     baseURL: API_BASE_URL,
-    timeout: 10000, // 10 second timeout
+    timeout: 30000, // 30 second timeout (mobile networks can be slow)
     headers: {
         'Content-Type': 'application/json',
     },

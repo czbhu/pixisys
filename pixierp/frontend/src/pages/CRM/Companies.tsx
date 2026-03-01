@@ -33,6 +33,8 @@ import {
 } from '@ant-design/icons';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { crmService } from '../../services/crmService';
+import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import { deepSearchMatch } from '../../utils/searchUtils';
 
 type BankAccount = {
     id?: number;
@@ -217,26 +219,12 @@ const Companies: React.FC = () => {
     }, [location.search, showCreateModal, form]);
 
     const filteredCompanies = useMemo(() => {
-        const q = (searchQuery || '').trim().toLowerCase();
         return companies.filter((c) => {
             if (statusFilter === 'active' && c.is_active === false) return false;
             if (statusFilter === 'inactive' && c.is_active !== false) return false;
             if (customerTypeFilter === 'customers' && !c.is_customer) return false;
             if (customerTypeFilter === 'suppliers' && !c.is_supplier) return false;
-            if (!q) return true;
-            const haystack = [
-                c.name,
-                c.tax_number,
-                c.group_tax_number,
-                c.eu_tax_number,
-                c.city,
-                c.email,
-                c.full_address,
-            ]
-                .filter(Boolean)
-                .join(' ') 
-                .toLowerCase();
-            return haystack.includes(q);
+            return deepSearchMatch(searchQuery, c);
         });
     }, [companies, statusFilter, searchQuery, customerTypeFilter]);
 
@@ -537,22 +525,18 @@ const Companies: React.FC = () => {
     return (
         <Card
             title={
-                <Space size="large" wrap>
-                    <Title level={4} style={{ margin: 0 }}>Cégek</Title>
-                    <Tag color="blue">PixInvoice CRM</Tag>
-                </Space>
+                <UnifiedQuickSearchHeader
+                    title={<Space size="large" wrap>
+                        <Title level={4} style={{ margin: 0 }}>Cégek</Title>
+                        <Tag color="blue">PixInvoice CRM</Tag>
+                    </Space>}
+                    searchValue={searchQuery}
+                    onSearchChange={setSearchQuery}
+                    placeholder="Keresés..."
+                />
             }
             extra={
                 <Space wrap style={{ justifyContent: 'flex-end', maxWidth: '100%' }}>
-                    <Input.Search
-                        allowClear
-                        placeholder="Keresés..."
-                        enterButton={<SearchOutlined />}
-                        style={{ width: 200 }}
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        onSearch={(val) => { setSearchQuery(val); loadCompanies({ query: val }); }}
-                    />
                     <Select
                         value={statusFilter}
                         style={{ width: 140 }}

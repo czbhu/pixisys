@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import EnhancedTable from '../../components/EnhancedTable';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined } from '@ant-design/icons';
@@ -998,47 +999,44 @@ const Services: React.FC = () => {
         </Button>
       </div>
 
-      <Space style={{ marginBottom: 16 }}>
-        <Input
-            style={{ width: 300 }}
-            placeholder="Keresés (név, cikkszám, leírás, kategória)..."
-            prefix={<SearchOutlined />}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            allowClear
-        />
-        <TreeSelect
-            style={{ width: 250 }}
-            value={selectedCategoryFilter}
-            dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
-            treeData={buildGroupTree(serviceGroups)}
-            placeholder="Minden kategória"
-            treeDefaultExpandAll={false}
-            onChange={setSelectedCategoryFilter}
-            allowClear
-            showSearch
-            filterTreeNode={(inputValue, treeNode) => 
-               (treeNode?.title as string).toLowerCase().includes(inputValue.toLowerCase())
-            }
-        />
-        <Select 
-            value={statusFilter} 
-            onChange={setStatusFilter} 
-            style={{ width: 120 }}
-        >
-            <Option value="all">Mind</Option>
-            <Option value="active">Aktív</Option>
-            <Option value="inactive">Inaktív</Option>
-        </Select>
-      </Space>
-
-      <Table
+      <EnhancedTable
+        tableKey="services"
+        searchValue={query}
+        onSearchChange={setQuery}
+        searchPlaceholder="Keresés (név, cikkszám, leírás, kategória)..."
+        toolbarExtra={
+            <Space>
+                <TreeSelect
+                    style={{ width: 250 }}
+                    value={selectedCategoryFilter}
+                    dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
+                    treeData={buildGroupTree(serviceGroups)}
+                    placeholder="Minden kategória"
+                    treeDefaultExpandAll={false}
+                    onChange={setSelectedCategoryFilter}
+                    allowClear
+                    showSearch
+                    filterTreeNode={(inputValue, treeNode) => 
+                       (treeNode?.title as string).toLowerCase().includes(inputValue.toLowerCase())
+                    }
+                />
+                <Select 
+                    value={statusFilter} 
+                    onChange={setStatusFilter} 
+                    style={{ width: 120 }}
+                >
+                    <Option value="all">Mind</Option>
+                    <Option value="active">Aktív</Option>
+                    <Option value="inactive">Inaktív</Option>
+                </Select>
+            </Space>
+        }
         size="small"
         columns={columns}
         dataSource={filteredServices}
         loading={loading}
         rowKey="id"
-        scroll={{ x: 1200 }}
+        cardBreakpoint={850}
         pagination={{
             pageSize: 20,
             showSizeChanger: true,
