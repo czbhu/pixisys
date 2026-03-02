@@ -1257,6 +1257,9 @@ class InvoiceCreateSerializer(serializers.ModelSerializer):
         if not explicit_number and not invoice_block_id:
             raise serializers.ValidationError({'invoice_number': 'Számlaszám vagy számlatömb kötelező'})
 
+        # Keltezés mindig az aktuális nap legyen (kézi és automatikus kiállításnál is)
+        validated_data['issue_date'] = timezone.localdate()
+
         # Company resolve and number generation
         from django.db import transaction
         with transaction.atomic():
