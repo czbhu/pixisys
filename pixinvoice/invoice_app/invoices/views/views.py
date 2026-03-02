@@ -1281,6 +1281,23 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             pass
         return invoice, None
 
+    def _scheduled_submit_to_nav(self, request, invoice):
+        try:
+            response = self.submit_to_nav(request, pk=str(invoice.id))
+            status_code = getattr(response, 'status_code', 200)
+            if status_code >= 400:
+                data = getattr(response, 'data', None)
+                if isinstance(data, dict):
+                    return data.get('error') or data.get('error_message') or str(data)
+                return f'NAV beküldés sikertelen (HTTP {status_code})'
+            try:
+                invoice.refresh_from_db()
+            except Exception:
+                pass
+            return None
+        except Exception as exc:
+            return f'NAV beküldési hiba: {exc}'
+
     def _scheduled_process_due(self, request, company):
         today = timezone.localdate()
         processed = 0
@@ -1305,7 +1322,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     blocked += 1
                     break
 
-                issue_for = schedule.next_issue_date
+                issue_for = today if schedule.approval_required else schedule.next_issue_date
                 invoice, error = self._scheduled_generate_invoice(request, schedule, issue_for)
                 if error:
                     schedule.last_error = f'Kiállítás sikertelen: {error}'
@@ -1342,6 +1359,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if email_error:
                     schedule.last_error = email_error
                     schedule.save(update_fields=['last_error', 'updated_at'])
+
+                if not schedule.approval_required:
+                    nav_error = self._scheduled_submit_to_nav(request, invoice)
+                    if nav_error:
+                        schedule.last_error = nav_error
+                        schedule.save(update_fields=['last_error', 'updated_at'])
 
                 processed += 1
 
@@ -1451,6 +1474,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     schedule.last_error = email_error
                     schedule.save(update_fields=['last_error', 'updated_at'])
 
+                if not schedule.approval_required:
+                    nav_error = self._scheduled_submit_to_nav(request, invoice)
+                    if nav_error:
+                        schedule.last_error = nav_error
+                        schedule.save(update_fields=['last_error', 'updated_at'])
+
         return Response({
             'id': str(schedule.id),
             'created_invoice_number': created_invoice_number,
@@ -1540,8 +1569,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         qs = ScheduledInvoice.objects.filter(company_id=company_id, id__in=schedule_ids, approval_required=True)
         now_ts = timezone.now()
+        today = timezone.localdate()
         user = request.user if getattr(request.user, 'is_authenticated', False) else None
         updated = 0
+        generated = 0
+        failed = 0
         for row in qs:
             row.is_approved = True
             row.approved_at = now_ts
@@ -1549,7 +1581,43 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             row.last_error = None
             row.save(update_fields=['is_approved', 'approved_at', 'approved_by', 'last_error', 'updated_at'])
             updated += 1
-        return Response({'approved': updated})
+
+            if not row.is_active:
+                continue
+
+            invoice, error = self._scheduled_generate_invoice(request, row, today)
+            if error:
+                row.last_error = f'Jóváhagyás utáni kiállítás sikertelen: {error}'
+                row.save(update_fields=['last_error', 'updated_at'])
+                failed += 1
+                continue
+
+            ScheduledInvoiceRun.objects.create(
+                scheduled_invoice=row,
+                invoice=invoice,
+                issued_for_date=today,
+            )
+
+            row.last_issue_date = today
+            row.last_generated_invoice = invoice
+            row.next_issue_date = self._scheduled_next_issue_date(row, today)
+            row.last_error = None
+            row.is_approved = False
+            row.approved_at = None
+            row.approved_by = None
+            row.save(update_fields=[
+                'last_issue_date',
+                'last_generated_invoice',
+                'next_issue_date',
+                'last_error',
+                'is_approved',
+                'approved_at',
+                'approved_by',
+                'updated_at',
+            ])
+            generated += 1
+
+        return Response({'approved': updated, 'generated': generated, 'failed': failed})
 
     @action(detail=False, methods=['get'], url_path='scheduled-invoices/(?P<schedule_id>[^/.]+)/template')
     def scheduled_invoices_template(self, request, schedule_id=None):
