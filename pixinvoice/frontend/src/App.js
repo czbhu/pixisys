@@ -98,8 +98,8 @@ function AppContent() {
                 <Route path="/" element={guard('dashboard', <Dashboard />)} />
                 <Route path="/invoices" element={guard('invoices', <Invoices />)} />
                 <Route path="/scheduled-invoices" element={guard('scheduled_invoices', <ScheduledInvoices />)} />
-                <Route path="/incoming-invoices" element={guard('incoming_invoices', <IncomingInvoices />)} />
-                <Route path="/incoming-invoices-external" element={guard('incoming_invoices', <IncomingInvoices externalOutgoing />)} />
+                <Route path="/incoming-invoices" element={guard('incoming_invoices', <IncomingInvoices key="internal" />)} />
+                <Route path="/incoming-invoices-external" element={guard('incoming_invoices', <IncomingInvoices key="external" externalOutgoing />)} />
                 <Route path="/incoming-invoices/open" element={guard('incoming_invoices', <IncomingInvoiceOpen />)} />
                 <Route path="/incoming-invoices/new" element={guard('incoming_invoices', <InvoiceForm />)} />
                 <Route path="/invoices/new" element={guard('invoices', <InvoiceForm />)} />
