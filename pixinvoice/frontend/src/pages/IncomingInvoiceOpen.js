@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useLocation } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Spin } from 'antd';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI } from '../services/api';
@@ -180,11 +180,25 @@ function parseIncomingXmlForPrint(xmlRaw) {
 
 export default function IncomingInvoiceOpen() {
   const location = useLocation();
+  const navigate = useNavigate();
   const params = useMemo(() => new URLSearchParams(location.search || ''), [location.search]);
   const companyId = params.get('company_id') || '';
   const invoiceNumber = params.get('invoice_number') || '';
   const supplierTaxNumber = params.get('supplier_tax_number') || '';
   const externalOutgoing = String(params.get('external_outgoing') || '').toLowerCase() === '1' || String(params.get('external_outgoing') || '').toLowerCase() === 'true';
+  const returnTo = params.get('return_to') || '';
+
+  const handleBack = () => {
+    if (returnTo) {
+      navigate(returnTo);
+      return;
+    }
+    if (window.history.length > 1) {
+      navigate(-1);
+      return;
+    }
+    navigate(externalOutgoing ? '/incoming-invoices-external' : '/incoming-invoices');
+  };
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -398,16 +412,39 @@ export default function IncomingInvoiceOpen() {
   );
 
   if (loading) {
-    return <div style={{ padding: 24 }}><Spin size="large" tip="Betöltés..." /></div>;
+    return (
+      <div style={{ padding: 24 }}>
+        <div style={{ marginBottom: 12 }}>
+          <button type="button" onClick={handleBack} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+            ← Vissza
+          </button>
+        </div>
+        <Spin size="large" tip="Betöltés..." />
+      </div>
+    );
   }
 
   if (error) {
-    return <div style={{ padding: 24, color: '#b91c1c' }}>{error}</div>;
+    return (
+      <div style={{ padding: 24 }}>
+        <div style={{ marginBottom: 12 }}>
+          <button type="button" onClick={handleBack} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+            ← Vissza
+          </button>
+        </div>
+        <div style={{ color: '#b91c1c' }}>{error}</div>
+      </div>
+    );
   }
 
   if (!parsed) {
     return (
       <div style={{ padding: 20 }}>
+        <div style={{ marginBottom: 12 }}>
+          <button type="button" onClick={handleBack} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+            ← Vissza
+          </button>
+        </div>
         <h3 style={{ marginTop: 0 }}>Számla XML: {invoiceNumber || '-'}</h3>
         <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#f8fafc', border: '1px solid #e5e7eb', padding: 12, borderRadius: 8 }}>
           {rawXml}
@@ -419,6 +456,11 @@ export default function IncomingInvoiceOpen() {
 
   return (
     <div style={{ padding: 20 }}>
+      <div style={{ marginBottom: 12 }}>
+        <button type="button" onClick={handleBack} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #d1d5db', background: '#fff', cursor: 'pointer' }}>
+          ← Vissza
+        </button>
+      </div>
       <h2 style={{ marginTop: 0 }}>Számla: {parsed.invoiceNumber || invoiceNumber || '-'}</h2>
 
       <div style={{ display: 'grid', gridTemplateColumns: (externalOutgoing || parsed.customer?.name) ? '1fr 1fr 1fr' : '1fr 1fr', gap: 12, marginBottom: 12 }}>
