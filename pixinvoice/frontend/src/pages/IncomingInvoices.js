@@ -437,24 +437,6 @@ const PaymentHistoryModal = ({ companyId, onClose, visible }) => {
 export default function IncomingInvoices({ externalOutgoing = false }) {
   const navigate = useNavigate();
   const queryParams = new URLSearchParams(window.location.search);
-  const q = (key, fallback = '') => {
-    const value = queryParams.get(key);
-    return value == null ? fallback : value;
-  };
-  const qBool = (key, fallback = false) => {
-    const raw = String(q(key, fallback ? '1' : '0')).toLowerCase();
-    if (raw === '1' || raw === 'true' || raw === 'yes' || raw === 'on') return true;
-    if (raw === '0' || raw === 'false' || raw === 'no' || raw === 'off') return false;
-    return !!fallback;
-  };
-  const qList = (key) => String(q(key, ''))
-    .split(',')
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const qInt = (key, fallback) => {
-    const num = Number(q(key, fallback));
-    return Number.isFinite(num) && num > 0 ? num : fallback;
-  };
   const isSelectorMode = queryParams.get('mode') === 'select';
   const preselectIdsRaw = (queryParams.get('preselect_ids') || '').trim();
   const requestedPageSize = Number(queryParams.get('page_size') || 50);
@@ -467,29 +449,29 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
     ),
     [preselectIdsRaw]
   );
-  const [companyId, setCompanyId] = useState(() => q('company_id') || localStorage.getItem('selectedCompanyId') || '');
-  const [dateFrom, setDateFrom] = useState(() => q('date_from') || null);
-  const [dateTo, setDateTo] = useState(() => q('date_to') || null);
+  const [companyId, setCompanyId] = useState(() => localStorage.getItem('selectedCompanyId') || '');
+  const [dateFrom, setDateFrom] = useState(null);
+  const [dateTo, setDateTo] = useState(null);
   const [showDateModal, setShowDateModal] = useState(false);
   const [dateDraftFrom, setDateDraftFrom] = useState(null);
   const [dateDraftTo, setDateDraftTo] = useState(null);
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState([]);
-  const [page, setPage] = useState(() => qInt('page', 1));
+  const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(
     Number.isFinite(requestedPageSize) && requestedPageSize > 0 ? requestedPageSize : 50
   );
   const [totalItems, setTotalItems] = useState(0);
   const [, setHasMore] = useState(true);
   const [errorMsg, setErrorMsg] = useState('');
-  const [searchText, setSearchText] = useState(() => q('search', ''));
-  const [statusFilter, setStatusFilter] = useState(() => q('status_filter', 'all')); // all | unpaid | paid | due
-  const [paymentFilter, setPaymentFilter] = useState(() => qList('payment_filter')); // ['TRANSFER','CASH',...]
-  const [paymentListMode, setPaymentListMode] = useState(() => q('payment_list_mode', 'manual')); // manual | bank
-  const [manualOnly, setManualOnly] = useState(() => qBool('manual_only', false));
-  const [approvalFilter, setApprovalFilter] = useState(() => q('approval_filter', 'all')); // all | approved | unapproved
-  const [amountFrom, setAmountFrom] = useState(() => q('amount_from', ''));
-  const [amountTo, setAmountTo] = useState(() => q('amount_to', ''));
+  const [searchText, setSearchText] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all'); // all | unpaid | paid | due
+  const [paymentFilter, setPaymentFilter] = useState([]); // ['TRANSFER','CASH',...]
+  const [paymentListMode, setPaymentListMode] = useState('manual'); // manual | bank
+  const [manualOnly, setManualOnly] = useState(false);
+  const [approvalFilter, setApprovalFilter] = useState('all'); // all | approved | unapproved
+  const [amountFrom, setAmountFrom] = useState('');
+  const [amountTo, setAmountTo] = useState('');
   const [showAmountModal, setShowAmountModal] = useState(false);
   const [amountDraftFrom, setAmountDraftFrom] = useState('');
   const [amountDraftTo, setAmountDraftTo] = useState('');
@@ -812,27 +794,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
 
   const openXmlInNewTab = async (invoiceNumber, supplierTaxNumber) => {
     if (!companyId) { toast.error('Válassz céget'); return; }
-    const listParams = new URLSearchParams();
-    if (companyId) listParams.set('company_id', companyId);
-    if (searchText) listParams.set('search', searchText);
-    if (statusFilter && statusFilter !== 'all') listParams.set('status_filter', statusFilter);
-    if (paymentFilter && paymentFilter.length) listParams.set('payment_filter', paymentFilter.join(','));
-    if (approvalFilter && approvalFilter !== 'all') listParams.set('approval_filter', approvalFilter);
-    if (dateFrom) listParams.set('date_from', dateFrom);
-    if (dateTo) listParams.set('date_to', dateTo);
-    if (amountFrom) listParams.set('amount_from', amountFrom);
-    if (amountTo) listParams.set('amount_to', amountTo);
-    if (paymentListMode) listParams.set('payment_list_mode', paymentListMode);
-    if (manualOnly) listParams.set('manual_only', '1');
-    if (page) listParams.set('page', String(page));
-    if (pageSize) listParams.set('page_size', String(pageSize));
-    if (isSelectorMode) listParams.set('mode', 'select');
-    if (preselectIdsRaw) listParams.set('preselect_ids', preselectIdsRaw);
-
-    const listPath = window.location.pathname || (externalOutgoing ? '/incoming-invoices-external' : '/incoming-invoices');
-    const returnTo = `${listPath}${listParams.toString() ? `?${listParams.toString()}` : ''}`;
-
-    const targetUrl = `/incoming-invoices/open?company_id=${encodeURIComponent(companyId || '')}&invoice_number=${encodeURIComponent(invoiceNumber || '')}${supplierTaxNumber ? `&supplier_tax_number=${encodeURIComponent(supplierTaxNumber)}` : ''}${externalOutgoing ? '&external_outgoing=1' : ''}&return_to=${encodeURIComponent(returnTo)}`;
+    const targetUrl = `/incoming-invoices/open?company_id=${encodeURIComponent(companyId || '')}&invoice_number=${encodeURIComponent(invoiceNumber || '')}${supplierTaxNumber ? `&supplier_tax_number=${encodeURIComponent(supplierTaxNumber)}` : ''}${externalOutgoing ? '&external_outgoing=1' : ''}`;
     const opened = window.open(targetUrl, '_blank');
     if (!opened) {
       toast.error('A böngésző blokkolta az új lap megnyitását.');
@@ -1959,7 +1921,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
               const paymentDisplayDate = row.paymentDisplayDate || row.paymentDate;
               const hasPaymentDate = !!paymentDisplayDate;
               const pmUpper = String(row.paymentMethod||'').toUpperCase();
-              const isTransfer = pmUpper === 'TRANSFER' || pmUpper === 'COD' || pmUpper === 'UTANVET';
+              const isTransfer = pmUpper === 'TRANSFER' || pmUpper === 'COD';
               const hasBalance = remaining > 0.0001;
               const hasOverpay = overpaid > 0.0001;
               const isPaid = !!row.isPaid || (!isTransfer ? hasPaymentDate : (!hasBalance && !hasOverpay));
