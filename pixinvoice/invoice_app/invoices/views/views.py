@@ -7125,9 +7125,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         update_fields = ['payment_method']
         # Auto-settle non-transfer methods (cash, card, voucher, other, utanvet)
         if payment_method.lower() in ('cash', 'card', 'voucher', 'other', 'utanvet'):
-            from django.utils import timezone
             if not obj.payment_date:
-                obj.payment_date = timezone.localdate()
+                # Payment date = issue date (keltezés dátuma)
+                obj.payment_date = obj.invoice_issue_date
                 update_fields.append('payment_date')
             obj.payment_status = 'paid'
             update_fields.append('payment_status')
