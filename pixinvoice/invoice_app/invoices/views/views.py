@@ -5805,8 +5805,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             reconciled_paid_amount = r.amount_paid or decimal.Decimal('0')
             paid_amount = max(batch_paid_amount, reconciled_paid_amount)
             last_payment_dt = pay_map.get(pay_key, {}).get('last_payment')
-            # For card, cash, voucher, other: always paid, payment date = issue date
-            if payment_method in ['card', 'cash', 'voucher', 'other']:
+            # For card, cash, voucher, other, utanvet: always paid, payment date = issue date
+            if payment_method in ['card', 'cash', 'voucher', 'other', 'utanvet']:
                 payment_date = date_val
 
             remaining_amount = None
@@ -5827,7 +5827,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         is_partial = True
                 else:
                     # If we don't know gross, fall back to payment method/date
-                    is_paid = bool(payment_date) or payment_method in ['card','cash','voucher','other']
+                    is_paid = bool(payment_date) or payment_method in ['card','cash','voucher','other','utanvet']
             except Exception:
                 pass
             
@@ -5840,7 +5840,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             payment_display_date = None
             if payment_date:
                 payment_display_date = payment_date
-            elif payment_method in ['card', 'cash', 'voucher', 'other']:
+            elif payment_method in ['card', 'cash', 'voucher', 'other', 'utanvet']:
                 payment_display_date = date_val
             elif last_payment_dt:
                 try:
@@ -7122,7 +7122,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not obj:
             return Response({'error': 'Számla nem található'}, status=status.HTTP_404_NOT_FOUND)
         obj.payment_method = payment_method
-        obj.save(update_fields=['payment_method'])
+        update_fields = ['payment_method']
+        # Auto-settle non-transfer methods (cash, card, voucher, other, utanvet)
+        if payment_method.lower() in ('cash', 'card', 'voucher', 'other', 'utanvet'):
+            from django.utils import timezone
+            if not obj.payment_date:
+                obj.payment_date = timezone.localdate()
+                update_fields.append('payment_date')
+            obj.payment_status = 'paid'
+            update_fields.append('payment_status')
+        obj.save(update_fields=update_fields)
         return Response({'success': True, 'payment_method': obj.payment_method})
 
     @action(detail=False, methods=['post'], url_path='incoming/set_approval')
