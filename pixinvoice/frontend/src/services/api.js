@@ -559,6 +559,37 @@ export const proformaAPI = {
   createAdvanceInvoice: (id, data) => api.post(`/api/proformas/${id}/create_advance_invoice/`, data),
 };
 
+export const incomingProformaAPI = {
+  list: (params = {}) => api.get('/api/incoming-proformas/list/', { params }),
+  get: (companyId, id) => api.get('/api/incoming-proformas/get/', { params: { company_id: companyId, id } }),
+  create: (data) => api.post('/api/incoming-proformas/create/', data),
+  update: (data) => api.post('/api/incoming-proformas/update/', data),
+  delete: (companyId, id) => api.post('/api/incoming-proformas/delete/', { company_id: companyId, id }),
+  setStatus: (companyId, id, statusVal) => api.post('/api/incoming-proformas/set-status/', { company_id: companyId, id, status: statusVal }),
+  setPaymentMethod: (companyId, id, pm) => api.post('/api/incoming-proformas/set-payment-method/', { company_id: companyId, id, payment_method: pm }),
+  markPaid: (companyId, id, paymentDate) => api.post('/api/incoming-proformas/mark-paid/', { company_id: companyId, id, payment_date: paymentDate }),
+  addInvoiceLink: (data) => api.post('/api/incoming-proformas/add-invoice-link/', data),
+  removeInvoiceLink: (companyId, linkId, proformaId) => api.post('/api/incoming-proformas/remove-invoice-link/', { company_id: companyId, link_id: linkId, proforma_id: proformaId }),
+  suggestInvoices: (companyId, supplierTaxNumber, search) => api.get('/api/incoming-proformas/suggest-invoices/', { params: { company_id: companyId, supplier_tax_number: supplierTaxNumber, search } }),
+  uploadDocument: (companyId, proformaId, file, type = 'IMAGE', comment = '') => {
+    const fd = new FormData();
+    fd.append('company_id', companyId);
+    fd.append('proforma_id', proformaId);
+    fd.append('file', file);
+    fd.append('type', type);
+    if (comment) fd.append('comment', comment);
+    return api.post('/api/incoming-proformas/upload-document/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+  deleteDocument: (companyId, documentId) => api.post('/api/incoming-proformas/delete-document/', { company_id: companyId, document_id: documentId }),
+  setDocumentComment: (companyId, documentId, comment) => api.post('/api/incoming-proformas/set-document-comment/', { company_id: companyId, document_id: documentId, comment }),
+  parseDocument: (companyId, file) => {
+    const fd = new FormData();
+    if (companyId) fd.append('company_id', companyId);
+    fd.append('file', file);
+    return api.post('/api/incoming-proformas/parse-document/', fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+  },
+};
+
 export const importAPI = {
   importCustomers: (formData) => api.post('/api/import/customers/', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }

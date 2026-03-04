@@ -419,6 +419,12 @@ const Layout = ({ children }) => {
       key: 'proformas',
       iconNode: <ProformaIcon />
     },
+    {
+      path: '/incoming-proformas',
+      label: 'Bejövő Díjbekérők',
+      key: 'incoming_proformas',
+      iconNode: <IncomingInvoiceIcon />
+    },
     { path: '/bank-statements', label: 'Bank', icon: CreditCard, key: 'bank_statements' },
     { path: '/cash-registers', label: 'Kassza', icon: CreditCard, key: 'bank_statements' },
     { path: '/arrears', label: 'Kintlévőség', icon: CreditCard, key: 'arrears' },

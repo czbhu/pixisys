@@ -45,6 +45,8 @@ import ScheduledInvoices from './pages/ScheduledInvoices';
 import Proformas from './pages/Proformas';
 import IncomingInvoices from './pages/IncomingInvoices';
 import IncomingInvoiceOpen from './pages/IncomingInvoiceOpen';
+import IncomingProformas from './pages/IncomingProformas';
+import IncomingProformaOpen from './pages/IncomingProformaOpen';
 import BackupRestore from './pages/Settings/BackupRestore';
 import NavAuditExport from './pages/Settings/NavAuditExport';
 import Currencies from './pages/Settings/Currencies';
@@ -102,6 +104,8 @@ function AppContent() {
                 <Route path="/incoming-invoices-external" element={guard('incoming_invoices', <IncomingInvoices key="external" externalOutgoing />)} />
                 <Route path="/incoming-invoices/open" element={guard('incoming_invoices', <IncomingInvoiceOpen />)} />
                 <Route path="/incoming-invoices/new" element={guard('incoming_invoices', <InvoiceForm />)} />
+                <Route path="/incoming-proformas" element={guard('incoming_proformas', <IncomingProformas />)} />
+                <Route path="/incoming-proformas/open" element={guard('incoming_proformas', <IncomingProformaOpen />)} />
                 <Route path="/invoices/new" element={guard('invoices', <InvoiceForm />)} />
                 <Route path="/invoices/:id/edit" element={guard('invoices', <InvoiceForm />)} />
                 <Route path="/bank-statements" element={guard('bank_statements', <BankStatements />)} />

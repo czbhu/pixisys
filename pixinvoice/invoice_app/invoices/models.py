@@ -275,6 +275,91 @@ class IncomingDocument(models.Model):
         return f"Doc {self.invoice_number} - {self.original_name or self.file.name}"
 
 
+def incoming_proforma_upload_path(instance, filename: str) -> str:
+    import os
+    safe_name = os.path.basename(filename or '')
+    return f"incoming_proformas/{instance.proforma.company_id}/{instance.proforma.id}/{safe_name}"
+
+
+class IncomingProforma(models.Model):
+    """Manually registered incoming proforma invoices (díjbekérők)."""
+    STATUS_CHOICES = [
+        ('unpaid', 'Kifizetetlen'),
+        ('paid', 'Kifizetett'),
+        ('invoiced', 'Kiszámlázott'),
+    ]
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    company = models.ForeignKey(Company, on_delete=models.CASCADE, related_name='incoming_proformas')
+    proforma_number = models.CharField(max_length=100)
+    supplier_tax_number = models.CharField(max_length=30, blank=True, null=True)
+    supplier_name = models.CharField(max_length=300, blank=True, null=True)
+    issue_date = models.DateField(blank=True, null=True)
+    due_date = models.DateField(blank=True, null=True)
+    delivery_date = models.DateField(blank=True, null=True)
+    payment_method = models.CharField(max_length=30, blank=True, null=True, default='TRANSFER')
+    currency = models.CharField(max_length=10, blank=True, null=True, default='HUF')
+    exchange_rate = models.DecimalField(max_digits=10, decimal_places=4, blank=True, null=True, default=1)
+    net_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True, default=0)
+    vat_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True, default=0)
+    gross_amount = models.DecimalField(max_digits=18, decimal_places=2, blank=True, null=True, default=0)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='unpaid')
+    payment_date = models.DateField(blank=True, null=True)
+    amount_paid = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    comment = models.TextField(blank=True, null=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Incoming Proforma"
+        verbose_name_plural = "Incoming Proformas"
+        ordering = ['-issue_date', '-created_at']
+        indexes = [
+            models.Index(fields=['company', 'status']),
+            models.Index(fields=['company', 'supplier_tax_number']),
+        ]
+
+    def __str__(self):
+        return f"{self.company.short_name or self.company.name} - {self.proforma_number}"
+
+
+class IncomingProformaDocument(models.Model):
+    TYPE_CHOICES = IncomingDocument.TYPE_CHOICES
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    proforma = models.ForeignKey(IncomingProforma, on_delete=models.CASCADE, related_name='documents')
+    type = models.CharField(max_length=16, choices=TYPE_CHOICES, default='IMAGE')
+    file = models.FileField(upload_to=incoming_proforma_upload_path)
+    original_name = models.CharField(max_length=255, blank=True, null=True)
+    content_type = models.CharField(max_length=100, blank=True, null=True)
+    size = models.PositiveIntegerField(default=0)
+    comment = models.CharField(max_length=500, blank=True, null=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-uploaded_at']
+
+    def __str__(self):
+        return f"ProformaDoc {self.proforma.proforma_number} - {self.original_name or self.file.name}"
+
+
+class IncomingProformaInvoiceLink(models.Model):
+    """Links a proforma to one or more incoming invoices with an allocated amount."""
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    proforma = models.ForeignKey(IncomingProforma, on_delete=models.CASCADE, related_name='invoice_links')
+    invoice_number = models.CharField(max_length=100)
+    supplier_tax_number = models.CharField(max_length=30, blank=True, null=True)
+    supplier_name = models.CharField(max_length=300, blank=True, null=True)
+    allocated_amount = models.DecimalField(max_digits=18, decimal_places=2, default=0)
+    currency = models.CharField(max_length=10, blank=True, null=True, default='HUF')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        unique_together = (('proforma', 'invoice_number', 'supplier_tax_number'),)
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"Link {self.proforma.proforma_number} → {self.invoice_number}"
+
+
 class CompanyEmailSettings(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     company = models.OneToOneField(Company, on_delete=models.CASCADE, related_name='email_settings')

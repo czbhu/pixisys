@@ -11,7 +11,7 @@ from .models import (
     InvoiceBlock, CompanyNAVConfiguration, CustomerBankAccount, CompanyBankAccount, VATType,
     BankStatement, BankStatementItem, ProformaInvoice, CompanyEmailSettings, PaymentBatch, PaymentBatchItem, IncomingDocument,
     BackupConfiguration, BackupFile, Currency, EmailTemplate, EmailSignature, CashRegister, CashRegisterTransaction, IncomingInvoiceDigest,
-    CronJobConfiguration
+    CronJobConfiguration, IncomingProforma, IncomingProformaDocument, IncomingProformaInvoiceLink,
 )
 
 
@@ -2018,3 +2018,40 @@ class BackupFileSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return 'Rendszer'
+
+
+# ── Incoming Proforma serializers ────────────────────────────────────────────
+
+class IncomingProformaDocumentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    def get_file_url(self, obj):
+        if obj.file:
+            request = self.context.get('request')
+            try:
+                url = obj.file.url
+                if request:
+                    return request.build_absolute_uri(url)
+                return url
+            except Exception:
+                pass
+        return None
+
+    class Meta:
+        model = IncomingProformaDocument
+        fields = ['id', 'proforma', 'type', 'file_url', 'original_name', 'content_type', 'size', 'comment', 'uploaded_at']
+
+
+class IncomingProformaInvoiceLinkSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = IncomingProformaInvoiceLink
+        fields = ['id', 'proforma', 'invoice_number', 'supplier_tax_number', 'supplier_name', 'allocated_amount', 'currency', 'created_at']
+
+
+class IncomingProformaSerializer(serializers.ModelSerializer):
+    invoice_links = IncomingProformaInvoiceLinkSerializer(many=True, read_only=True)
+    documents = IncomingProformaDocumentSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = IncomingProforma
+        fields = '__all__'

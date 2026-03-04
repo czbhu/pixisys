@@ -5,7 +5,7 @@ from invoices.views.views import (
     CompanyViewSet, SystemUserViewSet, RoleViewSet, InvoiceBlockViewSet, CompanyNAVConfigurationViewSet, CustomerBankAccountViewSet, CompanyBankAccountViewSet, VATTypeViewSet, BankStatementViewSet, ProformaViewSet,
     CompanyEmailSettingsViewSet, EmailTemplateViewSet, EmailSignatureViewSet, PaymentBatchViewSet, ApiAccessViewSet, APIClientViewSet, IncomingDocumentViewSet,
     CashRegisterViewSet, CashRegisterTransactionViewSet, CronJobConfigurationViewSet,
-    BackupConfigurationViewSet, BackupFileViewSet, CurrencyViewSet
+    BackupConfigurationViewSet, BackupFileViewSet, CurrencyViewSet, IncomingProformaViewSet
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate
 from invoices.views.import_views import import_customers, import_customers_streaming, import_contacts, import_contacts_streaming, export_customer_sample_csv, export_contact_sample_csv, export_missing_customers_csv, import_suppliers_from_invoices, import_suppliers_from_invoices_streaming
@@ -41,6 +41,7 @@ router.register(r'proformas', ProformaViewSet)
 router.register(r'payment-batches', PaymentBatchViewSet)
 router.register(r'api-clients', APIClientViewSet, basename='api-client')
 router.register(r'incoming-documents', IncomingDocumentViewSet)
+router.register(r'incoming-proformas', IncomingProformaViewSet, basename='incoming-proforma')
 router.register(r'backup-configs', BackupConfigurationViewSet, basename='backup-config')
 router.register(r'backup-files', BackupFileViewSet, basename='backup-file')
 

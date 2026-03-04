@@ -68,6 +68,7 @@ from invoices.serializers import (
     ProformaSerializer, ProformaCreateSerializer, CurrencySerializer, CashRegisterSerializer, CashRegisterTransactionSerializer
 )
 from invoices.serializers import CompanyEmailSettingsSerializer, PaymentBatchSerializer, PaymentBatchItemSerializer, IncomingDocumentSerializer, BackupConfigurationSerializer, BackupFileSerializer, EmailTemplateSerializer, EmailSignatureSerializer, CronJobConfigurationSerializer
+from invoices.serializers import IncomingProformaSerializer, IncomingProformaDocumentSerializer, IncomingProformaInvoiceLinkSerializer
 from invoices.nav_service import NAVService
 from invoices.mnb_api import MNBApiClient
 from invoices.supplier_auto_register import auto_register_or_update_supplier, get_supplier_bank_account_for_invoice
@@ -13143,6 +13144,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'], url_path='mark-paid')
     def mark_paid(self, request, pk=None):
+        from invoices.models import IncomingProforma
         batch = self.get_object()
         today = timezone.now().date()
         total_updated = 0
@@ -13153,6 +13155,11 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 qs = qs.filter(supplier_tax_number=it.supplier_tax_number)
             updated = qs.update(payment_date=today)
             total_updated += updated
+            # Also mark matching proformas as paid
+            pqs = IncomingProforma.objects.filter(company=batch.company, proforma_number=it.invoice_number, status='unpaid')
+            if it.supplier_tax_number:
+                pqs = pqs.filter(supplier_tax_number=it.supplier_tax_number)
+            pqs.update(status='paid', payment_date=today)
         try:
             if batch.status != 'EXPORTED':
                 batch.status = 'EXPORTED'
@@ -13208,6 +13215,471 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         item.save(update_fields=['amount_gross'])
         total = batch.items.aggregate(s=Sum('amount_gross')).get('s')
         return Response({'success': True, 'item': PaymentBatchItemSerializer(item).data, 'gross_total': str(total) if total is not None else None})
+
+
+# Backup Management Views
+class IncomingProformaViewSet(viewsets.ViewSet):
+    """CRUD + actions for incoming proforma invoices (bőjövő díjbekérők)."""
+    permission_classes = []
+
+    # ── helpers ──────────────────────────────────────────────────────────
+    def _get_company(self, company_id, request):
+        from invoices.models import Company
+        cid = company_id or (getattr(request, 'company', None) and str(request.company.id))
+        if not cid:
+            return None, Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            return Company.objects.get(id=cid), None
+        except Company.DoesNotExist:
+            return None, Response({'error': 'Cég nem található'}, status=status.HTTP_400_BAD_REQUEST)
+
+    def _proforma_to_dict(self, p):
+        links = list(p.invoice_links.values('id', 'invoice_number', 'supplier_tax_number', 'supplier_name', 'allocated_amount', 'currency'))
+        for lnk in links:
+            lnk['id'] = str(lnk['id'])
+            lnk['allocated_amount'] = str(lnk['allocated_amount'])
+        docs = []
+        for d in p.documents.all():
+            try:
+                file_url = d.file.url if d.file else None
+            except Exception:
+                file_url = None
+            docs.append({'id': str(d.id), 'type': d.type, 'original_name': d.original_name, 'file_url': file_url, 'comment': d.comment, 'size': d.size, 'uploaded_at': d.uploaded_at.isoformat() if d.uploaded_at else None})
+        gross = p.gross_amount or 0
+        allocated = sum(float(lnk['allocated_amount']) for lnk in links)
+        remaining = float(gross) - allocated
+        return {
+            'id': str(p.id),
+            'proforma_number': p.proforma_number,
+            'supplier_tax_number': p.supplier_tax_number,
+            'supplier_name': p.supplier_name,
+            'issue_date': p.issue_date.isoformat() if p.issue_date else None,
+            'due_date': p.due_date.isoformat() if p.due_date else None,
+            'delivery_date': p.delivery_date.isoformat() if p.delivery_date else None,
+            'payment_method': (p.payment_method or '').upper(),
+            'currency': (p.currency or 'HUF').upper(),
+            'exchange_rate': str(p.exchange_rate) if p.exchange_rate is not None else '1',
+            'net_amount': str(p.net_amount or 0),
+            'vat_amount': str(p.vat_amount or 0),
+            'gross_amount': str(p.gross_amount or 0),
+            'status': p.status,
+            'payment_date': p.payment_date.isoformat() if p.payment_date else None,
+            'amount_paid': str(p.amount_paid or 0),
+            'comment': p.comment or '',
+            'invoice_links': links,
+            'documents': docs,
+            'allocated_amount': str(allocated),
+            'remaining_amount': str(remaining),
+            'is_fully_covered': remaining <= 0.005,
+        }
+
+    # ── list ─────────────────────────────────────────────────────────────
+    @action(detail=False, methods=['get', 'post'], url_path='list')
+    def list_proformas(self, request):
+        from invoices.models import IncomingProforma
+        data = request.data if request.method == 'POST' else request.query_params
+        company_id = data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        qs = IncomingProforma.objects.filter(company=company)
+        status_filter = data.get('status') or ''
+        if status_filter and status_filter != 'all':
+            qs = qs.filter(status=status_filter)
+        search = data.get('search') or ''
+        if search:
+            qs = qs.filter(
+                Q(proforma_number__icontains=search) |
+                Q(supplier_name__icontains=search) |
+                Q(supplier_tax_number__icontains=search)
+            )
+        page = max(1, int(data.get('page', 1) or 1))
+        page_size = min(500, max(10, int(data.get('page_size', 50) or 50)))
+        total = qs.count()
+        offset = (page - 1) * page_size
+        rows = list(qs.prefetch_related('invoice_links', 'documents')[offset:offset + page_size])
+        return Response({'count': total, 'page': page, 'page_size': page_size, 'results': [self._proforma_to_dict(p) for p in rows]})
+
+    # ── get single ───────────────────────────────────────────────────────
+    @action(detail=False, methods=['get', 'post'], url_path='get')
+    def get_proforma(self, request):
+        from invoices.models import IncomingProforma
+        data = request.data if request.method == 'POST' else request.query_params
+        company_id = data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        proforma_id = data.get('id') or data.get('proforma_id') or request.query_params.get('id')
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        try:
+            p = IncomingProforma.objects.prefetch_related('invoice_links', 'documents').get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        return Response(self._proforma_to_dict(p))
+
+    # ── create ───────────────────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='create')
+    def create_proforma(self, request):
+        from invoices.models import IncomingProforma
+        import decimal
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_number = str(data.get('proforma_number') or '').strip()
+        if not proforma_number:
+            return Response({'error': 'Díjbekérő száma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        def d(v):
+            try:
+                return decimal.Decimal(str(v or 0))
+            except Exception:
+                return decimal.Decimal('0')
+        net = d(data.get('net_amount', 0))
+        vat = d(data.get('vat_amount', 0))
+        gross = d(data.get('gross_amount', 0)) or (net + vat)
+        p = IncomingProforma.objects.create(
+            company=company,
+            proforma_number=proforma_number,
+            supplier_tax_number=str(data.get('supplier_tax_number') or '').strip() or None,
+            supplier_name=str(data.get('supplier_name') or '').strip() or None,
+            issue_date=data.get('issue_date') or None,
+            due_date=data.get('due_date') or None,
+            delivery_date=data.get('delivery_date') or None,
+            payment_method=str(data.get('payment_method') or 'TRANSFER').strip().upper(),
+            currency=str(data.get('currency') or 'HUF').strip().upper(),
+            exchange_rate=d(data.get('exchange_rate') or 1) or decimal.Decimal('1'),
+            net_amount=net,
+            vat_amount=vat,
+            gross_amount=gross,
+            comment=str(data.get('comment') or '').strip() or None,
+            status='unpaid',
+        )
+        return Response(self._proforma_to_dict(p), status=status.HTTP_201_CREATED)
+
+    # ── update ───────────────────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='update')
+    def update_proforma(self, request):
+        from invoices.models import IncomingProforma
+        import decimal
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('id') or data.get('proforma_id')
+        if not proforma_id:
+            return Response({'error': 'id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        def d(v):
+            try:
+                return decimal.Decimal(str(v or 0))
+            except Exception:
+                return decimal.Decimal('0')
+        net = d(data.get('net_amount', p.net_amount))
+        vat = d(data.get('vat_amount', p.vat_amount))
+        gross = d(data.get('gross_amount', 0)) or (net + vat)
+        fields = ['proforma_number', 'supplier_tax_number', 'supplier_name', 'issue_date', 'due_date',
+                  'delivery_date', 'payment_method', 'currency', 'exchange_rate', 'net_amount', 'vat_amount',
+                  'gross_amount', 'comment', 'updated_at']
+        p.proforma_number = str(data.get('proforma_number') or p.proforma_number).strip()
+        p.supplier_tax_number = str(data.get('supplier_tax_number') or '').strip() or None
+        p.supplier_name = str(data.get('supplier_name') or '').strip() or None
+        p.issue_date = data.get('issue_date') or p.issue_date
+        p.due_date = data.get('due_date') or p.due_date
+        p.delivery_date = data.get('delivery_date') or None
+        p.payment_method = str(data.get('payment_method') or p.payment_method or 'TRANSFER').strip().upper()
+        p.currency = str(data.get('currency') or p.currency or 'HUF').strip().upper()
+        p.exchange_rate = d(data.get('exchange_rate') or p.exchange_rate or 1)
+        p.net_amount = net
+        p.vat_amount = vat
+        p.gross_amount = gross
+        p.comment = str(data.get('comment') or '').strip() or None
+        p.save(update_fields=fields)
+        p.refresh_from_db()
+        return Response(self._proforma_to_dict(IncomingProforma.objects.prefetch_related('invoice_links', 'documents').get(id=p.id)))
+
+    # ── delete ───────────────────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='delete')
+    def delete_proforma(self, request):
+        from invoices.models import IncomingProforma
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('id') or data.get('proforma_id')
+        if not proforma_id:
+            return Response({'error': 'id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        p.delete()
+        return Response({'success': True})
+
+    # ── set status ───────────────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='set-status')
+    def set_status(self, request):
+        from invoices.models import IncomingProforma
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('id') or data.get('proforma_id')
+        new_status = str(data.get('status') or '').lower()
+        if new_status not in ('unpaid', 'paid', 'invoiced'):
+            return Response({'error': 'Hibás státusz. Lehető: unpaid, paid, invoiced'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        update_fields = ['status', 'updated_at']
+        p.status = new_status
+        if new_status == 'paid' and not p.payment_date:
+            p.payment_date = timezone.localdate()
+            update_fields.append('payment_date')
+        p.save(update_fields=update_fields)
+        return Response({'success': True, 'status': p.status})
+
+    # ── set payment method ───────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='set-payment-method')
+    def set_payment_method(self, request):
+        from invoices.models import IncomingProforma
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('id') or data.get('proforma_id')
+        pm = str(data.get('payment_method') or '').strip().upper()
+        allowed = {'TRANSFER', 'CASH', 'CARD', 'VOUCHER', 'OTHER', 'UTANVET'}
+        if pm not in allowed:
+            return Response({'error': 'Hibás fizetési mód'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        p.payment_method = pm
+        update_fields = ['payment_method', 'updated_at']
+        if pm in ('CASH', 'CARD', 'VOUCHER', 'OTHER', 'UTANVET'):
+            if not p.payment_date:
+                p.payment_date = p.issue_date or timezone.localdate()
+                update_fields.append('payment_date')
+            p.status = 'paid'
+            update_fields.append('status')
+        p.save(update_fields=update_fields)
+        return Response({'success': True, 'payment_method': p.payment_method, 'status': p.status})
+
+    # ── mark paid directly ───────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='mark-paid')
+    def mark_paid_direct(self, request):
+        from invoices.models import IncomingProforma
+        import decimal
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('id') or data.get('proforma_id')
+        payment_date = data.get('payment_date') or timezone.localdate().isoformat()
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        p.status = 'paid'
+        p.payment_date = payment_date
+        p.amount_paid = p.gross_amount or decimal.Decimal('0')
+        p.save(update_fields=['status', 'payment_date', 'amount_paid', 'updated_at'])
+        return Response({'success': True, 'status': p.status, 'payment_date': str(p.payment_date)})
+
+    # ── invoice links ────────────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='add-invoice-link')
+    def add_invoice_link(self, request):
+        from invoices.models import IncomingProforma, IncomingProformaInvoiceLink
+        import decimal
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = data.get('proforma_id') or data.get('id')
+        invoice_number = str(data.get('invoice_number') or '').strip()
+        supplier_tax_number = str(data.get('supplier_tax_number') or '').strip() or None
+        supplier_name = str(data.get('supplier_name') or '').strip() or None
+        allocated_amount = data.get('allocated_amount', 0)
+        currency = str(data.get('currency') or 'HUF').strip().upper()
+        if not proforma_id or not invoice_number:
+            return Response({'error': 'proforma_id és invoice_number kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            amt = decimal.Decimal(str(allocated_amount or 0))
+        except Exception:
+            amt = decimal.Decimal('0')
+        link, created = IncomingProformaInvoiceLink.objects.update_or_create(
+            proforma=p,
+            invoice_number=invoice_number,
+            supplier_tax_number=supplier_tax_number,
+            defaults={'allocated_amount': amt, 'currency': currency, 'supplier_name': supplier_name or ''}
+        )
+        # Auto set status to invoiced if fully covered
+        total_allocated = sum(float(x.allocated_amount) for x in p.invoice_links.all())
+        if total_allocated >= float(p.gross_amount or 0) - 0.005:
+            p.status = 'invoiced'
+            p.save(update_fields=['status', 'updated_at'])
+        p.refresh_from_db()
+        return Response(self._proforma_to_dict(IncomingProforma.objects.prefetch_related('invoice_links', 'documents').get(id=p.id)))
+
+    @action(detail=False, methods=['post'], url_path='remove-invoice-link')
+    def remove_invoice_link(self, request):
+        from invoices.models import IncomingProforma, IncomingProformaInvoiceLink
+        data = request.data or {}
+        company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        link_id = data.get('link_id')
+        proforma_id = data.get('proforma_id')
+        if not link_id:
+            return Response({'error': 'link_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            link = IncomingProformaInvoiceLink.objects.get(id=link_id, proforma__company=company)
+        except IncomingProformaInvoiceLink.DoesNotExist:
+            return Response({'error': 'Kapcsolódó számla link nem található'}, status=status.HTTP_404_NOT_FOUND)
+        p = link.proforma
+        link.delete()
+        # Revert invoiced status if no longer covered
+        p.refresh_from_db()
+        total_allocated = sum(float(x.allocated_amount) for x in p.invoice_links.all())
+        if p.status == 'invoiced' and total_allocated < float(p.gross_amount or 0) - 0.005:
+            p.status = 'paid' if p.payment_date else 'unpaid'
+            p.save(update_fields=['status', 'updated_at'])
+        return Response(self._proforma_to_dict(IncomingProforma.objects.prefetch_related('invoice_links', 'documents').get(id=p.id)))
+
+    # ── suggest invoices (by supplier tax number) ─────────────────────
+    @action(detail=False, methods=['get', 'post'], url_path='suggest-invoices')
+    def suggest_invoices(self, request):
+        from invoices.models import IncomingInvoiceDigest
+        data = request.data if request.method == 'POST' else request.query_params
+        company_id = data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        supplier_tax_number = data.get('supplier_tax_number') or ''
+        search = data.get('search') or ''
+        qs = IncomingInvoiceDigest.objects.filter(company=company)
+        if supplier_tax_number:
+            qs = qs.filter(supplier_tax_number__icontains=supplier_tax_number[:8])
+        if search:
+            qs = qs.filter(Q(invoice_number__icontains=search) | Q(supplier_name__icontains=search))
+        qs = qs.order_by('-invoice_issue_date')[:50]
+        results = []
+        for inv in qs:
+            gross = float(inv.invoice_net_amount or 0) + float(inv.invoice_vat_amount or 0)
+            results.append({
+                'id': str(inv.id),
+                'invoice_number': inv.invoice_number,
+                'supplier_name': inv.supplier_name,
+                'supplier_tax_number': inv.supplier_tax_number,
+                'issue_date': inv.invoice_issue_date.isoformat() if inv.invoice_issue_date else None,
+                'gross_amount': str(gross),
+                'currency': (inv.currency or 'HUF').upper(),
+                'status': inv.payment_status or 'unpaid',
+            })
+        return Response({'results': results})
+
+    # ── document upload ───────────────────────────────────────────────
+    @action(detail=False, methods=['post'], url_path='upload-document')
+    def upload_document(self, request):
+        from invoices.models import IncomingProforma, IncomingProformaDocument
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        proforma_id = request.data.get('proforma_id')
+        file = request.FILES.get('file')
+        doc_type = request.data.get('type', 'IMAGE')
+        comment = request.data.get('comment', '')
+        if not proforma_id or not file:
+            return Response({'error': 'proforma_id és file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+        except IncomingProforma.DoesNotExist:
+            return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+        doc = IncomingProformaDocument.objects.create(
+            proforma=p,
+            type=doc_type,
+            file=file,
+            original_name=file.name,
+            content_type=getattr(file, 'content_type', '') or '',
+            size=getattr(file, 'size', 0) or 0,
+            comment=comment or None,
+        )
+        try:
+            file_url = doc.file.url
+        except Exception:
+            file_url = None
+        return Response({'success': True, 'id': str(doc.id), 'original_name': doc.original_name, 'file_url': file_url, 'type': doc.type, 'comment': doc.comment, 'size': doc.size})
+
+    @action(detail=False, methods=['post'], url_path='delete-document')
+    def delete_document(self, request):
+        from invoices.models import IncomingProformaDocument
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        doc_id = request.data.get('document_id')
+        if not doc_id:
+            return Response({'error': 'document_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            doc = IncomingProformaDocument.objects.get(id=doc_id, proforma__company=company)
+        except IncomingProformaDocument.DoesNotExist:
+            return Response({'error': 'Dokumentum nem található'}, status=status.HTTP_404_NOT_FOUND)
+        doc.delete()
+        return Response({'success': True})
+
+    @action(detail=False, methods=['post'], url_path='set-document-comment')
+    def set_document_comment(self, request):
+        from invoices.models import IncomingProformaDocument
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        doc_id = request.data.get('document_id')
+        comment = request.data.get('comment', '')
+        try:
+            doc = IncomingProformaDocument.objects.get(id=doc_id, proforma__company=company)
+        except IncomingProformaDocument.DoesNotExist:
+            return Response({'error': 'Dokumentum nem található'}, status=status.HTTP_404_NOT_FOUND)
+        doc.comment = comment
+        doc.save(update_fields=['comment'])
+        return Response({'success': True})
+
+    # ── OCR parse document (reuse incoming logic) ─────────────────────
+    @action(detail=False, methods=['post'], url_path='parse-document')
+    def parse_document(self, request):
+        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
+        company, err = self._get_company(company_id, request)
+        if err:
+            return err
+        file = request.FILES.get('file')
+        if not file:
+            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        # Reuse InvoiceViewSet's document parsing logic
+        inv_vs = InvoiceViewSet()
+        inv_vs.request = request
+        extracted = inv_vs._incoming_extract_text_from_document(file)
+        if extracted:
+            fields = inv_vs._incoming_extract_fields_from_text(extracted)
+        else:
+            fields = {}
+        return Response({'success': True, 'fields': fields})
 
 
 # Backup Management Views
