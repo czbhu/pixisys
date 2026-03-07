@@ -105,6 +105,7 @@ function AppContent() {
                 <Route path="/incoming-invoices/open" element={guard('incoming_invoices', <IncomingInvoiceOpen />)} />
                 <Route path="/incoming-invoices/new" element={guard('incoming_invoices', <InvoiceForm />)} />
                 <Route path="/incoming-proformas" element={guard('incoming_proformas', <IncomingProformas />)} />
+                <Route path="/incoming-proformas/new" element={guard('incoming_proformas', <IncomingProformaOpen />)} />
                 <Route path="/incoming-proformas/open" element={guard('incoming_proformas', <IncomingProformaOpen />)} />
                 <Route path="/invoices/new" element={guard('invoices', <InvoiceForm />)} />
                 <Route path="/invoices/:id/edit" element={guard('invoices', <InvoiceForm />)} />
