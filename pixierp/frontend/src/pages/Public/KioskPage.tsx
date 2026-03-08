@@ -200,20 +200,78 @@ const KioskPage: React.FC = () => {
            
         const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const wsUrl = `${wsProtocol}//${window.location.host}/ws/attendance/${deviceId}/`;
-        let socket: WebSocket;
+        let socket: WebSocket | null = null;
+        let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+        let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+        let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+        let isUnmounted = false;
+        let lastHeartbeatAt = Date.now();
+
+        const clearRuntimeTimers = () => {
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+            if (heartbeatTimer) {
+                clearInterval(heartbeatTimer);
+                heartbeatTimer = null;
+            }
+            if (watchdogTimer) {
+                clearInterval(watchdogTimer);
+                watchdogTimer = null;
+            }
+        };
+
+        const scheduleReconnect = () => {
+            if (isUnmounted || reconnectTimer) return;
+            reconnectTimer = setTimeout(() => {
+                reconnectTimer = null;
+                connect();
+            }, 3000);
+        };
+
+        const startHeartbeat = () => {
+            if (heartbeatTimer) clearInterval(heartbeatTimer);
+            heartbeatTimer = setInterval(() => {
+                if (!socket || socket.readyState !== WebSocket.OPEN) return;
+                try {
+                    socket.send(JSON.stringify({ type: 'ping' }));
+                } catch (e) {
+                    console.error('Kiosk heartbeat send failed', e);
+                }
+            }, 15000);
+
+            if (watchdogTimer) clearInterval(watchdogTimer);
+            watchdogTimer = setInterval(() => {
+                if (!socket || socket.readyState !== WebSocket.OPEN) return;
+                if (Date.now() - lastHeartbeatAt > 45000) {
+                    console.warn('Kiosk WS heartbeat timeout, forcing reconnect');
+                    socket.close();
+                }
+            }, 5000);
+        };
 
         const connect = () => {
             setWsStatus('nincs WS kapcsolat');
+            clearRuntimeTimers();
+            lastHeartbeatAt = Date.now();
             socket = new WebSocket(wsUrl);
 
             socket.onopen = () => {
                 console.log("Kiosk Connected");
                 setWsStatus('WS kapcsolat van');
+                lastHeartbeatAt = Date.now();
+                startHeartbeat();
             };
 
             socket.onmessage = (event) => {
                 try {
                     const data = JSON.parse(event.data);
+
+                    if (data.type === 'pong' || data.type === 'heartbeat') {
+                        lastHeartbeatAt = Date.now();
+                        return;
+                    }
                     
                     if (data.type === 'show_qr') {
                         // Check if busy using REFS
@@ -280,13 +338,25 @@ const KioskPage: React.FC = () => {
                 } catch (e) { console.error(e); }
             };
 
+            socket.onerror = (err) => {
+                console.error('Kiosk WS error', err);
+            };
+
             socket.onclose = () => {
                 setWsStatus('nincs WS kapcsolat');
-                setTimeout(connect, 3000);
+                if (isUnmounted) return;
+                scheduleReconnect();
             };
         };
         connect();
-        return () => { if (socket) socket.close(); };
+        return () => {
+            isUnmounted = true;
+            clearRuntimeTimers();
+            if (socket) {
+                socket.onclose = null;
+                socket.close();
+            }
+        };
     }, [deviceStatus, deviceId]); // Only reconnect if device auth changes
 
 

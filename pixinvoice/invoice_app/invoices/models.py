@@ -278,7 +278,13 @@ class IncomingDocument(models.Model):
 def incoming_proforma_upload_path(instance, filename: str) -> str:
     import os
     safe_name = os.path.basename(filename or '')
-    return f"incoming_proformas/{instance.proforma.company_id}/{instance.proforma.id}/{safe_name}"
+    _, ext = os.path.splitext(safe_name)
+    ext = (ext or '').lower()[:10]
+    # Keep storage path short to stay under FileField max_length (default 100).
+    short_name = f"d_{uuid.uuid4().hex[:12]}{ext}"
+    company_part = str(instance.proforma.company_id).replace('-', '')[:8]
+    proforma_part = str(instance.proforma.id).replace('-', '')[:8]
+    return f"ip/{company_part}/{proforma_part}/{short_name}"
 
 
 class IncomingProforma(models.Model):

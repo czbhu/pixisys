@@ -567,7 +567,18 @@ class AttendanceKioskConfigSerializer(serializers.ModelSerializer):
 from .models import KioskDevice
 
 class KioskDeviceSerializer(serializers.ModelSerializer):
+    ws_connected = serializers.SerializerMethodField()
+    ws_last_seen = serializers.SerializerMethodField()
+
     class Meta:
         model = KioskDevice
         fields = '__all__'
         read_only_fields = ['last_seen']
+
+    def get_ws_connected(self, obj):
+        key = f"kiosk_ws:{obj.device_id}:connected"
+        return bool(cache.get(key, False))
+
+    def get_ws_last_seen(self, obj):
+        key = f"kiosk_ws:{obj.device_id}:last_seen"
+        return cache.get(key)

@@ -35,6 +35,7 @@ const AttendanceQRModal: React.FC<AttendanceQRModalProps> = ({
     const [loading, setLoading] = useState(false);
     
     const [displayText, setDisplayText] = useState<string>('Tartsa a telefont a beléptető terminál elé.');
+    const [kioskResultText, setKioskResultText] = useState<string | null>(null);
 
     const [configLoading, setConfigLoading] = useState(true);
     const [qrValidity, setQrValidity] = useState(10);
@@ -80,6 +81,7 @@ const AttendanceQRModal: React.FC<AttendanceQRModalProps> = ({
             }
             // Reset challenge state when modal closes
             setChallengeSent(false);
+            setKioskResultText(null);
         };
     }, [open]);
 
@@ -349,6 +351,15 @@ const AttendanceQRModal: React.FC<AttendanceQRModalProps> = ({
                     isProcessingRef.current = false;
                     startScanner(selectedCameraId);
                  }, 1000);
+             } else if (data.action === 'check_in' || data.action === 'check_out') {
+                 const largeText = data.action === 'check_in' ? 'Jó munkát!' : 'Jó Pihenést!';
+                 setKioskResultText(largeText);
+                 message.success(data.message || 'Sikeres jelölés!');
+                 setTimeout(() => {
+                    setKioskResultText(null);
+                    onClose();
+                 }, 2500);
+                 return;
              } else {
                  message.success(data.message || 'Sikeres jelölés!');
                  onClose();
@@ -443,6 +454,24 @@ const AttendanceQRModal: React.FC<AttendanceQRModalProps> = ({
                 ) : (
                     // OPTION B: Scanner
                     <div style={{ width: '100%', textAlign: 'center' }}>
+                        {kioskResultText && (
+                            <div style={{
+                                marginBottom: 16,
+                                background: '#f6ffed',
+                                border: '1px solid #b7eb8f',
+                                borderRadius: 10,
+                                padding: '28px 20px'
+                            }}>
+                                <div style={{
+                                    fontSize: 46,
+                                    lineHeight: 1.1,
+                                    fontWeight: 800,
+                                    color: '#389e0d'
+                                }}>
+                                    {kioskResultText}
+                                </div>
+                            </div>
+                        )}
                          {cameras.length > 0 && (
                             <div style={{ marginBottom: 10 }}>
                                 {showCameraSelect ? (

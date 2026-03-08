@@ -9,6 +9,8 @@ from .models import AccessControlConfig, AttendanceKioskConfig, KioskDevice, Emp
 from apps.core.models import Zone
 from .services.access_control_service import AccessControlService
 from django.core.signing import TimestampSigner
+from django.core.cache import cache
+from django.utils import timezone
 
 
 class AccessControlConsumer(AsyncWebsocketConsumer):
@@ -162,6 +164,7 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
             self.channel_name
         )
         await self.accept()
+        await self.mark_ws_heartbeat(True)
         self.kiosk_task = asyncio.create_task(self.kiosk_lifecycle())
 
     async def disconnect(self, close_code):
@@ -169,6 +172,8 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
             self.kiosk_task.cancel()
         if self.rotation_task:
             self.rotation_task.cancel()
+        await self.release_controller_owner()
+        await self.mark_ws_heartbeat(False)
         
         await self.channel_layer.group_discard(
             "attendance_kiosk_broadcast",
@@ -194,6 +199,7 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
     async def rotate_qr_loop(self, user):
         try:
             while True:
+                await self.set_controller_owner(user.id, self.channel_name)
                 allowed_device_ids = await self.get_allowed_kiosks_for_user(user)
                 for dev_id in allowed_device_ids:
                     identity_token = await self.generate_identity_token_for_id(dev_id)
@@ -217,9 +223,26 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
     async def receive(self, text_data):
         try:
             data = json.loads(text_data)
+            message_type = data.get('type')
+
+            await self.mark_ws_heartbeat(True)
+
+            if message_type == 'ping':
+                await self.send(text_data=json.dumps({
+                    'type': 'pong'
+                }))
+                return
             
-            if data.get('type') == 'request_qr':
+            if message_type == 'request_qr':
                 print(f"[KIOSK_DEBUG] request_qr from {self.scope.get('user')} (DeviceID: {self.device_id})")
+                user = self.scope.get('user')
+
+                if not self.device_id and user and user.is_authenticated:
+                    owner = await self.get_controller_owner(user.id)
+                    if owner and owner != self.channel_name:
+                        return
+                    await self.set_controller_owner(user.id, self.channel_name)
+
                 token = await self.generate_kiosk_token()
                 user_name = data.get('user_name', 'Felhasználó')
                 
@@ -231,7 +254,6 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
                 }))
 
                 # Broadcast to relevant Kiosks if request comes from a controller (Phone)
-                user = self.scope.get('user')
                 if not self.device_id and user and user.is_authenticated:
                     # Cancel existing task if any
                     if self.rotation_task:
@@ -240,11 +262,12 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
                     # Start Rotation Loop
                     self.rotation_task = asyncio.create_task(self.rotate_qr_loop(user))
 
-            elif data.get('type') == 'stop_qr':
+            elif message_type == 'stop_qr':
                 # Stop Rotation Loop
                 if self.rotation_task:
                     self.rotation_task.cancel()
                     self.rotation_task = None
+                await self.release_controller_owner()
                 
                 # Broadcast stop_qr to all kiosks that received show_qr
                 user = self.scope.get('user')
@@ -279,11 +302,16 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
 
     # Receive message from user controller group
     async def controller_message(self, event):
-        if event['message'].get('type') == 'stop_rotation':
-             if self.rotation_task:
-                 print(f"[KIOSK_DEBUG] Stopping rotation task for {self.scope.get('user')}")
-                 self.rotation_task.cancel()
-                 self.rotation_task = None
+        msg = event.get('message') or {}
+        if msg.get('type') == 'stop_rotation':
+            owner_channel = msg.get('owner_channel')
+            if owner_channel and owner_channel == self.channel_name:
+                return
+            if self.rotation_task:
+                print(f"[KIOSK_DEBUG] Stopping rotation task for {self.scope.get('user')}")
+                self.rotation_task.cancel()
+                self.rotation_task = None
+            await self.release_controller_owner()
 
     @database_sync_to_async
     def get_allowed_kiosks_for_user(self, user):
@@ -326,7 +354,38 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
     # Receive message from room group
     async def kiosk_message(self, event):
         # Send message to WebSocket
+        await self.mark_ws_heartbeat(True)
         await self.send(text_data=json.dumps(event['message']))
+
+    @database_sync_to_async
+    def mark_ws_heartbeat(self, is_connected=True):
+        if not self.device_id:
+            return
+        base_key = f"kiosk_ws:{self.device_id}"
+        if is_connected:
+            now_iso = timezone.now().isoformat()
+            cache.set(f"{base_key}:connected", True, timeout=90)
+            cache.set(f"{base_key}:last_seen", now_iso, timeout=600)
+        else:
+            cache.set(f"{base_key}:connected", False, timeout=90)
+
+    @database_sync_to_async
+    def get_controller_owner(self, user_id):
+        return cache.get(f"kiosk_qr_owner:{user_id}")
+
+    @database_sync_to_async
+    def set_controller_owner(self, user_id, channel_name):
+        cache.set(f"kiosk_qr_owner:{user_id}", channel_name, timeout=60)
+
+    @database_sync_to_async
+    def release_controller_owner(self):
+        user = self.scope.get('user')
+        if self.device_id or not user or not user.is_authenticated:
+            return
+        key = f"kiosk_qr_owner:{user.id}"
+        owner = cache.get(key)
+        if owner == self.channel_name:
+            cache.delete(key)
 
     @database_sync_to_async
     def get_config(self):
@@ -343,8 +402,11 @@ class AttendanceKioskConsumer(AsyncWebsocketConsumer):
         try:
             # print("[KioskWS] Starting lifecycle loop")
             while True:
-                # Keep connection alive with heartbeat
-                await asyncio.sleep(60) 
+                # Periodic server-side heartbeat helps intermediaries keep WS alive.
+                await asyncio.sleep(25)
+                await self.send(text_data=json.dumps({
+                    'type': 'heartbeat'
+                }))
                 
                 # PREVIOUS LOGIC: Rotating Identity QR
                 # We disable this for "On Demand" mode where Kiosk shows Logo by default.

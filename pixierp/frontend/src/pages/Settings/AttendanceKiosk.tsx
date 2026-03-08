@@ -19,6 +19,8 @@ interface KioskDevice {
     name: string;
     status: 'pending' | 'approved' | 'blocked';
     last_seen: string;
+    ws_connected?: boolean;
+    ws_last_seen?: string;
     ip_address?: string;
     zones: number[];
 }
@@ -35,6 +37,31 @@ const AttendanceKiosk: React.FC = () => {
 
     // Identify State
     const [identifyingIds, setIdentifyingIds] = useState<number[]>([]);
+    const [heartbeatNow, setHeartbeatNow] = useState<number>(Date.now());
+
+    useEffect(() => {
+        const ticker = setInterval(() => setHeartbeatNow(Date.now()), 5000);
+        return () => clearInterval(ticker);
+    }, []);
+
+    const getWsHeartbeat = (record: KioskDevice) => {
+        const last = record.ws_last_seen ? moment(record.ws_last_seen) : null;
+        const secondsAgo = last ? Math.max(0, Math.floor((heartbeatNow - last.valueOf()) / 1000)) : null;
+
+        if (record.status !== 'approved') {
+            return { badge: 'default' as const, text: 'N/A', hint: 'Nincs engedélyezve' };
+        }
+        if (!last) {
+            return { badge: 'default' as const, text: 'Nincs jel', hint: 'Még nem érkezett WS heartbeat' };
+        }
+        if (record.ws_connected && secondsAgo !== null && secondsAgo <= 30) {
+            return { badge: 'success' as const, text: `Él (${secondsAgo} mp)`, hint: `Utolsó WS heartbeat: ${last.format('YYYY-MM-DD HH:mm:ss')}` };
+        }
+        if (secondsAgo !== null && secondsAgo <= 90) {
+            return { badge: 'warning' as const, text: `Akadozó (${secondsAgo} mp)`, hint: `Utolsó WS heartbeat: ${last.format('YYYY-MM-DD HH:mm:ss')}` };
+        }
+        return { badge: 'error' as const, text: secondsAgo !== null ? `Offline (${secondsAgo} mp)` : 'Offline', hint: last ? `Utolsó WS heartbeat: ${last.format('YYYY-MM-DD HH:mm:ss')}` : 'Nincs heartbeat időpont' };
+    };
 
     const fetchDevices = async () => {
         setLoading(true);
@@ -204,6 +231,18 @@ const AttendanceKiosk: React.FC = () => {
             dataIndex: 'last_seen',
             key: 'last_seen',
             render: (val: string) => val ? moment(val).format('YYYY-MM-DD HH:mm:ss') : '-'
+        },
+        {
+            title: 'WS Heartbeat',
+            key: 'ws_heartbeat',
+            render: (_: any, record: KioskDevice) => {
+                const hb = getWsHeartbeat(record);
+                return (
+                    <Tooltip title={hb.hint}>
+                        <Badge status={hb.badge} text={hb.text} />
+                    </Tooltip>
+                );
+            }
         },
         {
             title: 'Műveletek',

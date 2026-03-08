@@ -5832,10 +5832,49 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
             
-            # Force paid if model says so
-            if getattr(r, 'payment_status', '') == 'paid':
+            # Keep model paid state only if there is payment evidence.
+            # This self-heals stale rows where a payment batch was already deleted earlier.
+            try:
+                tol = decimal.Decimal('0.005')
+                has_payment_evidence = (
+                    (paid_amount > tol)
+                    or (bank_paid_amount > tol)
+                    or payment_method in ['card', 'cash', 'voucher', 'other', 'utanvet']
+                )
+            except Exception:
+                has_payment_evidence = payment_method in ['card', 'cash', 'voucher', 'other', 'utanvet']
+
+            model_payment_status = str(getattr(r, 'payment_status', '') or '').lower()
+            if model_payment_status == 'paid' and has_payment_evidence:
                 is_paid = True
                 remaining_amount = decimal.Decimal('0')
+            elif model_payment_status in ('paid', 'partially_paid') and not has_payment_evidence:
+                is_paid = False
+                is_partial = False
+                payment_date = None
+                try:
+                    if gross_val is not None:
+                        remaining_amount = gross_val
+                except Exception:
+                    pass
+                try:
+                    update_fields = []
+                    if r.payment_status != 'unpaid':
+                        r.payment_status = 'unpaid'
+                        update_fields.append('payment_status')
+                    if r.payment_date is not None:
+                        r.payment_date = None
+                        update_fields.append('payment_date')
+                    if decimal.Decimal(str(r.amount_paid or 0)) != decimal.Decimal('0'):
+                        r.amount_paid = decimal.Decimal('0')
+                        update_fields.append('amount_paid')
+                    if r.payment_reference:
+                        r.payment_reference = None
+                        update_fields.append('payment_reference')
+                    if update_fields:
+                        r.save(update_fields=update_fields)
+                except Exception:
+                    pass
 
             # payment display date: NAV/issue for instant methods, mark-paid date or last payment for transfers
             payment_display_date = None
@@ -6082,6 +6121,25 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     uniq.append(d)
             return uniq
 
+        proforma_number = None
+        proforma_label_patterns = [
+            r'(?:d[ií]jbek[eé]r[őo](?:\s*sz[aá]m[aá]?)?|proforma(?:\s*invoice)?(?:\s*number)?|el[őo]legbek[eé]r[őo](?:\s*sz[aá]m[aá]?)?)\s*[:#]?\s*([A-Z0-9](?=[A-Z0-9\/_\-.]*\d)[A-Z0-9\/_\-.]{3,40})',
+        ]
+        proforma_number = _find_in_lines(proforma_label_patterns)
+        if not proforma_number:
+            for ln in lines:
+                if not re.search(r'(d[ií]jbek[eé]r|proforma|el[őo]legbek[eé]r)', ln, flags=re.IGNORECASE):
+                    continue
+                candidates = re.findall(r'\b([A-Z0-9][A-Z0-9\/_\-.]{4,40})\b', ln.upper())
+                for cand in candidates:
+                    if re.fullmatch(r'[0-9\-]+', cand):
+                        continue
+                    if re.search(r'[0-9]', cand):
+                        proforma_number = cand
+                        break
+                if proforma_number:
+                    break
+
         invoice_number = None
         inv_label_patterns = [
             r'(?:sz[aá]mla(?:\s*sz[aá]m[aá]?)?|invoice(?:\s*number)?|fakt[uú]ra|cislo\s*faktury|č[ií]slo\s*fakt[úu]ry)\s*[:#]?\s*([A-Z0-9](?=[A-Z0-9\/_\-.]*\d)[A-Z0-9\/_\-.]{3,40})',
@@ -6100,6 +6158,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         break
                 if invoice_number:
                     break
+
+        if not invoice_number and proforma_number:
+            invoice_number = proforma_number
 
         issue_raw = _find_labelled_date([
             r'ki[aá]ll[ií]t[aá]s\s*d[aá]tuma', r'sz[aá]mla\s*kelte', r'kelt(?:ez[eé]s)?', r'invoice\s*date',
@@ -6130,9 +6191,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if issue_date and due_date and due_date < issue_date:
             issue_date, due_date = due_date, issue_date
 
-        supplier_marker = re.compile(r'(?:\bsz[aá]ll[ií]t[oó]\b|\bsupplier\b|\bseller\b|\bdod[aá]vate[ľl]\b|\bpred[aá]vaj[úu]ci\b|\belad[oó]\b)', re.IGNORECASE)
+        supplier_marker = re.compile(r'(?:\bsz[aá]ll[ií]t[oó]\b|\bsz[aá]mlakibocs[aá]t[oó]\b|\bkibocs[aá]t[oó]\b|\bissuer\b|\bsupplier\b|\bseller\b|\bsprzedawc[ay]\b|\bvystavitel\b|\bvystavovatel\b|\bdod[aá]vate[ľl]\b|\bdodavatel\b|\bpred[aá]vaj[úu]ci\b|\bpredavajuci\b|\belad[oó]\b)', re.IGNORECASE)
         buyer_marker = re.compile(r'(vev[őo]|buyer|customer|odberate[ľl]|el[őo]fizet[őo])', re.IGNORECASE)
-        tax_pat = re.compile(r'\b([A-Z]{2}\s*[A-Z0-9]{8,14}|[0-9]{8}(?:-[0-9]{1,2}-[0-9]{1,2})?)\b', re.IGNORECASE)
+        # Require at least one digit in prefixed tax IDs to avoid false positives like street names.
+        tax_pat = re.compile(r'\b([A-Z]{2}\s*(?=[A-Z0-9]*\d)[A-Z0-9]{8,14}|[0-9]{8}(?:-[0-9]{1,2}-[0-9]{1,2})?)\b', re.IGNORECASE)
 
         supplier_windows = []
         buyer_windows = []
@@ -6146,7 +6208,54 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         supplier_windows = set(supplier_windows)
         buyer_windows = set(buyer_windows)
 
+        # Explicit section parsing: extract lines under Seller/Supplier-like headers.
+        supplier_block = []
+        supplier_section_re = re.compile(r'^\s*(seller|supplier|sprzedawc[ay]|issuer|vystavitel|vystavovatel|sz[aá]ll[ií]t[oó]|sz[aá]mlakibocs[aá]t[oó]|kibocs[aá]t[oó]|dod[aá]vate[ľl]|dodavatel)\s*:?\s*(.*)$', re.IGNORECASE)
+        stop_section_re = re.compile(r'^\s*(buyer|customer|vev[őo]|el[őo]fizet[őo]|odberate[ľl])\s*:?', re.IGNORECASE)
+        table_start_re = re.compile(r'(commercial\s*invoice|nr\s+code\s+product|mennyis[eé]g|egys[eé]g[aá]r|[aá]r\s*o?sszesen|total\s*:)', re.IGNORECASE)
+        for idx, ln in enumerate(lines):
+            msec = supplier_section_re.match(str(ln or ''))
+            if not msec:
+                continue
+            inline = str(msec.group(2) or '').strip(' :;-')
+            if inline:
+                supplier_block.append(inline)
+            for j in range(idx + 1, min(len(lines), idx + 12)):
+                row = str(lines[j] or '').strip()
+                if not row:
+                    continue
+                if stop_section_re.search(row) or table_start_re.search(row):
+                    break
+                supplier_block.append(row)
+            if supplier_block:
+                break
+
         supplier_tax_number = None
+        if supplier_block:
+            block_text = ' '.join(supplier_block)
+            m_block_tax = tax_pat.search(block_text)
+            if m_block_tax:
+                supplier_tax_number = re.sub(r'\s+', '', (m_block_tax.group(1) or '').strip()).upper()
+
+        # First pass: explicit labelled supplier/issuer tax lines (most reliable on invoice-like layouts)
+        for idx, ln in enumerate(lines):
+            line = str(ln or '').strip()
+            if not line:
+                continue
+            if buyer_marker.search(line):
+                continue
+            has_supplier_ctx = bool(supplier_marker.search(line))
+            has_tax_label = bool(re.search(r'(ad[oó]sz[aá]m|tax\s*number|vat(?:\s*number)?|i[čc]\s*dph|di[čc])', line, flags=re.IGNORECASE))
+            if not has_tax_label:
+                continue
+            local_window = ' '.join(lines[idx:min(len(lines), idx + 2)])
+            if not has_supplier_ctx and not supplier_marker.search(local_window):
+                continue
+            m_tax = tax_pat.search(local_window)
+            if m_tax:
+                supplier_tax_number = re.sub(r'\s+', '', (m_tax.group(1) or '').strip()).upper()
+                break
+
         scored_taxes = []
         for idx, ln in enumerate(lines):
             has_supplier_marker = bool(supplier_marker.search(ln))
@@ -6167,13 +6276,25 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if re.search(r'(ksh\s*[aá]fa|ksh-sz|el[őo]fizet[őo]|vev[őo]|buyer|customer)', ln, flags=re.IGNORECASE):
                     score -= 3
                 scored_taxes.append((score, tax))
-        if scored_taxes:
+        if (not supplier_tax_number) and scored_taxes:
             scored_taxes.sort(key=lambda x: (x[0], len(x[1])), reverse=True)
             best_score, best_tax = scored_taxes[0]
             if best_score > 0:
                 supplier_tax_number = best_tax
 
         supplier_name = None
+        if supplier_block:
+            for row in supplier_block:
+                candidate = str(row or '').strip(' ,.;:-')
+                if not candidate or len(candidate) < 3:
+                    continue
+                if re.search(r'(ad[oó]sz[aá]m|tax|ksh|iban|swift|dic|i[čc]\s*dph|telef[oó]n|fax|bank|bdo)', candidate, flags=re.IGNORECASE):
+                    continue
+                if re.search(r'\b[0-9]{3,}\b', candidate):
+                    continue
+                supplier_name = candidate
+                break
+
         for idx, ln in enumerate(lines):
             if idx not in supplier_windows:
                 continue
@@ -6288,7 +6409,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             suggested_vat_rate = min(common, key=lambda c: abs(c - best))
 
         extracted_items = []
-        item_start_re = re.compile(r'^\s*(\d{1,3})\.\s+([A-Z0-9\-_./]{3,40})\s+(.+?)\s*$', re.IGNORECASE)
+        item_keys = set()
+        amount_token_ocr = r'(?:[0-9]{1,3}(?:[\s\u00A0][0-9]{3})+|[0-9]+)(?:[.,][0-9]{2})'
+        item_start_re = re.compile(
+            r'^\s*(?P<idx>\d{1,3})\s*[\.)\-:]\s*(?:(?P<code>[A-Z0-9\-_./]{2,40})\s+)?(?P<desc>.+?)\s*$',
+            re.IGNORECASE,
+        )
+        code_start_re = re.compile(
+            r'^\s*(?P<code>[A-Z0-9\-_./]{4,40})\s+(?P<desc>[A-Za-z].+?)\s*$',
+            re.IGNORECASE,
+        )
         qty_unit_re = re.compile(
             r'^(?P<desc>.+?)\s+(?P<qty>[0-9]+(?:[.,][0-9]+)?)\s+(?P<unit>[0-9][0-9\s.,]{1,20})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?\s*$',
             re.IGNORECASE,
@@ -6305,6 +6435,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         i = 0
         while i < len(lines):
             ln = lines[i]
+            # Prefer explicit indexed rows ("1.", "2)") to avoid false positives
+            # from wrapped descriptive lines.
             if item_start_re.match(ln):
                 block = [ln]
                 j = i + 1
@@ -6312,7 +6444,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     nxt = lines[j]
                     if item_start_re.match(nxt):
                         break
-                    if re.search(r'^\s*TOTAL\s*:', nxt, flags=re.IGNORECASE):
+                    if re.search(r'^\s*(TOTAL\s*:|[oö]sszeg|megt[eé]r[ií]t[eé]snek|[aá]r\s*o?sszesen)\b', nxt, flags=re.IGNORECASE):
                         break
                     block.append(nxt)
                     j += 1
@@ -6325,11 +6457,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             if not block:
                 continue
             m0 = item_start_re.match(block[0])
+            m0_code = code_start_re.match(block[0])
             if not m0:
-                continue
+                if not m0_code:
+                    continue
 
-            item_code = (m0.group(2) or '').strip()
-            base_desc = (m0.group(3) or '').strip()
+            item_code = ((m0.group('code') if m0 else None) or (m0_code.group('code') if m0_code else '') or '').strip()
+            base_desc = ((m0.group('desc') if m0 else None) or (m0_code.group('desc') if m0_code else '') or '').strip()
             block_text = ' '.join(part.strip() for part in block if part and part.strip())
 
             qty = None
@@ -6353,12 +6487,48 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     description = row_desc
                 break
 
+            if qty is None or unit_price is None:
+                # Fallback for wrapped table rows: "... qty unitPrice HUF ..."
+                m_qu = re.search(
+                    rf'(?P<qty>[0-9]+(?:[.,][0-9]+)?)\s+(?P<unit>{amount_token_ocr})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)\b',
+                    block_text,
+                    flags=re.IGNORECASE,
+                )
+                if m_qu:
+                    qty_val = self._incoming_parse_decimal(m_qu.group('qty'))
+                    unit_val = self._incoming_parse_decimal(m_qu.group('unit'))
+                    if qty_val is not None and unit_val is not None:
+                        qty = qty_val
+                        unit_price = unit_val
+
+            if qty is None or unit_price is None:
+                # Last-resort fallback: first plausible qty + price pair in the block.
+                m_qu2 = re.search(
+                    rf'\b(?P<qty>[0-9]+(?:[.,][0-9]+)?)\b\s+\b(?P<unit>{amount_token_ocr})\b',
+                    block_text,
+                )
+                if m_qu2:
+                    qty_val = self._incoming_parse_decimal(m_qu2.group('qty'))
+                    unit_val = self._incoming_parse_decimal(m_qu2.group('unit'))
+                    if qty_val is not None and unit_val is not None and qty_val > 0:
+                        qty = qty_val
+                        unit_price = unit_val
+
             mt = row_totals_re.search(block_text)
             if mt:
                 gross_line = self._incoming_parse_decimal(mt.group('gross'))
                 vat_val = self._incoming_parse_decimal(mt.group('vat_rate'))
                 if vat_val is not None:
                     vat_rate_line = float(vat_val)
+
+            # When OCR column alignment is off, gross may parse as 0.00; recover from largest positive amount in the block.
+            amount_vals = []
+            for raw in re.findall(rf'({amount_token_ocr})', block_text):
+                v = self._incoming_parse_decimal(raw)
+                if v is not None and v > 0:
+                    amount_vals.append(v)
+            if (gross_line is None or gross_line <= 0) and amount_vals:
+                gross_line = max(amount_vals)
 
             if qty is None or unit_price is None:
                 continue
@@ -6369,6 +6539,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     pass
 
             clean_desc = f"{item_code} {description}".strip()
+            dedupe_key = (item_code or '').upper() or clean_desc.upper()
+            if dedupe_key in item_keys:
+                continue
+            item_keys.add(dedupe_key)
             extracted_items.append({
                 'description': clean_desc,
                 'quantity': float(qty),
@@ -6379,8 +6553,48 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'gross_total': (str(gross_line) if gross_line is not None else None),
             })
 
+        # Supplemental pass: only run when primary pass found no valid rows.
+        amount_token = amount_token_ocr
+        row_supp_re = re.compile(
+            rf'^\s*(?P<idx>\d{{1,3}})\.\s+(?:(?P<code>[A-Z0-9\-_./]{{2,40}})\s+)?(?P<desc>.+?)\s+'
+            rf'(?P<qty>[0-9]+(?:[.,][0-9]+)?)\s+(?P<unit>{amount_token})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?\s+'
+            rf'(?P<net>{amount_token})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?\s+'
+            rf'(?P<vat_rate>[0-9]{{1,2}}(?:[.,][0-9]{{1,2}})?)\s*%\s+.*?(?P<gross>{amount_token})\s*(?:HUF|EUR|USD|GBP|PLN|CZK|RON|CHF)?',
+            re.IGNORECASE,
+        )
+
         if not extracted_items:
-            amount_token = r'[0-9]{1,3}(?:[\s\u00A0][0-9]{3})*(?:[.,][0-9]{2})'
+            for i in range(len(lines)):
+                base = str(lines[i] or '').strip()
+                if not item_start_re.match(base):
+                    continue
+                merged = ' '.join(str(lines[j] or '').strip() for j in range(i, min(len(lines), i + 6)) if str(lines[j] or '').strip())
+                ms = row_supp_re.match(merged)
+                if not ms:
+                    continue
+                code = str(ms.group('code') or '').strip()
+                desc = str(ms.group('desc') or '').strip()
+                qty_val = self._incoming_parse_decimal(ms.group('qty'))
+                unit_val = self._incoming_parse_decimal(ms.group('unit'))
+                gross_val = self._incoming_parse_decimal(ms.group('gross'))
+                vat_val = self._incoming_parse_decimal(ms.group('vat_rate'))
+                if qty_val is None or qty_val <= 0 or unit_val is None:
+                    continue
+                dedupe_key = (code or '').upper() or f"{code} {desc}".strip().upper()
+                if dedupe_key in item_keys:
+                    continue
+                item_keys.add(dedupe_key)
+                extracted_items.append({
+                    'description': f"{code} {desc}".strip(),
+                    'quantity': float(qty_val),
+                    'unit_price': float(unit_val),
+                    'vat_rate': float((0 if tax_exempt_hint else (float(vat_val) if vat_val is not None else (suggested_vat_rate or 0)))),
+                    'unit_of_measure': 'db',
+                    'code': code or None,
+                    'gross_total': (str(gross_val) if gross_val is not None else None),
+                })
+
+        if not extracted_items:
             dense_item_re = re.compile(
                 r'^(?P<desc>.+?)\s+(?:(?P<vat_rate>[0-9]{1,2}(?:[.,][0-9]{1,2})?)%\s*)?'
                 rf'(?P<unit>{amount_token})\s+(?P<line_total>{amount_token})'
@@ -6417,6 +6631,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 })
 
         return {
+            'proforma_number': proforma_number,
             'invoice_number': invoice_number,
             'issue_date': issue_date,
             'due_date': due_date,
@@ -13170,8 +13385,90 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['delete'], url_path='delete')
     def delete_batch(self, request, pk=None):
+        from invoices.models import IncomingProforma
         batch = self.get_object()
+        company = batch.company
+        batch_id = batch.id
+        affected_items = list(batch.items.values('invoice_number', 'supplier_tax_number'))
         batch.delete()
+
+        # If a removed batch item has no remaining payment linkage, reset paid markers.
+        instant_methods = {'cash', 'card', 'voucher', 'other', 'utanvet'}
+        seen = set()
+        for raw in affected_items:
+            invoice_number = str(raw.get('invoice_number') or '').strip()
+            supplier_tax_number = str(raw.get('supplier_tax_number') or '').strip()
+            if not invoice_number:
+                continue
+            key = (invoice_number, supplier_tax_number)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            digest_qs = IncomingInvoiceDigest.objects.filter(company=company, invoice_number=invoice_number)
+            if supplier_tax_number:
+                digest_qs = digest_qs.filter(supplier_tax_number=supplier_tax_number)
+            for digest in digest_qs:
+                other_batch_qs = PaymentBatchItem.objects.filter(
+                    batch__company=company,
+                    invoice_number=digest.invoice_number,
+                ).exclude(batch_id=batch_id)
+                if digest.supplier_tax_number:
+                    other_batch_qs = other_batch_qs.filter(supplier_tax_number=digest.supplier_tax_number)
+                has_other_batch_item = other_batch_qs.exists()
+                has_bank_item = BankStatementItem.objects.filter(
+                    bank_statement__company=company,
+                    incoming_invoice=digest,
+                ).exists()
+                if has_other_batch_item or has_bank_item:
+                    continue
+
+                payment_method = str(digest.payment_method or '').strip().lower()
+                if payment_method in instant_methods:
+                    continue
+
+                update_fields = []
+                if digest.payment_date is not None:
+                    digest.payment_date = None
+                    update_fields.append('payment_date')
+                if str(digest.payment_status or '').lower() in ('paid', 'partially_paid'):
+                    digest.payment_status = 'unpaid'
+                    update_fields.append('payment_status')
+                if decimal.Decimal(str(digest.amount_paid or 0)) != decimal.Decimal('0'):
+                    digest.amount_paid = decimal.Decimal('0')
+                    update_fields.append('amount_paid')
+                if digest.payment_reference:
+                    digest.payment_reference = None
+                    update_fields.append('payment_reference')
+                if update_fields:
+                    digest.save(update_fields=update_fields)
+
+            proforma_qs = IncomingProforma.objects.filter(company=company, proforma_number=invoice_number)
+            if supplier_tax_number:
+                proforma_qs = proforma_qs.filter(supplier_tax_number=supplier_tax_number)
+            for proforma in proforma_qs:
+                other_batch_qs = PaymentBatchItem.objects.filter(
+                    batch__company=company,
+                    invoice_number=proforma.proforma_number,
+                ).exclude(batch_id=batch_id)
+                if proforma.supplier_tax_number:
+                    other_batch_qs = other_batch_qs.filter(supplier_tax_number=proforma.supplier_tax_number)
+                if other_batch_qs.exists():
+                    continue
+
+                p_update = []
+                if proforma.status == 'paid':
+                    proforma.status = 'unpaid'
+                    p_update.append('status')
+                if proforma.payment_date is not None:
+                    proforma.payment_date = None
+                    p_update.append('payment_date')
+                if decimal.Decimal(str(proforma.amount_paid or 0)) != decimal.Decimal('0'):
+                    proforma.amount_paid = decimal.Decimal('0')
+                    p_update.append('amount_paid')
+                if p_update:
+                    proforma.save(update_fields=p_update)
+
         return Response({'success': True})
 
     @action(detail=False, methods=['post'], url_path='list-pending')
@@ -13283,9 +13580,6 @@ class IncomingProformaViewSet(viewsets.ViewSet):
         if err:
             return err
         qs = IncomingProforma.objects.filter(company=company)
-        status_filter = data.get('status') or ''
-        if status_filter and status_filter != 'all':
-            qs = qs.filter(status=status_filter)
         search = data.get('search') or ''
         if search:
             qs = qs.filter(
@@ -13293,6 +13587,95 @@ class IncomingProformaViewSet(viewsets.ViewSet):
                 Q(supplier_name__icontains=search) |
                 Q(supplier_tax_number__icontains=search)
             )
+
+        # Self-heal stale paid statuses: when no completed batch item backs the proforma,
+        # keep transfer-based proformas unpaid. This also fixes already-deleted historic batches.
+        try:
+            instant_methods = {'CASH', 'CARD', 'VOUCHER', 'OTHER', 'UTANVET'}
+            stale_rows = list(
+                qs.filter(status__in=['paid', 'invoiced'])
+                .only('id', 'proforma_number', 'supplier_tax_number', 'payment_method', 'status', 'payment_date', 'amount_paid', 'gross_amount')
+                .prefetch_related('invoice_links')
+            )
+            invoice_numbers = {str(p.proforma_number or '').strip() for p in stale_rows if str(p.proforma_number or '').strip()}
+            item_keys = set()
+            if invoice_numbers:
+                item_values = PaymentBatchItem.objects.filter(
+                    batch__company=company,
+                    invoice_number__in=list(invoice_numbers),
+                ).exclude(batch__status='PENDING').values('invoice_number', 'supplier_tax_number')
+                item_keys = {
+                    (
+                        str(v.get('invoice_number') or '').strip(),
+                        str(v.get('supplier_tax_number') or '').strip(),
+                    )
+                    for v in item_values
+                }
+
+            for p in stale_rows:
+                inv_no = str(p.proforma_number or '').strip()
+                supp_tax = str(p.supplier_tax_number or '').strip()
+                if not inv_no:
+                    continue
+
+                try:
+                    gross = decimal.Decimal(str(p.gross_amount or 0))
+                except Exception:
+                    gross = decimal.Decimal('0')
+                allocated = decimal.Decimal('0')
+                for lnk in p.invoice_links.all():
+                    try:
+                        allocated += decimal.Decimal(str(lnk.allocated_amount or 0))
+                    except Exception:
+                        continue
+                fully_covered = allocated >= (gross - decimal.Decimal('0.005'))
+
+                pm = str(p.payment_method or '').upper()
+                if supp_tax:
+                    # When proforma has supplier tax number, accept only exact tax-number match.
+                    has_batch_payment = ((inv_no, supp_tax) in item_keys)
+                else:
+                    # Without tax number we can only match by invoice/proforma number.
+                    has_batch_payment = any(k[0] == inv_no for k in item_keys)
+
+                target_status = p.status
+                target_payment_date = p.payment_date
+                target_amount_paid = p.amount_paid
+
+                if fully_covered:
+                    target_status = 'invoiced'
+                elif pm in instant_methods or has_batch_payment:
+                    target_status = 'paid'
+                    if target_amount_paid is None or decimal.Decimal(str(target_amount_paid or 0)) <= decimal.Decimal('0'):
+                        target_amount_paid = gross
+                else:
+                    target_status = 'unpaid'
+                    target_payment_date = None
+                    target_amount_paid = decimal.Decimal('0')
+
+                update_fields = []
+                if p.status != target_status:
+                    p.status = target_status
+                    update_fields.append('status')
+                if p.payment_date != target_payment_date:
+                    p.payment_date = target_payment_date
+                    update_fields.append('payment_date')
+                try:
+                    current_amount_paid = decimal.Decimal(str(p.amount_paid or 0))
+                    desired_amount_paid = decimal.Decimal(str(target_amount_paid or 0))
+                    if current_amount_paid != desired_amount_paid:
+                        p.amount_paid = desired_amount_paid
+                        update_fields.append('amount_paid')
+                except Exception:
+                    pass
+                if update_fields:
+                    p.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+        except Exception:
+            pass
+
+        status_filter = data.get('status') or ''
+        if status_filter and status_filter != 'all':
+            qs = qs.filter(status=status_filter)
         page = max(1, int(data.get('page', 1) or 1))
         page_size = min(500, max(10, int(data.get('page_size', 50) or 50)))
         total = qs.count()
@@ -13321,6 +13704,8 @@ class IncomingProformaViewSet(viewsets.ViewSet):
     def create_proforma(self, request):
         from invoices.models import IncomingProforma
         import decimal
+        import datetime
+        from django.db import DataError, IntegrityError
         data = request.data or {}
         company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         company, err = self._get_company(company_id, request)
@@ -13329,6 +13714,26 @@ class IncomingProformaViewSet(viewsets.ViewSet):
         proforma_number = str(data.get('proforma_number') or '').strip()
         if not proforma_number:
             return Response({'error': 'Díjbekérő száma kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        def txt(v, max_len=None):
+            val = str(v or '').strip()
+            if not val:
+                return None
+            if max_len:
+                return val[:max_len]
+            return val
+
+        def parse_date(v):
+            val = str(v or '').strip()
+            if not val:
+                return None
+            for fmt in ('%Y-%m-%d', '%Y.%m.%d', '%Y/%m/%d', '%d.%m.%Y', '%d/%m/%Y', '%d-%m-%Y', '%Y%m%d'):
+                try:
+                    return datetime.datetime.strptime(val, fmt).date()
+                except Exception:
+                    continue
+            return None
+
         def d(v):
             try:
                 return decimal.Decimal(str(v or 0))
@@ -13337,23 +13742,26 @@ class IncomingProformaViewSet(viewsets.ViewSet):
         net = d(data.get('net_amount', 0))
         vat = d(data.get('vat_amount', 0))
         gross = d(data.get('gross_amount', 0)) or (net + vat)
-        p = IncomingProforma.objects.create(
-            company=company,
-            proforma_number=proforma_number,
-            supplier_tax_number=str(data.get('supplier_tax_number') or '').strip() or None,
-            supplier_name=str(data.get('supplier_name') or '').strip() or None,
-            issue_date=data.get('issue_date') or None,
-            due_date=data.get('due_date') or None,
-            delivery_date=data.get('delivery_date') or None,
-            payment_method=str(data.get('payment_method') or 'TRANSFER').strip().upper(),
-            currency=str(data.get('currency') or 'HUF').strip().upper(),
-            exchange_rate=d(data.get('exchange_rate') or 1) or decimal.Decimal('1'),
-            net_amount=net,
-            vat_amount=vat,
-            gross_amount=gross,
-            comment=str(data.get('comment') or '').strip() or None,
-            status='unpaid',
-        )
+        try:
+            p = IncomingProforma.objects.create(
+                company=company,
+                proforma_number=txt(proforma_number, 100),
+                supplier_tax_number=txt(data.get('supplier_tax_number'), 30),
+                supplier_name=txt(data.get('supplier_name'), 300),
+                issue_date=parse_date(data.get('issue_date')),
+                due_date=parse_date(data.get('due_date')),
+                delivery_date=parse_date(data.get('delivery_date')),
+                payment_method=(txt(data.get('payment_method') or 'TRANSFER', 30) or 'TRANSFER').upper(),
+                currency=(txt(data.get('currency') or 'HUF', 10) or 'HUF').upper(),
+                exchange_rate=d(data.get('exchange_rate') or 1) or decimal.Decimal('1'),
+                net_amount=net,
+                vat_amount=vat,
+                gross_amount=gross,
+                comment=txt(data.get('comment')),
+                status='unpaid',
+            )
+        except (DataError, IntegrityError) as e:
+            return Response({'error': f'Érvénytelen adat: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self._proforma_to_dict(p), status=status.HTTP_201_CREATED)
 
     # ── update ───────────────────────────────────────────────────────────
@@ -13361,6 +13769,8 @@ class IncomingProformaViewSet(viewsets.ViewSet):
     def update_proforma(self, request):
         from invoices.models import IncomingProforma
         import decimal
+        import datetime
+        from django.db import DataError, IntegrityError
         data = request.data or {}
         company_id = data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         company, err = self._get_company(company_id, request)
@@ -13373,6 +13783,26 @@ class IncomingProformaViewSet(viewsets.ViewSet):
             p = IncomingProforma.objects.get(id=proforma_id, company=company)
         except IncomingProforma.DoesNotExist:
             return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        def txt(v, max_len=None):
+            val = str(v or '').strip()
+            if not val:
+                return None
+            if max_len:
+                return val[:max_len]
+            return val
+
+        def parse_date(v, fallback=None):
+            if v in (None, ''):
+                return fallback
+            val = str(v or '').strip()
+            for fmt in ('%Y-%m-%d', '%Y.%m.%d', '%Y/%m/%d', '%d.%m.%Y', '%d/%m/%Y', '%d-%m-%Y', '%Y%m%d'):
+                try:
+                    return datetime.datetime.strptime(val, fmt).date()
+                except Exception:
+                    continue
+            return fallback
+
         def d(v):
             try:
                 return decimal.Decimal(str(v or 0))
@@ -13384,20 +13814,23 @@ class IncomingProformaViewSet(viewsets.ViewSet):
         fields = ['proforma_number', 'supplier_tax_number', 'supplier_name', 'issue_date', 'due_date',
                   'delivery_date', 'payment_method', 'currency', 'exchange_rate', 'net_amount', 'vat_amount',
                   'gross_amount', 'comment', 'updated_at']
-        p.proforma_number = str(data.get('proforma_number') or p.proforma_number).strip()
-        p.supplier_tax_number = str(data.get('supplier_tax_number') or '').strip() or None
-        p.supplier_name = str(data.get('supplier_name') or '').strip() or None
-        p.issue_date = data.get('issue_date') or p.issue_date
-        p.due_date = data.get('due_date') or p.due_date
-        p.delivery_date = data.get('delivery_date') or None
-        p.payment_method = str(data.get('payment_method') or p.payment_method or 'TRANSFER').strip().upper()
-        p.currency = str(data.get('currency') or p.currency or 'HUF').strip().upper()
+        p.proforma_number = txt(data.get('proforma_number') or p.proforma_number, 100)
+        p.supplier_tax_number = txt(data.get('supplier_tax_number'), 30)
+        p.supplier_name = txt(data.get('supplier_name'), 300)
+        p.issue_date = parse_date(data.get('issue_date'), p.issue_date)
+        p.due_date = parse_date(data.get('due_date'), p.due_date)
+        p.delivery_date = parse_date(data.get('delivery_date'), None)
+        p.payment_method = (txt(data.get('payment_method') or p.payment_method or 'TRANSFER', 30) or 'TRANSFER').upper()
+        p.currency = (txt(data.get('currency') or p.currency or 'HUF', 10) or 'HUF').upper()
         p.exchange_rate = d(data.get('exchange_rate') or p.exchange_rate or 1)
         p.net_amount = net
         p.vat_amount = vat
         p.gross_amount = gross
-        p.comment = str(data.get('comment') or '').strip() or None
-        p.save(update_fields=fields)
+        p.comment = txt(data.get('comment'))
+        try:
+            p.save(update_fields=fields)
+        except (DataError, IntegrityError) as e:
+            return Response({'error': f'Érvénytelen adat: {str(e)}'}, status=status.HTTP_400_BAD_REQUEST)
         p.refresh_from_db()
         return Response(self._proforma_to_dict(IncomingProforma.objects.prefetch_related('invoice_links', 'documents').get(id=p.id)))
 
@@ -13565,22 +13998,109 @@ class IncomingProformaViewSet(viewsets.ViewSet):
     # ── suggest invoices (by supplier tax number) ─────────────────────
     @action(detail=False, methods=['get', 'post'], url_path='suggest-invoices')
     def suggest_invoices(self, request):
-        from invoices.models import IncomingInvoiceDigest
+        from invoices.models import IncomingInvoiceDigest, IncomingProforma, Customer
+        import unicodedata
         data = request.data if request.method == 'POST' else request.query_params
         company_id = data.get('company_id') or request.query_params.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
         company, err = self._get_company(company_id, request)
         if err:
             return err
+        proforma_id = data.get('proforma_id') or data.get('id')
+        supplier_customer_id = data.get('supplier_customer_id') or data.get('customer_id')
         supplier_tax_number = data.get('supplier_tax_number') or ''
         search = data.get('search') or ''
+
+        proforma_obj = None
+        if proforma_id:
+            try:
+                proforma_obj = IncomingProforma.objects.filter(company=company, id=proforma_id).first()
+            except Exception:
+                proforma_obj = None
+        if proforma_obj and not supplier_tax_number:
+            supplier_tax_number = proforma_obj.supplier_tax_number or ''
+
+        supplier_customer = None
+        if supplier_customer_id:
+            try:
+                supplier_customer = Customer.objects.filter(id=supplier_customer_id).first()
+            except Exception:
+                supplier_customer = None
+        if supplier_customer and not supplier_tax_number:
+            supplier_tax_number = (
+                supplier_customer.tax_number
+                or supplier_customer.full_tax_number
+                or supplier_customer.vat_group_member_tax_number
+                or supplier_customer.eu_tax_number
+                or ''
+            )
+
         qs = IncomingInvoiceDigest.objects.filter(company=company)
         if supplier_tax_number:
             qs = qs.filter(supplier_tax_number__icontains=supplier_tax_number[:8])
+        if proforma_obj and proforma_obj.issue_date:
+            # Only invoices issued after the proforma date should be suggestable for linking.
+            qs = qs.filter(invoice_issue_date__gt=proforma_obj.issue_date)
         if search:
             qs = qs.filter(Q(invoice_number__icontains=search) | Q(supplier_name__icontains=search))
-        qs = qs.order_by('-invoice_issue_date')[:50]
+
+        # Exclude invoices already linked to this proforma from suggestions.
+        if proforma_obj:
+            linked_numbers = list(proforma_obj.invoice_links.values_list('invoice_number', flat=True))
+            if linked_numbers:
+                qs = qs.exclude(invoice_number__in=linked_numbers)
+
+        qs = qs.order_by('-invoice_issue_date')
+
+        def _digits(v):
+            return ''.join(ch for ch in str(v or '') if ch.isdigit())
+
+        def _norm_name(v):
+            txt = unicodedata.normalize('NFD', str(v or ''))
+            txt = ''.join(ch for ch in txt if unicodedata.category(ch) != 'Mn')
+            txt = ''.join(ch.lower() if ch.isalnum() or ch.isspace() else ' ' for ch in txt)
+            return ' '.join(txt.split())
+
+        crm_tax_digits = set()
+        crm_name_norm = ''
+        if supplier_customer:
+            crm_name_norm = _norm_name(supplier_customer.name)
+            for raw_tax in [
+                supplier_customer.tax_number,
+                supplier_customer.full_tax_number,
+                supplier_customer.vat_group_member_tax_number,
+                supplier_customer.eu_tax_number,
+            ]:
+                d = _digits(raw_tax)
+                if d:
+                    crm_tax_digits.add(d)
+                    if len(d) >= 8:
+                        crm_tax_digits.add(d[:8])
+
+        def _match_supplier_by_crm(inv):
+            if not supplier_customer:
+                return True
+            inv_tax = _digits(inv.supplier_tax_number)
+            inv_tax8 = inv_tax[:8] if len(inv_tax) >= 8 else inv_tax
+
+            if crm_tax_digits:
+                for ct in crm_tax_digits:
+                    if not ct:
+                        continue
+                    if inv_tax and (inv_tax == ct or inv_tax.startswith(ct) or ct.startswith(inv_tax)):
+                        return True
+                    if inv_tax8 and (inv_tax8 == ct or ct.startswith(inv_tax8) or inv_tax8.startswith(ct[:8])):
+                        return True
+                return False
+
+            inv_name = _norm_name(inv.supplier_name)
+            if crm_name_norm and inv_name:
+                return inv_name == crm_name_norm or inv_name in crm_name_norm or crm_name_norm in inv_name
+            return False
+
         results = []
         for inv in qs:
+            if not _match_supplier_by_crm(inv):
+                continue
             gross = float(inv.invoice_net_amount or 0) + float(inv.invoice_vat_amount or 0)
             results.append({
                 'id': str(inv.id),
@@ -13592,24 +14112,43 @@ class IncomingProformaViewSet(viewsets.ViewSet):
                 'currency': (inv.currency or 'HUF').upper(),
                 'status': inv.payment_status or 'unpaid',
             })
+            if len(results) >= 50:
+                break
         return Response({'results': results})
 
     # ── document upload ───────────────────────────────────────────────
     @action(detail=False, methods=['post'], url_path='upload-document')
     def upload_document(self, request):
         from invoices.models import IncomingProforma, IncomingProformaDocument
-        company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
-        company, err = self._get_company(company_id, request)
-        if err:
-            return err
-        proforma_id = request.data.get('proforma_id')
-        file = request.FILES.get('file')
+        proforma_id = (
+            request.data.get('proforma_id')
+            or request.data.get('id')
+            or request.POST.get('proforma_id')
+            or request.POST.get('id')
+            or request.query_params.get('proforma_id')
+            or request.query_params.get('id')
+        )
+        file = (
+            request.FILES.get('file')
+            or request.FILES.get('document')
+            or request.FILES.get('upload')
+            or (next(iter(request.FILES.values())) if request.FILES else None)
+        )
         doc_type = request.data.get('type', 'IMAGE')
         comment = request.data.get('comment', '')
         if not proforma_id or not file:
-            return Response({'error': 'proforma_id és file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({
+                'error': 'proforma_id és file kötelező',
+                'debug': {
+                    'proforma_id': proforma_id,
+                    'data_keys': list(getattr(request, 'data', {}).keys()) if hasattr(request, 'data') else [],
+                    'post_keys': list(getattr(request, 'POST', {}).keys()) if hasattr(request, 'POST') else [],
+                    'file_keys': list(getattr(request, 'FILES', {}).keys()) if hasattr(request, 'FILES') else [],
+                }
+            }, status=status.HTTP_400_BAD_REQUEST)
+
         try:
-            p = IncomingProforma.objects.get(id=proforma_id, company=company)
+            p = IncomingProforma.objects.get(id=proforma_id)
         except IncomingProforma.DoesNotExist:
             return Response({'error': 'Díjbekérő nem található'}, status=status.HTTP_404_NOT_FOUND)
         doc = IncomingProformaDocument.objects.create(
@@ -13664,22 +14203,193 @@ class IncomingProformaViewSet(viewsets.ViewSet):
     # ── OCR parse document (reuse incoming logic) ─────────────────────
     @action(detail=False, methods=['post'], url_path='parse-document')
     def parse_document(self, request):
+        from invoices.models import Customer
+
         company_id = request.data.get('company_id') or (getattr(request, 'company', None) and str(request.company.id))
-        company, err = self._get_company(company_id, request)
-        if err:
-            return err
+        company = None
+        if str(company_id or '').strip().lower() not in ('', 'undefined', 'null'):
+            company, err = self._get_company(company_id, request)
+            if err:
+                return err
         file = request.FILES.get('file')
         if not file:
             return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-        # Reuse InvoiceViewSet's document parsing logic
+
         inv_vs = InvoiceViewSet()
         inv_vs.request = request
-        extracted = inv_vs._incoming_extract_text_from_document(file)
-        if extracted:
-            fields = inv_vs._incoming_extract_fields_from_text(extracted)
+        extracted_text, extract_errors = inv_vs._incoming_extract_text_from_document(file)
+        if not extracted_text:
+            return Response({
+                'success': False,
+                'error': 'Nem sikerült olvasható szöveget kinyerni a fájlból.',
+                'details': extract_errors,
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+        fields = inv_vs._incoming_extract_fields_from_text(extracted_text)
+        if not fields.get('proforma_number'):
+            raw_name = str(getattr(file, 'name', '') or '').strip()
+            stem = re.sub(r'\.[^.]+$', '', raw_name)
+            if stem and re.fullmatch(r'(?=.*[A-Za-z])(?=.*\d)[A-Za-z0-9\/_\-. ]{4,80}', stem):
+                fields['proforma_number'] = stem.strip()
+
+        def _norm_tax(v):
+            return ''.join(ch for ch in str(v or '') if ch.isdigit())
+
+        def _norm_name(v):
+            return re.sub(r'\s+', ' ', str(v or '').strip().lower())
+
+        def _norm_alnum(v):
+            return re.sub(r'[^A-Z0-9]', '', str(v or '').upper())
+
+        def _extract_supplier_contexts(text_value):
+            txt_lines = [str(ln or '').strip() for ln in str(text_value or '').splitlines()]
+            txt_lines = [ln for ln in txt_lines if ln]
+            seller_re = re.compile(r'(seller|supplier|sprzedawc[ay]|issuer|vystavitel|vystavovatel|sz[aá]ll[ií]t[oó]|sz[aá]mlakibocs[aá]t[oó]|kibocs[aá]t[oó]|dod[aá]vate[ľl]|dodavatel)', re.IGNORECASE)
+            buyer_re = re.compile(r'(buyer|customer|vev[őo]|el[őo]fizet[őo]|odberate[ľl])', re.IGNORECASE)
+            table_re = re.compile(r'(commercial\s*invoice|invoice\s*no|nr\s+code\s+product|mennyis[eé]g|egys[eé]g[aá]r|total\s*:|line\s*total)', re.IGNORECASE)
+            contexts = []
+            for i, ln in enumerate(txt_lines):
+                if not seller_re.search(ln):
+                    continue
+                chunk = [ln]
+                for j in range(i + 1, min(len(txt_lines), i + 14)):
+                    row = txt_lines[j]
+                    if buyer_re.search(row) or table_re.search(row):
+                        break
+                    chunk.append(row)
+                contexts.append(' '.join(chunk))
+            return contexts
+
+        def _match_supplier_in_contexts(qs, contexts, full_text):
+            if not contexts:
+                contexts = []
+            context_norm = [_norm_name(c) for c in contexts if c]
+            context_alnum = [_norm_alnum(c) for c in contexts if c]
+            full_norm = _norm_name(full_text)
+            full_alnum = _norm_alnum(full_text)
+            best = None
+            best_score = 0
+            for cand in qs:
+                score = 0
+                cand_name = _norm_name(getattr(cand, 'name', None))
+                cand_tax_raw = [
+                    getattr(cand, 'tax_number', None),
+                    getattr(cand, 'full_tax_number', None),
+                    getattr(cand, 'eu_tax_number', None),
+                    getattr(cand, 'vat_group_member_tax_number', None),
+                ]
+                cand_tax_digits = [_norm_tax(x) for x in cand_tax_raw if x]
+                cand_tax_alnum = [_norm_alnum(x) for x in cand_tax_raw if x]
+
+                for tax in cand_tax_digits:
+                    if len(tax) < 8:
+                        continue
+                    if any(tax in c or c in tax for c in context_alnum if c):
+                        score += 12
+                    elif tax in full_alnum:
+                        score += 5
+                for tax in cand_tax_alnum:
+                    if len(tax) < 8:
+                        continue
+                    if any(tax in c or c in tax for c in context_alnum if c):
+                        score += 10
+                    elif tax in full_alnum:
+                        score += 4
+
+                if cand_name and len(cand_name) >= 4:
+                    if any(cand_name in c or c in cand_name for c in context_norm if c):
+                        score += 6
+                    elif cand_name in full_norm:
+                        score += 2
+
+                if score > best_score:
+                    best_score = score
+                    best = cand
+            return best if best_score >= 6 else None
+
+        def _find_supplier_match(qs):
+            tax_value = _norm_tax(fields.get('supplier_tax_number'))
+            if tax_value:
+                for cand in qs:
+                    cand_nums = [
+                        _norm_tax(getattr(cand, 'tax_number', None)),
+                        _norm_tax(getattr(cand, 'full_tax_number', None)),
+                        _norm_tax(getattr(cand, 'eu_tax_number', None)),
+                        _norm_tax(getattr(cand, 'vat_group_member_tax_number', None)),
+                    ]
+                    cand_nums = [n for n in cand_nums if n]
+                    if any((n == tax_value) or (len(tax_value) >= 8 and n.startswith(tax_value[:8])) or (len(n) >= 8 and tax_value.startswith(n[:8])) for n in cand_nums):
+                        return cand
+
+            name_value = _norm_name(fields.get('supplier_name'))
+            if name_value:
+                by_exact = qs.filter(name__iexact=fields.get('supplier_name')).first()
+                if by_exact:
+                    return by_exact
+                return qs.filter(name__icontains=fields.get('supplier_name')).first()
+            return None
+
+        all_supplier_qs = Customer.objects.filter(is_supplier=True) if hasattr(Customer, 'is_supplier') else Customer.objects.all()
+        if company is not None:
+            company_supplier_qs = _filter_customers_by_companies(all_supplier_qs, [str(company.id)])
+            if not company_supplier_qs.exists():
+                company_supplier_qs = _filter_customers_by_companies(Customer.objects.all(), [str(company.id)])
         else:
-            fields = {}
-        return Response({'success': True, 'fields': fields})
+            company_supplier_qs = Customer.objects.none()
+
+        matched_supplier = _find_supplier_match(company_supplier_qs)
+        if not matched_supplier:
+            matched_supplier = _find_supplier_match(all_supplier_qs)
+        if not matched_supplier:
+            all_customer_qs = Customer.objects.all()
+            if company is not None:
+                company_customer_qs = _filter_customers_by_companies(all_customer_qs, [str(company.id)])
+                matched_supplier = _find_supplier_match(company_customer_qs) or _find_supplier_match(all_customer_qs)
+            else:
+                matched_supplier = _find_supplier_match(all_customer_qs)
+
+        if not matched_supplier:
+            contexts = _extract_supplier_contexts(extracted_text)
+            matched_supplier = _match_supplier_in_contexts(company_supplier_qs, contexts, extracted_text)
+            if not matched_supplier:
+                matched_supplier = _match_supplier_in_contexts(all_supplier_qs, contexts, extracted_text)
+
+        if matched_supplier:
+            if not fields.get('supplier_name'):
+                fields['supplier_name'] = getattr(matched_supplier, 'name', None)
+            if not fields.get('supplier_tax_number'):
+                fields['supplier_tax_number'] = (
+                    getattr(matched_supplier, 'tax_number', None)
+                    or getattr(matched_supplier, 'full_tax_number', None)
+                    or getattr(matched_supplier, 'eu_tax_number', None)
+                    or getattr(matched_supplier, 'vat_group_member_tax_number', None)
+                )
+
+        payload = {
+            'proforma_number': fields.get('proforma_number') or fields.get('invoice_number'),
+            'invoice_number': fields.get('invoice_number') or fields.get('proforma_number'),
+            'issue_date': fields.get('issue_date'),
+            'due_date': fields.get('due_date'),
+            'delivery_date': fields.get('delivery_date'),
+            'supplier_name': fields.get('supplier_name'),
+            'supplier_tax_number': fields.get('supplier_tax_number'),
+            'currency': fields.get('currency') or 'HUF',
+            'payment_method': fields.get('payment_method') or 'transfer',
+            'gross_total': (str(fields['gross_total']) if fields.get('gross_total') is not None else None),
+            'net_total': (str(fields['net_total']) if fields.get('net_total') is not None else None),
+            'vat_total': (str(fields['vat_total']) if fields.get('vat_total') is not None else None),
+            'suggested_vat_rate': fields.get('suggested_vat_rate'),
+            'items': fields.get('items') or [],
+            'matched_supplier_id': (str(matched_supplier.id) if matched_supplier else None),
+            'matched_supplier_name': (matched_supplier.name if matched_supplier else None),
+        }
+
+        return Response({
+            'success': True,
+            'fields': payload,
+            'data': payload,
+            'extract_warnings': extract_errors,
+        })
 
 
 # Backup Management Views
