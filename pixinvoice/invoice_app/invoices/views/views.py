@@ -5507,23 +5507,71 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         supplier_customers_by_tax = {}
         supplier_customers_by_name = {}
+        all_customers_by_tax = {}
+        all_customers_by_name = {}
+
+        def _customer_tax_keys(cust_obj):
+            keys = set()
+            try:
+                tx = _normalize_tax_value(getattr(cust_obj, 'tax_number', ''))
+                if tx:
+                    keys.add(tx)
+            except Exception:
+                pass
+            try:
+                ftx = _normalize_tax_value(getattr(cust_obj, 'full_tax_number', ''))
+                if ftx:
+                    keys.add(ftx)
+                    if len(ftx) >= 8:
+                        keys.add(ftx[:8])
+            except Exception:
+                pass
+            return keys
         if supplier_tax_values or supplier_name_values:
             supplier_candidates = Customer.objects.filter(is_supplier=True)
             if supplier_tax_values and supplier_name_values:
                 supplier_candidates = supplier_candidates.filter(
-                    Q(tax_number__in=list(supplier_tax_values)) | Q(name__in=list(supplier_name_values))
+                    Q(tax_number__in=list(supplier_tax_values))
+                    | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(name__in=list(supplier_name_values))
                 )
             elif supplier_tax_values:
-                supplier_candidates = supplier_candidates.filter(tax_number__in=list(supplier_tax_values))
+                supplier_candidates = supplier_candidates.filter(
+                    Q(tax_number__in=list(supplier_tax_values))
+                    | Q(full_tax_number__in=list(supplier_tax_values))
+                )
             else:
                 supplier_candidates = supplier_candidates.filter(name__in=list(supplier_name_values))
             for c in supplier_candidates:
-                tax_key = _normalize_tax_value(getattr(c, 'tax_number', ''))
-                if tax_key and tax_key not in supplier_customers_by_tax:
-                    supplier_customers_by_tax[tax_key] = c
+                for tax_key in _customer_tax_keys(c):
+                    if tax_key and tax_key not in supplier_customers_by_tax:
+                        supplier_customers_by_tax[tax_key] = c
                 name_key = str(getattr(c, 'name', '') or '').strip().lower()
                 if name_key and name_key not in supplier_customers_by_name:
                     supplier_customers_by_name[name_key] = c
+
+            all_candidates = Customer.objects.all()
+            if supplier_tax_values and supplier_name_values:
+                all_candidates = all_candidates.filter(
+                    Q(tax_number__in=list(supplier_tax_values))
+                    | Q(full_tax_number__in=list(supplier_tax_values))
+                    | Q(name__in=list(supplier_name_values))
+                )
+            elif supplier_tax_values:
+                all_candidates = all_candidates.filter(
+                    Q(tax_number__in=list(supplier_tax_values))
+                    | Q(full_tax_number__in=list(supplier_tax_values))
+                )
+            else:
+                all_candidates = all_candidates.filter(name__in=list(supplier_name_values))
+
+            for c in all_candidates:
+                for tax_key in _customer_tax_keys(c):
+                    if tax_key and tax_key not in all_customers_by_tax:
+                        all_customers_by_tax[tax_key] = c
+                name_key = str(getattr(c, 'name', '') or '').strip().lower()
+                if name_key and name_key not in all_customers_by_name:
+                    all_customers_by_name[name_key] = c
 
         supplier_bank_accounts_by_customer_id = {}
         if supplier_customers_by_tax or supplier_customers_by_name:
@@ -5693,6 +5741,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 return None
 
         fetched_due_cache = {}
+        supplier_promoted_ids = set()
 
         def fetch_due_date_from_nav(inv_number, supplier_tax_number=None, digest_index=None, allow_network=True):
             key = f"{inv_number}|{supplier_tax_number or ''}"
@@ -5875,6 +5924,26 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 supplier_customer = supplier_customers_by_tax.get(supplier_tax_key)
             if not supplier_customer and supplier_name_key:
                 supplier_customer = supplier_customers_by_name.get(supplier_name_key)
+            if not supplier_customer and supplier_tax_key:
+                supplier_customer = all_customers_by_tax.get(supplier_tax_key)
+            if not supplier_customer and supplier_name_key:
+                supplier_customer = all_customers_by_name.get(supplier_name_key)
+
+            # If an existing customer appears as issuer on incoming invoices,
+            # ensure it is marked as supplier as well.
+            if (
+                not external_outgoing
+                and supplier_customer is not None
+                and not bool(getattr(supplier_customer, 'is_supplier', False))
+            ):
+                sup_id = str(getattr(supplier_customer, 'id', '') or '')
+                if sup_id and sup_id not in supplier_promoted_ids:
+                    try:
+                        Customer.objects.filter(id=supplier_customer.id).update(is_supplier=True)
+                        supplier_customer.is_supplier = True
+                        supplier_promoted_ids.add(sup_id)
+                    except Exception:
+                        pass
 
             supplier_customer_id = str(supplier_customer.id) if supplier_customer and getattr(supplier_customer, 'id', None) else None
             supplier_missing_in_crm = (not external_outgoing) and (supplier_customer is None)
