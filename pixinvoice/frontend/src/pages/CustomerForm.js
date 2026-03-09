@@ -267,6 +267,15 @@ const BankCard = styled.div`
   }
 `;
 
+const PrefillHint = styled.div`
+  background: #fff9db;
+  border: 1px solid #ffe066;
+  color: #7d6608;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+`;
+
 const BankRow = styled.div`
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -702,6 +711,19 @@ const CustomerForm = () => {
       return '';
     }
   }, [location.search]);
+  const prefillFromQuery = React.useMemo(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      return {
+        name: (sp.get('prefill_name') || '').trim(),
+        taxNumber: (sp.get('prefill_tax_number') || '').trim(),
+        bankAccount: (sp.get('prefill_bank_account') || '').trim(),
+        invoiceNumber: (sp.get('prefill_invoice_number') || '').trim(),
+      };
+    } catch {
+      return { name: '', taxNumber: '', bankAccount: '', invoiceNumber: '' };
+    }
+  }, [location.search]);
   const [lookupMessage, setLookupMessage] = useState(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -711,7 +733,10 @@ const CustomerForm = () => {
   const [duplicateModal, setDuplicateModal] = useState(null);
   const [pendingData, setPendingData] = useState(null);
   const [bankAccounts, setBankAccounts] = useState([]); // Local editable list
+  const [highlightedBankIndex, setHighlightedBankIndex] = useState(null);
   const originalBankAccountIdsRef = React.useRef(new Set());
+  const queryPrefillAppliedRef = React.useRef(false);
+  const bankPrefillAppliedRef = React.useRef(false);
 
   const { data: customer, isLoading: customerLoading } = useQuery(
     ['customer', id],
@@ -937,7 +962,12 @@ const CustomerForm = () => {
           console.warn('Bank accounts upsert error', e);
         }
         toast.success('Ügyfél frissítve');
-        navigate('/customers');
+        if (returnTo && id) {
+          const sep = returnTo.includes('?') ? '&' : '?';
+          navigate(`${returnTo}${sep}customer_id=${encodeURIComponent(id)}`);
+        } else {
+          navigate('/customers');
+        }
       },
       onError: (error, data) => {
         if (error.response?.status === 409 && error.response?.data?.error === 'duplicate_tax_number') {
@@ -1339,6 +1369,66 @@ const CustomerForm = () => {
     }
   }, [isRetrying]);
 
+  React.useEffect(() => {
+    if (queryPrefillAppliedRef.current) return;
+    queryPrefillAppliedRef.current = true;
+
+    if (prefillFromQuery.name && !isEdit) {
+      setValue('name', prefillFromQuery.name);
+    }
+
+    if (prefillFromQuery.taxNumber && !isEdit) {
+      const taxDigits = String(prefillFromQuery.taxNumber).replace(/\D/g, '').slice(0, 8);
+      if (taxDigits) {
+        setValue('tax_number', taxDigits);
+        setValue('is_supplier', true);
+      }
+    }
+  }, [isEdit, prefillFromQuery, setValue]);
+
+  React.useEffect(() => {
+    if (bankPrefillAppliedRef.current) return;
+    const bankAccount = String(prefillFromQuery.bankAccount || '').trim();
+    if (!bankAccount) return;
+
+    if (isEdit && bankQuery.isLoading) return;
+
+    const normalizeBank = (raw) => String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const wanted = normalizeBank(bankAccount);
+    if (!wanted) return;
+
+    const currentRows = Array.isArray(bankAccounts) ? bankAccounts : [];
+    let existingIdx = -1;
+    for (let i = 0; i < currentRows.length; i += 1) {
+      const row = currentRows[i] || {};
+      const acc = normalizeBank(row.account_number);
+      const iban = normalizeBank(row.iban);
+      if (acc === wanted || iban === wanted) {
+        existingIdx = i;
+        break;
+      }
+    }
+
+    if (existingIdx >= 0) {
+      setHighlightedBankIndex(existingIdx);
+      bankPrefillAppliedRef.current = true;
+      return;
+    }
+
+    const newRow = {
+      bank_name: '',
+      account_number: bankAccount,
+      iban: '',
+      swift_bic: '',
+      currency: 'HUF',
+      is_primary: currentRows.length === 0,
+    };
+    const nextRows = [...currentRows, newRow];
+    setBankAccounts(nextRows);
+    setHighlightedBankIndex(nextRows.length - 1);
+    bankPrefillAppliedRef.current = true;
+  }, [prefillFromQuery.bankAccount, isEdit, bankQuery.isLoading, bankAccounts]);
+
   const handleViesLookup = async () => {
     const euVat = getValues('eu_tax_number');
     if (!euVat) {
@@ -1431,7 +1521,7 @@ const CustomerForm = () => {
           )}
           <Button
             variant="secondary"
-            onClick={() => navigate('/customers')}
+            onClick={() => navigate(returnTo || '/customers')}
           >
             <ArrowLeft size={16} />
             Vissza
@@ -1563,8 +1653,18 @@ const CustomerForm = () => {
             {bankAccounts.length === 0 && (
               <div style={{ color: '#7f8c8d', fontSize: 14 }}>Nincs rögzített bankszámla.</div>
             )}
+            {prefillFromQuery.bankAccount && (
+              <PrefillHint>
+                NAV XML bankszámla javaslat: <strong>{prefillFromQuery.bankAccount}</strong>
+                {prefillFromQuery.invoiceNumber ? ` (számla: ${prefillFromQuery.invoiceNumber})` : ''}
+              </PrefillHint>
+            )}
             {bankAccounts.map((b, idx) => (
-              <BankCard key={b.id || idx} className={b.is_primary ? 'primary' : ''}>
+              <BankCard
+                key={b.id || idx}
+                className={b.is_primary ? 'primary' : ''}
+                style={highlightedBankIndex === idx ? { borderColor: '#f39c12', boxShadow: '0 0 0 3px rgba(243, 156, 18, 0.18)', background: '#fffdf5' } : undefined}
+              >
                 <BankCardHeader>
                   <Inline>
                     <label style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

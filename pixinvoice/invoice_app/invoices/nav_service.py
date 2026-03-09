@@ -465,6 +465,65 @@ class NAVService:
                 d = Decimal('0')
             return f"{d.quantize(Decimal('0.0000'), rounding=ROUND_HALF_UP)}"
 
+        def _format_supplier_bank_account_for_nav(raw_value: Optional[str]) -> Optional[str]:
+            """
+            NAV common:BankAccountNumberType accepted formats:
+            - 8-8-8 (HU domestic)
+            - 8-8 (HU domestic)
+            - IBAN (2 letters + 2 digits + 11..30 alnum)
+            """
+            if not raw_value:
+                return None
+
+            text = str(raw_value).strip()
+            if not text:
+                return None
+
+            compact = re.sub(r'\s+', '', text).upper()
+
+            # IBAN format
+            if re.fullmatch(r'[A-Z]{2}[0-9]{2}[0-9A-Z]{11,30}', compact):
+                return compact
+
+            # Hungarian formats: 8-8 or 8-8-8
+            if re.fullmatch(r'[0-9]{8}-[0-9]{8}(-[0-9]{8})?', compact):
+                return compact
+
+            # Raw digits fallback: 16 -> 8-8, 24 -> 8-8-8
+            digits = re.sub(r'\D', '', compact)
+            if len(digits) == 16:
+                return f"{digits[:8]}-{digits[8:16]}"
+            if len(digits) == 24:
+                return f"{digits[:8]}-{digits[8:16]}-{digits[16:24]}"
+
+            return None
+
+        def _resolve_supplier_bank_account_value(inv: Invoice) -> Optional[str]:
+            # 1) Invoice block default bank account (if configured)
+            try:
+                block = getattr(inv, 'invoice_block', None)
+                block_bank = getattr(block, 'default_bank_account', None) if block else None
+                if block_bank:
+                    formatted = _format_supplier_bank_account_for_nav(block_bank.iban or block_bank.account_number)
+                    if formatted:
+                        return formatted
+            except Exception:
+                pass
+
+            # 2) Company's primary bank account, then first account
+            try:
+                company = getattr(inv, 'company', None)
+                if company is not None:
+                    company_bank = company.bank_accounts.filter(is_primary=True).first() or company.bank_accounts.first()
+                    if company_bank:
+                        formatted = _format_supplier_bank_account_for_nav(company_bank.iban or company_bank.account_number)
+                        if formatted:
+                            return formatted
+            except Exception:
+                pass
+
+            return None
+
         NS_DATA = "http://schemas.nav.gov.hu/OSA/3.0/data"
         NS_BASE = "http://schemas.nav.gov.hu/OSA/3.0/base"
         NS_COMMON = "http://schemas.nav.gov.hu/NTCA/1.0/common"
@@ -530,6 +589,10 @@ class NAVService:
         ET.SubElement(detailed, '{%s}streetName' % NS_BASE).text = getattr(invoice.company, 'street_name', '') or 'Ismeretlen utca'
         ET.SubElement(detailed, '{%s}publicPlaceCategory' % NS_BASE).text = getattr(invoice.company, 'public_place_category', '') or 'utca'
         ET.SubElement(detailed, '{%s}number' % NS_BASE).text = getattr(invoice.company, 'street_number', '') or '1'
+
+        supplier_bank_account = _resolve_supplier_bank_account_value(invoice)
+        if supplier_bank_account:
+            ET.SubElement(supplierInfo, '{%s}supplierBankAccountNumber' % NS_DATA).text = supplier_bank_account
 
         # customerInfo
         customerInfo = ET.SubElement(invoiceHead, '{%s}customerInfo' % NS_DATA)

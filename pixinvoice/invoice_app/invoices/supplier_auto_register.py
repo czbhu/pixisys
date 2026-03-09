@@ -226,6 +226,11 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
         changes = []
         requires_save = False
 
+        if not existing.is_supplier:
+            existing.is_supplier = True
+            changes.append("is_supplier: False -> True")
+            requires_save = True
+
         # 1. Update basic fields if changed (except bank account)
         fields_map = {
             'name': 'name',
@@ -278,10 +283,23 @@ def auto_register_or_update_supplier(company, xml_text: str, payment_method: Opt
     else:
         # Nincs még ilyen ügyfél, létrehozzuk
         try:
+            city_value = (supplier_data.get('city') or '').strip()
+            postal_value = (supplier_data.get('postal_code') or '').strip()
+
+            # Customer modelben a city és postal_code kötelező.
+            # Ha NAV XML-ben hiányos a cím, adunk biztonságos fallbacket,
+            # hogy az auto-regisztráció ne hasaljon el.
+            if not city_value:
+                city_value = 'ISMERETLEN'
+            if not postal_value:
+                postal_value = '0000'
+
             # Alapértelmezett értékek
             customer_defaults = {
                 'name': supplier_data.get('name', f'Beszállító {tax_number}'),
                 'tax_number': tax_number,
+                'city': city_value,
+                'postal_code': postal_value,
                 'is_supplier': True,
                 'is_customer': False,
                 'country': supplier_data.get('country', 'Magyarország'),

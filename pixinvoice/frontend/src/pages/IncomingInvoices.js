@@ -186,6 +186,23 @@ const StatusPill = styled.span`
   border: 1px solid ${props => props.variant === 'paid' ? '#bfe8d0' : '#ffd8a8'};
 `;
 
+const InlineActionBadge = styled.button`
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid #f1c40f;
+  background: #fff8d6;
+  color: #7d6608;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+
+  &:hover {
+    background: #fff1b5;
+  }
+`;
+
 const Toolbar = styled.div`
   display: flex;
   gap: 8px;
@@ -795,6 +812,37 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
   const openXmlInNewTab = async (invoiceNumber, supplierTaxNumber) => {
     if (!companyId) { toast.error('Válassz céget'); return; }
     const targetUrl = `/incoming-invoices/open?company_id=${encodeURIComponent(companyId || '')}&invoice_number=${encodeURIComponent(invoiceNumber || '')}${supplierTaxNumber ? `&supplier_tax_number=${encodeURIComponent(supplierTaxNumber)}` : ''}${externalOutgoing ? '&external_outgoing=1' : ''}`;
+    const opened = window.open(targetUrl, '_blank');
+    if (!opened) {
+      toast.error('A böngésző blokkolta az új lap megnyitását.');
+    }
+  };
+
+  const openSupplierCreateFromInvoice = (row) => {
+    const params = new URLSearchParams();
+    params.set('return', '/incoming-invoices');
+    if (row?.supplierName) params.set('prefill_name', String(row.supplierName));
+    if (row?.supplierTaxNumber) params.set('prefill_tax_number', String(row.supplierTaxNumber));
+    if (row?.supplierNavBankAccount) params.set('prefill_bank_account', String(row.supplierNavBankAccount));
+    if (row?.invoiceNumber) params.set('prefill_invoice_number', String(row.invoiceNumber));
+    const targetUrl = `/customers/new?${params.toString()}`;
+    const opened = window.open(targetUrl, '_blank');
+    if (!opened) {
+      toast.error('A böngésző blokkolta az új lap megnyitását.');
+    }
+  };
+
+  const openSupplierEditForNewBank = (row) => {
+    const customerId = row?.supplierCustomerId;
+    if (!customerId) {
+      toast.error('A CRM beszállító nem található.');
+      return;
+    }
+    const params = new URLSearchParams();
+    params.set('return', '/incoming-invoices');
+    if (row?.supplierNavBankAccount) params.set('prefill_bank_account', String(row.supplierNavBankAccount));
+    if (row?.invoiceNumber) params.set('prefill_invoice_number', String(row.invoiceNumber));
+    const targetUrl = `/customers/${encodeURIComponent(String(customerId))}/edit?${params.toString()}`;
     const opened = window.open(targetUrl, '_blank');
     if (!opened) {
       toast.error('A böngésző blokkolta az új lap megnyitását.');
@@ -1985,7 +2033,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                   )}
                 </TableCell>
                 <TableCell title={row.supplierName}>
-                  <span style={{ display:'inline-flex', alignItems:'center', gap:6 }}>
+                  <span style={{ display:'inline-flex', alignItems:'center', gap:6, flexWrap:'wrap' }}>
                     <span>{row.supplierName?.length>30? row.supplierName.slice(0,30)+'…':row.supplierName}</span>
                     {isManualIncomingRow(row) && !externalOutgoing && (
                       <span
@@ -1994,6 +2042,32 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                       >
                         M
                       </span>
+                    )}
+                    {!externalOutgoing && row.supplierMissingInCrm && (
+                      <InlineActionBadge
+                        type="button"
+                        title="Beszállító létrehozása CRM-ben"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openSupplierCreateFromInvoice(row);
+                        }}
+                      >
+                        Nincs CRM-ben
+                      </InlineActionBadge>
+                    )}
+                    {!externalOutgoing && row.supplierHasNewBankAccount && (
+                      <InlineActionBadge
+                        type="button"
+                        title="Új NAV bankszámla hozzáadása a CRM beszállítóhoz"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          openSupplierEditForNewBank(row);
+                        }}
+                      >
+                        Új bankszámla
+                      </InlineActionBadge>
                     )}
                   </span>
                 </TableCell>

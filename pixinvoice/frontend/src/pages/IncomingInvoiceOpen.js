@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
 import { Spin } from 'antd';
 import { toast } from 'react-toastify';
-import api, { incomingDocsAPI } from '../services/api';
+import api, { incomingDocsAPI, customerAPI, customerBankAccountAPI } from '../services/api';
 
 const cardStyle = {
   background: '#f8fafc',
@@ -81,6 +81,12 @@ function parseIncomingXmlForPrint(xmlRaw) {
     const paymentDate = firstText('paymentDate') || firstText('dueDate');
     const paymentMethod = firstText('paymentMethod');
     const currency = firstText('invoiceCurrencyCode') || firstText('invoiceCurrency') || firstText('currencyCode') || firstText('currency');
+    const navBankAccount = (
+      firstText('supplierBankAccountNumber')
+      || firstText('bankAccountNumber')
+      || firstText('creditorAccountNumber')
+      || firstText('payeeFinancialAccount')
+    );
 
     const supplierInfo = doc.getElementsByTagNameNS('*', 'supplierInfo')[0] || doc;
     const customerInfo = doc.getElementsByTagNameNS('*', 'customerInfo')[0] || doc;
@@ -154,6 +160,7 @@ function parseIncomingXmlForPrint(xmlRaw) {
       deliveryDate,
       paymentDate,
       paymentMethod,
+      navBankAccount,
       currency,
       supplier: {
         name: supplierName,
@@ -195,6 +202,7 @@ export default function IncomingInvoiceOpen() {
   const [uploading, setUploading] = useState(false);
   const [uploadType, setUploadType] = useState('IMAGE');
   const [uploadComment, setUploadComment] = useState('');
+  const [crmSupplierBankAccount, setCrmSupplierBankAccount] = useState('');
   const fileInputRef = useRef(null);
 
   const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
@@ -232,6 +240,58 @@ export default function IncomingInvoiceOpen() {
     load();
     return () => { active = false; };
   }, [companyId, invoiceNumber, supplierTaxNumber, externalOutgoing]);
+
+  useEffect(() => {
+    let active = true;
+    const loadCrmSupplierBank = async () => {
+      const taxRaw = parsed?.supplier?.taxNumber || supplierTaxNumber;
+      const taxDigits = String(taxRaw || '').replace(/\D+/g, '');
+      if (!taxDigits) {
+        if (active) setCrmSupplierBankAccount('');
+        return;
+      }
+      try {
+        const customerRes = await customerAPI.getCustomers({
+          company_id: companyId || undefined,
+          type: 'supplier',
+          search: taxDigits,
+          page_size: 50,
+        });
+        const rows = Array.isArray(customerRes.data)
+          ? customerRes.data
+          : (customerRes.data?.results || []);
+
+        const matched = rows.find((row) => {
+          const candidateTax = String(row?.tax_number || row?.full_tax_number || '').replace(/\D+/g, '');
+          return candidateTax && (candidateTax === taxDigits || candidateTax.startsWith(taxDigits) || taxDigits.startsWith(candidateTax));
+        });
+
+        if (!matched?.id) {
+          if (active) setCrmSupplierBankAccount('');
+          return;
+        }
+
+        const accRes = await customerBankAccountAPI.getAccounts({ customer_id: matched.id });
+        const accRows = Array.isArray(accRes.data)
+          ? accRes.data
+          : (accRes.data?.results || []);
+
+        const approved = accRows.filter((acc) => acc?.is_approved !== false);
+        const selected = approved.find((acc) => acc?.is_primary)
+          || approved[0]
+          || accRows.find((acc) => acc?.is_primary)
+          || accRows[0];
+
+        const value = (selected?.iban || selected?.account_number || '').trim();
+        if (active) setCrmSupplierBankAccount(value || '');
+      } catch {
+        if (active) setCrmSupplierBankAccount('');
+      }
+    };
+
+    loadCrmSupplierBank();
+    return () => { active = false; };
+  }, [companyId, parsed, supplierTaxNumber]);
 
   const loadDocs = async () => {
     if (!companyId || !invoiceNumber) return;
@@ -442,6 +502,7 @@ export default function IncomingInvoiceOpen() {
           <div style={{ fontWeight: 700, marginBottom: 6 }}>Szállító</div>
           <div>{parsed.supplier?.name || '-'}</div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>Adószám: {parsed.supplier?.taxNumber || '-'}</div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>CRM bankszámla: {crmSupplierBankAccount || '-'}</div>
           {(parsed.supplier?.addressLines || []).map((line, idx) => <div key={`sup-${idx}`}>{line}</div>)}
         </div>
         {(externalOutgoing || parsed.customer?.name) && (
@@ -457,6 +518,7 @@ export default function IncomingInvoiceOpen() {
           <div><strong>Teljesítés:</strong> {parsed.deliveryDate || '-'}</div>
           <div><strong>Esedékesség:</strong> {parsed.paymentDate || '-'}</div>
           <div><strong>Fizetési mód:</strong> {parsed.paymentMethod || '-'}</div>
+          <div><strong>NAV XML bankszámla:</strong> {parsed.navBankAccount || '-'}</div>
           <div><strong>Deviza:</strong> {parsed.currency || '-'}</div>
         </div>
       </div>

@@ -360,12 +360,20 @@ class CustomerViewSet(viewsets.ModelViewSet):
         search = self.request.query_params.get('search', None)
         if search:
             search_regex = get_fuzzy_search_regex(search)
-            queryset = queryset.filter(
+            search_filter = (
                 Q(name__iregex=search_regex) |
                 Q(tax_number__icontains=search) |
                 Q(eu_tax_number__icontains=search) |
                 Q(email__icontains=search)
             )
+            filtered = queryset.filter(search_filter)
+
+            # If company-scoped filters hide standalone CRM suppliers,
+            # fall back to global supplier search for explicit search queries.
+            if not filtered.exists():
+                filtered = Customer.objects.filter(is_supplier=True).filter(search_filter)
+
+            queryset = filtered
         type_filter = self.request.query_params.get('type') or self.request.query_params.get('kind')
         if type_filter == 'supplier':
             queryset = queryset.filter(is_supplier=True)
@@ -4791,7 +4799,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 ),
             )
             if company_tax_base:
-                has_any_qs = has_any_qs.filter(Q(_supplier_tax_norm__startswith=company_tax_base) | Q(supplier_name__icontains=company.name))
+                has_any_qs = has_any_qs.filter(Q(_supplier_tax_norm__contains=company_tax_base) | Q(supplier_name__icontains=company.name))
             elif company_name_norm:
                 has_any_qs = has_any_qs.filter(supplier_name__icontains=company.name)
         if date_from and date_to:
@@ -5250,9 +5258,12 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 ),
             )
             if external_outgoing:
-                qs = qs.filter(Q(_supplier_tax_norm__startswith=company_tax_base) | Q(supplier_name__icontains=company.name))
+                qs = qs.filter(Q(_supplier_tax_norm__contains=company_tax_base) | Q(supplier_name__icontains=company.name))
             else:
-                qs = qs.filter(Q(_customer_tax_norm__startswith=company_tax_base) | Q(_customer_tax_norm=''))
+                qs = qs.filter(
+                    Q(_customer_tax_norm__contains=company_tax_base)
+                    | (Q(_customer_tax_norm='') & ~Q(_supplier_tax_norm__contains=company_tax_base))
+                )
         elif external_outgoing and company_name_norm:
             qs = qs.filter(supplier_name__icontains=company.name)
 
@@ -5276,6 +5287,15 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 Q(transaction_id__startswith=manual_tx_prefix)
                 & Q(invoice_number__in=nav_external_invoice_numbers)
             )
+        else:
+            # Incoming view must not show external outbound snapshots that share the same digest table.
+            qs = qs.exclude(
+                Q(invoice_operation__iexact='OUTBOUND')
+                | Q(invoice_operation__iexact='EXTERNAL_OUTGOING')
+                | Q(transaction_id__startswith='OUTBOUND_MANUAL::')
+            )
+            if company_tax_base:
+                qs = qs.exclude(_supplier_tax_norm__contains=company_tax_base)
         if date_from and date_to:
             qs = qs.filter(
                 Q(invoice_issue_date__gte=date_from, invoice_issue_date__lte=date_to)
@@ -5463,6 +5483,80 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         items_all = []
 
+        def _normalize_tax_value(raw_value):
+            return ''.join(ch for ch in str(raw_value or '') if ch.isdigit())
+
+        supplier_tax_values = set()
+        supplier_name_values = set()
+        for _row in page_items_raw:
+            try:
+                tx = str(getattr(_row, 'supplier_tax_number', '') or '').strip()
+            except Exception:
+                tx = ''
+            if tx:
+                supplier_tax_values.add(tx)
+            ntx = _normalize_tax_value(tx)
+            if ntx:
+                supplier_tax_values.add(ntx)
+            try:
+                nm = str(getattr(_row, 'supplier_name', '') or '').strip()
+            except Exception:
+                nm = ''
+            if nm:
+                supplier_name_values.add(nm)
+
+        supplier_customers_by_tax = {}
+        supplier_customers_by_name = {}
+        if supplier_tax_values or supplier_name_values:
+            supplier_candidates = Customer.objects.filter(is_supplier=True)
+            if supplier_tax_values and supplier_name_values:
+                supplier_candidates = supplier_candidates.filter(
+                    Q(tax_number__in=list(supplier_tax_values)) | Q(name__in=list(supplier_name_values))
+                )
+            elif supplier_tax_values:
+                supplier_candidates = supplier_candidates.filter(tax_number__in=list(supplier_tax_values))
+            else:
+                supplier_candidates = supplier_candidates.filter(name__in=list(supplier_name_values))
+            for c in supplier_candidates:
+                tax_key = _normalize_tax_value(getattr(c, 'tax_number', ''))
+                if tax_key and tax_key not in supplier_customers_by_tax:
+                    supplier_customers_by_tax[tax_key] = c
+                name_key = str(getattr(c, 'name', '') or '').strip().lower()
+                if name_key and name_key not in supplier_customers_by_name:
+                    supplier_customers_by_name[name_key] = c
+
+        supplier_bank_accounts_by_customer_id = {}
+        if supplier_customers_by_tax or supplier_customers_by_name:
+            supplier_customer_ids = {
+                str(c.id)
+                for c in list(supplier_customers_by_tax.values()) + list(supplier_customers_by_name.values())
+                if getattr(c, 'id', None)
+            }
+
+            def _normalize_bank_value(raw_value):
+                s = str(raw_value or '').strip().upper()
+                if not s:
+                    return ''
+                return ''.join(ch for ch in s if ch.isalnum())
+
+            if supplier_customer_ids:
+                bank_rows = CustomerBankAccount.objects.filter(customer_id__in=list(supplier_customer_ids)).values(
+                    'customer_id',
+                    'account_number',
+                    'iban',
+                )
+                for b in bank_rows:
+                    cid = str(b.get('customer_id') or '')
+                    if not cid:
+                        continue
+                    vals = supplier_bank_accounts_by_customer_id.setdefault(cid, set())
+                    acc = _normalize_bank_value(b.get('account_number'))
+                    iban = _normalize_bank_value(b.get('iban'))
+                    if acc:
+                        vals.add(acc)
+                    if iban:
+                        vals.add(iban)
+
         # Helpers for due date extraction and on-demand NAV fetch
         def _parse_due_from_xml_text(xml_text: str):
             try:
@@ -5511,6 +5605,30 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             except Exception:
                 return None
 
+        def _parse_supplier_bank_from_xml_text(xml_text: str):
+            try:
+                import xml.etree.ElementTree as ET
+                root = ET.fromstring(xml_text)
+            except Exception:
+                return None
+            wanted = {
+                'supplierbankaccountnumber',
+                'bankaccountnumber',
+                'creditoraccountnumber',
+                'payeefinancialaccount',
+            }
+            for el in root.iter():
+                try:
+                    tag_raw = el.tag.split('}', 1)[-1] if isinstance(el.tag, str) and '}' in el.tag else el.tag
+                    tag = (tag_raw or '').lower()
+                    if tag in wanted:
+                        val = (el.text or '').strip()
+                        if val:
+                            return val
+                except Exception:
+                    continue
+            return None
+
         def _parse_external_meta_from_xml_text(xml_text: str):
             return _parse_external_meta_basic(xml_text)
 
@@ -5556,6 +5674,21 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if not cached or not cached.xml_text:
                     return None
                 return _parse_huf_amounts_from_xml(cached.xml_text)
+            except Exception:
+                return None
+
+        def extract_supplier_bank_from_cache(inv_number, supplier_tax_number=None):
+            try:
+                from invoices.models import IncomingInvoiceData
+                q = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number)
+                if supplier_tax_number:
+                    q = q.filter(supplier_tax_number=supplier_tax_number)
+                cached = q.order_by('-updated_at').first()
+                if (not cached or not cached.xml_text) and supplier_tax_number:
+                    cached = IncomingInvoiceData.objects.filter(company=company, invoice_number=inv_number).order_by('-updated_at').first()
+                if not cached or not cached.xml_text:
+                    return None
+                return _parse_supplier_bank_from_xml_text(cached.xml_text)
             except Exception:
                 return None
 
@@ -5639,7 +5772,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         try:
                             customer, conflict = auto_register_or_update_supplier(company, decoded_xml)
                             if conflict:
-                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                                details = conflict.get('differences') or conflict.get('changes') or conflict
+                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {details}")
                         except Exception as e:
                             logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                 except Exception:
@@ -5733,6 +5867,29 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         pass
 
             row_currency = (str(resolved_currency).strip().upper() if resolved_currency else str(getattr(r, 'currency', '') or '').strip().upper()) or 'HUF'
+
+            supplier_tax_key = _normalize_tax_value(getattr(r, 'supplier_tax_number', ''))
+            supplier_name_key = str(getattr(r, 'supplier_name', '') or '').strip().lower()
+            supplier_customer = None
+            if supplier_tax_key:
+                supplier_customer = supplier_customers_by_tax.get(supplier_tax_key)
+            if not supplier_customer and supplier_name_key:
+                supplier_customer = supplier_customers_by_name.get(supplier_name_key)
+
+            supplier_customer_id = str(supplier_customer.id) if supplier_customer and getattr(supplier_customer, 'id', None) else None
+            supplier_missing_in_crm = (not external_outgoing) and (supplier_customer is None)
+
+            nav_supplier_bank_account = None
+            has_new_supplier_bank_account = False
+            if not external_outgoing:
+                nav_supplier_bank_account = extract_supplier_bank_from_cache(r.invoice_number, getattr(r, 'supplier_tax_number', None))
+
+                if supplier_customer_id and nav_supplier_bank_account:
+                    nav_norm = ''.join(ch for ch in str(nav_supplier_bank_account).strip().upper() if ch.isalnum())
+                    existing_norm = supplier_bank_accounts_by_customer_id.get(supplier_customer_id, set())
+                    if nav_norm and nav_norm not in existing_norm:
+                        has_new_supplier_bank_account = True
+
             needs_huf_enrichment = (
                 row_currency != 'HUF' and (
                     getattr(r, 'invoice_net_amount_huf', None) is None
@@ -5938,6 +6095,10 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 'invoiceIssueDate': date_val.isoformat() if date_val else None,
                 'supplierTaxNumber': party_tax,
                 'supplierName': party_name,
+                'supplierCustomerId': supplier_customer_id,
+                'supplierMissingInCrm': bool(supplier_missing_in_crm),
+                'supplierNavBankAccount': nav_supplier_bank_account,
+                'supplierHasNewBankAccount': bool(has_new_supplier_bank_account),
                 'currency': row_currency,
                 'exchangeRate': (str(r.exchange_rate) if getattr(r, 'exchange_rate', None) is not None else None),
                 'netAmount': (str(r.invoice_net_amount) if r.invoice_net_amount is not None else None),
@@ -7177,7 +7338,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                                                         try:
                                                             customer, conflict = auto_register_or_update_supplier(company, xml_text2)
                                                             if conflict:
-                                                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                                                                details = conflict.get('differences') or conflict.get('changes') or conflict
+                                                                logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {details}")
                                                         except Exception as e:
                                                             logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                                                     except Exception:
@@ -7269,7 +7431,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     try:
                         customer, conflict = auto_register_or_update_supplier(company, xml_text)
                         if conflict:
-                            logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {conflict['differences']}")
+                            details = conflict.get('differences') or conflict.get('changes') or conflict
+                            logger.warning(f"Beszállító adatok eltérnek ({supplier_tax_number}): {details}")
                     except Exception as e:
                         logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
             except Exception:
@@ -7301,6 +7464,17 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     xml_text = decoded.decode('utf-8', errors='replace')
         except Exception:
             pass
+
+        # Ensure supplier auto-register/update also runs for cached XML responses.
+        # (Previously this path could be skipped when XML came straight from cache.)
+        if xml_text and not external_outgoing:
+            try:
+                customer, conflict = auto_register_or_update_supplier(company, xml_text)
+                if conflict:
+                    details = conflict.get('differences') or conflict.get('changes') or conflict
+                    logger.warning(f"Beszállító auto-regisztráció/frissítés ({supplier_tax_number or invoice_number}): {details}")
+            except Exception as e:
+                logger.error(f"Hiba a beszállító auto-regisztráció során (cache path): {e}")
 
         resp = HttpResponse(xml_text or '', content_type='application/xml')
         # inline viewing support
@@ -7890,9 +8064,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                              pass # Already logged in function
                         elif result.get('updated'):
                              logger.info(f"Beszállító automatikusan frissítve ({d.supplier_tax_number}): {result.get('changes')}")
-                        elif result.get('differences'): 
-                             # Fallback or strict mode
-                             logger.warning(f"Beszállító adatok eltérnek ({d.supplier_tax_number}): {result['differences']}")
+                        else:
+                            details = result.get('differences') or result.get('changes') or result
+                            logger.warning(f"Beszállító adatok eltérnek ({d.supplier_tax_number}): {details}")
                 except Exception as e:
                     logger.error(f"Hiba a beszállító auto-regisztráció során: {e}")
                 created += 1
