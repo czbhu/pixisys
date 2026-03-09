@@ -5,7 +5,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Save, ArrowLeft, Search, Loader, PlusCircle, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
-import { customerAPI, customerBankAccountAPI } from '../services/api';
+import api, { customerAPI, customerBankAccountAPI } from '../services/api';
 
 const FormContainer = styled.div`
   background: white;
@@ -719,11 +719,23 @@ const CustomerForm = () => {
         taxNumber: (sp.get('prefill_tax_number') || '').trim(),
         bankAccount: (sp.get('prefill_bank_account') || '').trim(),
         invoiceNumber: (sp.get('prefill_invoice_number') || '').trim(),
+        sourceCompanyId: (sp.get('source_company_id') || '').trim(),
+        sourceInvoiceNumber: (sp.get('source_invoice_number') || '').trim(),
+        sourceSupplierTaxNumber: (sp.get('source_supplier_tax_number') || '').trim(),
       };
     } catch {
-      return { name: '', taxNumber: '', bankAccount: '', invoiceNumber: '' };
+      return {
+        name: '',
+        taxNumber: '',
+        bankAccount: '',
+        invoiceNumber: '',
+        sourceCompanyId: '',
+        sourceInvoiceNumber: '',
+        sourceSupplierTaxNumber: '',
+      };
     }
   }, [location.search]);
+  const [resolvedPrefillBankAccount, setResolvedPrefillBankAccount] = useState(prefillFromQuery.bankAccount || '');
   const [lookupMessage, setLookupMessage] = useState(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -737,6 +749,11 @@ const CustomerForm = () => {
   const originalBankAccountIdsRef = React.useRef(new Set());
   const queryPrefillAppliedRef = React.useRef(false);
   const bankPrefillAppliedRef = React.useRef(false);
+
+  React.useEffect(() => {
+    setResolvedPrefillBankAccount(prefillFromQuery.bankAccount || '');
+    bankPrefillAppliedRef.current = false;
+  }, [prefillFromQuery.bankAccount, prefillFromQuery.sourceCompanyId, prefillFromQuery.sourceInvoiceNumber, prefillFromQuery.sourceSupplierTaxNumber]);
 
   const { data: customer, isLoading: customerLoading } = useQuery(
     ['customer', id],
@@ -1387,8 +1404,55 @@ const CustomerForm = () => {
   }, [isEdit, prefillFromQuery, setValue]);
 
   React.useEffect(() => {
+    let active = true;
+    const fetchBankFromIncomingXml = async () => {
+      if (resolvedPrefillBankAccount) return;
+      if (isEdit) return;
+      const companyId = prefillFromQuery.sourceCompanyId;
+      const invoiceNumber = prefillFromQuery.sourceInvoiceNumber || prefillFromQuery.invoiceNumber;
+      if (!companyId || !invoiceNumber) return;
+
+      try {
+        const res = await api.get('/api/invoices/incoming/details/', {
+          params: {
+            company_id: companyId,
+            invoice_number: invoiceNumber,
+            supplier_tax_number: prefillFromQuery.sourceSupplierTaxNumber || undefined,
+          },
+        });
+        const xmlText = String(res?.data?.xml_text || '');
+        if (!xmlText) return;
+
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(xmlText, 'application/xml');
+        if (doc.getElementsByTagName('parsererror').length) return;
+
+        const firstText = (name) => {
+          const els = doc.getElementsByTagNameNS('*', name);
+          const val = els && els[0] && els[0].textContent ? String(els[0].textContent).trim() : '';
+          return val;
+        };
+
+        const bank = firstText('supplierBankAccountNumber')
+          || firstText('bankAccountNumber')
+          || firstText('creditorAccountNumber')
+          || firstText('payeeFinancialAccount');
+
+        if (active && bank) {
+          setResolvedPrefillBankAccount(bank);
+        }
+      } catch {
+        // Optional fallback only; ignore silently if unavailable.
+      }
+    };
+
+    fetchBankFromIncomingXml();
+    return () => { active = false; };
+  }, [isEdit, prefillFromQuery, resolvedPrefillBankAccount]);
+
+  React.useEffect(() => {
     if (bankPrefillAppliedRef.current) return;
-    const bankAccount = String(prefillFromQuery.bankAccount || '').trim();
+    const bankAccount = String(resolvedPrefillBankAccount || '').trim();
     if (!bankAccount) return;
 
     if (isEdit && bankQuery.isLoading) return;
@@ -1415,10 +1479,11 @@ const CustomerForm = () => {
       return;
     }
 
+    const isIbanFormat = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{11,30}$/.test(wanted);
     const newRow = {
       bank_name: '',
-      account_number: bankAccount,
-      iban: '',
+      account_number: isIbanFormat ? '' : bankAccount,
+      iban: isIbanFormat ? bankAccount : '',
       swift_bic: '',
       currency: 'HUF',
       is_primary: currentRows.length === 0,
@@ -1427,7 +1492,7 @@ const CustomerForm = () => {
     setBankAccounts(nextRows);
     setHighlightedBankIndex(nextRows.length - 1);
     bankPrefillAppliedRef.current = true;
-  }, [prefillFromQuery.bankAccount, isEdit, bankQuery.isLoading, bankAccounts]);
+  }, [resolvedPrefillBankAccount, isEdit, bankQuery.isLoading, bankAccounts]);
 
   const handleViesLookup = async () => {
     const euVat = getValues('eu_tax_number');
@@ -1653,9 +1718,9 @@ const CustomerForm = () => {
             {bankAccounts.length === 0 && (
               <div style={{ color: '#7f8c8d', fontSize: 14 }}>Nincs rögzített bankszámla.</div>
             )}
-            {prefillFromQuery.bankAccount && (
+            {resolvedPrefillBankAccount && (
               <PrefillHint>
-                NAV XML bankszámla javaslat: <strong>{prefillFromQuery.bankAccount}</strong>
+                NAV XML bankszámla javaslat: <strong>{resolvedPrefillBankAccount}</strong>
                 {prefillFromQuery.invoiceNumber ? ` (számla: ${prefillFromQuery.invoiceNumber})` : ''}
               </PrefillHint>
             )}

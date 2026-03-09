@@ -825,6 +825,9 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
     if (row?.supplierTaxNumber) params.set('prefill_tax_number', String(row.supplierTaxNumber));
     if (row?.supplierNavBankAccount) params.set('prefill_bank_account', String(row.supplierNavBankAccount));
     if (row?.invoiceNumber) params.set('prefill_invoice_number', String(row.invoiceNumber));
+    if (companyId) params.set('source_company_id', String(companyId));
+    if (row?.invoiceNumber) params.set('source_invoice_number', String(row.invoiceNumber));
+    if (row?.supplierTaxNumber) params.set('source_supplier_tax_number', String(row.supplierTaxNumber));
     const targetUrl = `/customers/new?${params.toString()}`;
     const opened = window.open(targetUrl, '_blank');
     if (!opened) {
