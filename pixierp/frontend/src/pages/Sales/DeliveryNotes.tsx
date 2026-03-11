@@ -674,7 +674,6 @@ const DeliveryNotes: React.FC = () => {
                      setFilterOrderNumber('');
                      setFilterItemName('');
                  }}>Szűrők törlése</Button>
-             )}
             <Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>
             Új szállítólevél
             </Button>

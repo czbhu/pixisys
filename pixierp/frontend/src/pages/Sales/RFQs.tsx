@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
+import type { ColumnsType } from 'antd/es/table';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -496,7 +497,7 @@ const RFQs: React.FC = () => {
     return res;
   }, [filtered, isItemsView]);
 
-  const itemsColumns = useMemo(() => ([
+  const itemsColumns = useMemo((): ColumnsType<any> => ([
     {
       title: 'Dátum', key: 'issue_date', width: 100,
       sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || ''),
