@@ -8,7 +8,7 @@
  * Ügyfélnév helper: renderCustomerName(record) – magánszemély kezelés
  */
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useCallback } from 'react';
 import { Table, Button, Dropdown, Tooltip, Space, Input, Pagination, Select, Card } from 'antd';
 import type { TableProps, TableColumnType } from 'antd';
 import {
@@ -41,7 +41,7 @@ import ResponsiveCardList from './ResponsiveCardList';
 
 // ─── Drag-and-drop header cell ────────────────────────────────────────────────
 
-const DraggableHeaderCell: React.FC<any> = ({ id, children, ...props }) => {
+const DraggableHeaderCell: React.FC<any> = ({ id, colWidth, onResizeMove, onResizeEnd, children, ...props }) => {
   const {
     attributes,
     listeners,
@@ -52,17 +52,49 @@ const DraggableHeaderCell: React.FC<any> = ({ id, children, ...props }) => {
   } = useSortable({ id: id || 'noop' });
 
   const style: React.CSSProperties = {
+    ...props.style,
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
     cursor: isDragging ? 'grabbing' : 'default',
     userSelect: 'none',
+    position: 'relative',
+    ...(colWidth ? { width: colWidth, minWidth: colWidth } : {}),
+  };
+
+  const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const startX = e.clientX;
+    const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
+    const startWidth = colWidth || th?.offsetWidth || 100;
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.max(40, startWidth + ev.clientX - startX);
+      onResizeMove?.(id, newWidth);
+    };
+    const onMouseUp = (ev: MouseEvent) => {
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      const newWidth = Math.max(40, startWidth + ev.clientX - startX);
+      onResizeEnd?.(id, newWidth);
+    };
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', onMouseUp);
   };
 
   if (!id) return <th {...props}>{children}</th>;
   return (
     <th {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
       {children}
+      {onResizeMove && (
+        <div
+          onMouseDown={handleResizeMouseDown}
+          style={{
+            position: 'absolute', top: 0, right: 0, width: 6, height: '100%',
+            cursor: 'col-resize', zIndex: 2,
+          }}
+        />
+      )}
     </th>
   );
 };
@@ -216,6 +248,23 @@ function EnhancedTable<T extends object = any>({
   const toggleCol = (key: string) =>
     setColVis((prev) => ({ ...(prev || defaultVisibility), [key]: !mergedColVis[key] }));
 
+  // Preferences: column widths ──────────────────────────────────────────────
+  const [colWidthsPref, setColWidthsPref] = useUserPreference<Record<string, number>>(
+    `${tableKey}_colWidths`,
+    {}
+  );
+  const [liveWidths, setLiveWidths] = useState<Record<string, number>>({});
+  const mergedWidths: Record<string, number> = { ...(colWidthsPref || {}), ...liveWidths };
+
+  const handleResizeMove = useCallback((key: string, width: number) => {
+    setLiveWidths(prev => ({ ...prev, [key]: width }));
+  }, []);
+
+  const handleResizeEnd = useCallback((key: string, width: number) => {
+    setLiveWidths({});
+    setColWidthsPref(prev => ({ ...(prev || {}), [key]: width }));
+  }, [setColWidthsPref]);
+
   // Preferences: column order ───────────────────────────────────────────────
   const [colOrderRaw, setColOrder] = useUserPreference<string[]>(
     `${tableKey}_colOrder`,
@@ -286,11 +335,22 @@ function EnhancedTable<T extends object = any>({
       .filter((k) => mergedColVis[k] !== false)
       .map((k) => colMap.get(k))
       .filter(Boolean)
-      .map((c) => ({
-        ...c,
-        onHeaderCell: () => ({ id: String((c as any).key ?? (c as any).dataIndex ?? '') }),
-      }));
-  }, [rawColumns, colOrder, mergedColVis]);
+      .map((c) => {
+        const key = String((c as any).key ?? (c as any).dataIndex ?? '');
+        const savedWidth = mergedWidths[key];
+        return {
+          ...c,
+          ...(savedWidth ? { width: savedWidth } : {}),
+          onHeaderCell: () => ({
+            id: key,
+            colWidth: savedWidth || (c as any).width,
+            onResizeMove: handleResizeMove,
+            onResizeEnd: handleResizeEnd,
+          }),
+        };
+      });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawColumns, colOrder, mergedColVis, mergedWidths, handleResizeMove, handleResizeEnd]);
 
   // ─── Responsive card layout ────────────────────────────────────────────────
   const { containerRef, useCardLayout } = useResponsiveTable(
@@ -353,6 +413,15 @@ function EnhancedTable<T extends object = any>({
         ),
         onClick: () => setTableResetKey((k) => k + 1),
       },
+      {
+        key: '__reset_widths',
+        label: (
+          <span style={{ color: '#888', fontSize: 12 }}>
+            <ReloadOutlined style={{ marginRight: 6 }} />Oszlopszélességek alaphelyzete
+          </span>
+        ),
+        onClick: () => { setLiveWidths({}); setColWidthsPref({}); },
+      },
     ];
   }, [rawColumns, mergedColVis, defaultVisibility, allKeys, noColumnManager]);
 
@@ -376,25 +445,27 @@ function EnhancedTable<T extends object = any>({
   const dataLen = (tableProps.dataSource ?? []).length;
 
   const [intPage, setIntPage] = useState(1);
-  const [intPageSize, setIntPageSize] = useState(origPageSize);
+  const [intPageSize, setIntPageSize] = useUserPreference<number>(`${tableKey}_pageSize`, origPageSize);
   const page = origCurrent ?? intPage;
   const size = intPageSize;
   const handlePageChange = (p: number) => { setIntPage(p); origOnChange?.(p, size); };
   const handleSizeChange = (s: number) => { setIntPageSize(s); setIntPage(1); origOnChange?.(1, s); };
 
-  const topPag = pag !== false ? {
-    ...(typeof pag === 'object' ? pag : {}),
-    pageSize: size,
-    current: page,
-    onChange: handlePageChange,
-    showSizeChanger: false,
-    position: ['topCenter'] as any,
-  } : false;
+  const pagSizeOptions = [{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }, { value: 200, label: '200 / oldal' }, { value: 500, label: '500 / oldal' }, { value: 1000, label: '1000 / oldal' }];
+
+  const pagRow = pag !== false ? (
+    <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 4 }}>
+      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
+      <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
+    </div>
+  ) : null;
+
+  const topPag = false as any;
 
   const footerFn = pag !== false && dataLen > size ? () => (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
       <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
-      <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={[{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }]} />
+      <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
     </div>
   ) : undefined;
 
@@ -466,9 +537,11 @@ function EnhancedTable<T extends object = any>({
       ) : (
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={colOrder} strategy={horizontalListSortingStrategy}>
+            {pagRow}
             <Table<T>
               key={tableResetKey}
               {...tableProps}
+              scroll={{ x: 'max-content', ...((tableProps as any).scroll || {}) }}
               pagination={topPag}
               footer={footerFn}
               columns={processedColumns as TableColumnType<T>[]}

@@ -94,6 +94,7 @@ ROLE_MENU_OPTIONS = [
     {'key': 'incoming_invoices_approve', 'label': 'Bejövő számlák jóváhagyás'},
     {'key': 'payment_batch_without_approval', 'label': 'Fizetési csomag jóváhagyás nélkül'},
     {'key': 'proformas', 'label': 'Díjbekérők'},
+    {'key': 'incoming_proformas', 'label': 'Bejövő Díjbekérők'},
     {'key': 'bank_statements', 'label': 'Bank'},
     {'key': 'arrears', 'label': 'Kintlévőség'},
     {'key': 'customers', 'label': 'Ügyfelek'},
@@ -3978,10 +3979,31 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                 if key:
                     incoming_bank_paid_map[key] = _as_decimal(row.get('total'))
 
+        # Payment batch paid map: keyed by (invoice_number, supplier_tax_number)
+        # If an invoice is in any payment batch (PENDING or EXPORTED), treat it as handled
+        batch_paid_map = {}
+        incoming_company_ids = set(
+            str(getattr(inv, 'company_id', '') or '')
+            for inv in incoming_all
+            if getattr(inv, 'company_id', None)
+        )
+        if incoming_company_ids:
+            for item in PaymentBatchItem.objects.filter(
+                batch__company_id__in=incoming_company_ids
+            ).values('invoice_number', 'supplier_tax_number', 'amount_gross'):
+                inv_no = str(item.get('invoice_number') or '').strip()
+                tax_no = str(item.get('supplier_tax_number') or '').strip()
+                if inv_no:
+                    key = (inv_no, tax_no)
+                    batch_paid_map[key] = batch_paid_map.get(key, decimal.Decimal('0')) + _as_decimal(item.get('amount_gross'))
+
         def _incoming_effective_paid(inv):
             paid_model = _as_decimal(getattr(inv, 'amount_paid', 0))
             paid_bank = _as_decimal(incoming_bank_paid_map.get(str(getattr(inv, 'id', ''))))
-            return max(paid_model, paid_bank)
+            inv_no = str(getattr(inv, 'invoice_number', '') or '').strip()
+            tax_no = str(getattr(inv, 'supplier_tax_number', '') or '').strip()
+            paid_batch = batch_paid_map.get((inv_no, tax_no), decimal.Decimal('0'))
+            return max(paid_model, paid_bank, paid_batch)
 
         def _incoming_outstanding(inv):
             return _incoming_gross(inv) - _incoming_effective_paid(inv)

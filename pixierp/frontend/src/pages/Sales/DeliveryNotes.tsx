@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider } from 'antd';
-import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined } from '@ant-design/icons';
+import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip } from 'antd';
+import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import EnhancedTable from '../../components/EnhancedTable';
@@ -63,6 +63,34 @@ interface SignatureTemplate {
 const DeliveryNotes: React.FC = () => {
   const [data, setData] = useState<DeliveryNoteItemRow[]>([]);
   const [loading, setLoading] = useState(false);
+  const [csvMode, setCsvMode] = useState(false);
+  const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
+
+  const exportCsv = () => {
+    const rows = (csvSelectedKeys.length > 0 ? data.filter(r => csvSelectedKeys.includes(r.id)) : data)
+      .map(r => ({
+        'Szállítólevél szám': r.delivery_note_number,
+        'Megrendelés szám': r.order_number,
+        'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
+        'Ügyfél': r.customer_name ?? '',
+        'Kapcsolattartó': r.contact_names ?? r.contact_name ?? '',
+        'Tétel': r.item_name,
+        'Mennyiség': r.quantity,
+        'ME': r.unit,
+        'Megjegyzés': r.notes ?? '',
+        'Visszaigazolt': r.is_confirmed ? 'Igen' : 'Nem',
+        'Visszaigazoló': r.confirmed_by_user_name ?? '',
+      }));
+    if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
+    const headers = Object.keys(rows[0]);
+    const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `szallitolevelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setCsvMode(false); setCsvSelectedKeys([]);
+  };
   const [searchText, setSearchText] = useState('');
   
   // Specific filters
@@ -632,7 +660,15 @@ const DeliveryNotes: React.FC = () => {
                 <UnifiedQuickSearchHeader
                         title={<h1 style={{ margin: 0 }}>Szállítólevél Tételek</h1>}
                         actions={<Space className="pixi-unified-card-actions">
-             {(filterNoteNumber || filterOrderNumber || filterItemName) && (
+             {csvMode ? (
+               <Space size="small">
+                 <span style={{ fontSize: 13, color: '#666' }}>{csvSelectedKeys.length > 0 ? `${csvSelectedKeys.length} kijelölve` : 'Minden látható'}</span>
+                 <Button type="primary" icon={<FileTextOutlined />} size="small" onClick={exportCsv}>CSV letöltés</Button>
+                 <Button size="small" onClick={() => { setCsvMode(false); setCsvSelectedKeys([]); }}>Mégse</Button>
+               </Space>
+             ) : (
+               <Tooltip title="CSV export"><Button icon={<FileTextOutlined />} onClick={() => { setCsvMode(true); setCsvSelectedKeys([]); }} /></Tooltip>
+             )}
                  <Button onClick={() => {
                      setFilterNoteNumber('');
                      setFilterOrderNumber('');
@@ -657,6 +693,7 @@ const DeliveryNotes: React.FC = () => {
         loading={loading}
         size="small"
         cardBreakpoint={850}
+        rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined}
       />
 
       <Modal

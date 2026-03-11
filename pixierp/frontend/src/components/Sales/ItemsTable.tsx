@@ -37,6 +37,7 @@ interface ItemsTableProps {
   onCopyItem?: (item: any) => void;
   currency?: string;
   hidePrices?: boolean;
+  currencySelector?: React.ReactNode;
 }
 
 interface RowContextProps {
@@ -88,7 +89,7 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   const [dataSource, setDataSource] = useState<Item[]>([]);
@@ -425,9 +426,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         </DndContext>
       </div>
       {!hidePrices && (
-      <div style={{ marginTop: 12, textAlign: 'right' }}>
-        <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
-        <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>{currencySelector}</div>
+        <div style={{ textAlign: 'right' }}>
+          <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
+          <div style={{ fontSize: 12, color: '#666' }}>(nem tartalmazza az ÁFA-t)</div>
+        </div>
       </div>
       )}
       

@@ -86,10 +86,17 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [calculatedVolumes, setCalculatedVolumes] = useState({ unit: 0, total: 0 });
   const [isFixedQuantity, setIsFixedQuantity] = useState(false);
     const [initialEditorSnapshot, setInitialEditorSnapshot] = useState('');
+    const [dataLoadedKey, setDataLoadedKey] = useState(0);
+
+    const EMPTY_STRINGS = new Set(['', '<p><br></p>', '<p></p>', '<br>']);
 
     const normalizeForCompare = (value: any): any => {
         if (value === null || value === undefined) return undefined;
-        if (typeof value === 'string') return value.trim();
+        if (typeof value === 'string') {
+            const trimmed = value.trim();
+            if (EMPTY_STRINGS.has(trimmed)) return undefined;
+            return trimmed;
+        }
         if (Array.isArray(value)) return value.map(normalizeForCompare);
         if (value instanceof Date) return value.toISOString();
         if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
@@ -114,6 +121,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
 
   useEffect(() => {
     if (open) {
+      setDataLoadedKey(0);
       loadData();
       form.resetFields();
       setCostItems([]);
@@ -190,6 +198,15 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
         return () => clearTimeout(timer);
     }, [open, editingProduct]);
 
+    // Re-take snapshot after data finishes loading (covers generated code, etc.)
+    useEffect(() => {
+        if (!open || dataLoadedKey === 0) return;
+        const timer = setTimeout(() => {
+            setInitialEditorSnapshot(getEditorSnapshot());
+        }, 150);
+        return () => clearTimeout(timer);
+    }, [dataLoadedKey]);
+
   useEffect(() => {
     // Auto-generate code for calculator-created products once products are loaded
     if (open && editingProduct && editingProduct._from_calculator && existingProducts.length > 0) {
@@ -253,6 +270,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       setCalculatorTemplates(templatesRes.data?.results ?? templatesRes.data ?? []);
     } catch (e) {
       console.error(e);
+    } finally {
+      setDataLoadedKey(k => k + 1);
     }
   };
 

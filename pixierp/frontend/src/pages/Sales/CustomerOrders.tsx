@@ -3,7 +3,7 @@ import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined } from '@ant-design/icons';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
@@ -207,6 +207,64 @@ interface CustomerOrder {
   const [isItemsView, setIsItemsView] = useState(
     savedSettings?.isItemsView || false
   );
+  const [csvMode, setCsvMode] = useState(false);
+  const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
+
+  const exportCsv = () => {
+    const isOrders = !isItemsView;
+    let rows: any[];
+    if (isOrders) {
+      const data = csvSelectedKeys.length > 0
+        ? filteredOrders.filter(o => csvSelectedKeys.includes(o.id))
+        : filteredOrders;
+      rows = data.map(o => ({
+        'Megr. szám': o.order_number,
+        'Dátum': o.order_date ? dayjs(o.order_date).format('YYYY-MM-DD') : '',
+        'Ügyfél': o.customer_name,
+        'Árajánlat': o.quote_request_title,
+        'Kapcsolattartó': o.contact_names,
+        'Határidő': o.deadline ? dayjs(o.deadline).format('YYYY-MM-DD') : '',
+        'Nettó összeg': o.total_amount ?? '',
+        'Státusz': o.status,
+        'Számlaszám': o.invoice_number ?? '',
+        'Szállítólevél': o.delivery_note_number ?? '',
+        'Rögzítő': o.created_by_name ?? '',
+      }));
+    } else {
+      const data = csvSelectedKeys.length > 0
+        ? flattenedItems.filter((it: any) => csvSelectedKeys.includes(it.uniqueId))
+        : flattenedItems;
+      rows = data.map((it: any) => ({
+        'Megr. szám': it.order_number,
+        'Dátum': it.order_date ? dayjs(it.order_date).format('YYYY-MM-DD') : '',
+        'Ügyfél': it.customer_name,
+        'Tétel neve': it.name,
+        'Leírás': it.product_description ?? '',
+        'Belső leírás': it.internal_description ?? '',
+        'Megjegyzés': it.description ?? '',
+        'Beszállító': it.supplier_name ?? '',
+        'Határidő': it.deadline ? dayjs(it.deadline).format('YYYY-MM-DD') : '',
+        'Nettó összeg': it.net_total ?? '',
+        'Státusz': it.status,
+      }));
+    }
+    if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
+    const headers = Object.keys(rows[0]);
+    const escape = (v: any) => {
+      const s = String(v ?? '');
+      return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `megrendelesek_${dayjs().format('YYYY-MM-DD')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setCsvMode(false);
+    setCsvSelectedKeys([]);
+  };
 
   // Save settings to localStorage whenever they change
   useEffect(() => {
@@ -1532,6 +1590,23 @@ interface CustomerOrder {
           >
               <Button icon={<FilterOutlined />}>Gyorsszűrők</Button>
           </Dropdown>
+          {csvMode ? (
+            <Space size="small">
+              <span style={{ fontSize: 13, color: '#666' }}>
+                {csvSelectedKeys.length > 0 ? `${csvSelectedKeys.length} kijelölve` : 'Minden látható'}
+              </span>
+              <Button type="primary" icon={<FileTextOutlined />} size="small" onClick={exportCsv}>
+                CSV letöltés
+              </Button>
+              <Button size="small" onClick={() => { setCsvMode(false); setCsvSelectedKeys([]); }}>
+                Mégse
+              </Button>
+            </Space>
+          ) : (
+            <Tooltip title="CSV export" placement="bottom">
+              <Button icon={<FileTextOutlined />} onClick={() => { setCsvMode(true); setCsvSelectedKeys([]); }} />
+            </Tooltip>
+          )}
           <Tooltip
             title={statusFilter.length > 0
               ? statusFilter.map(v => ({
@@ -1612,6 +1687,11 @@ interface CustomerOrder {
           rowKey={isItemsView ? 'uniqueId' : 'id'}
           loading={loading}
           size="small"
+          rowSelection={csvMode ? {
+            selectedRowKeys: csvSelectedKeys,
+            onChange: (keys) => setCsvSelectedKeys(keys),
+            columnWidth: 40,
+          } : undefined}
           className="co-responsive-table"
           tableLayout="auto"
           pagination={{

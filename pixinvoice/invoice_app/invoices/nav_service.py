@@ -770,7 +770,40 @@ class NAVService:
         rate_buckets = {}
         line_no = 1
         huf_rate = Decimal(str(invoice.exchange_rate or '1'))
-        
+
+        # --- Currency-aware rounding setup ---
+        is_huf = (invoice.currency == 'HUF')
+        try:
+            from invoices.models import Currency as CurrencyModel
+            _cur = CurrencyModel.objects.get(code=invoice.currency)
+            _display_decimals = _cur.display_decimals
+        except Exception:
+            _display_decimals = 0 if is_huf else 2
+        if is_huf:
+            _display_decimals = 0
+        _dec_fmt = Decimal('1') if _display_decimals == 0 else Decimal('0.' + '0' * _display_decimals)
+        _huf_fmt = Decimal('1')
+
+        def rnd(v) -> Decimal:
+            """Round to invoice-currency precision."""
+            try:
+                return Decimal(str(v)).quantize(_dec_fmt, rounding=ROUND_HALF_UP)
+            except Exception:
+                return Decimal('0')
+
+        def rndhuf(v) -> Decimal:
+            """Round to whole HUF (for *HUF suffix fields)."""
+            try:
+                return Decimal(str(v)).quantize(_huf_fmt, rounding=ROUND_HALF_UP)
+            except Exception:
+                return Decimal('0')
+
+        def round5(v) -> Decimal:
+            """Round to nearest 5 Ft (HUF cash rounding)."""
+            d = Decimal(str(v))
+            return (d / 5).quantize(Decimal('1'), rounding=ROUND_HALF_UP) * 5
+        # --- end rounding setup ---
+
         # Feltöltésben minden számla normál szerkezetű
         is_simplified = False
         for item in invoice.items.all():
@@ -815,11 +848,11 @@ class NAVService:
             if u_code == 'OWN':
                 # Saját mértékegység megnevezése kötelező OWN esetén
                 ET.SubElement(line, '{%s}unitOfMeasureOwn' % NS_DATA).text = (u_own or 'OWN')
-            ET.SubElement(line, '{%s}unitPrice' % NS_DATA).text = q2(item.unit_price)
+            ET.SubElement(line, '{%s}unitPrice' % NS_DATA).text = str(rnd(item.unit_price))
 
-            net = Decimal(str(item.net_amount))
+            net = rnd(Decimal(str(item.net_amount)))
             vat_pct = (Decimal(str(item.vat_rate or 0)) / Decimal('100')).quantize(Decimal('0.0000'), rounding=ROUND_HALF_UP)
-            vat_amount = (net * vat_pct)
+            vat_amount = rnd(net * vat_pct)
             gross = net + vat_amount
             total_net += net
             total_vat += vat_amount
@@ -837,25 +870,25 @@ class NAVService:
                 lineAmountsSimpl = ET.SubElement(line, '{%s}lineAmountsSimplified' % NS_DATA)
                 vatRate = ET.SubElement(lineAmountsSimpl, '{%s}lineVatRate' % NS_DATA)
                 ET.SubElement(vatRate, '{%s}vatPercentage' % NS_DATA).text = q4(vat_pct)
-                ET.SubElement(lineAmountsSimpl, '{%s}lineGrossAmountSimplified' % NS_DATA).text = q2(gross)
+                ET.SubElement(lineAmountsSimpl, '{%s}lineGrossAmountSimplified' % NS_DATA).text = str(gross)
                 if invoice.currency == 'HUF':
-                    ET.SubElement(lineAmountsSimpl, '{%s}lineGrossAmountSimplifiedHUF' % NS_DATA).text = q2(gross)
+                    ET.SubElement(lineAmountsSimpl, '{%s}lineGrossAmountSimplifiedHUF' % NS_DATA).text = str(gross)
             else:
                 lineAmountsNormal = ET.SubElement(line, '{%s}lineAmountsNormal' % NS_DATA)
                 netData = ET.SubElement(lineAmountsNormal, '{%s}lineNetAmountData' % NS_DATA)
-                ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = q2(net)
-                ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net * huf_rate)
+                ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = str(net)
+                ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = str(rndhuf(net * huf_rate))
 
                 vatRate = ET.SubElement(lineAmountsNormal, '{%s}lineVatRate' % NS_DATA)
                 ET.SubElement(vatRate, '{%s}vatPercentage' % NS_DATA).text = q4(vat_pct)
 
                 vatData = ET.SubElement(lineAmountsNormal, '{%s}lineVatData' % NS_DATA)
-                ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = q2(vat_amount)
-                ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount * huf_rate)
+                ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = str(vat_amount)
+                ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = str(rndhuf(vat_amount * huf_rate))
 
                 grossData = ET.SubElement(lineAmountsNormal, '{%s}lineGrossAmountData' % NS_DATA)
-                ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = q2(gross)
-                ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(gross * huf_rate)
+                ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = str(gross)
+                ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = str(rndhuf(gross * huf_rate))
 
         # Add advance deduction lines for FINAL invoices based on allocations
         try:
@@ -878,12 +911,12 @@ class NAVService:
                     # Split allocated gross by advance VAT composition
                     remaining_alloc = Decimal(str(alloc.amount))
                     for rate, g in adv_rate_gross.items():
-                        portion_gross = (Decimal(str(alloc.amount)) * (g / adv_total_gross)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        portion_gross = rnd(Decimal(str(alloc.amount)) * (g / adv_total_gross))
                         # Last rate adjust for rounding
                         # Negative deduction line
                         portion_gross = -portion_gross
                         vat_pct = (rate / Decimal('100')).quantize(Decimal('0.0000'), rounding=ROUND_HALF_UP)
-                        net = (portion_gross / (Decimal('1') + vat_pct)).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+                        net = rnd(portion_gross / (Decimal('1') + vat_pct))
                         vat_amount = portion_gross - net
 
                         # Append line
@@ -895,7 +928,7 @@ class NAVService:
                         ET.SubElement(line, '{%s}lineDescription' % NS_DATA).text = f"Előleg beszámítása ({adv.invoice_number})"
                         ET.SubElement(line, '{%s}quantity' % NS_DATA).text = q2(Decimal('1'))
                         ET.SubElement(line, '{%s}unitOfMeasure' % NS_DATA).text = 'PIECE'
-                        ET.SubElement(line, '{%s}unitPrice' % NS_DATA).text = q2(net)
+                        ET.SubElement(line, '{%s}unitPrice' % NS_DATA).text = str(net)
 
                         total_net += net
                         total_vat += vat_amount
@@ -908,19 +941,19 @@ class NAVService:
 
                         lineAmountsNormal = ET.SubElement(line, '{%s}lineAmountsNormal' % NS_DATA)
                         netData = ET.SubElement(lineAmountsNormal, '{%s}lineNetAmountData' % NS_DATA)
-                        ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = q2(net)
-                        ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = q2(net * huf_rate)
+                        ET.SubElement(netData, '{%s}lineNetAmount' % NS_DATA).text = str(net)
+                        ET.SubElement(netData, '{%s}lineNetAmountHUF' % NS_DATA).text = str(rndhuf(net * huf_rate))
                         
                         vatRate = ET.SubElement(lineAmountsNormal, '{%s}lineVatRate' % NS_DATA)
                         ET.SubElement(vatRate, '{%s}vatPercentage' % NS_DATA).text = q4(vat_pct)
                         
                         vatData = ET.SubElement(lineAmountsNormal, '{%s}lineVatData' % NS_DATA)
-                        ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = q2(vat_amount)
-                        ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = q2(vat_amount * huf_rate)
+                        ET.SubElement(vatData, '{%s}lineVatAmount' % NS_DATA).text = str(vat_amount)
+                        ET.SubElement(vatData, '{%s}lineVatAmountHUF' % NS_DATA).text = str(rndhuf(vat_amount * huf_rate))
                         
                         grossData = ET.SubElement(lineAmountsNormal, '{%s}lineGrossAmountData' % NS_DATA)
-                        ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = q2(portion_gross)
-                        ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = q2(portion_gross * huf_rate)
+                        ET.SubElement(grossData, '{%s}lineGrossAmountNormal' % NS_DATA).text = str(portion_gross)
+                        ET.SubElement(grossData, '{%s}lineGrossAmountNormalHUF' % NS_DATA).text = str(rndhuf(portion_gross * huf_rate))
         except Exception:
             pass
 
@@ -932,8 +965,8 @@ class NAVService:
                 s = ET.SubElement(invoiceSummary, '{%s}summarySimplified' % NS_DATA)
                 vr = ET.SubElement(s, '{%s}vatRate' % NS_DATA)
                 ET.SubElement(vr, '{%s}vatPercentage' % NS_DATA).text = rate_key
-                ET.SubElement(s, '{%s}vatContentGrossAmount' % NS_DATA).text = q2(vals['gross'])
-                ET.SubElement(s, '{%s}vatContentGrossAmountHUF' % NS_DATA).text = q2(vals['gross'] * huf_rate)
+                ET.SubElement(s, '{%s}vatContentGrossAmount' % NS_DATA).text = str(vals['gross'])
+                ET.SubElement(s, '{%s}vatContentGrossAmountHUF' % NS_DATA).text = str(rndhuf(vals['gross'] * huf_rate))
         else:
             summaryNormal = ET.SubElement(invoiceSummary, '{%s}summaryNormal' % NS_DATA)
 
@@ -944,26 +977,30 @@ class NAVService:
                 ET.SubElement(vr, '{%s}vatPercentage' % NS_DATA).text = rate_key
 
                 netData = ET.SubElement(s, '{%s}vatRateNetData' % NS_DATA)
-                ET.SubElement(netData, '{%s}vatRateNetAmount' % NS_DATA).text = q2(vals['net'])
-                ET.SubElement(netData, '{%s}vatRateNetAmountHUF' % NS_DATA).text = q2(vals['net'] * huf_rate)
+                ET.SubElement(netData, '{%s}vatRateNetAmount' % NS_DATA).text = str(vals['net'])
+                ET.SubElement(netData, '{%s}vatRateNetAmountHUF' % NS_DATA).text = str(rndhuf(vals['net'] * huf_rate))
 
                 vatData = ET.SubElement(s, '{%s}vatRateVatData' % NS_DATA)
-                ET.SubElement(vatData, '{%s}vatRateVatAmount' % NS_DATA).text = q2(vals['vat'])
-                ET.SubElement(vatData, '{%s}vatRateVatAmountHUF' % NS_DATA).text = q2(vals['vat'] * huf_rate)
+                ET.SubElement(vatData, '{%s}vatRateVatAmount' % NS_DATA).text = str(vals['vat'])
+                ET.SubElement(vatData, '{%s}vatRateVatAmountHUF' % NS_DATA).text = str(rndhuf(vals['vat'] * huf_rate))
 
                 grossData = ET.SubElement(s, '{%s}vatRateGrossData' % NS_DATA)
-                ET.SubElement(grossData, '{%s}vatRateGrossAmount' % NS_DATA).text = q2(vals['gross'])
-                ET.SubElement(grossData, '{%s}vatRateGrossAmountHUF' % NS_DATA).text = q2(vals['gross'] * huf_rate)
+                ET.SubElement(grossData, '{%s}vatRateGrossAmount' % NS_DATA).text = str(vals['gross'])
+                ET.SubElement(grossData, '{%s}vatRateGrossAmountHUF' % NS_DATA).text = str(rndhuf(vals['gross'] * huf_rate))
 
-            ET.SubElement(summaryNormal, '{%s}invoiceNetAmount' % NS_DATA).text = q2(total_net)
-            ET.SubElement(summaryNormal, '{%s}invoiceNetAmountHUF' % NS_DATA).text = q2(total_net * huf_rate)
-            ET.SubElement(summaryNormal, '{%s}invoiceVatAmount' % NS_DATA).text = q2(total_vat)
-            ET.SubElement(summaryNormal, '{%s}invoiceVatAmountHUF' % NS_DATA).text = q2(total_vat * huf_rate)
+            ET.SubElement(summaryNormal, '{%s}invoiceNetAmount' % NS_DATA).text = str(total_net)
+            ET.SubElement(summaryNormal, '{%s}invoiceNetAmountHUF' % NS_DATA).text = str(rndhuf(total_net * huf_rate))
+            ET.SubElement(summaryNormal, '{%s}invoiceVatAmount' % NS_DATA).text = str(total_vat)
+            ET.SubElement(summaryNormal, '{%s}invoiceVatAmountHUF' % NS_DATA).text = str(rndhuf(total_vat * huf_rate))
 
         summaryGross = ET.SubElement(invoiceSummary, '{%s}summaryGrossData' % NS_DATA)
         total_gross = total_net + total_vat
-        ET.SubElement(summaryGross, '{%s}invoiceGrossAmount' % NS_DATA).text = q2(total_gross)
-        ET.SubElement(summaryGross, '{%s}invoiceGrossAmountHUF' % NS_DATA).text = q2(total_gross * huf_rate)
+        if is_huf and (invoice.payment_method in {'cash', 'cod'}):
+            total_gross_display = round5(total_gross)
+        else:
+            total_gross_display = total_gross
+        ET.SubElement(summaryGross, '{%s}invoiceGrossAmount' % NS_DATA).text = str(total_gross_display)
+        ET.SubElement(summaryGross, '{%s}invoiceGrossAmountHUF' % NS_DATA).text = str(rndhuf(total_gross_display * huf_rate))
 
         return ET.tostring(root, encoding='utf-8', xml_declaration=True).decode('utf-8')
 

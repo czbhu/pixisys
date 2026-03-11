@@ -217,7 +217,7 @@ if [ "$PRODUCTION_MODE" != "true" ]; then
     # Start ERP frontend dev server
     echo -e "${BLUE}⚛️  Starting ERP Frontend dev server (port 3000)...${NC}"
     cd "$SCRIPT_DIR/pixierp/frontend"
-    PORT=3000 BROWSER=none HOST=0.0.0.0 REACT_APP_API_URL=/api/v1 REACT_APP_DEV_MODE=true npm start > /tmp/pixierp_frontend.log 2>&1 &
+    PORT=3000 BROWSER=none HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=0 REACT_APP_API_URL=/api/v1 REACT_APP_DEV_MODE=true npm start > /tmp/pixierp_frontend.log 2>&1 &
     ERP_FRONTEND_PID=$!
     echo "$ERP_FRONTEND_PID" > "$ERP_FRONTEND_PIDFILE"
     echo -e "${GREEN}✅ ERP Frontend dev server started (PID: $ERP_FRONTEND_PID)${NC}"
@@ -225,7 +225,7 @@ if [ "$PRODUCTION_MODE" != "true" ]; then
     # Start Invoice frontend dev server
     echo -e "${BLUE}⚛️  Starting Invoice Frontend dev server (port ${INV_FRONTEND_PORT})...${NC}"
     cd "$SCRIPT_DIR/pixinvoice/frontend"
-    PORT=${INV_FRONTEND_PORT} BROWSER=none HOST=0.0.0.0 REACT_APP_API_URL="" REACT_APP_DEV_MODE=true npm start > /tmp/pixinvoice_frontend.log 2>&1 &
+    PORT=${INV_FRONTEND_PORT} BROWSER=none HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=0 REACT_APP_API_URL="" REACT_APP_DEV_MODE=true npm start > /tmp/pixinvoice_frontend.log 2>&1 &
     INVOICE_FRONTEND_PID=$!
     echo "$INVOICE_FRONTEND_PID" > "$INVOICE_FRONTEND_PIDFILE"
     echo -e "${GREEN}✅ Invoice Frontend dev server started (PID: $INVOICE_FRONTEND_PID)${NC}"

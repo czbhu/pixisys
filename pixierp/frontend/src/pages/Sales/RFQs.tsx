@@ -5,7 +5,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -24,7 +24,7 @@ const { TextArea } = Input;
 
 const RFQs: React.FC = () => {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams(); // Add this
+  const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -62,10 +62,71 @@ const RFQs: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
+  const [csvMode, setCsvMode] = useState(false);
+  const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
+  const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
+
+  const exportCsv = () => {
+    if (isItemsView) {
+      const source = csvSelectedKeys.length > 0
+        ? flattenedItems.filter((r: any) => csvSelectedKeys.includes(r.uniqueId))
+        : flattenedItems;
+      const rows = source.map((r: any) => ({
+        'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
+        'Ajánlat szám': r.rfq_number ?? '',
+        'Tétel neve': r.product_name || r.manufacturing_product_name || r.service_name || r.name || '',
+        'Leírás': r.product_description ?? '',
+        'Belső leírás': r.internal_description ?? '',
+        'Megjegyzés': r.description ?? '',
+        'Ügyfél': r.company_name ?? '',
+        'Nettó összeg': (Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toFixed(2),
+        'Státusz': r.status ?? '',
+      }));
+      if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
+      const headers = Object.keys(rows[0]);
+      const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
+      const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
+      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_tetelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
+      URL.revokeObjectURL(url);
+      setCsvMode(false); setCsvSelectedKeys([]);
+      return;
+    }
+    const rows = (csvSelectedKeys.length > 0 ? filtered.filter((r: any) => csvSelectedKeys.includes(r.id)) : filtered)
+      .map((r: any) => ({
+        'Szám': r.request_number ?? r.number ?? '',
+        'Dátum': r.created_at ? dayjs(r.created_at).format('YYYY-MM-DD') : '',
+        'Cég': r.company?.name ?? '',
+        'Kapcsolattartók': (r.contacts || []).map((c: any) => c.name).filter(Boolean).join('; '),
+        'Tárgy': r.title ?? '',
+        'Projekt': r.project?.name ?? '',
+        'Státusz': r.status ?? '',
+        'Deviza': r.currency ?? '',
+        'Nettó összeg': r.total_amount ?? '',
+        'Rögzítő': r.created_by_name ?? '',
+        'Határidő': r.deadline ? dayjs(r.deadline).format('YYYY-MM-DD') : '',
+      }));
+    if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
+    const headers = Object.keys(rows[0]);
+    const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
+    const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
+    URL.revokeObjectURL(url);
+    setCsvMode(false); setCsvSelectedKeys([]);
+  };
+
+  const QUILL_EMPTY = new Set(['', '<p><br></p>', '<p></p>', '<br>']);
 
   const normalizeForCompare = (value: any): any => {
     if (value === null || value === undefined) return undefined;
-    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (QUILL_EMPTY.has(trimmed)) return undefined;
+      return trimmed;
+    }
     if (Array.isArray(value)) return value.map(normalizeForCompare);
     if (value instanceof Date) return value.toISOString();
     if (typeof value === 'object' && typeof value?.format === 'function') return value.format('YYYY-MM-DDTHH:mm:ss');
@@ -82,7 +143,11 @@ const RFQs: React.FC = () => {
   };
 
   const getFormSnapshot = () => JSON.stringify(normalizeForCompare(form.getFieldsValue(true)));
-  const hasFormChanges = () => getFormSnapshot() !== initialFormSnapshot;
+  const hasFormChanges = () =>
+    getFormSnapshot() !== initialFormSnapshot
+    || newItems.length > 0
+    || rfqFiles.length > 0
+    || newCosts.length > 0;
 
   useEffect(() => {
     loadData();
@@ -183,12 +248,6 @@ const RFQs: React.FC = () => {
         <Tooltip title={tooltipContent} placement="right" color="#1d2939">
           <div style={{ lineHeight: '1.3', cursor: 'default' }}>
             {r.title && <div style={{ fontWeight: 600 }}>{r.title}</div>}
-            {(r.company?.name || r.company_name)
-              ? <div style={{ fontSize: '0.85em', color: '#1890ff' }}>{r.company?.name || r.company_name}</div>
-              : <div style={{ fontSize: '0.85em', color: '#d48806', fontWeight: 500 }}>
-                  {(r.contacts && r.contacts[0]?.name) || r.contact_names?.split(',')[0]?.trim() || 'Magánszemély'}
-                </div>
-            }
             <div style={{ fontSize: '0.75em', color: '#888' }}>{r.number || r.request_number}</div>
           </div>
         </Tooltip>
@@ -213,7 +272,35 @@ const RFQs: React.FC = () => {
     ), 
     sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') 
   },
-  { title: 'Kapcsolattartó', key: 'contact_names', width: 140, responsive: ['xl'], render: (_: any, r: any): React.ReactNode => r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '), sorter: (a: any, b: any) => (a.contact_names || '').localeCompare(b.contact_names || '') },
+  {
+    title: 'Ügyfél', key: 'customer_name', width: 160,
+    sorter: (a: any, b: any) => {
+      const aName = a.is_private ? (a.contact_names || '') : (a.company?.name || a.company_name || '');
+      const bName = b.is_private ? (b.contact_names || '') : (b.company?.name || b.company_name || '');
+      return aName.localeCompare(bName, 'hu');
+    },
+    render: (_: any, r: any): React.ReactNode => {
+      const isPrivate = !r.company?.name && !r.company_name;
+      const primaryName = isPrivate
+        ? (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', ') || 'Magánszemély')
+        : (r.company?.name || r.company_name);
+      const secondaryName = isPrivate
+        ? null
+        : (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '));
+      const tooltipText = isPrivate
+        ? primaryName
+        : [primaryName, secondaryName].filter(Boolean).join(' – ');
+      return (
+        <Tooltip title={tooltipText}>
+          <div>
+            <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: (isPrivate || secondaryName) ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{primaryName}</div>
+            {isPrivate && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
+            {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
+          </div>
+        </Tooltip>
+      );
+    },
+  },
     { 
       title: 'Nettó összeg', 
       key: 'total_net_amount', 
@@ -383,6 +470,138 @@ const RFQs: React.FC = () => {
       )
     }
   ]), [navigate]);
+
+  const flattenedItems = useMemo(() => {
+    if (!isItemsView) return [];
+    const res: any[] = [];
+    filtered.forEach((rfq: any) => {
+      (rfq.items || []).forEach((item: any, idx: number) => {
+        res.push({
+          ...item,
+          uniqueId: `${rfq.id}_${item.id ?? idx}`,
+          rfq_number: rfq.number || rfq.request_number,
+          rfq_id: rfq.id,
+          rfq_title: rfq.title,
+          company_name: rfq.company?.name || rfq.company_name || '',
+          contact_names: rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', '),
+          is_private: !rfq.company?.name && !rfq.company_name,
+          issue_date: rfq.issue_date,
+          deadline: rfq.deadline,
+          status: rfq.status,
+          currency_symbol: rfq.currency_symbol || 'Ft',
+          created_by_name: rfq.created_by_name,
+        });
+      });
+    });
+    return res;
+  }, [filtered, isItemsView]);
+
+  const itemsColumns = useMemo(() => ([
+    {
+      title: 'Dátum', key: 'issue_date', width: 100,
+      sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || ''),
+      render: (_: any, r: any) => r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
+    },
+    {
+      title: 'Ajánlat szám', key: 'rfq_number', width: 140,
+      sorter: (a: any, b: any) => (a.rfq_number || '').localeCompare(b.rfq_number || ''),
+      render: (_: any, r: any) => (
+        <a style={{ color: '#1677ff', fontWeight: 500, cursor: 'pointer' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}`)}>
+          {r.rfq_number}
+        </a>
+      ),
+    },
+    {
+      title: 'Tétel neve', key: 'item_name', ellipsis: true,
+      sorter: (a: any, b: any) => {
+        const nameA = a.product_name || a.manufacturing_product_name || a.service_name || a.name || '';
+        const nameB = b.product_name || b.manufacturing_product_name || b.service_name || b.name || '';
+        return nameA.localeCompare(nameB, 'hu');
+      },
+      render: (_: any, r: any) => r.product_name || r.manufacturing_product_name || r.service_name || r.name || '—',
+    },
+    {
+      title: 'Leírás', dataIndex: 'product_description', key: 'product_description', width: 200,
+      sorter: (a: any, b: any) => (a.product_description || '').localeCompare(b.product_description || '', 'hu'),
+      render: (t: string) => t ? (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{t}</div>) : null,
+    },
+    {
+      title: 'Belső leírás', dataIndex: 'internal_description', key: 'internal_description', width: 180,
+      sorter: (a: any, b: any) => (a.internal_description || '').localeCompare(b.internal_description || '', 'hu'),
+      render: (t: string) => t ? (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{t}</div>) : null,
+    },
+    {
+      title: 'Megjegyzés', dataIndex: 'description', key: 'description', width: 180,
+      sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
+      render: (t: string) => t ? (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12 }}>{t}</div>) : null,
+    },
+    {
+      title: 'Ügyfél', key: 'company_name', width: 160,
+      sorter: (a: any, b: any) => {
+        const aName = a.is_private ? (a.contact_names || '') : (a.company_name || '');
+        const bName = b.is_private ? (b.contact_names || '') : (b.company_name || '');
+        return aName.localeCompare(bName, 'hu');
+      },
+      render: (_: any, r: any): React.ReactNode => {
+        const primaryName = r.is_private
+          ? (r.contact_names || 'Magánszemély')
+          : (r.company_name || 'Magánszemély');
+        const secondaryName = r.is_private ? null : r.contact_names;
+        const tooltipText = r.is_private
+          ? primaryName
+          : [primaryName, secondaryName].filter(Boolean).join(' – ');
+        return (
+          <Tooltip title={tooltipText}>
+            <div>
+              <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: (r.is_private || secondaryName) ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{primaryName}</div>
+              {r.is_private && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
+              {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
+            </div>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: 'Nettó összeg', key: 'net_total', width: 130, align: 'right' as const,
+      sorter: (a: any, b: any) => (Number(a.quantity || 0) * Number(a.net_unit_price || 0)) - (Number(b.quantity || 0) * Number(b.net_unit_price || 0)),
+      render: (_: any, r: any) => `${(Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`,
+    },
+    {
+      title: 'Státusz', dataIndex: 'status', key: 'status', width: 110,
+      sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || ''),
+      render: statusTag,
+    },
+    {
+      title: 'Műveletek', key: 'actions', width: 90,
+      render: (_: any, r: any) => (
+        <Space size="small">
+          <Tooltip title="Megnyitás">
+            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}`)} />
+          </Tooltip>
+          <Tooltip title="Tétel törlése">
+            <Button danger icon={<DeleteOutlined />} size="small" onClick={() => {
+              Modal.confirm({
+                title: 'Tétel törlése',
+                content: 'Biztosan törlöd ezt a tételt?',
+                okText: 'Igen, törlöm',
+                okButtonProps: { danger: true },
+                cancelText: 'Mégsem',
+                onOk: async () => {
+                  try {
+                    await salesService.deleteQuoteRequestItem(r.id, r.rfq_id);
+                    message.success('Tétel törölve');
+                    loadData();
+                  } catch (e: any) {
+                    message.error(e?.response?.data?.error || 'Hiba a törlés során');
+                  }
+                },
+              });
+            }} />
+          </Tooltip>
+        </Space>
+      ),
+    },
+  ]), [navigate, statusTag]);
 
   const handleCreate = async () => {
     try {
@@ -732,6 +951,25 @@ const RFQs: React.FC = () => {
         title="Árajánlatok"
         extra={
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
+              <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
+                <div
+                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
+                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: !isItemsView ? '#ffffff' : 'transparent', color: !isItemsView ? '#1677ff' : '#666', boxShadow: !isItemsView ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', userSelect: 'none' }}
+                >Árajánlatok</div>
+                <div
+                  onClick={() => { setIsItemsView(true); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'items'); return p; }, { replace: true }); }}
+                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: isItemsView ? '#1677ff' : 'transparent', color: isItemsView ? '#ffffff' : '#666', boxShadow: isItemsView ? '0 1px 4px rgba(22,119,255,0.25)' : 'none', userSelect: 'none' }}
+                >Tételek</div>
+              </div>
+              {csvMode ? (
+                <Space size="small">
+                  <span style={{ fontSize: 13, color: '#666' }}>{csvSelectedKeys.length > 0 ? `${csvSelectedKeys.length} kijelölve` : 'Minden látható'}</span>
+                  <Button type="primary" icon={<FileTextOutlined />} size="small" onClick={exportCsv}>CSV letöltés</Button>
+                  <Button size="small" onClick={() => { setCsvMode(false); setCsvSelectedKeys([]); }}>Mégse</Button>
+                </Space>
+              ) : (
+                <Tooltip title="CSV export"><Button icon={<FileTextOutlined />} onClick={() => { setCsvMode(true); setCsvSelectedKeys([]); }} /></Tooltip>
+              )}
               <Select
                 className="rfqs-status-select"
                 value={statusFilter}
@@ -765,7 +1003,7 @@ const RFQs: React.FC = () => {
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <EnhancedTable tableKey="rfqs" searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={columns as any} dataSource={filtered} rowKey="id" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} />
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined} />
       </Card>
       <Modal 
         title={`Ajánlat kérő kiküldése: ${(() => {
@@ -1040,35 +1278,35 @@ const RFQs: React.FC = () => {
         width={1100}
       >
         <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
-          <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
-            <Tooltip title="Az árajánlat még nem lett elmentve, a napló üres. Mentés után a részleteknél elérhető.">
-              <Button size="small" onClick={() => message.info('Mentés előtt nincs napló. Mentsd az árajánlatot, majd a részletek nézetben megnyitható a Napló.')}>
-                Napló
-              </Button>
-            </Tooltip>
+          {/* ── Alap adatok ─────────────────────────────────────────────── */}
+          <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={6}>
+                <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
+                  <Input value={nextNumber || ''} readOnly />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
+                  <Input value={currentUserName || ''} readOnly />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} onChange={onIssueDateChange} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
           </div>
-          <Row gutter={[8, 4]}>
-            <Col xs={24} md={6}>
-              <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
-                <Input value={nextNumber || ''} readOnly />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={6}>
-              <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
-                <Input value={currentUserName || ''} readOnly />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={6}>
-              <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
-                <DatePicker style={{ width: '100%' }} onChange={onIssueDateChange} />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={6}>
-              <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
+          {/* ── Ügyfél ──────────────────────────────────────────────────── */}
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
           <Row gutter={[8, 4]}>
             <Col xs={24} md={8}>
               <Form.Item 
@@ -1236,6 +1474,10 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+          </div>
+          {/* ── Tartalom ─────────────────────────────────────────────────── */}
+          <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tartalom</div>
           <Row gutter={[8, 4]}>
             <Col xs={24} md={14}>
               <Form.Item label="Megnevezés" name="title" style={{ marginBottom: 6 }}>
@@ -1254,97 +1496,78 @@ const RFQs: React.FC = () => {
           </Row>
           <Row gutter={[8, 4]}>
             <Col xs={24} md={12}>
-              <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
+              <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                <ReactQuill theme="snow" style={{ background: '#fff' }} />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
-              <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
+              <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                <ReactQuill theme="snow" style={{ background: '#fff' }} />
               </Form.Item>
             </Col>
           </Row>
-          <Divider style={{ margin: '12px 0' }} />
+          </div>
+          {/* ── Csatolmányok ──────────────────────────────────────────────── */}
+          <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Csatolmányok</div>
           <Row gutter={[8, 4]}>
-            <Col xs={24} md={8}>
-              <Form.Item label="Pénznem" style={{ marginBottom: 6 }}>
-                <Select
-                  showSearch
-                  optionFilterProp="label"
-                  placeholder="Válassz pénznemet"
-                  value={currency}
-                  onChange={(val) => setCurrency(String(val))}
-                >
-                  {currencyList.map((c) => (
-                    <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
-                      {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={16}>
+            <Col xs={24}>
               <Form.Item label="Ajánlat csatolmányok" style={{ marginBottom: 6 }}>
-                <Upload.Dragger
-                  multiple
-                  fileList={rfqFiles}
-                  beforeUpload={(file) => {
-                    const f = file as any;
-                    const key = f.uid || f.name;
-                    setRfqFiles((prev) => [...prev, f]);
-                    setRfqFileRemarks((prev) => ({ ...prev, [key]: prev[key] ?? '' }));
-                    return Upload.LIST_IGNORE;
-                  }}
-                  onRemove={(file) => {
-                    const key = (file as any).uid || (file as any).name;
-                    setRfqFiles((prev) => prev.filter((f) => f.uid !== file.uid));
-                    setRfqFileRemarks((prev) => {
-                      const copy = { ...prev } as any;
-                      delete copy[key];
-                      return copy;
-                    });
-                    return true;
-                  }}
-                >
-                  <p className="ant-upload-drag-icon">📎</p>
-                  <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a feltöltéshez</p>
-                </Upload.Dragger>
-                <div style={{ marginTop: 8 }}>
-                  {rfqFiles.map((f) => {
-                    const key = (f as any).uid || (f as any).name;
-                    return (
-                      <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
-                        <Button type="link" style={{ padding: 0, minWidth: 180, textAlign: 'left' }} onClick={() => {
-                          const fileObj = (f as any).originFileObj || f;
-                          const url = (f as any).url || (fileObj ? URL.createObjectURL(fileObj) : undefined);
-                          if (url) {
-                            setPreviewUrl(url);
-                            setPreviewTitle(f.name);
-                            setPreviewOpen(true);
-                          }
-                        }}>{f.name}</Button>
-                        <Input
-                          size="small"
-                          placeholder="Megjegyzés"
-                          value={rfqFileRemarks[key] || ''}
-                          onChange={(e) => setRfqFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
-                          style={{ flex: 1 }}
-                        />
-                        <Button danger size="small" onClick={() => {
-                          setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
-                          setRfqFileRemarks((prev) => {
-                            const copy = { ...prev } as any;
-                            delete copy[key];
-                            return copy;
-                          });
-                        }}>Törlés</Button>
-                      </div>
-                    );
-                  })}
+                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  <Upload.Dragger
+                    multiple
+                    showUploadList={false}
+                    fileList={rfqFiles}
+                    beforeUpload={(file) => {
+                      const f = file as any;
+                      const key = f.uid || f.name;
+                      setRfqFiles((prev) => [...prev, f]);
+                      setRfqFileRemarks((prev) => ({ ...prev, [key]: prev[key] ?? '' }));
+                      return Upload.LIST_IGNORE;
+                    }}
+                    style={{ width: 120, minWidth: 120, height: 120, padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 4 }}>
+                      <span style={{ fontSize: 24 }}>📎</span>
+                      <span style={{ fontSize: 11, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>Húzd ide vagy kattints</span>
+                    </div>
+                  </Upload.Dragger>
+                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {rfqFiles.length === 0 && (
+                      <span style={{ fontSize: 12, color: '#aaa', paddingTop: 4 }}>Még nincs feltöltött fájl</span>
+                    )}
+                    {rfqFiles.map((f) => {
+                      const key = (f as any).uid || (f as any).name;
+                      return (
+                        <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <Button type="link" size="small" style={{ padding: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
+                            const fileObj = (f as any).originFileObj || f;
+                            const url = (f as any).url || (fileObj ? URL.createObjectURL(fileObj) : undefined);
+                            if (url) { setPreviewUrl(url); setPreviewTitle(f.name); setPreviewOpen(true); }
+                          }} title={f.name}>{f.name}</Button>
+                          <Input
+                            size="small"
+                            placeholder="Megjegyzés"
+                            value={rfqFileRemarks[key] || ''}
+                            onChange={(e) => setRfqFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
+                            style={{ flex: 1 }}
+                          />
+                          <Button danger size="small" onClick={() => {
+                            setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
+                            setRfqFileRemarks((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
+                          }}>✕</Button>
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </Form.Item>
             </Col>
           </Row>
+          </div>
+          {/* ── Tételek ──────────────────────────────────────────────────── */}
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
             <span>Tétel hozzáadása:</span>
             <Checkbox 
@@ -1362,6 +1585,26 @@ const RFQs: React.FC = () => {
           <div style={{ marginTop: 6 }}>
             <ItemsTable
               currency={currency}
+              currencySelector={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
+                  <Select
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="Válassz pénznemet"
+                    value={currency}
+                    onChange={(val) => setCurrency(String(val))}
+                    style={{ width: 200 }}
+                    size="small"
+                  >
+                    {currencyList.map((c) => (
+                      <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
+                        {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
+                      </Select.Option>
+                    ))}
+                  </Select>
+                </div>
+              }
               onDeleteItem={(rec) => {
                 setNewItems((prev) => prev.filter((_, idx) => (idx + 1) !== rec.id));
               }}
@@ -1409,8 +1652,11 @@ const RFQs: React.FC = () => {
             })}
             />
           </div>
-          <Divider style={{ margin: '16px 0' }}>Költség kalkuláció</Divider>
-          <div style={{ marginBottom: 16 }}>
+          </div>
+          {/* ── Költség kalkuláció ───────────────────────────────────────── */}
+          <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
+          <div style={{ marginBottom: 8 }}>
              <RFQCostsTable 
                 totalRevenue={newItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.net_unit_price || 0)), 0)}
                 currency={currency}
@@ -1418,6 +1664,7 @@ const RFQs: React.FC = () => {
                 value={newCosts}
                 onChange={setNewCosts}
              />
+          </div>
           </div>
         </Form>
       </Modal>
@@ -1433,13 +1680,23 @@ const RFQs: React.FC = () => {
         footer={null}
         width={900}
       >
-        {previewUrl ? (
-          previewUrl.match(/\.pdf($|\?)/i) ? (
-            <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
-          ) : (
-            <img alt={previewTitle} src={previewUrl} style={{ maxWidth: '100%', maxHeight: '70vh' }} />
-          )
-        ) : (
+        {previewUrl ? (() => {
+          const ext = previewTitle.split('.').pop()?.toLowerCase() ?? '';
+          if (ext === 'pdf') {
+            return <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '75vh', border: 0 }} />;
+          }
+          if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) {
+            return <img alt={previewTitle} src={previewUrl} style={{ maxWidth: '100%', maxHeight: '75vh', display: 'block', margin: '0 auto' }} />;
+          }
+          return (
+            <div style={{ padding: 32, textAlign: 'center' }}>
+              <p style={{ marginBottom: 16 }}>Ez a fájltípus ({ext || 'ismeretlen'}) nem jeleníthető meg közvetlenül.</p>
+              <a href={previewUrl} download={previewTitle}>
+                <Button type="primary">Letöltés: {previewTitle}</Button>
+              </a>
+            </div>
+          );
+        })() : (
           <div>Nincs előnézet</div>
         )}
       </Modal>

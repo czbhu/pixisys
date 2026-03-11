@@ -1461,6 +1461,7 @@ class Currency(models.Model):
     name = models.CharField(max_length=50, verbose_name="Currency Name")
     symbol = models.CharField(max_length=5, blank=True, null=True, verbose_name="Symbol")
     current_rate = models.DecimalField(max_digits=12, decimal_places=4, default=1.0, verbose_name="Current Rate (to HUF)")
+    display_decimals = models.PositiveSmallIntegerField(default=2, verbose_name="Megjelenítési tizedes jegyek")
     last_updated = models.DateTimeField(auto_now=True, verbose_name="Last Updated")
     is_active = models.BooleanField(default=True, verbose_name="Active")
     is_default = models.BooleanField(default=False, verbose_name="Default")

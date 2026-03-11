@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef } from 'react';
 import styled from 'styled-components';
-import { Eye, RefreshCw, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar, Banknote } from 'lucide-react';
+import { Eye, RefreshCw, CheckSquare, Square, PlusCircle, FolderOpen, Trash2, FileDown, X, Save, Edit2, Upload, Image as ImageIcon, RotateCcw, Calendar, Banknote, PenLine, CreditCard, FileText, ListChecks } from 'lucide-react';
 import { Pagination, Spin } from 'antd';
 import { toast } from 'react-toastify';
 import api, { incomingDocsAPI, invoiceAPI } from '../services/api';
@@ -46,17 +46,18 @@ const PrimaryButton = styled.button`
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 16px;
-  background-color: #3498db;
+  padding: 0 16px;
+  height: 34px;
+  background-color: #2563eb;
   color: white;
   border: none;
-  border-radius: 4px;
+  border-radius: 6px;
   font-size: 14px;
   font-weight: 500;
   cursor: pointer;
-  transition: background-color 0.2s;
+  transition: background-color 0.15s;
 
-  &:hover { background-color: #2980b9; }
+  &:hover { background-color: #1d4ed8; }
   &:disabled { opacity: 0.6; cursor: not-allowed; }
 `;
 
@@ -217,13 +218,50 @@ const Toolbar = styled.div`
 `;
 
 const SearchInput = styled.input`
-  padding: 6px 10px;
+  padding: 0 10px;
+  height: 34px;
   min-width: 260px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 14px;
+  color: #374151;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &::placeholder { color: #9ca3af; }
+  &:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  }
 
   @media (max-width: 768px) {
     min-width: 0;
     width: 100%;
   }
+`;
+
+const FilterSelect = styled.select`
+  appearance: none;
+  -webkit-appearance: none;
+  padding: 0 32px 0 10px;
+  height: 34px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background-color: #fff;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  font-size: 14px;
+  color: #374151;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+
+  &:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 3px rgba(59,130,246,0.15);
+  }
+  &:hover:not(:focus) { border-color: #9ca3af; }
 `;
 
 const CheckboxBtn = styled.button`
@@ -253,13 +291,16 @@ const SecondaryButton = styled.button`
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
-  background-color: #ecf0f1;
-  color: #2c3e50;
-  border: none;
-  border-radius: 4px;
+  padding: 0 12px;
+  height: 34px;
+  background-color: #f9fafb;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
   font-size: 14px;
   cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  &:hover:not(:disabled) { background-color: #f3f4f6; border-color: #9ca3af; }
   &:disabled { opacity: 0.5; cursor: not-allowed; }
 
   @media (max-width: 768px) {
@@ -530,6 +571,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
   const searchTimer = useRef(null);
   const headerSelectRef = useRef(null);
+  const paymentDetailsRef = useRef(null);
   const [approvalSaving, setApprovalSaving] = useState({});
   const [czBackfillLoading, setCzBackfillLoading] = useState(false);
   const [mobileActionsRowKey, setMobileActionsRowKey] = useState(null);
@@ -604,6 +646,16 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
     allowAllMenus ||
     (allowedMenus && allowedMenus.includes('payment_batch_without_approval'))
   );
+
+  useEffect(() => {
+    const handler = (e) => {
+      if (paymentDetailsRef.current && !paymentDetailsRef.current.contains(e.target)) {
+        paymentDetailsRef.current.open = false;
+      }
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
 
   useEffect(() => {
     const sync = () => {
@@ -1134,6 +1186,14 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
   });
   const excludedForBatch = selectedRows.length - selectedRowsForBatch.length;
   const selectedTotal = selectedRowsForBatch.reduce((sum, r) => sum + Number(r.grossAmount || 0), 0);
+  const selectionSummary = selectedRows.reduce((acc, r) => {
+    const cur = r.currency || 'HUF';
+    if (!acc[cur]) acc[cur] = { net: 0, vat: 0, gross: 0 };
+    acc[cur].net   += Number(r.netAmount   || 0);
+    acc[cur].vat   += Number(r.vatAmount   || 0);
+    acc[cur].gross += Number(r.grossAmount || 0);
+    return acc;
+  }, {});
 
   const isVisibleByBankStatus = (row) => {
     if (paymentListMode !== 'bank' || statusFilter === 'all') return true;
@@ -1758,26 +1818,18 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
               onKeyDown={(e)=>{ if (e.key==='Enter') fetchDigest(1, { replace: true }); }}
               placeholder={externalOutgoing ? 'Keresés számlaszám, ügyfél vagy adószám alapján...' : 'Gyorskereső (számla, név, adószám)'}
             />
-            {!externalOutgoing && (
-              <SecondaryButton
-                onClick={()=>{ setAmountDraftFrom(amountFrom); setAmountDraftTo(amountTo); setShowAmountModal(true); }}
-              >
-                <Banknote size={16}/>
-                {amountFrom || amountTo ? `${amountFrom || '0'} – ${amountTo || '∞'} Ft` : 'Összeg'}
-              </SecondaryButton>
-            )}
-            <select value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
+            <FilterSelect value={statusFilter} onChange={(e)=>{ setStatusFilter(e.target.value); }}>
               <option value="all">{externalOutgoing ? 'Összes státusz' : 'Mind'}</option>
               <option value="unpaid">Kifizetetlen</option>
               <option value="paid">Kifizetett</option>
               <option value="due">Esedékes</option>
-            </select>
+            </FilterSelect>
             {!externalOutgoing && (
-              <details style={{ position: 'relative' }}>
-                <summary style={{ listStyle: 'none', cursor: 'pointer', padding:'6px 10px', border:'1px solid #ddd', borderRadius:4, minWidth: 210 }}>
+              <details ref={paymentDetailsRef} style={{ position: 'relative' }}>
+                <summary style={{ listStyle: 'none', cursor: 'pointer', padding:'0 32px 0 10px', border:'1px solid #d1d5db', borderRadius:6, minWidth: 200, height:34, display:'flex', alignItems:'center', fontSize:14, color:'#374151', background:'#fff', backgroundImage:"url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E\")", backgroundRepeat:'no-repeat', backgroundPosition:'right 10px center', userSelect:'none' }}>
                   {paymentFilter.length ? `Fizetési mód (${paymentFilter.length})` : 'Összes fizetési mód'}
                 </summary>
-                <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:20, background:'#fff', border:'1px solid #ddd', borderRadius:6, padding:8, minWidth:230, boxShadow:'0 2px 8px rgba(0,0,0,0.12)' }}>
+                <div style={{ position:'absolute', top:'calc(100% + 4px)', left:0, zIndex:20, background:'#fff', border:'1px solid #d1d5db', borderRadius:8, padding:10, minWidth:230, boxShadow:'0 8px 24px rgba(0,0,0,0.12)' }}>
                   {[
                     ['TRANSFER','Átutalás'],
                     ['CASH','Készpénz'],
@@ -1808,21 +1860,11 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
               </details>
             )}
             {!externalOutgoing && (
-              <select value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); }} style={{ padding:'6px 10px' }}>
+              <FilterSelect value={approvalFilter} onChange={(e)=>{ setApprovalFilter(e.target.value); }}>
                 <option value="all">Összes jóváhagyás</option>
                 <option value="approved">Csak jóváhagyott</option>
                 <option value="unapproved">Csak nem jóváhagyott</option>
-              </select>
-            )}
-            {!externalOutgoing && (
-              <label style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'0 4px' }}>
-                <input
-                  type="checkbox"
-                  checked={manualOnly}
-                  onChange={(e)=>setManualOnly(e.target.checked)}
-                />
-                Kézzel felvitt számlák
-              </label>
+              </FilterSelect>
             )}
           </ToolbarRow>
           <SecondaryButton
@@ -1831,13 +1873,14 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
           >
             <Calendar size={16}/>{externalOutgoing ? ' Dátum szűrés' : ''}
           </SecondaryButton>
-          <RefreshButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading} title="Frissítés">
-            <RefreshCw size={16}/>
-          </RefreshButton>
           {!externalOutgoing && (
-            <PrimaryButton onClick={()=>navigate('/incoming-invoices/new')} title="Új bejövő számla kézi rögzítése">
-              Új számla
-            </PrimaryButton>
+            <SecondaryButton
+              onClick={()=>{ setAmountDraftFrom(amountFrom); setAmountDraftTo(amountTo); setShowAmountModal(true); }}
+              title={amountFrom || amountTo ? `Összeg szűrő: ${amountFrom||'0'} – ${amountTo||'∞'} Ft` : 'Összeg szűrő'}
+              style={amountFrom || amountTo ? { background:'#dbeafe', color:'#0f172a' } : {}}
+            >
+              <Banknote size={16}/>
+            </SecondaryButton>
           )}
           {externalOutgoing && (
             <SecondaryButton onClick={runCzBackfill} disabled={czBackfillLoading} title="Számla sorozat pótlása NAV-ból">
@@ -1848,16 +1891,16 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
             <SecondaryButton
               onClick={exportSelectedCsv}
               disabled={selectedCount===0}
-              title={selectedCount===0 ? 'Jelölj ki számlákat az exporthoz' : 'Kijelölt számlák exportálása CSV-be'}
+              title={selectedCount===0 ? 'Jelölj ki számlákat az exporthoz' : `Kijelölt számlák exportálása CSV-be (${selectedCount} db)`}
             >
-              <FileDown size={16}/> Kijelöltek CSV ({selectedCount})
+              <FileDown size={16}/> {selectedCount > 0 ? `CSV (${selectedCount})` : 'CSV'}
             </SecondaryButton>
           )}
           
           {!isSelectorMode && !externalOutgoing && (
           <>
-          <SecondaryButton onClick={() => setShowPaymentHistory(true)}>
-            Kifizetések
+          <SecondaryButton onClick={() => setShowPaymentHistory(true)} title="Kifizetések">
+            <CreditCard size={16}/>
           </SecondaryButton>
           <SecondaryButton
             onClick={() => {
@@ -1869,27 +1912,20 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                 return next;
               });
             }}
+            title="Bankkivonat egyeztetés"
             style={paymentListMode === 'bank' ? { background:'#dbeafe', color:'#0f172a' } : {}}
           >
-            Bankkivonat
+            <FileText size={16}/>
           </SecondaryButton>
-          <SecondaryButton onClick={openBatches}>
-            <FolderOpen size={16}/> Csomagok ({pendingCount})
+          <SecondaryButton onClick={openBatches} title="Csomagok">
+            <FolderOpen size={16}/>{pendingCount > 0 && <span style={{ marginLeft:2 }}>({pendingCount})</span>}
           </SecondaryButton>
-          <label style={{ display:'inline-flex', alignItems:'center', gap:8, marginLeft:4, padding:'0 4px' }}>
-            <input
-              type="checkbox"
-              checked={allowAllPaymentTypesForBatch}
-              onChange={(e)=>setAllowAllPaymentTypesForBatch(e.target.checked)}
-            />
-            Minden számlatípus kijelölhető
-          </label>
           <SecondaryButton
             onClick={openCreateBatchModal}
             disabled={selectedCount===0}
-            title={selectedCount===0 ? (allowAllPaymentTypesForBatch ? 'Válassz számlákat' : 'Válassz átutalásos számlákat') : ''}
+            title={selectedCount===0 ? (allowAllPaymentTypesForBatch ? 'Válassz számlákat a csomag készítéséhez' : 'Válassz átutalásos számlákat') : 'Fizetési csomag készítése'}
           >
-            <PlusCircle size={16}/> Fizetési csomag készítése ({selectedCount})
+            <PlusCircle size={16}/>{selectedCount > 0 && <span style={{ marginLeft:2 }}>({selectedCount})</span>}
           </SecondaryButton>
           {editingBatch && (
             <div style={{ display:'inline-flex', gap:8, marginLeft:8 }}>
@@ -1902,6 +1938,32 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
             </div>
           )}
           </>
+          )}
+          <label title="Minden számlatípus kijelölhető" style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'0 4px', cursor:'pointer' }}>
+            <input
+              type="checkbox"
+              checked={allowAllPaymentTypesForBatch}
+              onChange={(e)=>setAllowAllPaymentTypesForBatch(e.target.checked)}
+            />
+            <ListChecks size={15} style={{ color: allowAllPaymentTypesForBatch ? '#2563eb' : '#6b7280' }} />
+          </label>
+          {!externalOutgoing && (
+            <label title="Kézzel felvitt számlák" style={{ display:'inline-flex', alignItems:'center', gap:6, padding:'0 4px', cursor:'pointer' }}>
+              <input
+                type="checkbox"
+                checked={manualOnly}
+                onChange={(e)=>setManualOnly(e.target.checked)}
+              />
+              <PenLine size={15} style={{ color: manualOnly ? '#2563eb' : '#6b7280' }} />
+            </label>
+          )}
+          <RefreshButton onClick={()=>fetchDigest(1, { refresh: 1, replace: true })} disabled={loading} title="Frissítés">
+            <RefreshCw size={16}/>
+          </RefreshButton>
+          {!externalOutgoing && (
+            <PrimaryButton onClick={()=>navigate('/incoming-invoices/new')} title="Új bejövő számla kézi rögzítése">
+              Új számla
+            </PrimaryButton>
           )}
         </Toolbar>
       </InvoicesHeader>
@@ -1928,6 +1990,20 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
       )}
       {antPagination}
       <TableContainer>
+        {selectedCount > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, padding: '6px 12px',
+            background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 6, marginBottom: 6,
+            fontSize: 13, alignItems: 'center' }}>
+            <strong>{selectedCount} db kijelölve</strong>
+            {Object.entries(selectionSummary).map(([cur, sums]) => (
+              <span key={cur} style={{ display: 'flex', gap: 12 }}>
+                <span>Nettó: <b>{Number(sums.net).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {cur}</b></span>
+                <span>ÁFA: <b>{Number(sums.vat).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {cur}</b></span>
+                <span>Bruttó: <b>{Number(sums.gross).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {cur}</b></span>
+              </span>
+            ))}
+          </div>
+        )}
         <Table>
           <TableHeader>
             <tr>
@@ -2122,10 +2198,9 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                 <TableCell>
                   {needsPaymentMethod(row) ? (
                     <div style={{ display:'flex', gap:8, alignItems:'center', flexWrap:'wrap' }}>
-                      <select
+                      <FilterSelect
                         value={paymentDrafts[rowKey(row)] ?? (String(row.paymentMethod||'').toUpperCase()==='OTHER' ? 'OTHER' : '')}
                         onChange={(e)=>setPaymentDrafts(prev => ({ ...prev, [rowKey(row)]: e.target.value }))}
-                        style={{ padding:'6px 8px' }}
                       >
                         <option value="">Válassz…</option>
                         <option value="TRANSFER">Átutalás</option>
@@ -2134,7 +2209,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                         <option value="VOUCHER">Utalvány</option>
                         <option value="UTANVET">Utánvét</option>
                         <option value="OTHER">Egyéb</option>
-                      </select>
+                      </FilterSelect>
                       <SecondaryButton onClick={()=>savePaymentMethod(row)} disabled={!paymentDrafts[rowKey(row)]}>
                         <Save size={14}/> Mentés
                       </SecondaryButton>
@@ -2541,11 +2616,11 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
               </div>
               <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:8}}>
                 <label style={{width:160}}>Bankszámla</label>
-                <select value={batchBankAccount} onChange={e=>{
+                <FilterSelect value={batchBankAccount} onChange={e=>{
                   const id = e.target.value; setBatchBankAccount(id);
                   const acc = (Array.isArray(bankAccounts)? bankAccounts: []).find(a => String(a.id)===String(id));
                   if (acc && acc.currency) setBatchCurrency(acc.currency);
-                }} style={{flex:1, padding:6}}>
+                }} style={{flex:1}}>
                   <option value="">-- válassz --</option>
                   {(Array.isArray(bankAccounts) ? bankAccounts : []).map(acc => (
                     <option key={acc.id} value={acc.id}>
@@ -2553,7 +2628,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                       {acc.currency ? ` (${acc.currency})` : ''}
                     </option>
                   ))}
-                </select>
+                </FilterSelect>
               </div>
               <div style={{display:'flex', gap:12, alignItems:'center', marginBottom:8}}>
                 <label style={{width:160}}>Pénznem</label>
@@ -2773,10 +2848,10 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
             </ModalHeader>
             <ModalBody>
               <div style={{ display:'flex', gap:12, alignItems:'center', marginBottom:12 }}>
-                <select value={uploadType} onChange={(e)=>setUploadType(e.target.value)}>
+                <FilterSelect value={uploadType} onChange={(e)=>setUploadType(e.target.value)}>
                   <option value="IMAGE">Számlakép</option>
                   <option value="OTHER">Egyéb</option>
-                </select>
+                </FilterSelect>
                 <SecondaryButton onClick={()=>fileInputRef.current?.click()} disabled={uploading}>
                   <Upload size={16}/> {uploading ? 'Feltöltés…' : 'Fájl feltöltése'}
                 </SecondaryButton>

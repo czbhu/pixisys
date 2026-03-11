@@ -14,7 +14,9 @@ import {
   Upload,
   HelpCircle,
   X,
-  Clock3
+  Clock3,
+  BookmarkPlus,
+  Archive
 } from 'lucide-react';
 import styled from 'styled-components';
 import DatePicker from 'react-datepicker';
@@ -791,6 +793,10 @@ const InvoiceForm = () => {
   const scheduledEditIdFromQuery = params.get('scheduled_edit') || '';
   const [editingScheduledId, setEditingScheduledId] = useState(scheduledEditIdFromQuery || null);
   const [scheduleModalOpen, setScheduleModalOpen] = useState(false);
+  const MANUAL_DRAFTS_KEY = 'pixinvoice_manual_drafts';
+  const [draftsModalOpen, setDraftsModalOpen] = useState(false);
+  const [manualDrafts, setManualDrafts] = useState([]);
+  const [currencyConfirm, setCurrencyConfirm] = useState(null); // { newOpt, resolve }
   const [scheduleSaving, setScheduleSaving] = useState(false);
   const [scheduleTemplateOptions, setScheduleTemplateOptions] = useState([{ value: 'invoice_send', label: 'Számlaküldés' }]);
   const [scheduleContactEmails, setScheduleContactEmails] = useState([]);
@@ -1429,19 +1435,22 @@ const InvoiceForm = () => {
     }
   }, [watch('invoice_block_id'), invoiceBlocks, isEdit, setValue, availableCurrencies]);
 
-  // Set default currency from customer if available (overrides block)
+  // Set default currency AND invoice block from customer's default_currency
   React.useEffect(() => {
     const cid = watch('customer_id');
     if (!cid || isEdit) return;
-    
-    // Find customer in loaded list (if available)
-    // Note: customers might be paginated, so this relies on ReactSelect loading or preloaded cache.
-    // If customers are loaded via useQuery(['customers']..), this works.
     const customer = customerRows.find(c => c.id === cid);
-    if (customer && customer.default_currency) {
-      setValue('currency', customer.default_currency);
+    if (!customer?.default_currency) return;
+    const wantedCurrency = String(customer.default_currency).trim().toUpperCase();
+    setValue('currency', wantedCurrency);
+    const blocks = invoiceBlocks?.results || [];
+    const matchedBlock = blocks.find(
+      (b) => String(b?.currency || b?.default_currency || '').trim().toUpperCase() === wantedCurrency
+    );
+    if (matchedBlock) {
+      setValue('invoice_block_id', matchedBlock.id, { shouldDirty: true, shouldValidate: true });
     }
-  }, [watch('customer_id'), customerRows, isEdit, setValue]);
+  }, [watch('customer_id'), customerRows, invoiceBlocks, isEdit, setValue]);
 
   // Calculate exchange rate when currency changes
   const selectedCurrency = watch('currency');
@@ -2281,7 +2290,15 @@ const InvoiceForm = () => {
 
   // (moved) invoice -> form population happens in guarded effect above
 
-  const round = (num) => Math.round((Math.abs(Number(num)) + Number.EPSILON) * 100) / 100 * (num < 0 ? -1 : 1);
+  const currencyDecimals = (() => {
+    const code = watch('currency') || 'HUF';
+    if (code === 'HUF') return 0;
+    return (availableCurrencies || []).find(c => c.code === code)?.display_decimals ?? 2;
+  })();
+  const round = (num) => {
+    const factor = Math.pow(10, currencyDecimals);
+    return Math.round((Math.abs(Number(num)) + Number.EPSILON) * factor) / factor * (Number(num) < 0 ? -1 : 1);
+  };
 
   const calculateItemTotals = (item) => {
     // Robust parsing handling commas
@@ -2703,6 +2720,80 @@ const InvoiceForm = () => {
       delivery_year_day: Number(deliveryYearDayOverride ?? scheduleForm.deliveryYearDay ?? 1) || 1,
       items,
     };
+  };
+
+  // Manual draft save/load helpers
+  const loadManualDrafts = () => {
+    try { return JSON.parse(localStorage.getItem(MANUAL_DRAFTS_KEY) || '[]'); } catch { return []; }
+  };
+
+  const saveDraft = () => {
+    const values = getValues();
+    const blocks = invoiceBlocks?.results || [];
+    const block = blocks.find((b) => String(b.id) === String(values.invoice_block_id));
+    const customer = customerRows.find((c) => c.id === values.customer_id) || null;
+    const items = Array.isArray(values.items) ? values.items : [];
+    const totalNet = items.reduce((acc, item) => {
+      return acc + (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
+    }, 0);
+    const toISO = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d || null);
+    const draft = {
+      id: Date.now(),
+      savedAt: new Date().toISOString(),
+      customer_name: customer?.name || '—',
+      invoice_block_name: block ? `${block.name} (${block.prefix})` : '—',
+      currency: values.currency || 'HUF',
+      total_net: totalNet,
+      formData: {
+        customer_id: values.customer_id || '',
+        company_id: values.company_id || '',
+        invoice_block_id: values.invoice_block_id || '',
+        issue_date: toISO(values.issue_date),
+        due_date: toISO(values.due_date),
+        delivery_date: toISO(values.delivery_date),
+        currency: values.currency || 'HUF',
+        exchange_rate: values.exchange_rate ?? 1,
+        payment_method: values.payment_method || 'transfer',
+        invoice_category: values.invoice_category || 'SIMPLIFIED',
+        invoice_appearance: values.invoice_appearance || 'ELECTRONIC',
+        payment_date: toISO(values.payment_date),
+        completeness_indicator: !!values.completeness_indicator,
+        order_reference: values.order_reference || '',
+        notes: values.notes || '',
+        items,
+      },
+    };
+    const existing = loadManualDrafts();
+    existing.push(draft);
+    try { localStorage.setItem(MANUAL_DRAFTS_KEY, JSON.stringify(existing)); } catch {}
+    toast.success('Vázlat elmentve!');
+  };
+
+  const openDraftsModal = () => {
+    setManualDrafts(loadManualDrafts());
+    setDraftsModalOpen(true);
+  };
+
+  const loadDraftIntoForm = (draft) => {
+    const reviveDate = (v) => (v ? new Date(v) : null);
+    const fd = draft.formData;
+    if (fd.issue_date) setValue('issue_date', reviveDate(fd.issue_date));
+    if (fd.due_date) setValue('due_date', reviveDate(fd.due_date));
+    if ('delivery_date' in fd) setValue('delivery_date', reviveDate(fd.delivery_date));
+    ['customer_id', 'company_id', 'invoice_block_id', 'currency', 'exchange_rate',
+      'payment_method', 'invoice_category', 'invoice_appearance', 'payment_date',
+      'completeness_indicator', 'order_reference', 'notes'].forEach((k) => {
+      if (k in fd) setValue(k, fd[k]);
+    });
+    if (Array.isArray(fd.items) && fd.items.length) setValue('items', fd.items);
+    setDraftsModalOpen(false);
+    toast.success('Vázlat betöltve!');
+  };
+
+  const deleteManualDraft = (draftId) => {
+    const next = loadManualDrafts().filter((d) => d.id !== draftId);
+    try { localStorage.setItem(MANUAL_DRAFTS_KEY, JSON.stringify(next)); } catch {}
+    setManualDrafts(next);
   };
 
   const openScheduleModal = async () => {
@@ -3564,6 +3655,27 @@ const InvoiceForm = () => {
                 {parseIncomingDocumentMutation.isLoading || openingPendingPrefills ? 'Feldolgozás...' : 'Számlakép/PDF beolvasás'}
               </Button>
             )}
+            {!isEdit && !isProforma && !isIncomingManual && (
+              <>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={openDraftsModal}
+                >
+                  <Archive size={16} />
+                  Vázlatok
+                </Button>
+                <Button
+                  variant="secondary"
+                  type="button"
+                  onClick={saveDraft}
+                  style={{ background: '#f59e0b', borderColor: '#d97706', color: '#fff' }}
+                >
+                  <BookmarkPlus size={16} />
+                  Mentés vázlatként
+                </Button>
+              </>
+            )}
             <Button
               variant="secondary"
               onClick={() => navigate(backListPath)}
@@ -3963,6 +4075,97 @@ const InvoiceForm = () => {
             </ModalCard>
           </ModalBackdrop>
         )}
+        {currencyConfirm && (
+          <ModalBackdrop onClick={() => { currencyConfirm.resolve(false); setCurrencyConfirm(null); }}>
+            <ModalCard onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480 }}>
+              <ModalHeader>
+                <span>Pénznem váltás</span>
+                <IconGhostButton onClick={() => { currencyConfirm.resolve(false); setCurrencyConfirm(null); }} aria-label="Bezárás">
+                  <X size={18} />
+                </IconGhostButton>
+              </ModalHeader>
+              <ModalBody>
+                <p style={{ marginBottom: 12 }}>
+                  Biztosan átváltod a pénznemet <strong>{getValues('currency') || 'HUF'}</strong> → <strong>{currencyConfirm.newOpt?.value}</strong> devizára?
+                </p>
+                <p style={{ marginBottom: 20, color: '#6b7280', fontSize: 13 }}>
+                  Tipp: ha általában {currencyConfirm.newOpt?.value} devizában számlázol ennek az ügyfélnek, inkább válassz {currencyConfirm.newOpt?.value} pénznemű <strong>számlatömböt</strong> — ekkor automatikusan a megfelelő deviza lesz aktív.
+                </p>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+                  <Button variant="secondary" type="button" onClick={() => { currencyConfirm.resolve(false); setCurrencyConfirm(null); }}>
+                    Mégse
+                  </Button>
+                  <Button variant="primary" type="button" onClick={() => { currencyConfirm.resolve(true); setCurrencyConfirm(null); }}>
+                    Igen, váltom
+                  </Button>
+                </div>
+              </ModalBody>
+            </ModalCard>
+          </ModalBackdrop>
+        )}
+        {draftsModalOpen && (
+          <ModalBackdrop onClick={() => setDraftsModalOpen(false)}>
+            <ModalCard onClick={(e) => e.stopPropagation()} style={{ maxWidth: 800 }}>
+              <ModalHeader>
+                <span>Vázlatok</span>
+                <IconGhostButton onClick={() => setDraftsModalOpen(false)} aria-label="Bezárás">
+                  <X size={18} />
+                </IconGhostButton>
+              </ModalHeader>
+              <ModalBody>
+                {manualDrafts.length === 0 ? (
+                  <p style={{ color: '#6b7280', textAlign: 'center', padding: '24px 0' }}>Nincsenek mentett vázlatok.</p>
+                ) : (
+                  <div style={{ overflowX: 'auto' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
+                      <thead>
+                        <tr style={{ borderBottom: '2px solid #e5e7eb', background: '#f9fafb' }}>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Ügyfél</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Mentés dátuma</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'left' }}>Számlatömb</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'right' }}>Nettó összeg</th>
+                          <th style={{ padding: '8px 12px', textAlign: 'center' }}>Műveletek</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {manualDrafts.slice().reverse().map((d) => (
+                          <tr key={d.id} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                            <td style={{ padding: '8px 12px' }}>{d.customer_name}</td>
+                            <td style={{ padding: '8px 12px', whiteSpace: 'nowrap' }}>
+                              {new Date(d.savedAt).toLocaleString('hu-HU')}
+                            </td>
+                            <td style={{ padding: '8px 12px' }}>{d.invoice_block_name}</td>
+                            <td style={{ padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
+                              {d.total_net.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} {d.currency}
+                            </td>
+                            <td style={{ padding: '8px 12px', textAlign: 'center', whiteSpace: 'nowrap' }}>
+                              <Button
+                                variant="secondary"
+                                type="button"
+                                style={{ marginRight: 6, padding: '4px 10px', fontSize: 13 }}
+                                onClick={() => loadDraftIntoForm(d)}
+                              >
+                                Betölt
+                              </Button>
+                              <Button
+                                variant="danger"
+                                type="button"
+                                style={{ padding: '4px 10px', fontSize: 13 }}
+                                onClick={() => deleteManualDraft(d.id)}
+                              >
+                                Töröl
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </ModalBody>
+            </ModalCard>
+          </ModalBackdrop>
+        )}
         <FormGrid>
           <FormSection>
             <SectionTitle>Alapadatok</SectionTitle>
@@ -3991,9 +4194,7 @@ const InvoiceForm = () => {
                         noOptionsMessage={() => customersLoading ? 'Ügyfelek betöltése...' : 'Nincs találat'}
                         filterOption={(option, rawInput) => {
                           const term = normalize(rawInput);
-                          if (!term) {
-                            return Number(option?.data?._usage || 0) > 0 || customerOptions.slice(0, 5).some((x) => x.value === option.value);
-                          }
+                          if (!term) return true;
                           return option.data._norm.includes(term);
                         }}
                         styles={{ container: (base) => ({ ...base, zIndex: 10 }) }}
@@ -4095,7 +4296,7 @@ const InvoiceForm = () => {
                           <input type="checkbox" checked={!!selectedAdvances[a.id]} onChange={(e)=> setSelectedAdvances(prev => ({ ...prev, [a.id]: e.target.checked }))} />
                           <span style={{ fontWeight:600 }}>{a.invoice_number}</span>
                           <span style={{ color:'#6c757d' }}>(Kiállítva: {a.issue_date})</span>
-                          <span style={{ marginLeft:'auto' }}>Hátralévő előleg: {Number(a.remaining).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} HUF</span>
+                          <span style={{ marginLeft:'auto' }}>Hátralévő előleg: {Number(a.remaining).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} HUF</span>
                         </label>
                       ))}
                     </div>
@@ -4152,7 +4353,7 @@ const InvoiceForm = () => {
                   </div>
                 ) : (
                   <div style={{ fontSize: 12, color: '#b42318', marginTop: 6 }}>
-                    Hátralék: {remainingDisplay.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}
+                    Hátralék: {remainingDisplay.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}
                   </div>
                 )
               )}
@@ -4170,6 +4371,10 @@ const InvoiceForm = () => {
                 onChange={async (opt) => {
                   const val = opt ? opt.value : 'HUF';
                   const oldVal = getValues('currency') || 'HUF';
+                  if (val !== oldVal && !isEdit) {
+                    const confirmed = await new Promise((resolve) => setCurrencyConfirm({ newOpt: opt, resolve }));
+                    if (!confirmed) return;
+                  }
                   const oldRate = Number(getValues('exchange_rate')) || 1;
 
                   setValue('currency', val);
@@ -4470,14 +4675,14 @@ const InvoiceForm = () => {
                         onFocus={selectAll}
                         readOnly={isReadOnly || isStornoCreation || isAutoAdvance}
                         disabled={isReadOnly || isStornoCreation || isAutoAdvance}
-                        value={getItemStr(index, 'gross_unit_price_str', ((item?.unit_price || 0) * (1 + (item?.vat_rate || 0)/100)).toFixed(2))}
+                        value={getItemStr(index, 'gross_unit_price_str', ((item?.unit_price || 0) * (1 + (item?.vat_rate || 0)/100)).toFixed(currencyDecimals))}
                         onChange={(e) => {
                           const str = (e.target.value ?? '').toString();
                           setValue(`items.${index}.gross_unit_price_str`, str, { shouldValidate: false, shouldDirty: true });
                           const gross = parseFloat(str.replace(',', '.'));
                           const net = (gross) / (1 + (Number(item?.vat_rate || 0)/100));
                           if (Number.isFinite(net)) {
-                            const net2 = Number(net.toFixed(2));
+                            const net2 = Number(net.toFixed(currencyDecimals));
                             setValue(`items.${index}.unit_price`, net2, { shouldValidate: false, shouldDirty: true });
                             setValue(`items.${index}.unit_price_str`, String(net2), { shouldValidate: false, shouldDirty: true });
                           }
@@ -4527,7 +4732,7 @@ const InvoiceForm = () => {
                         onFocus={selectAll}
                         readOnly={isAutoAdvance}
                         disabled={isAutoAdvance}
-                        value={getItemStr(index, 'net_total_str', netAmount.toFixed(2))}
+                        value={getItemStr(index, 'net_total_str', netAmount.toFixed(currencyDecimals))}
                         onChange={(e) => {
                           const str = (e.target.value ?? '').toString();
                           setValue(`items.${index}.net_total_str`, str, { shouldValidate: false, shouldDirty: true });
@@ -4535,7 +4740,7 @@ const InvoiceForm = () => {
                           const qty = Number(item?.quantity || 0) || 1;
                           const newUnit = netTotal / qty;
                           if (Number.isFinite(newUnit)) {
-                            const nu2 = Number((newUnit||0).toFixed(2));
+                            const nu2 = Number((newUnit||0).toFixed(currencyDecimals));
                             setValue(`items.${index}.unit_price`, nu2, { shouldValidate: false, shouldDirty: true });
                             setValue(`items.${index}.unit_price_str`, String(nu2), { shouldValidate: false, shouldDirty: true });
                           }
@@ -4548,7 +4753,7 @@ const InvoiceForm = () => {
                       <ItemInput
                         type="number"
                         step="0.01"
-                        value={Number(vatAmount.toFixed(2))}
+                        value={Number(vatAmount.toFixed(currencyDecimals))}
                         disabled
                         readOnly
                       />
@@ -4562,7 +4767,7 @@ const InvoiceForm = () => {
                         onDoubleClick={selectAll}
                         readOnly={isAutoAdvance}
                         disabled={isAutoAdvance}
-                        value={getItemStr(index, 'gross_total_str', grossAmount.toFixed(2))}
+                        value={getItemStr(index, 'gross_total_str', grossAmount.toFixed(currencyDecimals))}
                         onChange={(e) => {
                           const str = (e.target.value ?? '').toString();
                           setValue(`items.${index}.gross_total_str`, str, { shouldValidate: false, shouldDirty: true });
@@ -4572,7 +4777,7 @@ const InvoiceForm = () => {
                           const qty = Number(item?.quantity || 0) || 1;
                           const newUnit = netTotal / qty;
                           if (Number.isFinite(newUnit)) {
-                            const nu2 = Number((newUnit||0).toFixed(2));
+                            const nu2 = Number((newUnit||0).toFixed(currencyDecimals));
                             setValue(`items.${index}.unit_price`, nu2, { shouldValidate: false, shouldDirty: true });
                             setValue(`items.${index}.unit_price_str`, String(nu2), { shouldValidate: false, shouldDirty: true });
                           }
@@ -4619,15 +4824,15 @@ const InvoiceForm = () => {
           <SectionTitle>Összesítés</SectionTitle>
           <SummaryRow>
             <span>Nettó összeg:</span>
-            <span>{totals.netTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
+            <span>{totals.netTotal.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</span>
           </SummaryRow>
           <SummaryRow>
             <span>ÁFA összeg:</span>
-            <span>{totals.vatTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
+            <span>{totals.vatTotal.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</span>
           </SummaryRow>
           <SummaryRow>
             <span>Bruttó összeg:</span>
-            <span>{totals.grossTotal.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
+            <span>{totals.grossTotal.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</span>
           </SummaryRow>
 
           {/* ÁFA részletező */}
@@ -4647,16 +4852,16 @@ const InvoiceForm = () => {
                   {vb.rows.map(r => (
                     <tr key={r.rate}>
                       <td>{r.names && r.names.length > 0 ? r.names.join(', ') : `${r.rate.toLocaleString('hu-HU')}%`}</td>
-                      <td>{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
-                      <td>{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
-                      <td>{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</td>
+                      <td>{r.net.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</td>
+                      <td>{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</td>
+                      <td>{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</td>
                     </tr>
                   ))}
                   <tr>
                     <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} /></th>
-                    <th>{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
-                    <th>{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
-                    <th>{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</th>
+                    <th>{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</th>
+                    <th>{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</th>
+                    <th>{vb.totals.gross.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</th>
                   </tr>
                 </tbody>
               </VatTable>
@@ -4721,6 +4926,16 @@ const InvoiceForm = () => {
           <Save size={14} />
           Mentés
         </MobileActionButton>
+        {!isEdit && !isProforma && !isIncomingManual && (
+          <MobileActionButton
+            variant="secondary"
+            type="button"
+            onClick={saveDraft}
+          >
+            <BookmarkPlus size={14} />
+            Vázlat
+          </MobileActionButton>
+        )}
       </MobileActionBar>
 
         </FormContainer>
@@ -4747,7 +4962,7 @@ const InvoiceForm = () => {
                       </td>
                       <td style={{ width: '35%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top', textAlign: 'right' }}>
                         <strong>{selectedCustomer?.name || '—'}</strong><br/>
-                        Fizetendő: <strong>{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</strong>
+                        Fizetendő: <strong>{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</strong>
                       </td>
                     </tr>
                   </tbody>
@@ -4876,7 +5091,7 @@ const InvoiceForm = () => {
                         <div className="inv-highlight" style={{ marginTop: '4mm' }}>
                           <div className="inv-amount">
                             <span className="label"><BilingualLabel label={payLabel} translationMap={translations} show={bilingual} /></span>
-                            <span className="value">{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</span>
+                            <span className="value">{payAmountAbs.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</span>
                           </div>
                           
                           <div className="inv-deadline">
@@ -4917,7 +5132,7 @@ const InvoiceForm = () => {
                             </div>
                           ) : (
                             <div style={{ fontSize: '0.85em', color: '#b42318', marginTop: 2 }}>
-                              Hátralék: {remainingDisplay.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}
+                              Hátralék: {remainingDisplay.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}
                             </div>
                           )
                         )}
@@ -4986,11 +5201,11 @@ const InvoiceForm = () => {
                     <td className="col-desc">{it?.description || ''}</td>
                     <td className="cen col-qty">{qty.toLocaleString('hu-HU')}</td>
                     <td className="cen col-unit">{unit}</td>
-                    <td className="num col-unitnet">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="num col-unitnet">{unitPrice.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
                     <td className={vatClass}>{vatLabel}</td>
-                    <td className="num col-net">{netAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="num col-vat">{vatAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-                    <td className="num col-gross">{grossAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+                    <td className="num col-net">{netAmount.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
+                    <td className="num col-vat">{vatAmount.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
+                    <td className="num col-gross">{grossAmount.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
                   </tr>
                 );
               })}
@@ -5021,9 +5236,9 @@ const InvoiceForm = () => {
                               <td className="cen vat-desc-col">
                                   {r.names && r.names.length > 0 ? r.names.join(', ') : `${r.rate.toLocaleString('hu-HU')}%`}
                               </td>
-                              <td className="num">{r.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                              <td className="num">{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
-                              <td className="num">{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                              <td className="num">{r.net.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
+                              <td className="num">{r.vat.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
+                              <td className="num">{r.gross.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
                             </tr>
                           ))}
                           {Math.abs(roundingDiff) > 0.001 && (
@@ -5031,14 +5246,14 @@ const InvoiceForm = () => {
                               <td className="cen"><BilingualLabel label="Kerekítés" translationMap={translations} show={bilingual} /></td>
                               <td className="num"></td>
                               <td className="num"></td>
-                              <td className="num">{roundingDiff.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</td>
+                              <td className="num">{roundingDiff.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</td>
                             </tr>
                           )}
                           <tr>
                             <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} separator="/" /> ({currency})</th>
-                            <th className="num">{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                            <th className="num">{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                            <th className="num inv-gross-total">{payableAmount.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
+                            <th className="num">{vb.totals.net.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</th>
+                            <th className="num">{vb.totals.vat.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</th>
+                            <th className="num inv-gross-total">{payableAmount.toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })}</th>
                           </tr>
                           
                           {/* Dual Language Native Currency Summary */}
@@ -5050,9 +5265,9 @@ const InvoiceForm = () => {
                               return (
                                   <tr style={{ borderTop: '2px solid #000' }}>
                                     <th><BilingualLabel label="Összesen" translationMap={translations} show={bilingual} separator="/" /> (HUF)</th>
-                                    <th className="num">{hufNet.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                                    <th className="num">{hufVat.toLocaleString('hu-HU', { minimumFractionDigits: 2 })}</th>
-                                    <th className="num inv-gross-total">{hufGross.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} HUF</th>
+                                    <th className="num">{hufNet.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</th>
+                                    <th className="num">{hufVat.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</th>
+                                    <th className="num inv-gross-total">{hufGross.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} HUF</th>
                                   </tr>
                               );
                           })()}
@@ -5068,7 +5283,7 @@ const InvoiceForm = () => {
                           <div className="inv-block-title">Felhasznált előlegek</div>
                           <ul style={{ margin: 0, paddingLeft: '5mm' }}>
                             {advs.map((a, i) => (
-                              <li key={i}>Előleg számla: {a.invoice_number} — felhasználva: {Number(a.amount||0).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} {currency}</li>
+                              <li key={i}>Előleg számla: {a.invoice_number} — felhasználva: {Number(a.amount||0).toLocaleString('hu-HU', { minimumFractionDigits: currencyDecimals, maximumFractionDigits: currencyDecimals })} {currency}</li>
                             ))}
                           </ul>
                         </div>

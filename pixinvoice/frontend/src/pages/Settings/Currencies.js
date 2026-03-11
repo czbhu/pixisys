@@ -196,6 +196,7 @@ const Currencies = () => {
       name: '',
       current_rate: '',
       rate_valid_date: new Date().toISOString().split('T')[0],
+      display_decimals: 2,
       is_active: true,
       is_default: false
     }
@@ -283,12 +284,14 @@ const Currencies = () => {
       setValue('rate_valid_date', item.rate_valid_date || new Date().toISOString().split('T')[0]);
       setValue('is_active', item.is_active);
       setValue('is_default', item.is_default);
+      setValue('display_decimals', item.display_decimals ?? 2);
     } else {
       reset({
         code: '',
         name: '',
         current_rate: '',
         rate_valid_date: new Date().toISOString().split('T')[0],
+        display_decimals: 2,
         is_active: true,
         is_default: false
       });
@@ -347,6 +350,7 @@ const Currencies = () => {
             <Th>Devizanem</Th>
             <Th>Megnevezés</Th>
             <Th>Árfolyam (HUF)</Th>
+            <Th>Tizedes jegyek</Th>
             <Th>Érvényesség kezdete</Th>
             <Th>Státusz</Th>
             <Th>Utolsó frissítés</Th>
@@ -367,6 +371,14 @@ const Currencies = () => {
                 {currency.current_rate ? (
                     new Intl.NumberFormat('hu-HU', { minimumFractionDigits: 2 }).format(currency.current_rate) + ' Ft'
                 ) : '-'}
+              </Td>
+              <Td style={{ textAlign: 'center' }}>
+                <code style={{ background: '#f3f4f6', padding: '2px 6px', borderRadius: 4, fontSize: 13 }}>
+                  {currency.display_decimals ?? 2}
+                </code>
+                <span style={{ color: '#9ca3af', marginLeft: 6, fontSize: 12 }}>
+                  ({(1234).toLocaleString('hu-HU', { minimumFractionDigits: currency.display_decimals ?? 2, maximumFractionDigits: currency.display_decimals ?? 2 })})
+                </span>
               </Td>
               <Td>{currency.rate_valid_date || '-'}</Td>
               <Td>
@@ -474,6 +486,20 @@ const Currencies = () => {
               type="date"
               {...register('rate_valid_date')}
             />
+          </FormGroup>
+
+          <FormGroup>
+            <Label htmlFor="display_decimals">Megjelenítési tizedes jegyek</Label>
+            <Select
+              id="display_decimals"
+              {...register('display_decimals', { valueAsNumber: true })}
+            >
+              <option value={0}>0 — egész szám (pl. 1&nbsp;234)</option>
+              <option value={1}>1 — egy tizedes (pl. 1&nbsp;234.5)</option>
+              <option value={2}>2 — két tizedes (pl. 1&nbsp;234.56)</option>
+              <option value={3}>3 — három tizedes (pl. 1&nbsp;234.567)</option>
+              <option value={4}>4 — négy tizedes (pl. 1&nbsp;234.5678)</option>
+            </Select>
           </FormGroup>
 
           <CheckboxContainer>
