@@ -793,13 +793,35 @@ def _generate_pdf_bytes_v2(inv):
          
     vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
     
+    # Determine display_decimals (0 for HUF, else from Currency model)
+    from decimal import Decimal, ROUND_HALF_UP
+    _is_huf_v2 = (inv.currency or 'HUF').upper() == 'HUF'
+    if _is_huf_v2:
+        display_decimals = 0
+    else:
+        try:
+            _curr_obj = Currency.objects.get(code=inv.currency)
+            display_decimals = _curr_obj.display_decimals
+        except Exception:
+            display_decimals = 2
+    _dec_fmt = Decimal('1') if display_decimals == 0 else Decimal('0.' + '0' * display_decimals)
+    def _rnd_v2(v):
+        return float(Decimal(str(v)).quantize(_dec_fmt, rounding=ROUND_HALF_UP))
+
+    # Round vat_summary rows
+    for row in vat_summary:
+        row['net'] = _rnd_v2(row['net'])
+        row['vat'] = _rnd_v2(row['vat'])
+        row['gross'] = _rnd_v2(row['gross'])
+
     huf_totals = None
-    if (inv.currency or '').upper() != 'HUF':
+    if not _is_huf_v2:
          ex = inv.exchange_rate or 1
+         _huf_rnd = lambda v: float(Decimal(str(v)).quantize(Decimal('1'), rounding=ROUND_HALF_UP))
          huf_totals = {
-             'net': inv.total_net_amount * ex,
-             'vat': inv.total_vat_amount * ex,
-             'gross': inv.total_gross_amount * ex
+             'net': _huf_rnd(inv.total_net_amount * ex),
+             'vat': _huf_rnd(inv.total_vat_amount * ex),
+             'gross': _huf_rnd(inv.total_gross_amount * ex)
          }
 
     advances_sum = 0
@@ -833,7 +855,8 @@ def _generate_pdf_bytes_v2(inv):
             'huf_totals': huf_totals,
             'rounding_diff': rounding_diff,
             'payable_amount': payable_amount,
-            'amount_words': amount_words
+            'amount_words': amount_words,
+            'display_decimals': display_decimals,
         }
         html = render_to_string('invoices/print_invoice_v2.html', ctx)
         pdf_buf = io.BytesIO()
