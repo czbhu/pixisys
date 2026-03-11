@@ -4,19 +4,18 @@ import decimal
 register = template.Library()
 
 @register.filter
-def invoice_number_format(value):
+def invoice_number_format(value, decimals=2):
     """
     Formats a number with space as thousand separator and dot as decimal separator.
+    Optional 'decimals' argument controls decimal places (default 2; use 0 for HUF).
     Example: 1234567.89 -> 1 234 567.89
     """
     if value is None:
         return ""
     try:
-        # Convert to float to handle decimals and strings
         val = float(value)
-        # Format with comma as thousand separator
-        formatted = "{:,.2f}".format(val)
-        # Replace comma with space
+        dec = int(decimals) if decimals is not None else 2
+        formatted = "{:,.{d}f}".format(val, d=dec)
         return formatted.replace(",", " ")
     except (ValueError, TypeError):
         return value

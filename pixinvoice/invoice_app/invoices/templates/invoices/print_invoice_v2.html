@@ -306,7 +306,7 @@
                                     </td>
                                     <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: right;">
                                         <strong class="inv-top-buyer-name">{% if invoice.customer %}{{ invoice.customer.name }}{% else %}—{% endif %}</strong><br/>
-                                        Fizetendő: <strong>{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }} {{ invoice.currency }}</strong>
+                                        Fizetendő: <strong>{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format:display_decimals }} {{ invoice.currency }}</strong>
                                     </td>
                                 </tr>
                             </tbody>
@@ -431,7 +431,7 @@
                                     <div class="inv-highlight">
                                         <div class="inv-amount">
                                             <span class="label">Fizetendő{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %}:</span>
-                                            <span class="value">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }} {{ invoice.currency }}</span>
+                                            <span class="value">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format:display_decimals }} {{ invoice.currency }}</span>
                                         </div>
                                         <div class="inv-deadline">
                                             <span class="muted">Fizetési határidő{% if bilingual %} <span class="secondary-label">/ Due Date</span>{% endif %}</span>
@@ -502,7 +502,7 @@
                                     <td class="col-desc">{{ item.description }}</td>
                                     <td class="cen col-qty">{{ item.quantity|invoice_quantity_format }}</td>
                                     <td class="cen col-unit">{{ item.unit_of_measure|default:"db" }}</td>
-                                    <td class="num col-unitnet">{{ item.unit_price|invoice_number_format }}</td>
+                                    <td class="num col-unitnet">{{ item.unit_price|invoice_number_format:display_decimals }}</td>
                                     <td class="cen col-vatrate">
                                         {% if item.vat_type and item.vat_type.category != 'PERCENT' %}
                                             <span style="font-size: 8pt;">{{ item.vat_type.name }}</span>
@@ -510,9 +510,9 @@
                                             {% if item.vat_rate|add:0 == item.vat_rate %}{{ item.vat_rate|floatformat:0 }}%{% else %}{{ item.vat_rate }}%{% endif %}
                                         {% endif %}
                                     </td>
-                                    <td class="num col-net">{{ item.net_amount|invoice_number_format }}</td>
-                                    <td class="num col-vat">{{ item.vat_amount|invoice_number_format }}</td>
-                                    <td class="num col-gross">{{ item.gross_amount|invoice_number_format }}</td>
+                                    <td class="num col-net">{{ item.net_amount|invoice_number_format:display_decimals }}</td>
+                                    <td class="num col-vat">{{ item.vat_amount|invoice_number_format:display_decimals }}</td>
+                                    <td class="num col-gross">{{ item.gross_amount|invoice_number_format:display_decimals }}</td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -541,13 +541,13 @@
                                     <td class="cen vat-desc-col">
                                         {{ row.label }}
                                     </td>
-                                    <td class="num">{{ row.net|invoice_number_format }}</td>
-                                    <td class="num">{{ row.vat|invoice_number_format }}</td>
-                                    <td class="num">{{ row.gross|invoice_number_format }}</td>
+                                    <td class="num">{{ row.net|invoice_number_format:display_decimals }}</td>
+                                    <td class="num">{{ row.vat|invoice_number_format:display_decimals }}</td>
+                                    <td class="num">{{ row.gross|invoice_number_format:display_decimals }}</td>
                                   </tr>
                                   {% endfor %}
 
-                                  {% if rounding_diff and rounding_diff|floatformat:2 != "0.00" %}
+                                  {% if rounding_diff and rounding_diff != 0 %}
                                   <tr>
                                     <td class="cen">Kerekítés{% if bilingual %} <span class="secondary-label">/ Rounding</span>{% endif %}</td>
                                     <td class="num"></td>
@@ -558,17 +558,17 @@
 
                                   <tr>
                                     <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} ({{ invoice.currency }})</th>
-                                    <th class="num">{{ invoice.total_net_amount|invoice_number_format }}</th>
-                                    <th class="num">{{ invoice.total_vat_amount|invoice_number_format }}</th>
-                                    <th class="num inv-gross-total">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format }}</th>
+                                    <th class="num">{{ invoice.total_net_amount|invoice_number_format:display_decimals }}</th>
+                                    <th class="num">{{ invoice.total_vat_amount|invoice_number_format:display_decimals }}</th>
+                                    <th class="num inv-gross-total">{{ payable_amount|default:invoice.total_gross_amount|invoice_number_format:display_decimals }}</th>
                                   </tr>
                                   
                                   {% if huf_totals %}
                                   <tr style="border-top: 2px solid #000;">
                                     <th style="white-space: nowrap;">Összesen{% if bilingual %} <span class="secondary-label">/ Total</span>{% endif %} (HUF)</th>
-                                    <th class="num">{{ huf_totals.net|invoice_number_format }}</th>
-                                    <th class="num">{{ huf_totals.vat|invoice_number_format }}</th>
-                                    <th class="num inv-gross-total">{{ huf_totals.gross|invoice_number_format }} HUF</th>
+                                    <th class="num">{{ huf_totals.net|invoice_number_format:0 }}</th>
+                                    <th class="num">{{ huf_totals.vat|invoice_number_format:0 }}</th>
+                                    <th class="num inv-gross-total">{{ huf_totals.gross|invoice_number_format:0 }} HUF</th>
                                   </tr>
                                   {% endif %}
                                 </tbody>
