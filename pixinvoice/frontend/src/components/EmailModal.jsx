@@ -165,24 +165,28 @@ export default function EmailModal({
             </>
           )}
         </div>
+        <form autoComplete="off" onSubmit={e => e.preventDefault()} style={{ display: 'contents' }}>
+        {/* hidden honeypot inputs to absorb Chrome autofill */}
+        <input type="text" name="pxi_absorb1" style={{ display: 'none' }} />
+        <input type="text" name="pxi_absorb2" style={{ display: 'none' }} />
         <div style={styles.content}>
           <label style={styles.label}>Feladó</label>
-          <input style={styles.input} value={from} onChange={(e) => setFrom(e.target.value)} placeholder="from@example.com" autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_from" value={from} onChange={(e) => setFrom(e.target.value)} placeholder="from@example.com" autoComplete="off" />
 
           <label style={styles.label}>Válaszcím (Reply-to)</label>
-          <input style={styles.input} value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="reply@example.com" autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_replyto" value={replyTo} onChange={(e) => setReplyTo(e.target.value)} placeholder="reply@example.com" autoComplete="off" />
 
           <label style={styles.label}>Címzettek (To)</label>
-          <input style={styles.input} value={to} onChange={(e) => setTo(e.target.value)} placeholder="a@b.hu, c@d.hu" autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_to" value={to} onChange={(e) => setTo(e.target.value)} placeholder="a@b.hu, c@d.hu" autoComplete="off" />
 
           <label style={styles.label}>Másolat (Cc)</label>
-          <input style={styles.input} value={cc} onChange={(e) => setCc(e.target.value)} placeholder="" autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_cc" value={cc} onChange={(e) => setCc(e.target.value)} placeholder="" autoComplete="off" />
 
           <label style={styles.label}>Rejtett másolat (Bcc)</label>
-          <input style={styles.input} value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="" autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_bcc" value={bcc} onChange={(e) => setBcc(e.target.value)} placeholder="" autoComplete="off" />
 
           <label style={styles.label}>Tárgy</label>
-          <input style={styles.input} value={subject} onChange={(e) => setSubject(e.target.value)} autoComplete="off" readOnly onFocus={e => e.target.removeAttribute('readOnly')} />
+          <input style={styles.input} name="pxi_subject" value={subject} onChange={(e) => setSubject(e.target.value)} autoComplete="off" />
 
           <label style={styles.label}>Üzenet</label>
           <div style={{ gridColumn: '1 / span 2', marginBottom: 20 }}>
@@ -225,6 +229,7 @@ export default function EmailModal({
             </div>
           )}
         </div>
+        </form>
         <div style={styles.footer}>
           <div style={{ flex: 1, display: 'flex', alignItems: 'center' }}>
              <label style={{ display: 'flex', alignItems: 'center', cursor: 'pointer', userSelect: 'none' }} title="Részletes státusz megjelenítése küldés közben">
