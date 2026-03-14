@@ -209,6 +209,14 @@ echo -e "${BLUE}[2/10] Git állapot ellenőrzése...${NC}"
 if [[ -n $(git status -s) ]]; then
     echo -e "${YELLOW}⚠️  Figyelem: Van nem commitált változás!${NC}"
     git status -s
+
+    if [[ -n $(git diff --name-only --diff-filter=U) ]]; then
+        echo -e "${RED}❌ Nem lehet stash-elni, mert feloldatlan merge konfliktus van:${NC}"
+        git diff --name-only --diff-filter=U | sed 's/^/   - /'
+        echo -e "${YELLOW}   Előbb oldd fel a konfliktust, majd: git add <fájl> és futtasd újra az update.sh-t.${NC}"
+        exit 1
+    fi
+
     read -p "Folytatod? (y/N): " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
@@ -216,12 +224,19 @@ if [[ -n $(git status -s) ]]; then
     fi
 
     echo -e "${YELLOW}  • Lokális változások ideiglenes stash-be mentése...${NC}"
-    if git stash push -u -m "pixisys-update-autostash-${TIMESTAMP}" >/dev/null; then
+    STASH_ERR_FILE=$(mktemp)
+    if git stash push -u -m "pixisys-update-autostash-${TIMESTAMP}" >/dev/null 2>"$STASH_ERR_FILE"; then
         STASH_CREATED=true
         STASH_REF=$(git stash list | head -n 1 | cut -d: -f1)
         echo -e "${GREEN}✓ Lokális változások stash-elve ($STASH_REF)${NC}"
+        rm -f "$STASH_ERR_FILE"
     else
         echo -e "${RED}❌ Nem sikerült a lokális változásokat stash-elni.${NC}"
+        if [[ -s "$STASH_ERR_FILE" ]]; then
+            echo -e "${YELLOW}   Git hiba:${NC}"
+            sed 's/^/   /' "$STASH_ERR_FILE"
+        fi
+        rm -f "$STASH_ERR_FILE"
         exit 1
     fi
 fi

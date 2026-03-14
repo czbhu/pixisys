@@ -47,11 +47,12 @@ def log_activity(user, action, description, obj=None, changes=None, request=None
 @receiver(post_save, sender=QuoteRequest)
 def log_quote_request_save(sender, instance, created, **kwargs):
     """Log QuoteRequest creation and updates"""
+    ref = instance.number or instance.request_number or str(instance.pk)
     if created:
-        description = f"Ajánlatkérés létrehozva: {instance.quote_number}"
+        description = f"Ajánlatkérés létrehozva: {ref}"
         action = 'create'
     else:
-        description = f"Ajánlatkérés módosítva: {instance.quote_number}"
+        description = f"Ajánlatkérés módosítva: {ref}"
         action = 'update'
     
     # Try to get user from instance if available (set by view)
@@ -73,7 +74,8 @@ def log_quote_request_delete(sender, instance, **kwargs):
     user = getattr(instance, '_log_user', None)
     
     if user:
-        description = f"Ajánlatkérés törölve: {instance.quote_number}"
+        ref = instance.number or instance.request_number or str(instance.pk)
+        description = f"Ajánlatkérés törölve: {ref}"
         log_activity(
             user=user,
             action='delete',
