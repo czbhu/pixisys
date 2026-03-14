@@ -12,7 +12,9 @@ import {
     ApiOutlined,
     CloudServerOutlined,
     HddOutlined,
-    EnvironmentOutlined
+    EnvironmentOutlined,
+    WifiOutlined,
+    ScanOutlined
 } from '@ant-design/icons';
 import AccessControlSettingsPage from './pages/AccessControlSettingsPage';
 import EmailServerPage from './pages/EmailServerPage';
@@ -28,6 +30,8 @@ import CompanySettings from './CompanySettings';
 import Backup from './Backup';
 import Zones from './Zones';
 import PublicSitePage from './pages/PublicSitePage';
+import IotPage from './pages/IotPage';
+import NfcPage from './pages/NfcPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
@@ -46,6 +50,8 @@ const SettingsModule: React.FC = () => {
       { key: '/settings/hestia', label: 'Hestia', icon: <CloudServerOutlined /> },
       { key: '/settings/backup', label: 'Backup', icon: <HddOutlined /> },
         { key: '/settings/public-site', label: 'Publikus oldal', icon: <GlobalOutlined /> },
+        { key: '/settings/iot', label: 'IoT eszközök', icon: <WifiOutlined /> },
+        { key: '/settings/nfc', label: 'NFC tagek', icon: <ScanOutlined /> },
   ];
 
   return (
@@ -65,6 +71,8 @@ const SettingsModule: React.FC = () => {
       <Route path="/attendance-kiosk" element={<AttendanceKioskSettingsPage />} />
       <Route path="/backup" element={<Backup />} />
       <Route path="/public-site" element={<PublicSitePage />} />
+      <Route path="/iot" element={<IotPage />} />
+      <Route path="/nfc" element={<NfcPage />} />
     </Routes>
   );
 };

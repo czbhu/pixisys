@@ -69,6 +69,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/warehouse/inventory', '/warehouse/receipts', '/warehouse/scraps', '/warehouse/warehouses', '/warehouse/reports', '/warehouse/suppliers',
       '/settings/access-control', '/settings/attendance-kiosk', '/settings/companies', '/settings/currencies', '/settings/roles', '/settings/email-server', '/settings/email-templates', '/settings/signatures', '/settings/integrations', '/settings/pixinvoice', '/settings/hestia', '/settings/backup', '/settings/zones'
       , '/settings/public-site'
+      , '/settings/iot'
+      , '/settings/nfc'
     ];
     
     // Find the longest matching prefix
@@ -559,6 +561,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/hestia', label: 'Hestia' },
         { key: '/settings/backup', label: 'Backup' },
         { key: '/settings/public-site', label: 'Publikus oldal' },
+        { key: '/settings/iot', label: 'IoT eszközök' },
+        { key: '/settings/nfc', label: 'NFC tagek' },
       ],
     },
   ];
@@ -656,6 +660,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/settings/hestia': 'settings',
     '/settings/backup': 'settings',
     '/settings/public-site': 'settings',
+    '/settings/iot': 'settings',
+    '/settings/nfc': 'settings',
     '/site-management': 'settings',
     '/personal/cash-registers': 'finance.cash_registers',
   };

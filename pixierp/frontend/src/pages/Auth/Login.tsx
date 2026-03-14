@@ -16,7 +16,13 @@ const Login = () => {
         try {
             const result = await login(values);
             if (result.success) {
-                navigate('/dashboard');
+                const params = new URLSearchParams(window.location.search);
+                const next = params.get('next');
+                if (next) {
+                    window.location.href = next;
+                } else {
+                    navigate('/dashboard');
+                }
             }
         } catch (error) {
             message.error('Bejelentkezési hiba történt');

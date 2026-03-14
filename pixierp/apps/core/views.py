@@ -10,7 +10,7 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
-from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth import authenticate, get_user_model, login as django_login
 from datetime import timedelta
 from django.contrib.auth.hashers import make_password
 from django.conf import settings
@@ -223,6 +223,9 @@ def login_view(request):
         # Frissítsük a last_login mezőt, mert JWT auth alapból nem teszi meg
         user.last_login = timezone.now()
         user.save(update_fields=['last_login'])
+
+        # Django session létrehozása, hogy a böngészős kérések (pl. NFC trigger) is felismerje a bejelentkezést
+        django_login(request, user, backend='django.contrib.auth.backends.ModelBackend')
 
         refresh = RefreshToken.for_user(user)
         return Response({
@@ -2601,6 +2604,257 @@ class UserRoleViewSet(viewsets.ModelViewSet):
 
 from .models import Zone
 from .serializers import ZoneSerializer
+
+class IoTDeviceViewSet(viewsets.ModelViewSet):
+    from .models import IoTDevice as _IoTDevice
+    from .serializers import IoTDeviceSerializer as _IoTDeviceSerializer
+    queryset = None
+    serializer_class = None
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        from .models import IoTDevice
+        return IoTDevice.objects.all()
+
+    def get_serializer_class(self):
+        from .serializers import IoTDeviceSerializer
+        return IoTDeviceSerializer
+
+    @action(detail=True, methods=['post'])
+    def test(self, request, pk=None):
+        """Kapcsolat teszt — megpinggeli az eszközt"""
+        device = self.get_object()
+        if device.device_type == 'shelly_1mini_gen3_relay':
+            import requests as req
+            url = f"http://{device.shelly_host}/rpc/Shelly.GetStatus"
+            try:
+                auth = None
+                if device.shelly_auth_user:
+                    auth = (device.shelly_auth_user, device.shelly_auth_pass)
+                r = req.get(url, auth=auth, timeout=5)
+                r.raise_for_status()
+                return Response({'success': True, 'status': r.json()})
+            except Exception as e:
+                return Response({'success': False, 'error': str(e)}, status=400)
+        return Response({'error': 'Ismeretlen eszköz típus'}, status=400)
+
+    @action(detail=True, methods=['post'])
+    def activate(self, request, pk=None):
+        """Aktivál egy konkrét csatornát (pulzus)"""
+        device = self.get_object()
+        channel = int(request.data.get('channel', device.shelly_channel))
+        if device.device_type == 'shelly_1mini_gen3_relay':
+            import requests as req
+            url = f"http://{device.shelly_host}/rpc/Switch.Set"
+            settings = device.type_settings if isinstance(device.type_settings, dict) else {}
+            pulse_ms = int(settings.get('pulse_ms', 1000))
+            payload = {
+                'id': channel,
+                'on': True,
+                'toggle_after': pulse_ms / 1000,
+            }
+            try:
+                auth = None
+                if device.shelly_auth_user:
+                    auth = (device.shelly_auth_user, device.shelly_auth_pass)
+                r = req.post(url, json=payload, auth=auth, timeout=5)
+                r.raise_for_status()
+                return Response({'success': True, 'result': r.json()})
+            except Exception as e:
+                return Response({'success': False, 'error': str(e)}, status=400)
+        return Response({'error': 'Ismeretlen eszköz típus'}, status=400)
+
+
+def _verify_ntag424_sun(enc_picc_hex: str, cmac_hex: str, key_hex: str):
+    """
+    NTAG424 DNA SUN (Secure Unique NFC / SDM) hitelesítés ellenőrzése.
+    NXP AN12196 és a libsdm referencia-implementáció alapján.
+
+    Visszatér: (valid: bool, read_counter: int)
+
+    Paraméterek:
+      enc_picc_hex  — 32 hex kar. (16 bájt) titkosított PICC adat (?e= query param)
+      cmac_hex      — 16 hex kar. (8 bájt) csonkított MAC  (?m= query param)
+      key_hex       — 32 hex kar. (16 bájt) AES-128 kulcs   (tag.sun_key)
+
+    Konfiguráció (TagWriter által a tagre írva):
+      - SDMMetaReadKey = SDMFileReadKey = sun_key (ugyanaz a kulcs mindkettőhöz)
+      - SDMMACInputOffset = SDMMACOffset (nincs titkosított file adat, csak PICC+CMAC mirror)
+    """
+    try:
+        from Crypto.Cipher import AES
+        from Crypto.Hash import CMAC as _CMAC
+
+        if len(enc_picc_hex) != 32 or len(cmac_hex) != 16 or len(key_hex) != 32:
+            return False, 0
+
+        key = bytes.fromhex(key_hex)
+        enc_picc = bytes.fromhex(enc_picc_hex)
+        cmac_recv = bytes.fromhex(cmac_hex)
+
+        # 1. lépés: EncPICCData visszafejtése (AES-CBC, IV=0, kulcs=sun_key)
+        cipher = AES.new(key, AES.MODE_CBC, iv=bytes(16))
+        picc_data = cipher.decrypt(enc_picc)
+
+        # picc_data[0] = 0xC7 (NTAG424 DNA jelölő)
+        # picc_data[1:8] = UID (7 bájt)
+        # picc_data[8:11] = ReadCounter (3 bájt, little-endian)
+        if picc_data[0] != 0xC7:
+            return False, 0
+
+        uid = picc_data[1:8]
+        read_ctr_bytes = picc_data[8:11]
+        read_ctr = int.from_bytes(read_ctr_bytes, 'little')
+
+        # 2. lépés: session MAC kulcs levezetése
+        # SV2 = 0x3C || 0xC3 || 0x00 || 0x01 || 0x00 || 0x80 || UID || ReadCtr
+        sv2 = bytes([0x3C, 0xC3, 0x00, 0x01, 0x00, 0x80]) + uid + read_ctr_bytes
+        cobj = _CMAC.new(key, ciphermod=AES)
+        cobj.update(sv2)
+        session_mac_key = cobj.digest()
+
+        # 3. lépés: várt CMAC kiszámítása (üres input, páratlan indexű bájtok)
+        cobj2 = _CMAC.new(session_mac_key, ciphermod=AES)
+        cobj2.update(b'')
+        full_mac = cobj2.digest()
+        expected_cmac = bytes(full_mac[i] for i in range(1, 16, 2))  # 8 bájt
+
+        if expected_cmac != cmac_recv:
+            return False, 0
+
+        return True, read_ctr
+
+    except Exception:
+        return False, 0
+
+
+class NfcTagViewSet(viewsets.ModelViewSet):
+    permission_classes = [IsAuthenticated]
+    pagination_class = None
+
+    def get_queryset(self):
+        from .models import NfcTag
+        return NfcTag.objects.select_related('iot_device').all()
+
+    def get_serializer_class(self):
+        from .serializers import NfcTagSerializer
+        return NfcTagSerializer
+
+    @action(detail=True, methods=['get', 'post'], permission_classes=[])
+    def trigger(self, request, pk=None):
+        """Public endpoint — NFC tag URL-be írva. Aktiválja a csatolt IoT eszköz csatornáját."""
+
+        def _resp(success, title, detail, status_code=200):
+            """Böngészőből (telefon) HTML-t, API-ból JSON-t ad vissza."""
+            if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+                from django.http import HttpResponse
+                bg = '#f0fdf4' if success else '#fef2f2'
+                hc = '#16a34a' if success else '#dc2626'
+                icon = '✓' if success else '✗'
+                html = (
+                    f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+                    f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                    f'<title>{title}</title>'
+                    f'<style>body{{margin:0;font-family:-apple-system,sans-serif;background:{bg};'
+                    f'display:flex;align-items:center;justify-content:center;min-height:100vh}}'
+                    f'.box{{text-align:center;padding:32px 24px}}'
+                    f'.icon{{font-size:64px;margin-bottom:16px}}'
+                    f'h1{{color:{hc};margin:0 0 8px;font-size:24px}}'
+                    f'p{{color:#555;margin:0;font-size:15px}}</style></head>'
+                    f'<body><div class="box"><div class="icon">{icon}</div>'
+                    f'<h1>{title}</h1><p>{detail}</p></div></body></html>'
+                )
+                return HttpResponse(html, status=status_code, content_type='text/html; charset=utf-8')
+            data = {'success': success, 'message': detail} if success else {'error': detail}
+            return Response(data, status=status_code)
+
+        def _redirect_to_login(trigger_url):
+            """Bejelentkezési oldalra irányítja a felhasználót, visszatérési URL-lel."""
+            from django.http import HttpResponse
+            login_url = f'https://erp.pixisys.eu/login?next={trigger_url}'
+            html = (
+                f'<!DOCTYPE html><html><head><meta charset="utf-8">'
+                f'<meta name="viewport" content="width=device-width,initial-scale=1">'
+                f'<title>Bejelentkezés szükséges</title>'
+                f'<style>body{{margin:0;font-family:-apple-system,sans-serif;background:#fffbeb;'
+                f'display:flex;align-items:center;justify-content:center;min-height:100vh}}'
+                f'.box{{text-align:center;padding:32px 24px}}'
+                f'.icon{{font-size:64px;margin-bottom:16px}}'
+                f'h1{{color:#d97706;margin:0 0 8px;font-size:24px}}'
+                f'p{{color:#555;margin:0 0 20px;font-size:15px}}'
+                f'a{{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;'
+                f'padding:12px 28px;border-radius:8px;font-size:16px;font-weight:600}}</style></head>'
+                f'<body><div class="box"><div class="icon">🔐</div>'
+                f'<h1>Bejelentkezés szükséges</h1>'
+                f'<p>Az NFC tag aktiválásához be kell jelentkezned.</p>'
+                f'<a href="{login_url}">Bejelentkezés</a>'
+                f'</div></body></html>'
+            )
+            return HttpResponse(html, status=401, content_type='text/html; charset=utf-8')
+
+        tag = self.get_object()
+        if not tag.is_active:
+            return _resp(False, 'Inaktív tag', 'Ez az NFC tag jelenleg nincs aktiválva.', 403)
+
+        # Bejelentkezés ellenőrzése
+        if not request.user or not request.user.is_authenticated:
+            trigger_url = request.build_absolute_uri()
+            if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+                return _redirect_to_login(trigger_url)
+            return Response({'error': 'Bejelentkezés szükséges'}, status=401)
+
+        # HR osztály jogosultság ellenőrzése az IoT eszközön
+        device_for_auth = tag.iot_device
+        if device_for_auth and device_for_auth.allowed_departments.exists():
+            user = request.user
+            # Superuser mindent elér
+            if not user.is_superuser:
+                try:
+                    user_dept_ids = set(user.employee_profile.departments.values_list('id', flat=True))
+                except Exception:
+                    user_dept_ids = set()
+                allowed_ids = set(device_for_auth.allowed_departments.values_list('id', flat=True))
+                if not user_dept_ids.intersection(allowed_ids):
+                    dept_names = ', '.join(device_for_auth.allowed_departments.values_list('name', flat=True))
+                    return _resp(False, 'Nincs jogosultságod', f'Ehhez az eszközhöz csak a következő osztályok tagjai férhetnek hozzá: {dept_names}.', 403)
+
+        # NTAG424 SUN (Secure Unique NFC) ellenőrzés
+        if tag.tag_type == 'ntag424':
+            if not tag.sun_key:
+                return _resp(False, 'Konfiguráció hiányzik', 'Az NFC tag nincs helyesen konfigurálva: SUN kulcs hiányzik. Állítsd be a rendszerben.', 400)
+            enc_picc = request.query_params.get('e', '')
+            cmac_recv = request.query_params.get('m', '')
+            if not enc_picc or not cmac_recv:
+                return _resp(False, 'Helytelen NFC tag konfiguráció', 'A tag nem küldi a biztonsági paramétereket (?e= és ?m=). Állítsd be az SDM mirroringet a TagWriterben az útmutató szerint.', 400)
+            valid, counter = _verify_ntag424_sun(enc_picc, cmac_recv, tag.sun_key)
+            if not valid:
+                return _resp(False, 'Érvénytelen hitelesítés', 'A tag kriptográfiai ellenőrzése sikertelen. Ellenőrizd a SUN AES kulcsot a rendszerben és a tagben.', 403)
+            if counter <= tag.last_counter:
+                return _resp(False, 'Visszajátszott tap', 'Ez a tap már fel lett használva (replay védelem). Érintsd újra a taget.', 403)
+            # Számláló mentése — aktiválás előtt
+            type(tag).objects.filter(pk=tag.pk).update(last_counter=counter)
+
+        device = tag.iot_device
+        if not device:
+            return _resp(False, 'Konfiguráció hiányzik', 'Nincs IoT eszköz rendelve ehhez a taghez.', 400)
+        if device.device_type == 'shelly_1mini_gen3_relay':
+            import requests as req
+            url = f"http://{device.shelly_host}/rpc/Switch.Set"
+            s = device.type_settings if isinstance(device.type_settings, dict) else {}
+            pulse_ms = int(s.get('pulse_ms', 1000))
+            payload = {'id': tag.iot_channel, 'on': True, 'toggle_after': pulse_ms / 1000}
+            try:
+                auth = None
+                if device.shelly_auth_user:
+                    auth = (device.shelly_auth_user, device.shelly_auth_pass)
+                r = req.post(url, json=payload, auth=auth, timeout=5)
+                r.raise_for_status()
+                return _resp(True, 'Aktiválva', f'A relé sikeresen aktiválva ({tag.name}).', 200)
+            except Exception as e:
+                return _resp(False, 'Eszköz hiba', f'Az IoT eszköz nem elérhető: {e}', 400)
+        return _resp(False, 'Ismeretlen eszköz', 'Ismeretlen IoT eszköz típus.', 400)
+
 
 class ZoneViewSet(viewsets.ModelViewSet):
     queryset = Zone.objects.all()

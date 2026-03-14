@@ -511,6 +511,94 @@ class Zone(models.Model):
         return f"{self.zone_number} - {self.name}"
 
 
+class IoTDevice(models.Model):
+    """IoT eszköz (pl. Shelly relé, szenzor, stb.)"""
+
+    DEVICE_TYPE_CHOICES = [
+        ('shelly_1mini_gen3_relay', 'Shelly 1 Mini Gen3 Relay'),
+    ]
+
+    name = models.CharField(max_length=150, verbose_name='Eszköz neve')
+    device_type = models.CharField(max_length=60, choices=DEVICE_TYPE_CHOICES, verbose_name='Típus')
+    location = models.CharField(max_length=200, blank=True, default='', verbose_name='Hely')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+
+    # Shelly connection fields
+    shelly_host = models.CharField(max_length=255, blank=True, default='', verbose_name='IP / Hostnév (Shelly)')
+    shelly_auth_user = models.CharField(max_length=100, blank=True, default='', verbose_name='Felhasználónév (Shelly)')
+    shelly_auth_pass = models.CharField(max_length=255, blank=True, default='', verbose_name='Jelszó (Shelly)')
+    shelly_channel = models.PositiveSmallIntegerField(default=0, verbose_name='Csatorna (0=alap)')
+    type_settings = models.JSONField(default=dict, blank=True, verbose_name='Típus beállítások')
+
+    # Jogosultság: ha üres → mindenki bejelentkezett user mehet, ha ki van töltve → csak a megadott osztályok
+    allowed_departments = models.ManyToManyField(
+        'hr.Department',
+        blank=True,
+        related_name='iot_devices',
+        verbose_name='Jogosult HR osztályok',
+        help_text='Ha üres, minden bejelentkezett felhasználó használhatja. Ha meg van adva, csak a listában szereplő osztályok tagjai.',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'IoT eszköz'
+        verbose_name_plural = 'IoT eszközök'
+        ordering = ['name']
+        db_table = 'iot_devices'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_device_type_display()})"
+
+
+class NfcTag(models.Model):
+    """NFC tag, amely egy IoT eszköz egy csatornáját aktiválja érintésre."""
+
+    TAG_TYPE_CHOICES = [
+        ('ntag215', 'NTAG215'),
+        ('ntag424', 'NTAG424'),
+    ]
+
+    name = models.CharField(max_length=150, verbose_name='Név')
+    tag_type = models.CharField(max_length=20, choices=TAG_TYPE_CHOICES, verbose_name='Tag típusa')
+    location = models.CharField(max_length=200, blank=True, default='', verbose_name='Hely / leírás')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+
+    # Linked IoT action
+    iot_device = models.ForeignKey(
+        'IoTDevice', null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='nfc_tags',
+        verbose_name='IoT eszköz',
+    )
+    iot_channel = models.PositiveSmallIntegerField(default=0, verbose_name='IoT csatorna')
+
+    # NTAG424 SUN (Secure Unique NFC) authentication
+    sun_key = models.CharField(
+        max_length=32, blank=True, default='',
+        verbose_name='SUN AES kulcs (hex)',
+        help_text='32 hex karakter (16 bájt AES-128 kulcs). Csak NTAG424-hez szükséges.',
+    )
+    last_counter = models.PositiveIntegerField(
+        default=0,
+        verbose_name='Utolsó SUN számláló',
+        help_text='Visszajátszás elleni védelem — az utolsó érvényes tap számlálója.',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'NFC tag'
+        verbose_name_plural = 'NFC tagek'
+        ordering = ['name']
+        db_table = 'nfc_tags'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_tag_type_display()})"
+
+
 class ActivityLog(models.Model):
     """Activity/Audit log for tracking user actions across the system"""
     ACTION_CHOICES = [

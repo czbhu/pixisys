@@ -6,7 +6,8 @@ from .models import (
     SignatureTemplate, PixinvoiceConfig, BackupConfiguration, 
     BackupFile, UserPreference, Role, Permission, UserRole, Notification,
     ActivityLog, TicketTopic, TicketType, Ticket, TicketMessage, TicketAttachment,
-    PublicSiteConfig, ClientPortalUser, ClientPortalSession, SiteFeature, SalesSite
+    PublicSiteConfig, ClientPortalUser, ClientPortalSession, SiteFeature, SalesSite,
+    IoTDevice, NfcTag
 )
 from apps.manufacturing.models import ProductClass, CalculatorTemplate
 from apps.hr.models import Department
@@ -569,3 +570,47 @@ class SalesSiteSerializer(serializers.ModelSerializer):
     def get_primary_domain(self, obj):
         domains = obj.domains if isinstance(obj.domains, list) else []
         return domains[0] if domains else ''
+
+
+class IoTDeviceSerializer(serializers.ModelSerializer):
+    device_type_display = serializers.CharField(source='get_device_type_display', read_only=True)
+    allowed_departments = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=__import__('apps.hr.models', fromlist=['Department']).Department.objects.all(),
+        required=False,
+    )
+    allowed_department_names = serializers.SerializerMethodField()
+
+    class Meta:
+        model = IoTDevice
+        fields = [
+            'id', 'name', 'device_type', 'device_type_display', 'location', 'is_active',
+            'shelly_host', 'shelly_auth_user', 'shelly_auth_pass', 'shelly_channel',
+            'type_settings', 'allowed_departments', 'allowed_department_names',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_allowed_department_names(self, obj):
+        return [{'id': d.id, 'name': d.name} for d in obj.allowed_departments.all()]
+
+
+class NfcTagSerializer(serializers.ModelSerializer):
+    tag_type_display = serializers.CharField(source='get_tag_type_display', read_only=True)
+    iot_device_name = serializers.SerializerMethodField()
+    iot_device_type = serializers.SerializerMethodField()
+
+    class Meta:
+        model = NfcTag
+        fields = [
+            'id', 'name', 'tag_type', 'tag_type_display', 'location', 'is_active',
+            'iot_device', 'iot_device_name', 'iot_device_type', 'iot_channel',
+            'sun_key', 'last_counter',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = ['last_counter', 'created_at', 'updated_at']
+
+    def get_iot_device_name(self, obj):
+        return obj.iot_device.name if obj.iot_device else None
+
+    def get_iot_device_type(self, obj):
+        return obj.iot_device.device_type if obj.iot_device else None
