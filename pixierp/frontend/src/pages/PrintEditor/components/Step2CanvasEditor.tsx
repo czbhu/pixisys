@@ -91,13 +91,32 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const guidesRef = useRef<Guide[]>([]);
   const snapRef = useRef(true);
   const nextGuideId = useRef(1);
+  const canvasAreaRef = useRef<HTMLDivElement>(null);
+  const [containerSize, setContainerSize] = useState({ w: 0, h: 0 });
 
-  // Canvas méret számítás — a ruler helyet foglal
-  const MAX_EDITOR_W = Math.min(window.innerWidth - (leftOffset + 220 + 48), 900);
-  const MAX_CANVAS_H = window.innerHeight - 140 - RULER_SIZE;
+  // Measure the actual canvas area container with ResizeObserver
+  useEffect(() => {
+    const el = canvasAreaRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(entries => {
+      const { width, height } = entries[0].contentRect;
+      setContainerSize({ w: width, h: height });
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
+  // Canvas méret számítás — konfár: oldálváltó (~40px) + legend (~28px) + padding (32px) + ruler
+  const CHROME_H = (params.sides === '2' ? 40 : 0) + 28 + 32 + RULER_SIZE;
+  const CHROME_W = RULER_SIZE + 32; // padding + ruler
+  const availW = containerSize.w > 0 ? containerSize.w - CHROME_W : window.innerWidth - (leftOffset + 220 + 48) - CHROME_W;
+  const availH = containerSize.h > 0 ? containerSize.h - CHROME_H : window.innerHeight - 140 - CHROME_H;
   const canvasW = params.width_mm * MM_TO_PX;
   const canvasH = params.height_mm * MM_TO_PX;
-  const scale = Math.min(MAX_EDITOR_W / canvasW, MAX_CANVAS_H / canvasH, 1);
+  const scale = Math.min(
+    availW > 0 ? availW / canvasW : 1,
+    availH > 0 ? availH / canvasH : 1,
+  );
   const displayW = Math.round(canvasW * scale);
   const displayH = Math.round(canvasH * scale);
 
@@ -903,7 +922,10 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         </div>
 
         {/* Canvas + oldal váltó */}
-        <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, background: '#f0f2f5' }}>
+        <div
+          ref={canvasAreaRef}
+          style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 16, background: '#f0f2f5' }}
+        >
           {params.sides === '2' && (
             <div style={{ marginBottom: 8 }}>
               <Button.Group>
