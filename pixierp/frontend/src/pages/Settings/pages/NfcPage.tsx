@@ -13,7 +13,7 @@ import api from '../../../services/api';
 const { Title, Text } = Typography;
 const { Option } = Select;
 
-const FRONTEND_BASE_URL = 'https://erp.pixisys.eu';
+const FRONTEND_BASE_URL = window.location.origin;
 
 interface IoTDevice {
   id: number;
@@ -155,7 +155,7 @@ const NfcPage: React.FC = () => {
   // Offset = 10 + (karakter pozíció az URL-ben, https:// nélkül)
   const getTagWriterOffsets = (id: number) => {
     const NDEF_OVERHEAD = 10;
-    const baseWithoutHttps = `erp.pixisys.eu/api/v1/nfc-tags/${id}/trigger/?e=`;
+    const baseWithoutHttps = `${window.location.host}/api/v1/nfc-tags/${id}/trigger/?e=`;
     const piccOff = NDEF_OVERHEAD + baseWithoutHttps.length;
     const macOff = piccOff + 32 + 3; // 32 hex (EncPICC) + "&m="
     return { piccOff, macOff };

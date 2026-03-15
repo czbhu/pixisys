@@ -1,5 +1,5 @@
 from rest_framework import status
-from rest_framework.decorators import api_view, permission_classes, action
+from rest_framework.decorators import api_view, permission_classes, action, authentication_classes
 import logging
 
 logger = logging.getLogger(__name__)
@@ -146,6 +146,7 @@ def health_check(request):
     })
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def login_view(request):
     """User login endpoint - accepts email or username"""
@@ -301,6 +302,7 @@ def update_profile_view(request):
     return Response(UserSerializer(user).data)
 
 @api_view(['POST'])
+@authentication_classes([])
 @permission_classes([AllowAny])
 def refresh_token_view(request):
     """Refresh JWT token"""
@@ -2772,7 +2774,8 @@ class NfcTagViewSet(viewsets.ModelViewSet):
         def _redirect_to_login(trigger_url):
             """Bejelentkezési oldalra irányítja a felhasználót, visszatérési URL-lel."""
             from django.http import HttpResponse
-            login_url = f'https://erp.pixisys.eu/login?next={trigger_url}'
+            frontend_base = getattr(settings, 'FRONTEND_BASE_URL', '').rstrip('/')
+            login_url = f'{frontend_base}/login?next={trigger_url}'
             html = (
                 f'<!DOCTYPE html><html><head><meta charset="utf-8">'
                 f'<meta name="viewport" content="width=device-width,initial-scale=1">'

@@ -585,6 +585,11 @@ class NfcTag(models.Model):
         verbose_name='Utolsó SUN számláló',
         help_text='Visszajátszás elleni védelem — az utolsó érvényes tap számlálója.',
     )
+    require_login = models.BooleanField(
+        default=True,
+        verbose_name='Bejelentkezés szükséges',
+        help_text='Ha ki van kapcsolva, az NFC tag bejelentkezés nélkül is aktivál (csak NTAG424 SUN kriptó szükséges). Zárolt képernyőnél is működik.',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

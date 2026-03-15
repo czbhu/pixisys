@@ -2681,7 +2681,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.save()
         
         # Build public delivery URL
-        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu')
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu')
         delivery_url = f"{frontend_url}/public/delivery/{order.public_delivery_token}"
         
         # Get recipient email from request or use quote_request contact
@@ -2946,7 +2946,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
              deadline = order.quote_request.deadline.strftime('%Y.%m.%d')
 
         # Generate QR Code
-        base_url = "https://erp.pixisys.eu"
+        base_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
         target_url = f"{base_url}/sales/customer-orders/{order.id}" # Link to Order or Item? User said generic QR.
         qr = qrcode.QRCode(version=1, box_size=10, border=2)
         qr.add_data(target_url)
@@ -3129,8 +3129,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         rfq = order.quote_request
 
         # Generate QR Code
-        # Base URL hardcoded or from settings? User specified erp.pixisys.eu
-        base_url = "https://erp.pixisys.eu"
+        base_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
         target_url = f"{base_url}/sales/customer-orders/{order.id}"
         
         qr = qrcode.QRCode(

@@ -604,7 +604,7 @@ class NfcTagSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'name', 'tag_type', 'tag_type_display', 'location', 'is_active',
             'iot_device', 'iot_device_name', 'iot_device_type', 'iot_channel',
-            'sun_key', 'last_counter',
+            'sun_key', 'last_counter', 'require_login',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['last_counter', 'created_at', 'updated_at']
