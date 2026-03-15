@@ -1,11 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, useParams, useLocation } from 'react-router-dom';
-import { Steps, Card, Typography, message, Spin, Space, Button, Select, Form, Modal, Result } from 'antd';
-import { LockOutlined } from '@ant-design/icons';
+import React, { useState, useEffect, useRef } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Typography, message, Button, Select, Form, Modal, Result } from 'antd';
+import { LockOutlined, ShoppingOutlined, UserOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
-import Step1Params, { PrintParams } from './components/Step1Params';
-import Step2CanvasEditor from './components/Step2CanvasEditor';
+import { PrintParams } from './components/Step1Params';
+import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
+import Step2CanvasEditor, { CanvasEditorHandle } from './components/Step2CanvasEditor';
 import Step3OrderSummary from './components/Step3OrderSummary';
 
 const { Title, Text } = Typography;
@@ -14,10 +15,12 @@ const { Option } = Select;
 interface Company { id: number; name: string; }
 interface Contact { id: number; first_name: string; last_name: string; company?: number; }
 
+const PARAMS_PANEL_W = 280;
+
 const DEFAULT_PARAMS: PrintParams = {
-  product_name: 'Névjegykártya',
-  width_mm: 85,
-  height_mm: 54,
+  product_name: 'A5 Szórólap',
+  width_mm: 148,
+  height_mm: 210,
   quantity: 100,
   sides: '1',
   side1_mode: 'color',
@@ -33,12 +36,13 @@ const PrintEditorPage: React.FC = () => {
   const location = useLocation();
   const isAdmin = !!(user?.is_staff || user?.is_superuser);
 
-  const [currentStep, setCurrentStep] = useState(0);
+  const canvasRef = useRef<CanvasEditorHandle>(null);
   const [params, setParams] = useState<PrintParams>(DEFAULT_PARAMS);
   const [orderId, setOrderId] = useState<number | null>(null);
   const [itemId, setItemId] = useState<number | null>(null);
-  const [priceBreakdown, setPriceBreakdown] = useState<any>(null);
+  const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
   const [saving, setSaving] = useState(false);
+  const [orderModalOpen, setOrderModalOpen] = useState(false);
 
   // Admin: ügyfél/kapcsolattartó választó
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -86,12 +90,9 @@ const PrintEditorPage: React.FC = () => {
     );
   }
 
-  // Megrendelés létrehozása vagy frissítése
-  const handleStep1Next = async () => {
-    setCurrentStep(1);
-  };
-
-  const handleStep2Next = async (designSide1: any, designSide2: any) => {
+  const handleOrder = async () => {
+    const design = canvasRef.current?.getDesignJson();
+    if (!design) { message.error('A canvas nem elérhető'); return; }
     setSaving(true);
     try {
       const itemPayload = {
@@ -108,10 +109,9 @@ const PrintEditorPage: React.FC = () => {
         unit_price: priceBreakdown?.unit_price ?? 0,
         total_price: priceBreakdown?.total ?? 0,
         price_breakdown: priceBreakdown ?? null,
-        design_json_side1: designSide1,
-        design_json_side2: designSide2,
+        design_json_side1: design.d1,
+        design_json_side2: design.d2,
       };
-
       const orderPayload = {
         status: 'draft',
         company: selectedCompany ?? undefined,
@@ -119,24 +119,17 @@ const PrintEditorPage: React.FC = () => {
         notes: '',
         items: [itemPayload],
       };
-
-      let oid = orderId;
-      let iid: number | null = null;
-
-      if (oid) {
-        const r = await api.patch(`/printshop/orders/${oid}/`, orderPayload);
-        iid = r.data?.items?.[0]?.id ?? null;
+      if (orderId) {
+        const r = await api.patch(`/printshop/orders/${orderId}/`, orderPayload);
+        setItemId(r.data?.items?.[0]?.id ?? null);
       } else {
         const r = await api.post('/printshop/orders/', orderPayload);
-        oid = r.data.id;
-        setOrderId(oid!);
-        iid = r.data?.items?.[0]?.id ?? null;
+        setOrderId(r.data.id);
+        setItemId(r.data?.items?.[0]?.id ?? null);
       }
-
-      if (iid) setItemId(iid);
-      setCurrentStep(2);
+      setOrderModalOpen(true);
     } catch (e: any) {
-      message.error(e?.response?.data?.error || 'Tervez\u00e9s ment\u00e9si hiba');
+      message.error(e?.response?.data?.error || 'Mentési hiba');
     } finally {
       setSaving(false);
     }
@@ -148,7 +141,8 @@ const PrintEditorPage: React.FC = () => {
     try {
       await api.patch(`/printshop/orders/${orderId}/`, { status: 'pending' });
       message.success('Megrendelés sikeresen leadva!');
-      navigate('/print-editor');
+      setOrderModalOpen(false);
+      navigate('/');
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Hiba a megrendelés leadásakor');
     } finally {
@@ -156,76 +150,89 @@ const PrintEditorPage: React.FC = () => {
     }
   };
 
-  const stepItems = [
-    { title: 'Paraméterek', description: 'Méret, nyomtatás, kötészet' },
-    { title: 'Tervezés', description: 'Grafika szerkesztése' },
-    { title: 'Megrendelés', description: 'Összefoglaló és leadás' },
-  ];
+  const selectedCompanyObj = selectedCompany ? companies.find(c => c.id === selectedCompany) ?? null : null;
+  const selectedContactObj = selectedContact ? contacts.find(c => c.id === selectedContact) ?? null : null;
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       {/* Header */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #e8e8e8', padding: '12px 24px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div>
-            <Title level={4} style={{ margin: 0 }}>Íves nyomtatás szerkesztő</Title>
-            <Text type="secondary" style={{ fontSize: 12 }}>Névjegykártya, szórólap, poszter</Text>
-          </div>
-          <Space>
-            {isAdmin && (
-              <Button onClick={() => setClientModalOpen(true)}>
-                {selectedCompany
-                  ? `Ügyfél: ${companies.find(c => c.id === selectedCompany)?.name ?? selectedCompany}`
-                  : 'Ügyfél kiválasztása'}
-              </Button>
-            )}
-          </Space>
-        </div>
+      <div style={{
+        height: 48, flexShrink: 0, background: '#fff',
+        borderBottom: '1px solid #e8e8e8', display: 'flex',
+        alignItems: 'center', padding: '0 16px', gap: 12,
+      }}>
+        <Title level={5} style={{ margin: 0 }}>Íves nyomtatás</Title>
+        <Text type="secondary" style={{ fontSize: 12 }}>Névjegykártya · Szórólap · Poszter</Text>
+        <div style={{ flex: 1 }} />
+        {isAdmin && (
+          <Button size="small" icon={<UserOutlined />} onClick={() => setClientModalOpen(true)}>
+            {selectedCompanyObj ? selectedCompanyObj.name : 'Ügyfél kiválasztása'}
+          </Button>
+        )}
       </div>
 
-      {/* Steps */}
-      <div style={{ background: '#fff', borderBottom: '1px solid #e8e8e8', padding: '16px 24px' }}>
-        <div style={{ maxWidth: 1200, margin: '0 auto' }}>
-          <Steps current={currentStep} items={stepItems} size="small" />
-        </div>
-      </div>
-
-      {/* Content */}
-      <div style={{ maxWidth: currentStep === 1 ? '100%' : 1200, margin: '0 auto', padding: currentStep === 1 ? '0' : '24px' }}>
-        {currentStep === 0 && (
-          <Step1Params
-            isAdmin={isAdmin}
+      {/* Body */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+        {/* Left params panel */}
+        <div style={{
+          width: PARAMS_PANEL_W, flexShrink: 0,
+          borderRight: '1px solid #e8e8e8',
+          background: '#fff', overflowY: 'auto',
+          display: 'flex', flexDirection: 'column',
+        }}>
+          <PrintParamsPanel
             params={params}
-            onParamsChange={setParams}
-            onNext={handleStep1Next}
+            onChange={setParams}
             onPriceChange={setPriceBreakdown}
+            isAdmin={isAdmin}
           />
-        )}
-        {currentStep === 1 && (
+          <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
+            <Button
+              type="primary"
+              block
+              size="large"
+              icon={<ShoppingOutlined />}
+              loading={saving}
+              onClick={handleOrder}
+            >
+              Megrendelés leadása
+            </Button>
+          </div>
+        </div>
+
+        {/* Canvas editor */}
+        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
           <Step2CanvasEditor
+            ref={canvasRef}
             params={params}
             isAdmin={isAdmin}
             priceBreakdown={priceBreakdown}
-            saving={saving}
-            onBack={() => setCurrentStep(0)}
-            onNext={handleStep2Next}
+            leftOffset={PARAMS_PANEL_W}
           />
-        )}
-        {currentStep === 2 && (
-          <Step3OrderSummary
-            params={params}
-            priceBreakdown={priceBreakdown}
-            orderId={orderId}
-            itemId={itemId}
-            isAdmin={isAdmin}
-            company={selectedCompany ? companies.find(c => c.id === selectedCompany) ?? null : null}
-            contact={selectedContact ? contacts.find(c => c.id === selectedContact) ?? null : null}
-            saving={saving}
-            onBack={() => setCurrentStep(1)}
-            onConfirm={handleConfirmOrder}
-          />
-        )}
+        </div>
       </div>
+
+      {/* Order summary modal */}
+      <Modal
+        open={orderModalOpen}
+        title="Megrendelés összefoglalója"
+        onCancel={() => setOrderModalOpen(false)}
+        footer={null}
+        width={700}
+      >
+        <Step3OrderSummary
+          params={params}
+          priceBreakdown={priceBreakdown}
+          orderId={orderId}
+          itemId={itemId}
+          isAdmin={isAdmin}
+          company={selectedCompanyObj}
+          contact={selectedContactObj}
+          saving={saving}
+          onBack={() => setOrderModalOpen(false)}
+          onConfirm={handleConfirmOrder}
+        />
+      </Modal>
 
       {/* Admin: Ügyfél választó modal */}
       <Modal
@@ -239,9 +246,7 @@ const PrintEditorPage: React.FC = () => {
         <Form layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item label="Cég">
             <Select
-              allowClear
-              showSearch
-              placeholder="Cég keresése..."
+              allowClear showSearch placeholder="Cég keresése..."
               optionFilterProp="children"
               value={selectedCompany ?? undefined}
               onChange={v => setSelectedCompany(v ?? null)}
@@ -252,9 +257,7 @@ const PrintEditorPage: React.FC = () => {
           </Form.Item>
           <Form.Item label="Kapcsolattartó">
             <Select
-              allowClear
-              showSearch
-              placeholder="Kapcsolattartó..."
+              allowClear showSearch placeholder="Kapcsolattartó..."
               optionFilterProp="children"
               value={selectedContact ?? undefined}
               onChange={v => setSelectedContact(v ?? null)}
@@ -262,7 +265,7 @@ const PrintEditorPage: React.FC = () => {
               style={{ width: '100%' }}
             >
               {contacts.map(c => (
-                <Option key={c.id} value={c.id}>{c.first_name} {c.last_name}</Option>
+                <Option key={c.id} value={c.id}>{c.last_name} {c.first_name}</Option>
               ))}
             </Select>
           </Form.Item>

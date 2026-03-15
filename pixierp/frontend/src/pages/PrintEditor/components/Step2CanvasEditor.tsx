@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Button, Space, Tooltip, Select, InputNumber, Popover, Divider,
   Upload, message, Spin, Slider, Typography, Tabs, Badge, Drawer,
@@ -40,20 +40,22 @@ const MM_TO_PX = 3.7795;
 const BLEED_MM = 3;
 const SAFE_MM = 3;
 
+export interface CanvasEditorHandle {
+  getDesignJson: () => { d1: any; d2: any } | null;
+}
+
 interface Props {
   params: PrintParams;
   isAdmin: boolean;
   priceBreakdown: any;
-  saving: boolean;
-  onBack: () => void;
-  onNext: (designSide1: any, designSide2: any) => void;
+  leftOffset?: number;
 }
 
 type Side = '1' | '2';
 
-const Step2CanvasEditor: React.FC<Props> = ({
-  params, isAdmin, priceBreakdown, saving, onBack, onNext,
-}) => {
+const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
+  { params, isAdmin, priceBreakdown, leftOffset = 0 }, ref
+) => {
   const canvasRef1 = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement);
   const canvasRef2 = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement);
   const fabricRef1 = useRef<fabric.Canvas | null>(null);
@@ -71,14 +73,32 @@ const Step2CanvasEditor: React.FC<Props> = ({
   const [objects2, setObjects2] = useState<fabric.Object[]>([]);
 
   // Canvas méret számítás
-  const MAX_EDITOR_W = Math.min(window.innerWidth - 320, 900);
+  const MAX_EDITOR_W = Math.min(window.innerWidth - (leftOffset + 220 + 48), 900);
+  const MAX_CANVAS_H = window.innerHeight - 140;
   const canvasW = params.width_mm * MM_TO_PX;
   const canvasH = params.height_mm * MM_TO_PX;
-  const scale = Math.min(MAX_EDITOR_W / canvasW, 700 / canvasH, 1);
+  const scale = Math.min(MAX_EDITOR_W / canvasW, MAX_CANVAS_H / canvasH, 1);
   const displayW = Math.round(canvasW * scale);
   const displayH = Math.round(canvasH * scale);
 
   const getActiveFabric = () => activeSide === '1' ? fabricRef1.current : fabricRef2.current;
+
+  // Expose getDesignJson via ref
+  useImperativeHandle(ref, () => ({
+    getDesignJson: () => {
+      const fc1 = fabricRef1.current;
+      if (!fc1) return null;
+      const getCleanJson = (fc: fabric.Canvas) => {
+        const json = fc.toJSON(['id', 'name']) as any;
+        json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
+        return json;
+      };
+      return {
+        d1: getCleanJson(fc1),
+        d2: fabricRef2.current ? getCleanJson(fabricRef2.current) : null,
+      };
+    },
+  }));
 
   // History helpers
   const saveHistory = useCallback((side: Side) => {
@@ -423,24 +443,6 @@ const Step2CanvasEditor: React.FC<Props> = ({
     saveHistory(activeSide);
   };
 
-  // Tovább gomb: canvas JSON kinyerése
-  const handleNext = () => {
-    const fc1 = fabricRef1.current;
-    const fc2 = fabricRef2.current;
-    if (!fc1) { message.error('Canvas nem inicializált'); return; }
-
-    // Végső JSON: guide helpereket kizárjuk
-    const getCleanJson = (fc: fabric.Canvas) => {
-    const json = fc.toJSON(['id', 'name']) as any;
-      json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
-      return json;
-    };
-
-    const d1 = getCleanJson(fc1);
-    const d2 = fc2 ? getCleanJson(fc2) : null;
-    onNext(d1, d2);
-  };
-
   // Szöveg igazítás
   const setTextAlign = (align: string) => {
     const fc = getActiveFabric();
@@ -461,7 +463,7 @@ const Step2CanvasEditor: React.FC<Props> = ({
   const histLen = activeSide === '1' ? history1.length : history2.length;
 
   return (
-    <div style={{ display: 'flex', height: 'calc(100vh - 130px)', overflow: 'hidden' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       {/* Left panel: Tools */}
       <div style={{
         width: 220, background: '#fff', borderRight: '1px solid #e8e8e8',
@@ -742,33 +744,9 @@ const Step2CanvasEditor: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Bottom action bar */}
-      <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0,
-        background: '#fff', borderTop: '1px solid #e8e8e8',
-        padding: '12px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-        zIndex: 100,
-      }}>
-        <Space>
-          <Button onClick={onBack}>← Vissza</Button>
-          {!isAdmin && priceBreakdown && (
-            <Text strong style={{ fontSize: 16 }}>
-              Becsült ár: {priceBreakdown.total?.toLocaleString('hu-HU')} Ft ({priceBreakdown.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db)
-            </Text>
-          )}
-        </Space>
-        <Button
-          type="primary"
-          size="large"
-          loading={saving}
-          icon={<CheckOutlined />}
-          onClick={handleNext}
-        >
-          Tovább a megrendeléshez →
-        </Button>
-      </div>
     </div>
   );
-};
+});
 
+Step2CanvasEditor.displayName = 'Step2CanvasEditor';
 export default Step2CanvasEditor;

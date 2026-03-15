@@ -28,6 +28,7 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'color': config.print_color_cost,
         'bw': config.print_bw_cost,
         'color_white': config.print_color_white_cost,
+        'white': config.print_color_white_cost,  # fehér festék = color_white-tal azonos
         'none': Decimal('0'),
     }
     print_cost_s1 = mode_costs.get(side1_mode, Decimal('0')) * qty
