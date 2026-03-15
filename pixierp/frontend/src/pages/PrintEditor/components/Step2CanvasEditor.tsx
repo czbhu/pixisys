@@ -186,20 +186,27 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc.on('object:added', () => updateObjects(side));
     fc.on('object:removed', () => updateObjects(side));
 
-    // CSS transform scale
+    // CSS transform: scale the canvas visually, do NOT override width/height
+    // (Fabric already sets the container to canvasW×canvasH; just scale visually)
     const el = fc.getElement().parentElement;
     if (el) {
       el.style.transformOrigin = 'top left';
       el.style.transform = `scale(${scale})`;
-      el.style.width = `${displayW}px`;
-      el.style.height = `${displayH}px`;
     }
 
     saveHistory(side);
   };
 
   useEffect(() => {
-    // Kis delay, hogy a DOM renderelődjön
+    // Reset state on dimension or sides change
+    setHistory1([]);
+    setHistory2([]);
+    setHistIdx1(-1);
+    setHistIdx2(-1);
+    setObjects1([]);
+    setObjects2([]);
+    setSelectedObj(null);
+
     const t = setTimeout(() => {
       initCanvas(canvasRef1, fabricRef1, '1');
       if (params.sides === '2') {
@@ -214,7 +221,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       fabricRef2.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [params.width_mm, params.height_mm, params.sides]);
 
   // Font betöltés
   const loadFont = async (fontName: string) => {
@@ -722,8 +729,10 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
               style={{
                 display: activeSide === '1' ? 'block' : 'none',
                 width: displayW, height: displayH,
+                overflow: 'hidden',
                 boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
                 background: '#fff',
+                flexShrink: 0,
               }}
             >
               <canvas ref={canvasRef1} />
@@ -733,8 +742,10 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
                 style={{
                   display: activeSide === '2' ? 'block' : 'none',
                   width: displayW, height: displayH,
+                  overflow: 'hidden',
                   boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
                   background: '#fff',
+                  flexShrink: 0,
                 }}
               >
                 <canvas ref={canvasRef2} />
