@@ -52,6 +52,7 @@ LOCAL_APPS = [
     'apps.orders',
     'apps.pos',
     'apps.warehouse',
+    'apps.printshop',
 ]
 
 # Daphne must be before staticfiles

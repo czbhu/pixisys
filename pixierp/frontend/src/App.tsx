@@ -29,6 +29,7 @@ import KioskPage from './pages/Public/KioskPage';
 import SiteManagement from './pages/SiteManagement/SiteManagement';
 import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview';
 import POSSales from './pages/POS/Sales';
+import PrintEditorPage from './pages/PrintEditor/PrintEditorPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
@@ -201,6 +202,12 @@ function AppContent() {
     return <POSSales />;
   }
 
+  // Print Editor fullscreen mode - no sidebar
+  const isPrintEditor = location.pathname.startsWith('/print-editor');
+  if (isPrintEditor) {
+    return <PrintEditorPage />;
+  }
+
   return (
     <Layout style={{ minHeight: '100vh' }}>
       {isMobile ? (
@@ -268,6 +275,7 @@ function AppContent() {
             <Route path="/tickets/settings" element={<Tickets mode="settings" />} />
             <Route path="/site-management" element={<SiteManagement />} />
             <Route path="/site-management/:slug" element={<SiteManagementPreview />} />
+            <Route path="/print-editor/*" element={<PrintEditorPage />} />
           </Routes>
         </Content>
 

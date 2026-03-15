@@ -14,6 +14,7 @@ import {
   BarChartOutlined,
   FileTextOutlined,
   GlobalOutlined,
+  PrinterOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -543,6 +544,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       ],
     },
     {
+      key: '/print-editor',
+      icon: <PrinterOutlined />,
+      label: 'Termékszerkesztők',
+      children: [
+        { key: '/print-editor/sheet', label: 'Íves nyomtatás' },
+      ],
+    },
+    {
       key: '/settings',
       icon: <ToolOutlined />,
       label: 'Beállítások',
@@ -563,6 +572,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/public-site', label: 'Publikus oldal' },
         { key: '/settings/iot', label: 'IoT eszközök' },
         { key: '/settings/nfc', label: 'NFC tagek' },
+        { key: '/settings/print-products', label: 'Termékszerkesztők' },
       ],
     },
   ];

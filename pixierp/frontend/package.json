@@ -15,11 +15,13 @@
     "axios": "^1.6.0",
     "date-fns": "^4.1.0",
     "dayjs": "^1.11.18",
+    "fabric": "^5.5.2",
     "formik": "^2.4.5",
     "html5-qrcode": "^2.3.8",
     "jspdf": "^4.0.0",
     "jspdf-autotable": "^5.0.7",
     "moment": "^2.29.4",
+    "pdfjs-dist": "^5.5.207",
     "qrcode.react": "^4.2.0",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -56,6 +58,7 @@
     ]
   },
   "devDependencies": {
+    "@types/fabric": "^5.3.11",
     "@types/react": "^19.2.10",
     "@types/react-dom": "^19.2.3",
     "http-proxy-middleware": "^3.0.5"

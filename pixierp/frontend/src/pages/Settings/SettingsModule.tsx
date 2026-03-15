@@ -32,6 +32,7 @@ import Zones from './Zones';
 import PublicSitePage from './pages/PublicSitePage';
 import IotPage from './pages/IotPage';
 import NfcPage from './pages/NfcPage';
+import PrintProductsPage from './pages/PrintProductsPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
@@ -73,6 +74,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/public-site" element={<PublicSitePage />} />
       <Route path="/iot" element={<IotPage />} />
       <Route path="/nfc" element={<NfcPage />} />
+      <Route path="/print-products" element={<PrintProductsPage />} />
     </Routes>
   );
 };
