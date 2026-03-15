@@ -1,19 +1,18 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Button, Space, Tooltip, Select, InputNumber, Popover, Divider,
-  Upload, message, Spin, Slider, Typography, Tabs, Badge, Drawer,
-  Row, Col, Input,
+  Upload, message, Slider, Typography, Switch,
 } from 'antd';
 import {
   UndoOutlined, RedoOutlined, DeleteOutlined, BoldOutlined,
   ItalicOutlined, FontSizeOutlined, BgColorsOutlined, PictureOutlined,
-  FileImageOutlined, AlignLeftOutlined, AlignCenterOutlined,
+  AlignLeftOutlined, AlignCenterOutlined,
   AlignRightOutlined, CopyOutlined, VerticalAlignTopOutlined,
   VerticalAlignBottomOutlined, BorderOutlined, LeftOutlined,
-  RightOutlined, CheckOutlined, LoadingOutlined, LockOutlined,
-  UnlockOutlined,
+  RightOutlined, LoadingOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
+import CanvasRuler from './CanvasRuler';
 
 // Fabric.js import
 import { fabric } from 'fabric';
@@ -39,9 +38,19 @@ const GOOGLE_FONTS = [
 const MM_TO_PX = 3.7795;
 const BLEED_MM = 3;
 const SAFE_MM = 3;
+const RULER_SIZE = 20;  // px
+const SNAP_THRESHOLD_PX = 6;  // px távolságon belül snap
+const GUIDE_COLOR = '#1890ff';
+const GUIDE_HIT_PX = 6;  // px-en belül kattintásra kijelöli/törli
 
 export interface CanvasEditorHandle {
   getDesignJson: () => { d1: any; d2: any } | null;
+}
+
+interface Guide {
+  id: number;
+  axis: 'x' | 'y';  // x = függőleges vonal, y = vízszintes vonal
+  mm: number;
 }
 
 interface Props {
@@ -72,9 +81,20 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const [objects1, setObjects1] = useState<fabric.Object[]>([]);
   const [objects2, setObjects2] = useState<fabric.Object[]>([]);
 
-  // Canvas méret számítás
+  // Guides + snap state
+  const [guides, setGuides] = useState<Guide[]>([]);
+  const [snapEnabled, setSnapEnabled] = useState(true);
+  const [cursorMm, setCursorMm] = useState<{ x: number | null; y: number | null }>({ x: null, y: null });
+  const [objPosMm, setObjPosMm] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const [newGuideMm, setNewGuideMm] = useState<number>(50);
+  const [newGuideAxis, setNewGuideAxis] = useState<'x' | 'y'>('x');
+  const guidesRef = useRef<Guide[]>([]);
+  const snapRef = useRef(true);
+  const nextGuideId = useRef(1);
+
+  // Canvas méret számítás — a ruler helyet foglal
   const MAX_EDITOR_W = Math.min(window.innerWidth - (leftOffset + 220 + 48), 900);
-  const MAX_CANVAS_H = window.innerHeight - 140;
+  const MAX_CANVAS_H = window.innerHeight - 140 - RULER_SIZE;
   const canvasW = params.width_mm * MM_TO_PX;
   const canvasH = params.height_mm * MM_TO_PX;
   const scale = Math.min(MAX_EDITOR_W / canvasW, MAX_CANVAS_H / canvasH, 1);
@@ -82,6 +102,10 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const displayH = Math.round(canvasH * scale);
 
   const getActiveFabric = () => activeSide === '1' ? fabricRef1.current : fabricRef2.current;
+
+  // Sync refs
+  useEffect(() => { guidesRef.current = guides; }, [guides]);
+  useEffect(() => { snapRef.current = snapEnabled; }, [snapEnabled]);
 
   // Expose getDesignJson via ref
   useImperativeHandle(ref, () => ({
@@ -179,12 +203,40 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc.add(safeRect);
 
     // Eseménykezelők
-    fc.on('selection:created', (e: any) => setSelectedObj(e.selected?.[0] ?? null));
-    fc.on('selection:updated', (e: any) => setSelectedObj(e.selected?.[0] ?? null));
-    fc.on('selection:cleared', () => setSelectedObj(null));
+    fc.on('selection:created', (e: any) => {
+      const obj = e.selected?.[0] ?? null;
+      setSelectedObj(obj);
+      updateObjPos(obj);
+    });
+    fc.on('selection:updated', (e: any) => {
+      const obj = e.selected?.[0] ?? null;
+      setSelectedObj(obj);
+      updateObjPos(obj);
+    });
+    fc.on('selection:cleared', () => { setSelectedObj(null); setObjPosMm(null); });
     fc.on('object:modified', () => { saveHistory(side); updateObjects(side); });
     fc.on('object:added', () => updateObjects(side));
     fc.on('object:removed', () => updateObjects(side));
+
+    // Snap + mouse-move és ruler cursor
+    fc.on('mouse:move', (e: any) => {
+      const p = e.absolutePointer;
+      if (!p) return;
+      setCursorMm({ x: p.x / MM_TO_PX, y: p.y / MM_TO_PX });
+    });
+    fc.on('mouse:out', () => setCursorMm({ x: null, y: null }));
+
+    fc.on('object:moving', (e: any) => {
+      if (!snapRef.current) return;
+      const obj = e.target;
+      if (!obj) return;
+      snapObjectToGuides(obj);
+      const left = obj.left ?? 0;
+      const top = obj.top ?? 0;
+      const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
+      const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
+      setObjPosMm({ x: left / MM_TO_PX, y: top / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+    });
 
     // CSS transform: scale the canvas visually, do NOT override width/height
     // (Fabric already sets the container to canvasW×canvasH; just scale visually)
@@ -222,6 +274,66 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.width_mm, params.height_mm, params.sides]);
+
+  // Update obj pos display
+  const updateObjPos = (obj: fabric.Object | null) => {
+    if (!obj) { setObjPosMm(null); return; }
+    const left = obj.left ?? 0;
+    const top = obj.top ?? 0;
+    const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
+    const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
+    setObjPosMm({ x: left / MM_TO_PX, y: top / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+  };
+
+  // Snap object to nearest guide
+  const snapObjectToGuides = (obj: fabric.Object) => {
+    const guideList = guidesRef.current;
+    const threshold = SNAP_THRESHOLD_PX;
+    let newLeft = obj.left ?? 0;
+    let newTop = obj.top ?? 0;
+    const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
+    const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
+
+    for (const g of guideList) {
+      const gPx = g.mm * MM_TO_PX;
+      if (g.axis === 'x') {
+        // vertical guide line: snap left edge or center or right edge
+        if (Math.abs(newLeft - gPx) < threshold) newLeft = gPx;
+        else if (Math.abs(newLeft + ow / 2 - gPx) < threshold) newLeft = gPx - ow / 2;
+        else if (Math.abs(newLeft + ow - gPx) < threshold) newLeft = gPx - ow;
+      } else {
+        // horizontal guide line: snap top edge or center or bottom edge
+        if (Math.abs(newTop - gPx) < threshold) newTop = gPx;
+        else if (Math.abs(newTop + oh / 2 - gPx) < threshold) newTop = gPx - oh / 2;
+        else if (Math.abs(newTop + oh - gPx) < threshold) newTop = gPx - oh;
+      }
+    }
+    obj.set({ left: newLeft, top: newTop });
+  };
+
+  // Guide line management
+  const addGuide = (axis: 'x' | 'y', mm: number) => {
+    const id = nextGuideId.current++;
+    setGuides(prev => [...prev, { id, axis, mm }]);
+  };
+
+  const removeGuide = (id: number) => {
+    setGuides(prev => prev.filter(g => g.id !== id));
+  };
+
+  const updateGuide = (id: number, mm: number) => {
+    setGuides(prev => prev.map(g => g.id === id ? { ...g, mm } : g));
+  };
+
+  // Drag from ruler to create guide
+  const handleRulerMouseDown = (axis: 'x' | 'y') => (e: React.MouseEvent<HTMLDivElement>) => {
+    // Just add a guide at approximate position
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const posPx = axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top;
+    const mm = Math.round((posPx / scale) * 2) / 2;  // 0.5mm precision
+    const clamped = Math.max(0, Math.min(axis === 'x' ? params.width_mm : params.height_mm, mm));
+    addGuide(axis, clamped);
+  };
 
   // Font betöltés
   const loadFont = async (fontName: string) => {
@@ -405,6 +517,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc!.renderAll();
     saveHistory(activeSide);
     setSelectedObj({ ...obj } as any);
+    updateObjPos(obj);
   };
 
   const deleteSelected = () => {
@@ -461,13 +574,50 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   };
 
   const isText = selectedObj?.type === 'i-text' || selectedObj?.type === 'text' || selectedObj?.type === 'textbox';
-  const isImage = selectedObj?.type === 'image';
+  const isImage = selectedObj?.type === 'image'; // eslint-disable-line @typescript-eslint/no-unused-vars
   const hasSelection = !!selectedObj && !(selectedObj as any).__guideHelper;
 
   const activeFc = getActiveFabric();
   const currentObjects = activeSide === '1' ? objects1 : objects2;
   const histIdx = activeSide === '1' ? histIdx1 : histIdx2;
   const histLen = activeSide === '1' ? history1.length : history2.length;
+
+  // Guide overlay — drawn on a transparent canvas overlaying the fabric canvas area
+  const GuideOverlay = () => {
+    const overlayRef = useRef<HTMLCanvasElement>(null);
+    useEffect(() => {
+      const canvas = overlayRef.current;
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.clearRect(0, 0, displayW, displayH);
+      ctx.strokeStyle = GUIDE_COLOR;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      for (const g of guides) {
+        const px = g.mm * scale;
+        ctx.beginPath();
+        if (g.axis === 'x') {
+          ctx.moveTo(px, 0); ctx.lineTo(px, displayH);
+        } else {
+          ctx.moveTo(0, px); ctx.lineTo(displayW, px);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    });
+    return (
+      <canvas
+        ref={overlayRef}
+        width={displayW}
+        height={displayH}
+        style={{
+          position: 'absolute', top: 0, left: 0,
+          pointerEvents: 'none', zIndex: 10,
+        }}
+      />
+    );
+  };
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -548,6 +698,59 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
             </div>
           </>
         )}
+
+        {/* Guide management */}
+        <Divider />
+        <Text strong style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>VONALZÓK</Text>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6, alignItems: 'center' }}>
+          <Text style={{ fontSize: 11, flexShrink: 0 }}>Snap:</Text>
+          <Switch
+            size="small"
+            checked={snapEnabled}
+            onChange={v => setSnapEnabled(v)}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 4, marginBottom: 6 }}>
+          <Select
+            size="small"
+            value={newGuideAxis}
+            onChange={v => setNewGuideAxis(v)}
+            style={{ width: 60 }}
+          >
+            <Option value="x">X │</Option>
+            <Option value="y">Y —</Option>
+          </Select>
+          <InputNumber
+            size="small"
+            min={0}
+            max={newGuideAxis === 'x' ? params.width_mm : params.height_mm}
+            step={0.5}
+            addonAfter="mm"
+            value={newGuideMm}
+            onChange={v => v !== null && setNewGuideMm(v)}
+            style={{ flex: 1 }}
+          />
+          <Button size="small" type="primary" onClick={() => addGuide(newGuideAxis, newGuideMm)}>+</Button>
+        </div>
+        <div style={{ maxHeight: 140, overflowY: 'auto' }}>
+          {guides.length === 0 && <Text type="secondary" style={{ fontSize: 11 }}>Nincs guide — húzd a vonalzóról!</Text>}
+          {guides.map(g => (
+            <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+              <Text style={{ fontSize: 11, width: 18, color: GUIDE_COLOR, fontWeight: 700 }}>{g.axis.toUpperCase()}</Text>
+              <InputNumber
+                size="small"
+                value={g.mm}
+                step={0.5}
+                min={0}
+                max={g.axis === 'x' ? params.width_mm : params.height_mm}
+                onChange={v => v !== null && updateGuide(g.id, v)}
+                style={{ flex: 1 }}
+                addonAfter="mm"
+              />
+              <Button size="small" danger onClick={() => removeGuide(g.id)} style={{ padding: '0 4px' }}>×</Button>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Center: Canvas area */}
@@ -566,6 +769,17 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
           </Tooltip>
 
           <Divider type="vertical" />
+
+          {/* Obj pozíció kijelző */}
+          {objPosMm && (
+            <>
+              <Text style={{ fontSize: 11, color: '#666' }}>
+                X: <strong>{objPosMm.x.toFixed(1)}</strong> Y: <strong>{objPosMm.y.toFixed(1)}</strong>
+                &nbsp; {objPosMm.w.toFixed(1)}×{objPosMm.h.toFixed(1)} mm
+              </Text>
+              <Divider type="vertical" />
+            </>
+          )}
 
           {/* Font selector (only for text) */}
           {isText && (
@@ -691,7 +905,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         {/* Canvas + oldal váltó */}
         <div style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: 16, background: '#f0f2f5' }}>
           {params.sides === '2' && (
-            <div style={{ marginBottom: 16 }}>
+            <div style={{ marginBottom: 8 }}>
               <Button.Group>
                 <Button
                   type={activeSide === '1' ? 'primary' : 'default'}
@@ -710,47 +924,84 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
             </div>
           )}
 
-          {/* Canvas legend */}
-          <div style={{ marginBottom: 8, fontSize: 11, color: '#888', display: 'flex', gap: 16 }}>
-            <span>
-              <span style={{ display: 'inline-block', width: 16, height: 2, background: '#aaa', marginRight: 4, verticalAlign: 'middle', borderTop: '1px dashed #aaa' }} />
-              Bleed ({BLEED_MM}mm)
-            </span>
-            <span>
-              <span style={{ display: 'inline-block', width: 16, height: 2, borderTop: '2px dashed #ff4d4f', marginRight: 4, verticalAlign: 'middle' }} />
-              Biztonsági zóna ({SAFE_MM}mm)
-            </span>
-            <span>{params.width_mm}×{params.height_mm}mm — {params.quantity} db</span>
+          {/* Ruler + canvas area */}
+          <div style={{ display: 'inline-flex', flexDirection: 'column', userSelect: 'none' }}>
+            {/* Top row: corner + horizontal ruler */}
+            <div style={{ display: 'flex', flexDirection: 'row' }}>
+              {/* Corner cell */}
+              <div style={{
+                width: RULER_SIZE, height: RULER_SIZE, flexShrink: 0,
+                background: '#f0f0f0', border: '1px solid #d9d9d9',
+                borderRight: 'none', borderBottom: 'none',
+              }} />
+              {/* Horizontal ruler (X) */}
+              <div
+                onMouseDown={handleRulerMouseDown('x')}
+                title="Húzd le új függőleges guide-hoz"
+              >
+                <CanvasRuler
+                  direction="h"
+                  totalMm={params.width_mm}
+                  scale={scale}
+                  size={RULER_SIZE}
+                  cursorMm={cursorMm.x}
+                />
+              </div>
+            </div>
+
+            {/* Bottom row: vertical ruler + canvas */}
+            <div style={{ display: 'flex', flexDirection: 'row' }}>
+              {/* Vertical ruler (Y) */}
+              <div
+                onMouseDown={handleRulerMouseDown('y')}
+                title="Húzd jobbra új vízszintes guide-hoz"
+              >
+                <CanvasRuler
+                  direction="v"
+                  totalMm={params.height_mm}
+                  scale={scale}
+                  size={RULER_SIZE}
+                  cursorMm={cursorMm.y}
+                />
+              </div>
+
+              {/* Canvas wrappers */}
+              <div style={{ position: 'relative' }}>
+                <GuideOverlay />
+                <div
+                  style={{
+                    display: activeSide === '1' ? 'block' : 'none',
+                    width: displayW, height: displayH,
+                    overflow: 'hidden',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                    background: '#fff',
+                  }}
+                >
+                  <canvas ref={canvasRef1} />
+                </div>
+                {params.sides === '2' && (
+                  <div
+                    style={{
+                      display: activeSide === '2' ? 'block' : 'none',
+                      width: displayW, height: displayH,
+                      overflow: 'hidden',
+                      boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
+                      background: '#fff',
+                    }}
+                  >
+                    <canvas ref={canvasRef2} />
+                  </div>
+                )}
+              </div>
+            </div>
           </div>
 
-          {/* Canvas wrappers */}
-          <div style={{ position: 'relative' }}>
-            <div
-              style={{
-                display: activeSide === '1' ? 'block' : 'none',
-                width: displayW, height: displayH,
-                overflow: 'hidden',
-                boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-                background: '#fff',
-                flexShrink: 0,
-              }}
-            >
-              <canvas ref={canvasRef1} />
-            </div>
-            {params.sides === '2' && (
-              <div
-                style={{
-                  display: activeSide === '2' ? 'block' : 'none',
-                  width: displayW, height: displayH,
-                  overflow: 'hidden',
-                  boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
-                  background: '#fff',
-                  flexShrink: 0,
-                }}
-              >
-                <canvas ref={canvasRef2} />
-              </div>
-            )}
+          {/* Info legend */}
+          <div style={{ marginTop: 8, fontSize: 11, color: '#aaa', display: 'flex', gap: 16 }}>
+            <span style={{ color: '#aaa' }}>Bleed: {BLEED_MM}mm szürke kéret</span>
+            <span style={{ color: '#ff4d4f' }}>Biztonsági zóna: {SAFE_MM}mm</span>
+            <span>{params.width_mm}×{params.height_mm}mm — {params.quantity} db</span>
+            {snapEnabled && <span style={{ color: GUIDE_COLOR }}>Snap: BE</span>}
           </div>
         </div>
       </div>
