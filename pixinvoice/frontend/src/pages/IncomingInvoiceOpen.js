@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { Spin } from 'antd';
 import { toast } from 'react-toastify';
-import api, { incomingDocsAPI, customerAPI, customerBankAccountAPI } from '../services/api';
+import api, { incomingDocsAPI, customerAPI, customerBankAccountAPI, companyAPI } from '../services/api';
+import '../print.css';
 
 const cardStyle = {
   background: '#f8fafc',
@@ -203,9 +205,72 @@ export default function IncomingInvoiceOpen() {
   const [uploadType, setUploadType] = useState('IMAGE');
   const [uploadComment, setUploadComment] = useState('');
   const [crmSupplierBankAccount, setCrmSupplierBankAccount] = useState('');
+  const [buyerCompany, setBuyerCompany] = useState(null);
   const fileInputRef = useRef(null);
 
   const fmt = (n) => (n == null ? '-' : Number(n).toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+  const fmtMaybe = (n, digits = 2) => (n == null ? '-' : Number(n).toLocaleString('hu-HU', { minimumFractionDigits: digits, maximumFractionDigits: digits }));
+  const fmtQty = (n) => (n == null ? '-' : Number(n).toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 4 }));
+
+  const formatTaxDisplay = (value) => {
+    const digits = String(value || '').replace(/\D+/g, '');
+    if (digits.length >= 11) return `${digits.slice(0, 8)}-${digits.slice(8, 9)}-${digits.slice(9, 11)}`;
+    if (digits.length === 8) return digits;
+    return value || '-';
+  };
+
+  const companyAddressLine = [
+    buyerCompany?.street_name,
+    buyerCompany?.public_place_category,
+    buyerCompany?.street_number,
+  ].filter(Boolean).join(' ');
+
+  const resolveDocUrl = (filePath) => {
+    if (!filePath || typeof filePath !== 'string') return null;
+    return /^https?:\/\//i.test(filePath) ? filePath : `${api.defaults.baseURL || ''}${filePath}`;
+  };
+
+  const isPrintableDoc = (doc) => {
+    const name = String(doc?.original_name || doc?.file || '').toLowerCase();
+    const ct = String(doc?.content_type || '').toLowerCase();
+    return ct.includes('pdf') || ct.includes('image/') || /\.(pdf|png|jpe?g|webp)$/i.test(name);
+  };
+
+  const printDocUrl = (url) => {
+    if (!url) return;
+    const frame = document.createElement('iframe');
+    frame.style.position = 'fixed';
+    frame.style.right = '0';
+    frame.style.bottom = '0';
+    frame.style.width = '0';
+    frame.style.height = '0';
+    frame.style.border = '0';
+    frame.src = url;
+
+    const cleanup = () => {
+      setTimeout(() => {
+        try { document.body.removeChild(frame); } catch (_) {}
+      }, 1200);
+    };
+
+    frame.onload = () => {
+      try {
+        frame.contentWindow?.focus();
+        frame.contentWindow?.print();
+      } catch (_) {
+        window.open(url, '_blank', 'noopener,noreferrer');
+      } finally {
+        cleanup();
+      }
+    };
+
+    frame.onerror = () => {
+      cleanup();
+      window.open(url, '_blank', 'noopener,noreferrer');
+    };
+
+    document.body.appendChild(frame);
+  };
 
   useEffect(() => {
     let active = true;
@@ -240,6 +305,24 @@ export default function IncomingInvoiceOpen() {
     load();
     return () => { active = false; };
   }, [companyId, invoiceNumber, supplierTaxNumber, externalOutgoing]);
+
+  useEffect(() => {
+    let active = true;
+    const loadCompany = async () => {
+      if (!companyId) {
+        setBuyerCompany(null);
+        return;
+      }
+      try {
+        const res = await companyAPI.getCompany(companyId);
+        if (active) setBuyerCompany(res?.data || null);
+      } catch {
+        if (active) setBuyerCompany(null);
+      }
+    };
+    loadCompany();
+    return () => { active = false; };
+  }, [companyId]);
 
   useEffect(() => {
     let active = true;
@@ -397,6 +480,26 @@ export default function IncomingInvoiceOpen() {
     <div style={{ marginTop: 18 }}>
       <h3 style={{ marginBottom: 10 }}>Feltöltött fájlok:</h3>
 
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10, flexWrap: 'wrap' }}>
+        <button type="button" onClick={() => window.print()}>
+          Nyomtatás (összesítő nézet)
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            const firstPrintable = (docs || []).find((doc) => isPrintableDoc(doc));
+            const url = resolveDocUrl(firstPrintable?.file);
+            if (!url) {
+              toast.info('Nincs nyomtatható számlakép csatolmány.');
+              return;
+            }
+            printDocUrl(url);
+          }}
+        >
+          Számlakép nyomtatása
+        </button>
+      </div>
+
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 10, alignItems: 'center' }}>
         <select value={uploadType} onChange={(e) => setUploadType(e.target.value)}>
           {DOC_TYPE_OPTIONS.map((opt) => (
@@ -430,19 +533,19 @@ export default function IncomingInvoiceOpen() {
             <th style={tableCell}>ID</th>
             <th style={tableCell}>Típus</th>
             <th style={tableCell}>Link</th>
+            <th style={tableCell}>Nyomtatás</th>
             <th style={tableCell}>Megjegyzés</th>
             <th style={tableCell}>Törlés</th>
           </tr>
         </thead>
         <tbody>
           {docsLoading ? (
-            <tr><td colSpan={5} style={{ ...tableCell, textAlign: 'center' }}>Betöltés…</td></tr>
+            <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center' }}>Betöltés…</td></tr>
           ) : docs.length === 0 ? (
-            <tr><td colSpan={5} style={{ ...tableCell, textAlign: 'center', color: '#6b7280' }}>Nincs feltöltött fájl</td></tr>
+            <tr><td colSpan={6} style={{ ...tableCell, textAlign: 'center', color: '#6b7280' }}>Nincs feltöltött fájl</td></tr>
           ) : docs.map((doc) => {
-            const fileUrl = (doc.file && typeof doc.file === 'string')
-              ? (/^https?:\/\//i.test(doc.file) ? doc.file : `${api.defaults.baseURL || ''}${doc.file}`)
-              : null;
+            const fileUrl = resolveDocUrl(doc.file);
+            const printable = isPrintableDoc(doc);
             return (
               <tr key={doc.id}>
                 <td style={{ ...tableCell, fontSize: 12, wordBreak: 'break-all' }}>{doc.id}</td>
@@ -450,6 +553,17 @@ export default function IncomingInvoiceOpen() {
                 <td style={tableCell}>
                   {fileUrl ? (
                     <a href={fileUrl} target="_blank" rel="noreferrer">{doc.original_name || 'Megnyitás'}</a>
+                  ) : '-'}
+                </td>
+                <td style={{ ...tableCell, textAlign: 'center' }}>
+                  {fileUrl && printable ? (
+                    <button
+                      type="button"
+                      onClick={() => printDocUrl(fileUrl)}
+                      style={{ border: '1px solid #cbd5e1', borderRadius: 4, padding: '6px 10px', background: '#fff', cursor: 'pointer' }}
+                    >
+                      Nyomtatás
+                    </button>
                   ) : '-'}
                 </td>
                 <td style={tableCell}>
@@ -494,6 +608,7 @@ export default function IncomingInvoiceOpen() {
   }
 
   return (
+    <>
     <div style={{ padding: 20 }}>
       <h2 style={{ marginTop: 0 }}>Számla: {parsed.invoiceNumber || invoiceNumber || '-'}</h2>
 
@@ -592,5 +707,184 @@ export default function IncomingInvoiceOpen() {
 
       {renderAttachments()}
     </div>
+    {createPortal((
+      <div className="print-invoice print-only">
+        <table className="inv-main-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ borderBottom: '2px solid #000' }}>
+              <td colSpan="2" style={{ padding: '2mm', border: 'none' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td style={{ width: '35%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top' }}>
+                        <strong>{parsed.supplier?.name || '—'}</strong><br/>
+                        Adószám: {formatTaxDisplay(parsed.supplier?.taxNumber)}
+                      </td>
+                      <td style={{ width: '30%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top', textAlign: 'center' }}>
+                        <strong style={{ fontSize: '11pt' }}>{parsed.invoiceNumber || invoiceNumber || '—'}</strong><br/>
+                        Kelt: {parsed.issueDate || '—'}
+                      </td>
+                      <td style={{ width: '35%', border: 'none', padding: 0, fontSize: '9pt', verticalAlign: 'top', textAlign: 'right' }}>
+                        <strong>{buyerCompany?.name || 'Ceze Kft'}</strong><br/>
+                        Fizetendő: <strong>{fmtMaybe(parsed.totals?.gross)} {parsed.currency || ''}</strong>
+                      </td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td colSpan="2" style={{ border: 'none', padding: 0 }}>
+                <div className="inv-header-wrapper inv-header-first-page">
+                  <div className="inv-header">
+                    <div className="inv-col-left">
+                      <div className="inv-seller">
+                        <div className="inv-block-title" style={{ marginBottom: '1mm', fontSize: '0.9em', color:'#666' }}>
+                          Szállító:
+                        </div>
+                        <div className="inv-seller-name">{parsed.supplier?.name || '—'}</div>
+                        <div>Adószám: {formatTaxDisplay(parsed.supplier?.taxNumber)}</div>
+                        {(parsed.supplier?.addressLines || []).map((line, idx) => <div key={`print-sup-${idx}`}>{line}</div>)}
+                        {crmSupplierBankAccount ? <div style={{ marginTop: '1mm' }}>Bankszámla: {crmSupplierBankAccount}</div> : null}
+                      </div>
+                    </div>
+
+                    <div className="inv-col-right">
+                      <div className="inv-title">Számla</div>
+                      <div className="inv-number">Számlaszám: {parsed.invoiceNumber || invoiceNumber || '—'}</div>
+
+                      <div className="inv-buyer-sm" style={{ marginTop: '4mm' }}>
+                        <div className="inv-block-title">Vevő</div>
+                        <div className="inv-buyer-name">{buyerCompany?.name || 'Ceze Kft'}</div>
+                        {(buyerCompany?.tax_number || buyerCompany?.full_tax_number) ? (
+                          <div>Adószám: {formatTaxDisplay(buyerCompany?.full_tax_number || buyerCompany?.tax_number)}</div>
+                        ) : null}
+                        {(buyerCompany?.postal_code || buyerCompany?.city) ? (
+                          <div>{(buyerCompany?.postal_code || '')} {buyerCompany?.city || ''}</div>
+                        ) : null}
+                        {companyAddressLine ? <div>{companyAddressLine}</div> : null}
+                        {buyerCompany?.country ? <div>{buyerCompany.country}</div> : null}
+                      </div>
+
+                      <div className="inv-highlight" style={{ marginTop: '4mm' }}>
+                        <div className="inv-amount">
+                          <span className="label">Fizetendő</span>
+                          <span className="value">{fmtMaybe(parsed.totals?.gross)} {parsed.currency || ''}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="inv-meta-row" style={{ marginTop: '3mm' }}>
+                    <div><strong>Kiállítás:</strong> {parsed.issueDate || '-'}</div>
+                    <div><strong>Teljesítés:</strong> {parsed.deliveryDate || '-'}</div>
+                    <div><strong>Fizetési határidő:</strong> {parsed.paymentDate || '-'}</div>
+                    <div><strong>Fizetési mód:</strong> {parsed.paymentMethod || '-'}</div>
+                  </div>
+                </div>
+              </td>
+            </tr>
+
+            <tr>
+              <td colSpan="2" style={{ border: 'none', padding: 0 }}>
+                <table className="inv-items" style={{ width: '100%', marginTop: '4mm' }}>
+                  <thead>
+                    <tr className="inv-items-header-row">
+                      <th className="col-desc">Megnevezés</th>
+                      <th className="cen col-qty">Menny.</th>
+                      <th className="cen col-unit">Egység</th>
+                      <th className="num col-unitnet">Egységár</th>
+                      <th className="cen col-vatrate">ÁFA</th>
+                      <th className="num col-net">Nettó</th>
+                      <th className="num col-vat">ÁFA értéke</th>
+                      <th className="num col-gross">Bruttó</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(parsed.lines || []).map((line, idx) => (
+                      <tr key={`print-line-${idx}`}>
+                        <td className="col-desc">
+                          {line.description || '-'}
+                          {(line.productCodes || []).length > 0 ? (
+                            <div className="muted" style={{ fontSize: '0.8em' }}>Kód: {(line.productCodes || []).join(', ')}</div>
+                          ) : null}
+                        </td>
+                        <td className="cen col-qty">{fmtQty(line.qty)}</td>
+                        <td className="cen col-unit">{line.unit || '-'}</td>
+                        <td className="num col-unitnet">{fmtMaybe(line.unitPrice)}</td>
+                        <td className="cen col-vatrate vat-rate-cell">{line.vatPct == null ? '-' : `${line.vatPct}%`}</td>
+                        <td className="num col-net">{fmtMaybe(line.net)}</td>
+                        <td className="num col-vat">{fmtMaybe(line.vat)}</td>
+                        <td className="num col-gross">{fmtMaybe(line.gross)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+
+            <tr>
+              <td style={{ width: '65%', border: 'none', paddingTop: '3mm', verticalAlign: 'top' }}>
+                {(parsed.vatSummary || []).length > 0 ? (
+                  <table className="inv-items vat-summary-table" style={{ marginTop: '2mm', width: '100%', borderCollapse: 'collapse', tableLayout: 'auto' }}>
+                    <colgroup>
+                      <col style={{ width: '20%' }} />
+                      <col style={{ width: '26%' }} />
+                      <col style={{ width: '27%' }} />
+                      <col style={{ width: '27%' }} />
+                    </colgroup>
+                    <thead>
+                      <tr>
+                        <th className="cen">ÁFA</th>
+                        <th className="num">Nettó összeg</th>
+                        <th className="num">ÁFA összeg</th>
+                        <th className="num">Bruttó összeg</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(parsed.vatSummary || []).map((row, idx) => (
+                        <tr key={`print-vat-${idx}`}>
+                          <td className="cen">{row.label || '-'}</td>
+                          <td className="num">{fmtMaybe(row.net)}</td>
+                          <td className="num">{fmtMaybe(row.vat)}</td>
+                          <td className="num">{fmtMaybe(row.gross)}</td>
+                        </tr>
+                      ))}
+                      <tr>
+                        <th>Összesen ({parsed.currency || ''})</th>
+                        <th className="num">{fmtMaybe(parsed.totals?.net)}</th>
+                        <th className="num">{fmtMaybe(parsed.totals?.vat)}</th>
+                        <th className="num inv-gross-total">{fmtMaybe(parsed.totals?.gross)}</th>
+                      </tr>
+                    </tbody>
+                  </table>
+                ) : null}
+              </td>
+              <td style={{ width: '35%', border: 'none', paddingTop: '3mm', verticalAlign: 'top' }}>
+                <table className="inv-items" style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <tbody>
+                    <tr>
+                      <td><strong>Nettó</strong></td>
+                      <td className="num">{fmtMaybe(parsed.totals?.net)}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>ÁFA</strong></td>
+                      <td className="num">{fmtMaybe(parsed.totals?.vat)}</td>
+                    </tr>
+                    <tr>
+                      <td><strong>Fizetendő</strong></td>
+                      <td className="num"><strong>{fmtMaybe(parsed.totals?.gross)} {parsed.currency || ''}</strong></td>
+                    </tr>
+                  </tbody>
+                </table>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    ), document.body)}
+    </>
   );
 }
