@@ -3324,6 +3324,22 @@ const InvoiceForm = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [watch('invoice_block_id')]);
 
+  // Auto-generate and preview next proforma number for new proformas
+  React.useEffect(() => {
+    if (!isProforma || isEdit) return;
+    (async () => {
+      try {
+        const { data } = await proformaAPI.getNextNumber();
+        const num = data.proforma_number || '';
+        setInvoiceNumberPreview(num);
+        setValue('invoice_number', num);
+      } catch (e) {
+        // ignore
+      }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isProforma, isEdit]);
+
   // Sync delivery_date default to issue_date if not set yet
   React.useEffect(() => {
     const issue = watch('issue_date');
@@ -3595,11 +3611,14 @@ const InvoiceForm = () => {
                 <Input
                   id="invoice_number"
                   value={isIncomingManual ? (watch('invoice_number') || '') : (isEdit ? (watch('invoice_number') || '') : (invoiceNumberPreview || ''))}
-                  disabled={!isIncomingManual}
-                  readOnly={!isIncomingManual}
-                  onChange={isIncomingManual ? (e) => setValue('invoice_number', e.target.value, { shouldDirty: true, shouldValidate: true }) : undefined}
+                  disabled={!isIncomingManual && !isProforma}
+                  readOnly={!isIncomingManual && !isProforma}
+                  onChange={(isIncomingManual || (isProforma && !isEdit)) ? (e) => {
+                    setInvoiceNumberPreview(e.target.value);
+                    setValue('invoice_number', e.target.value, { shouldDirty: true, shouldValidate: true });
+                  } : undefined}
                   placeholder={isIncomingManual ? 'Bejövő számla száma' : (isProforma ? 'Díjbekérő szám' : 'Számlaszám')}
-                  title={!isProforma && !isEdit && !isIncomingManual ? 'Előnézet — a végleges számlaszám mentéskor képződik.' : ''}
+                  title={isProforma && !isEdit ? 'Automatikusan generált szám — szükség esetén módosítható.' : (!isProforma && !isEdit && !isIncomingManual ? 'Előnézet — a végleges számlaszám mentéskor képződik.' : '')}
                   style={{ height: 32, padding: '6px 10px' }}
                 />
               </CompactField>

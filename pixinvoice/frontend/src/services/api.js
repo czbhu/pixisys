@@ -556,6 +556,7 @@ export const incomingDocsAPI = {
 export const proformaAPI = {
   getProformas: (params = {}) => api.get('/api/proformas/', { params }),
   getProforma: (id) => api.get(`/api/proformas/${id}/`),
+  getNextNumber: () => api.get('/api/proformas/next_number/'),
   createProforma: (data) => api.post('/api/proformas/', data),
   updateProforma: (id, data) => api.put(`/api/proformas/${id}/`, data),
   deleteProforma: (id) => api.delete(`/api/proformas/${id}/`),

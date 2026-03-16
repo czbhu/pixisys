@@ -12989,6 +12989,24 @@ class ProformaViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
+    @action(detail=False, methods=['get'], url_path='next_number')
+    def next_number(self, request):
+        """Preview the next auto-generated proforma number (YYYYMMDD + 3-digit seq)."""
+        from datetime import datetime
+        today = datetime.now().strftime('%Y%m%d')
+        last = ProformaInvoice.objects.filter(
+            proforma_number__startswith=today
+        ).order_by('-proforma_number').first()
+        seq = 1
+        if last and last.proforma_number.startswith(today):
+            tail = last.proforma_number[len(today):]
+            try:
+                seq = int(tail) + 1
+            except Exception:
+                seq = 1
+        pfnum = f"{today}{seq:03d}"
+        return Response({'proforma_number': pfnum})
+
     @action(detail=True, methods=['post'])
     def copy(self, request, pk=None):
         pf = self.get_object()
