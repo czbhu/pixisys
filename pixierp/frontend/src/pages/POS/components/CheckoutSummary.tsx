@@ -699,7 +699,7 @@ const CheckoutSummary: React.FC<Props> = ({
         onCancel={() => setCustomerModalVisible(false)}
         footer={null}
         width="95vw"
-        bodyStyle={{ height: 'calc(100vh - 120px)', padding: '16px' }}
+        styles={{ body: { height: 'calc(100vh - 120px)', padding: '16px' } }}
       >
         <CustomerSelection
           selectedCustomer={selectedCustomer}

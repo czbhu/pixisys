@@ -430,14 +430,14 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     // Név-Ügyfél(első 5 karakter)-001(növekvő sorszám)
     
     // Alap: Név normalizálva
-    let base = (name.substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let base = (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!base) base = 'GEN';
 
     let custPart = '';
     if (custIds && custIds.length > 0) {
       const c = customers.find(x => x.id === custIds[0]);
       if (c && c.name) {
-        custPart = c.name.substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '');
+        custPart = c.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '');
       }
     }
 

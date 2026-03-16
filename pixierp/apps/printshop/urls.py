@@ -4,6 +4,7 @@ from . import views
 
 router = DefaultRouter()
 router.register(r'size-presets', views.PrintSizePresetViewSet, basename='print-size-preset')
+router.register(r'materials', views.PrintMaterialViewSet, basename='print-material')
 router.register(r'orders', views.PrintOrderViewSet, basename='print-order')
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
         'get': 'list',
         'post': 'create',
     }), name='print-pricing'),
+    path('pdf-to-svg/', views.PdfToSvgView.as_view(), name='pdf-to-svg'),
 ]

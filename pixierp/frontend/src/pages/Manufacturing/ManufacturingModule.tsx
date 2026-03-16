@@ -10,9 +10,11 @@ import {
     DatabaseOutlined,
     ToolOutlined,
     CheckCircleOutlined,
-    GroupOutlined
+    GroupOutlined,
+    AppstoreOutlined
 } from '@ant-design/icons';
 import Products from './Products';
+import ProductEditor from './ProductEditor';
 import OrderedProducts from './OrderedProducts';
 import ProductClasses from './ProductClasses';
 import Projects from './Projects';
@@ -25,6 +27,7 @@ import ModuleDashboard from '../../components/ModuleDashboard';
 const ManufacturingModule: React.FC = () => {
     const dashboardItems = [
         { key: '/manufacturing/products', label: 'Egyedi gyártás', icon: <SkinOutlined /> },
+        { key: '/manufacturing/product-editor', label: 'Termék szerkesztő', icon: <AppstoreOutlined /> },
         { key: '/manufacturing/ordered-products', label: 'Megrendelt Gyártások', icon: <ShoppingOutlined /> },
         { key: '/manufacturing/product-classes', label: 'Termékkategóriák', icon: <TagsOutlined /> },
         { key: '/manufacturing/services', label: 'Szolgáltatások', icon: <ScissorOutlined /> },
@@ -40,6 +43,7 @@ const ManufacturingModule: React.FC = () => {
         <Routes>
             <Route path="/" element={<ModuleDashboard title="Gyártás" items={dashboardItems} />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/product-editor" element={<ProductEditor />} />
             <Route path="/ordered-products" element={<OrderedProducts />} />
             <Route path="/product-classes" element={<ProductClasses />} />
             <Route path="/projects" element={<Projects />} />

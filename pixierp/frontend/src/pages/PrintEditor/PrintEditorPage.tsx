@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Typography, message, Button, Select, Form, Modal, Result } from 'antd';
-import { LockOutlined, ShoppingOutlined, UserOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Select, Form, Modal, Result, Segmented, Tooltip, Tag } from 'antd';
+import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, EditOutlined, CommentOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
 import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
 import Step2CanvasEditor, { CanvasEditorHandle } from './components/Step2CanvasEditor';
 import Step3OrderSummary from './components/Step3OrderSummary';
+import PrintCommentView from './components/PrintCommentView';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -16,6 +17,7 @@ interface Company { id: number; name: string; }
 interface Contact { id: number; first_name: string; last_name: string; company?: number; }
 
 const PARAMS_PANEL_W = 280;
+const COLLAPSED_W = 28;
 
 const DEFAULT_PARAMS: PrintParams = {
   product_name: 'A5 Szórólap',
@@ -28,7 +30,10 @@ const DEFAULT_PARAMS: PrintParams = {
   binding: 'cut',
   folding_count: 0,
   folding_specs: [],
+  material_id: null,
 };
+
+const STORAGE_KEY = 'pixierp_editor_state';
 
 const PrintEditorPage: React.FC = () => {
   const { user } = useAuth();
@@ -37,12 +42,83 @@ const PrintEditorPage: React.FC = () => {
   const isAdmin = !!(user?.is_staff || user?.is_superuser);
 
   const canvasRef = useRef<CanvasEditorHandle>(null);
-  const [params, setParams] = useState<PrintParams>(DEFAULT_PARAMS);
+  const [viewMode, setViewMode] = useState<'editor' | 'preview'>('editor');
+  const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [params, setParams] = useState<PrintParams>(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) return JSON.parse(s).params ?? DEFAULT_PARAMS;
+    } catch {}
+    return DEFAULT_PARAMS;
+  });
+
+  const [initialDesign] = useState<{ d1: any; d2: any } | null>(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) {
+        const { d1, d2 } = JSON.parse(s);
+        return (d1 || d2) ? { d1: d1 ?? null, d2: d2 ?? null } : null;
+      }
+    } catch {}
+    return null;
+  });
+
+  const paramsRef = useRef(params);
+  useEffect(() => { paramsRef.current = params; }, [params]);
+
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const existing = s ? JSON.parse(s) : {};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params }));
+    } catch {}
+  }, [params]);
+
+  const handleDesignChange = useCallback((d1: any, d2: any) => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: paramsRef.current, d1, d2 }));
+    } catch {}
+  }, []);
   const [orderId, setOrderId] = useState<number | null>(null);
   const [itemId, setItemId] = useState<number | null>(null);
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
   const [saving, setSaving] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
+
+  // Lock state
+  const [editorLocked, setEditorLocked] = useState(false);
+  const [previewLocked, setPreviewLocked] = useState(false);
+  const [lockSaving, setLockSaving] = useState(false);
+
+  // Sync lock state when item is known
+  useEffect(() => {
+    if (!orderId || !itemId) return;
+    api.get(`printshop/orders/${orderId}/`)
+      .then(r => {
+        const item = (r.data?.items ?? []).find((i: any) => i.id === itemId);
+        if (item) {
+          setEditorLocked(!!item.editor_locked);
+          setPreviewLocked(!!item.preview_locked);
+        }
+      }).catch(() => {});
+  }, [orderId, itemId]);
+
+  const handleSetLock = async (field: 'editor_locked' | 'preview_locked', value: boolean) => {
+    if (!orderId || !itemId) return;
+    setLockSaving(true);
+    try {
+      const r = await api.post(`printshop/orders/${orderId}/set-lock/`, {
+        item_id: itemId, [field]: value,
+      });
+      setEditorLocked(r.data.editor_locked);
+      setPreviewLocked(r.data.preview_locked);
+      message.success(value ? 'Zárolva' : 'Feloldva');
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Hiba');
+    } finally {
+      setLockSaving(false);
+    }
+  };
 
   // Admin: ügyfél/kapcsolattartó választó
   const [companies, setCompanies] = useState<Company[]>([]);
@@ -97,6 +173,7 @@ const PrintEditorPage: React.FC = () => {
     try {
       const itemPayload = {
         product_name: params.product_name,
+        material: params.material_id ?? undefined,
         quantity: params.quantity,
         width_mm: params.width_mm,
         height_mm: params.height_mm,
@@ -164,6 +241,47 @@ const PrintEditorPage: React.FC = () => {
         <Title level={5} style={{ margin: 0 }}>Íves nyomtatás</Title>
         <Text type="secondary" style={{ fontSize: 12 }}>Névjegykártya · Szórólap · Poszter</Text>
         <div style={{ flex: 1 }} />
+        <Segmented
+          size="small"
+          value={viewMode}
+          onChange={v => setViewMode(v as 'editor' | 'preview')}
+          options={[
+            { value: 'editor', label: <Tooltip title="Szerkesztő — kalkuláció + canvas"><EditOutlined /> Szerkesztő</Tooltip> },
+            { value: 'preview', label: <Tooltip title="Preview & kommentelés"><CommentOutlined /> Preview & komment</Tooltip> },
+          ]}
+        />
+        {/* Lock controls — admin sees toggles, user sees badge if locked */}
+        {isAdmin && orderId && itemId ? (
+          <>
+            <Tooltip title={editorLocked ? 'Szerkesztő feloldása' : 'Szerkesztő zárolása'}>
+              <Button
+                size="small"
+                danger={editorLocked}
+                icon={editorLocked ? <LockOutlined /> : <UnlockOutlined />}
+                loading={lockSaving}
+                onClick={() => handleSetLock('editor_locked', !editorLocked)}
+              >
+                Szerkesztő
+              </Button>
+            </Tooltip>
+            <Tooltip title={previewLocked ? 'Preview feloldása' : 'Preview zárolása'}>
+              <Button
+                size="small"
+                danger={previewLocked}
+                icon={previewLocked ? <LockOutlined /> : <UnlockOutlined />}
+                loading={lockSaving}
+                onClick={() => handleSetLock('preview_locked', !previewLocked)}
+              >
+                Preview
+              </Button>
+            </Tooltip>
+          </>
+        ) : !isAdmin ? (
+          <>
+            {editorLocked && <Tag color="error" icon={<LockOutlined />}>Szerkesztő zárolva</Tag>}
+            {previewLocked && <Tag color="error" icon={<LockOutlined />}>Preview zárolva</Tag>}
+          </>
+        ) : null}
         {isAdmin && (
           <Button size="small" icon={<UserOutlined />} onClick={() => setClientModalOpen(true)}>
             {selectedCompanyObj ? selectedCompanyObj.name : 'Ügyfél kiválasztása'}
@@ -173,42 +291,93 @@ const PrintEditorPage: React.FC = () => {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left params panel */}
-        <div style={{
-          width: PARAMS_PANEL_W, flexShrink: 0,
-          borderRight: '1px solid #e8e8e8',
-          background: '#fff', overflowY: 'auto',
-          display: 'flex', flexDirection: 'column',
-        }}>
-          <PrintParamsPanel
-            params={params}
-            onChange={setParams}
-            onPriceChange={setPriceBreakdown}
-            isAdmin={isAdmin}
-          />
-          <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
-            <Button
-              type="primary"
-              block
-              size="large"
-              icon={<ShoppingOutlined />}
-              loading={saving}
-              onClick={handleOrder}
-            >
-              Megrendelés leadása
-            </Button>
+        {/* Left params panel — collapsible, hidden in preview mode */}
+        {viewMode === 'editor' && (
+          <div style={{
+            width: leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W,
+            flexShrink: 0,
+            borderRight: '1px solid #e8e8e8',
+            background: '#fff',
+            display: 'flex',
+            flexDirection: 'column',
+            transition: 'width 0.2s ease',
+            overflow: 'hidden',
+          }}>
+            {/* Panel header + toggle */}
+            <div style={{
+              height: 36, flexShrink: 0, display: 'flex', alignItems: 'center',
+              borderBottom: '1px solid #f0f0f0',
+              padding: leftPanelOpen ? '0 8px' : 0,
+              justifyContent: leftPanelOpen ? 'space-between' : 'center',
+            }}>
+              {leftPanelOpen && (
+                <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>PARAMÉTEREK & KALKULÁCIÓ</Text>
+              )}
+              <Button
+                type="text" size="small"
+                icon={leftPanelOpen ? <LeftOutlined /> : <RightOutlined />}
+                onClick={() => setLeftPanelOpen(v => !v)}
+                style={{ padding: '0 4px', flexShrink: 0 }}
+              />
+            </div>
+            {leftPanelOpen ? (
+              <>
+                <div style={{ flex: 1, overflowY: 'auto' }}>
+                  <PrintParamsPanel
+                    params={params}
+                    onChange={setParams}
+                    onPriceChange={setPriceBreakdown}
+                    isAdmin={isAdmin}
+                  />
+                </div>
+                <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
+                  <Button
+                    type="primary" block size="large"
+                    icon={<ShoppingOutlined />}
+                    loading={saving} onClick={handleOrder}
+                  >
+                    Megrendelés leadása
+                  </Button>
+                </div>
+              </>
+            ) : (
+              <div
+                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                onClick={() => setLeftPanelOpen(true)}
+              >
+                <span style={{
+                  writingMode: 'vertical-rl', textOrientation: 'mixed',
+                  transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
+                  userSelect: 'none', whiteSpace: 'nowrap',
+                }}>Paraméterek & kalkuláció</span>
+              </div>
+            )}
           </div>
-        </div>
+        )}
 
-        {/* Canvas editor */}
+        {/* Canvas editor / Preview */}
         <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-          <Step2CanvasEditor
-            ref={canvasRef}
-            params={params}
-            isAdmin={isAdmin}
-            priceBreakdown={priceBreakdown}
-            leftOffset={PARAMS_PANEL_W}
-          />
+          {viewMode === 'editor' ? (
+            <Step2CanvasEditor
+              ref={canvasRef}
+              params={params}
+              isAdmin={isAdmin}
+              priceBreakdown={priceBreakdown}
+              leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
+              onParamsChange={setParams}
+              initialDesign={initialDesign}
+              onDesignChange={handleDesignChange}
+              locked={!isAdmin && editorLocked}
+            />
+          ) : (
+            <PrintCommentView
+              orderId={orderId}
+              itemId={itemId}
+              isAdmin={isAdmin}
+              locked={!isAdmin && previewLocked}
+              authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+            />
+          )}
         </div>
       </div>
 

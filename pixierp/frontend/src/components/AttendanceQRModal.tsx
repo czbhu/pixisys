@@ -411,7 +411,7 @@ const AttendanceQRModal: React.FC<AttendanceQRModalProps> = ({
             onCancel={() => { stopScanner(); onClose(); }}
             footer={null}
             title={kioskMode === 'phone_qr' || kioskMode === 'authorized_qr' ? "Személyes Beléptető QR Kód" : "Kioszk Kód Beolvasása"}
-            destroyOnClose
+            destroyOnHidden
             centered
         >
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, padding: 20 }}>

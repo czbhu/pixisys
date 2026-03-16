@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Select, InputNumber, Radio, Divider, Typography, Spin } from 'antd';
+import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip } from 'antd';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
@@ -41,6 +42,25 @@ const COLOR_MODE_OPTIONS = [
 
 const fmt = (n: number) => n.toLocaleString('hu-HU', { maximumFractionDigits: 0 }) + ' Ft';
 
+/** oldal+kétoldalas → nyomtatandó ívek száma (páros egészre kerekítve) */
+const pagesToÍvek = (pages: number): number => {
+  const sheets = Math.ceil(pages / 2);
+  return sheets % 2 === 0 ? sheets : sheets + 1;
+};
+
+/** Egység alapján kiszamolja a végleges db számot */
+const toDb = (input: number, unit: 'db' | 'oldal' | 'ív', sides: '1' | '2'): number => {
+  if (unit === 'db') return input;
+  if (unit === 'ív') {
+    // ív = 1 db, de párosan érdemes: ha kétoldalas, kerekíts párosra
+    if (sides === '2') return input % 2 === 0 ? input : input + 1;
+    return input;
+  }
+  // 'oldal'
+  if (sides === '1') return input;  // 1 oldal = 1 ív = 1 db
+  return pagesToÍvek(input);         // 2 oldalas: páros ívszámra kerekít
+};
+
 const SectionLabel: React.FC<{ label: string }> = ({ label }) => (
   <Text style={{
     fontSize: 10, fontWeight: 700, color: '#999', letterSpacing: 0.8,
@@ -51,6 +71,7 @@ const SectionLabel: React.FC<{ label: string }> = ({ label }) => (
 );
 
 const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, isAdmin }) => {
+  const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null);
@@ -90,7 +111,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
     calculatePrice(params);
   }, [params]); // eslint-disable-line
 
-  const update = (partial: Partial<PrintParams>) => onChange({ ...params, ...partial });
+  const update = (partial: Partial<PrintParams>) => {
+    const next = { ...params, ...partial };
+    // Whenever quantity_input, quantity_unit or sides changes, recompute quantity (db)
+    const unit  = next.quantity_unit  ?? 'db';
+    const input = next.quantity_input ?? next.quantity;
+    const computed = toDb(input, unit, next.sides);
+    onChange({ ...next, quantity: computed });
+  };
 
   const handlePresetChange = (presetId: number) => {
     setSelectedPreset(presetId);
@@ -151,6 +179,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
             onChange={e => update({
               sides: e.target.value,
               side2_mode: e.target.value === '1' ? 'none' : (params.side2_mode === 'none' ? 'color' : params.side2_mode),
+              quantity_input: params.quantity_input ?? params.quantity,
             })}
             size="small"
             optionType="button"
@@ -202,20 +231,58 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           </Radio.Group>
 
           <SectionLabel label="Mennyiség" />
-          <InputNumber
-            size="small"
-            min={1}
-            max={100000}
-            addonAfter="db"
-            style={{ width: '100%' }}
-            value={params.quantity}
-            onChange={v => { if (v) update({ quantity: v }); }}
-          />
+          {(() => {
+            const unit  = params.quantity_unit  ?? 'db';
+            const input = params.quantity_input ?? params.quantity;
+            const computed = toDb(input, unit, params.sides);
+            const showHint = unit !== 'db' && computed !== input;
+            return (
+              <>
+                <div style={{ display: 'flex', gap: 4, marginBottom: showHint ? 3 : 0 }}>
+                  <InputNumber
+                    size="small"
+                    min={1}
+                    max={100000}
+                    style={{ flex: 1 }}
+                    value={input}
+                    onChange={v => {
+                      if (!v) return;
+                      update({ quantity_input: v, quantity_unit: unit });
+                    }}
+                  />
+                  <Select
+                    size="small"
+                    value={unit}
+                    style={{ width: 72 }}
+                    onChange={(u: 'db' | 'oldal' | 'ív') =>
+                      update({ quantity_unit: u, quantity_input: input })
+                    }
+                  >
+                    <Option value="db">db</Option>
+                    <Option value="oldal">oldal</Option>
+                    <Option value="ív">ív</Option>
+                  </Select>
+                </div>
+                {showHint && (
+                  <Text style={{ fontSize: 10, color: '#888' }}>
+                    = <strong>{computed}</strong> db
+                    {unit === 'oldal' && params.sides === '2' && (
+                      <Tooltip title="2 oldalas nyomtatásnál páros ívszámra kerekítve">
+                        {' '}<InfoCircleOutlined style={{ color: '#1890ff' }} />
+                      </Tooltip>
+                    )}
+                    {unit === 'ív' && params.sides === '2' && computed !== input && (
+                      <Tooltip title="2 oldalas nyomtatásnál páros számra kerekítve">
+                        {' '}<InfoCircleOutlined style={{ color: '#1890ff' }} />
+                      </Tooltip>
+                    )}
+                  </Text>
+                )}
+              </>
+            );
+          })()}
         </>
       )}
-
-      {/* Spacer */}
-      <div style={{ flex: 1, minHeight: 12 }} />
 
       {/* Price display */}
       <Divider style={{ margin: '8px 0' }} />
@@ -230,14 +297,37 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
             <br />
             <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(pricing.total)}</Title>
             <Text style={{ fontSize: 10, color: '#aaa' }}>{pricing.quantity} db</Text>
-            {isAdmin && (
-              <div style={{ fontSize: 10, color: '#aaa', marginTop: 2 }}>
-                Papír: {fmt(pricing.paper_cost)} | Ny: {fmt(pricing.print_cost_side1 + pricing.print_cost_side2)}
-              </div>
-            )}
           </>
         ) : null}
       </div>
+
+      {/* Collapsible price breakdown (admin only) */}
+      {isAdmin && pricing && (
+        <>
+          <Divider style={{ margin: '6px 0' }} />
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', padding: '2px 0', userSelect: 'none' }}
+            onClick={() => setPriceOpen(v => !v)}
+          >
+            {priceOpen ? <CaretDownOutlined style={{ fontSize: 10, color: '#888' }} /> : <CaretRightOutlined style={{ fontSize: 10, color: '#888' }} />}
+            <Text strong style={{ fontSize: 11, color: '#888' }}>ÁR KALKULÁCIÓ</Text>
+          </div>
+          {priceOpen && (
+            <div style={{ fontSize: 12, paddingTop: 4, paddingBottom: 8 }}>
+              <div>Papír: <strong>{fmt(pricing.paper_cost)}</strong></div>
+              <div>Nyomtatás 1.o: <strong>{fmt(pricing.print_cost_side1)}</strong></div>
+              {pricing.print_cost_side2 > 0 && (
+                <div>Nyomtatás 2.o: <strong>{fmt(pricing.print_cost_side2)}</strong></div>
+              )}
+              <div>Kötészet: <strong>{fmt(pricing.finishing_cost)}</strong></div>
+              <div>Fedezet: <strong>{pricing.margin_pct}%</strong></div>
+              <Divider style={{ margin: '4px 0' }} />
+              <div style={{ fontWeight: 600 }}>Összesen: {fmt(pricing.total)}</div>
+              <div>Egységár: {pricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 };

@@ -575,8 +575,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 />
               </div>
             }
-            headStyle={{ padding: '12px 16px' }}
-            bodyStyle={{ padding: '8px' }}
+            styles={{ header: { padding: '12px 16px' }, body: { padding: '8px' } }}
             style={{ height: 'calc(100vh - 168px)' }}
           >
             <div style={{ position: 'relative' }}>
@@ -636,8 +635,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 </Button>
               </div>
             }
-            headStyle={{ padding: '12px 16px' }}
-            bodyStyle={{ padding: '8px' }}
+            styles={{ header: { padding: '12px 16px' }, body: { padding: '8px' } }}
             style={{ height: 'calc(100vh - 168px)' }}
           >
             <Table
@@ -663,7 +661,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
         footer={null}
         width="90%"
         style={{ top: 20 }}
-        destroyOnClose
+        destroyOnHidden
       >
         <CustomerSelection
           selectedCustomer={selectedCustomer}

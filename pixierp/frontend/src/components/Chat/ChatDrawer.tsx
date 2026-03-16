@@ -155,7 +155,7 @@ export const ChatDrawer: React.FC<ChatDrawerProps> = ({ open, onClose, rfqId, or
             open={open} 
             onClose={onClose} 
             width={400}
-            bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
+            styles={{ body: { display: 'flex', flexDirection: 'column', padding: 0 } }}
         >
             <div style={{ flex: 1, overflow: 'auto', padding: 16, background: '#f5f5f5' }}>
                 <List

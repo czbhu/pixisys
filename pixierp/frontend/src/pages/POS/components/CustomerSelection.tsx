@@ -1171,7 +1171,7 @@ const CustomerSelection: React.FC<Props> = ({
         visible={modalVisible}
         onCancel={() => setModalVisible(false)}
         width="95vw"
-        bodyStyle={{ height: 'calc(100vh - 120px)', padding: '16px' }}
+        styles={{ body: { height: 'calc(100vh - 120px)', padding: '16px' } }}
         footer={null}
       >
         <style>

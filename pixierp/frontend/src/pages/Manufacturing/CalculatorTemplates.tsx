@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Row, Col, Card, List, Checkbox } from 'antd';
 import EnhancedTable from '../../components/EnhancedTable';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined, SearchOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
@@ -59,7 +59,7 @@ const ResourceSelectionModal: React.FC<{
 
   const columns = [
     { title: 'Név', dataIndex: 'name', key: 'name' },
-    { title: 'Kód', dataIndex: 'code', key: 'code' },
+    { title: 'Cikkszám', dataIndex: 'code', key: 'code' },
   ];
 
   return (
@@ -69,7 +69,7 @@ const ResourceSelectionModal: React.FC<{
       onOk={() => onOk(selectedIds)}
       onCancel={onCancel}
       width={800}
-      bodyStyle={{ height: '600px', display: 'flex', flexDirection: 'column' }}
+      styles={{ body: { height: '600px', display: 'flex', flexDirection: 'column' } }}
     >
       <div style={{ marginBottom: 16 }}>
         <strong>Kiválasztva ({selectedIds.length}):</strong>
@@ -199,6 +199,7 @@ const CalculatorTemplates: React.FC = () => {
   const handleCreate = () => {
     setEditingTemplate(null);
     form.resetFields();
+    form.setFieldsValue({ category: 'other', calculator_type: 'generic' });
     setSelectedMaterials([]);
     setSelectedServices([]);
     setModalVisible(true);
@@ -208,7 +209,7 @@ const CalculatorTemplates: React.FC = () => {
     setEditingTemplate(record);
     form.setFieldsValue({
       ...record,
-      category: record.category || 'Egyéb',
+      category: record.category || 'other',
       calculator_type: record.calculator_type || 'generic',
       allowed_materials: record.allowed_materials || [],
       allowed_services: record.allowed_services || [],
@@ -227,6 +228,26 @@ const CalculatorTemplates: React.FC = () => {
       message.error('Hiba a törlés során');
       console.error(error);
     }
+  };
+
+  const generateCode = () => {
+    const name = form.getFieldValue('name');
+    if (!name) {
+      message.warning('Előbb add meg a sablon nevét!');
+      return;
+    }
+    let base = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = 'CALC';
+    const codes = new Set(templates.map(t => t.code).filter(Boolean));
+    let i = 1;
+    let candidate = `${base}-${String(i).padStart(3, '0')}`;
+    while (codes.has(candidate)) {
+      i++;
+      candidate = `${base}-${String(i).padStart(3, '0')}`;
+      if (i > 999) { message.error('Nem sikerült egyedi cikkszámot generálni'); return; }
+    }
+    form.setFieldsValue({ code: candidate });
+    message.success(`Új cikkszám generálva: ${candidate}`);
   };
 
   const handleSubmit = async (values: any) => {
@@ -281,7 +302,7 @@ const CalculatorTemplates: React.FC = () => {
       }
     },
     {
-      title: 'Kód',
+      title: 'Cikkszám',
       dataIndex: 'code',
       key: 'code',
       width: 120,
@@ -402,22 +423,31 @@ const CalculatorTemplates: React.FC = () => {
 
           <Form.Item
             name="code"
-            label="Kód"
+            label="Cikkszám"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <Input placeholder="pl. MOLINO_PRINT" />
+            <Input
+              placeholder="pl. MOLINO-001"
+              addonAfter={
+                <SyncOutlined
+                  style={{ cursor: 'pointer' }}
+                  title="Cikkszám generálása a név alapján"
+                  onClick={generateCode}
+                />
+              }
+            />
           </Form.Item>
 
           <Row gutter={16}>
              <Col span={12}>
-                <Form.Item name="category" label="Kategória" initialValue="other">
+                <Form.Item name="category" label="Kategória">
                     <Select>
                         {CALCULATOR_CATEGORIES.map(c => <Option key={c.value} value={c.value}>{c.label}</Option>)}
                     </Select>
                 </Form.Item>
              </Col>
              <Col span={12}>
-                <Form.Item name="calculator_type" label="Működési logika" initialValue="generic">
+                <Form.Item name="calculator_type" label="Működési logika">
                      <Select>
                         {CALCULATOR_TYPES.map(t => <Option key={t.value} value={t.value}>{t.label}</Option>)}
                      </Select>

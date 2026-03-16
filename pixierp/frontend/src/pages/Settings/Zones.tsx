@@ -177,7 +177,7 @@ const Zones: React.FC = () => {
                 open={isModalVisible}
                 onCancel={() => setIsModalVisible(false)}
                 onOk={() => form.submit()}
-                destroyOnClose
+                destroyOnHidden
             >
                 <Form form={form} layout="vertical" onFinish={handleSubmit}>
                     <Form.Item name="name" label="Név" rules={[{ required: true, message: 'Kötelező mező' }]}>

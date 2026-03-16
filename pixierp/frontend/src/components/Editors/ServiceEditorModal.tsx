@@ -57,7 +57,7 @@ const ServiceEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
 
   const generateCode = () => {
       const name = form.getFieldValue('name') || '';
-      let base = (name.substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+      let base = (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!base) base = 'SERV';
       
       let i = 1;

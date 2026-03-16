@@ -2,7 +2,7 @@ from rest_framework import serializers
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
-    ManufacturingCostItem
+    ManufacturingCostItem, ProductTemplate, ProductTemplateSize
 )
 from apps.crm.models import Contact, Company as CRMCompany
 from apps.crm.utils import sync_company_to_local_db
@@ -460,3 +460,52 @@ class ServiceCostItemSerializer(serializers.ModelSerializer):
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'selling_price']
+
+
+class ProductTemplateSizeSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductTemplateSize
+        fields = ['id', 'label', 'width_mm', 'height_mm', 'sort_order']
+
+
+class ProductTemplateSerializer(serializers.ModelSerializer):
+    sizes = ProductTemplateSizeSerializer(many=True, required=False)
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    calculators_details = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ProductTemplate
+        fields = [
+            'id', 'name', 'code', 'description',
+            'category', 'category_name',
+            'calculators', 'calculators_details',
+            'sizes',
+            'is_active', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+
+    def get_calculators_details(self, obj):
+        return [{'id': c.id, 'name': c.name, 'code': c.code} for c in obj.calculators.all()]
+
+    def create(self, validated_data):
+        sizes_data = validated_data.pop('sizes', [])
+        calculators = validated_data.pop('calculators', [])
+        template = ProductTemplate.objects.create(**validated_data)
+        template.calculators.set(calculators)
+        for size in sizes_data:
+            ProductTemplateSize.objects.create(product=template, **size)
+        return template
+
+    def update(self, instance, validated_data):
+        sizes_data = validated_data.pop('sizes', None)
+        calculators = validated_data.pop('calculators', None)
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        instance.save()
+        if calculators is not None:
+            instance.calculators.set(calculators)
+        if sizes_data is not None:
+            instance.sizes.all().delete()
+            for size in sizes_data:
+                ProductTemplateSize.objects.create(product=instance, **size)
+        return instance

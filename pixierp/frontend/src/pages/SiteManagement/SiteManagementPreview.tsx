@@ -56,7 +56,7 @@ const SiteManagementPreview: React.FC = () => {
           <Alert type="warning" showIcon message="Az oldal nem található" description="Ellenőrizd a slug értékét a menedzsment listában." />
         ) : (
           <Space direction="vertical" size="large" className="site-preview-stack">
-            <Card bodyStyle={{ padding: 0, overflow: 'hidden' }} className="site-preview-card">
+            <Card styles={{ body: { padding: 0, overflow: 'hidden' } }} className="site-preview-card">
               <Carousel autoplay dots className="site-preview-carousel">
                 {stockImages.map((imageUrl, index) => (
                   <div key={`${imageUrl}-${index}`}>

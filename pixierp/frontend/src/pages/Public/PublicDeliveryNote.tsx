@@ -168,7 +168,7 @@ const PublicDeliveryNote: React.FC = () => {
 
              <Card
                 style={{ marginBottom: 20 }}
-                bodyStyle={{padding: '30px'}}
+                styles={{ body: {padding: '30px'} }}
              >
                  <div style={{display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid #eee', paddingBottom: 20, marginBottom: 20}}>
                      {data.supplier_info ? (

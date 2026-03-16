@@ -58,7 +58,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/personal/invitations', '/personal/orders', '/personal/attendance', '/personal/tasks', '/personal/approvals', '/personal/cash-registers', '/personal/tickets',
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log', '/hr/task-settings',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
-      '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/services', '/manufacturing/service-groups',
+      '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/product-editor', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports', '/finance/accounts',
       '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities', '/crm/campaigns',
@@ -160,7 +160,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/warehouse', 
       '/pos', 
       '/tickets',
-      '/site-management',
       '/settings'
     ];
     
@@ -343,6 +342,10 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         {
           key: '/manufacturing/product-classes',
           label: 'Termékkategóriák',
+        },
+        {
+          key: '/manufacturing/product-editor',
+          label: 'Termék szerkesztő',
         },
         {
           key: '/manufacturing/services',
@@ -536,12 +539,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       key: '/site-management',
       icon: <GlobalOutlined />,
       label: 'Weboldalak',
-      children: [
-        {
-          key: '/site-management',
-          label: 'Oldal menedzsment',
-        },
-      ],
     },
     {
       key: '/print-editor',
@@ -605,6 +602,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/manufacturing/products': 'manufacturing.products',
     '/manufacturing/ordered-products': 'manufacturing.products',
     '/manufacturing/product-classes': 'manufacturing.products',
+    '/manufacturing/product-editor': 'manufacturing.products',
     '/manufacturing/services': 'manufacturing.products',
     '/manufacturing/calculators': 'manufacturing.products',
     '/manufacturing/boms': 'manufacturing.materials',

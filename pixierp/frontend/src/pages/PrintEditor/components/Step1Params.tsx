@@ -16,6 +16,12 @@ interface SizePreset {
   height_mm: string;
 }
 
+interface PrintMaterial {
+  id: number;
+  name: string;
+  description: string;
+}
+
 interface PriceBreakdown {
   paper_cost: number;
   print_cost_side1: number;
@@ -32,13 +38,16 @@ export interface PrintParams {
   product_name: string;
   width_mm: number;
   height_mm: number;
-  quantity: number;
+  quantity: number;          // mindig db (ív/oldal → db konverzió után)
+  quantity_unit?: 'db' | 'oldal' | 'ív';  // beviteli egység, default 'db'
+  quantity_input?: number;   // a felhasználó által beírt szám az adott egységben
   sides: '1' | '2';
   side1_mode: string;
   side2_mode: string;
   binding: string;
   folding_count: number;
   folding_specs: Array<{ axis: 'H' | 'V'; pos_mm: number }>;
+  material_id: number | null;
 }
 
 interface Props {
@@ -67,6 +76,7 @@ const fmt = (n: number) =>
 
 const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext, onPriceChange }) => {
   const [presets, setPresets] = useState<SizePreset[]>([]);
+  const [materials, setMaterials] = useState<PrintMaterial[]>([]);
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null);
   const [calcLoading, setCalcLoading] = useState(false);
@@ -77,6 +87,10 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
     api.get('/printshop/size-presets/').then(res => {
       const data = res.data?.results ?? res.data;
       setPresets(Array.isArray(data) ? data : []);
+    });
+    api.get('/printshop/materials/').then(res => {
+      const data = res.data?.results ?? res.data;
+      setMaterials(Array.isArray(data) ? data : []);
     });
   }, []);
 
@@ -155,6 +169,24 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
               onChange={e => update({ product_name: e.target.value })}
               placeholder="pl. Névjegykártya, Szórólap"
             />
+          </Form.Item>
+
+          <Divider orientation="left" style={{ fontSize: 13 }}>Alapanyag</Divider>
+          <Form.Item label="Alapanyag választása">
+            <Select
+              allowClear
+              placeholder={materials.length === 0 ? 'Nincs elérhető alapanyag' : 'Válassz alapanyagot...'}
+              value={params.material_id ?? undefined}
+              disabled={materials.length === 0}
+              onChange={(v: number | undefined) => update({ material_id: v ?? null })}
+              onClear={() => update({ material_id: null })}
+            >
+              {materials.map(m => (
+                <Option key={m.id} value={m.id}>
+                  {m.name}{m.description ? ` — ${m.description}` : ''}
+                </Option>
+              ))}
+            </Select>
           </Form.Item>
 
           <Divider orientation="left" style={{ fontSize: 13 }}>Méret</Divider>

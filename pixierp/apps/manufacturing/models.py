@@ -1095,3 +1095,57 @@ class ServiceCostItem(models.Model):
         if self.unit_price and self.markup_percentage:
             self.selling_price = self.unit_price * (1 + self.markup_percentage / 100)
         super().save(*args, **kwargs)
+
+
+class ProductTemplate(models.Model):
+    """Termék sablon – újrafelhasználható termékdefiníció kalkulátorokkal és méretekkel."""
+    name = models.CharField(max_length=200, verbose_name="Termék neve")
+    code = models.CharField(max_length=50, blank=True, null=True, unique=True, verbose_name="Cikkszám")
+    description = models.TextField(blank=True, verbose_name="Leírás")
+    category = models.ForeignKey(
+        ProductClass,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='product_templates',
+        verbose_name="Termékkategória",
+    )
+    calculators = models.ManyToManyField(
+        CalculatorTemplate,
+        blank=True,
+        related_name='product_templates',
+        verbose_name="Kalkulátorok",
+    )
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = "Termék sablon"
+        verbose_name_plural = "Termék sablonok"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class ProductTemplateSize(models.Model):
+    """Egy termék sablon méret-variánsa."""
+    product = models.ForeignKey(
+        ProductTemplate,
+        on_delete=models.CASCADE,
+        related_name='sizes',
+        verbose_name="Termék sablon",
+    )
+    label = models.CharField(max_length=100, blank=True, verbose_name="Méret neve (pl. A4, B2)")
+    width_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Szélesség (mm)")
+    height_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Magasság (mm)")
+    sort_order = models.IntegerField(default=0, verbose_name="Sorrend")
+
+    class Meta:
+        verbose_name = "Termék méret"
+        verbose_name_plural = "Termék méretek"
+        ordering = ['sort_order', 'id']
+
+    def __str__(self):
+        label = self.label or f"{self.width_mm}×{self.height_mm} mm"
+        return f"{self.product.name} – {label}"

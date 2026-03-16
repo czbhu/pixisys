@@ -567,7 +567,7 @@ const AttendanceReport: React.FC<AttendanceReportProps> = ({ isPersonal = false 
                 onCancel={() => setSegmentsModalVisible(false)}
                 footer={null}
                 width={800}
-                destroyOnClose
+                destroyOnHidden
             >
                 <div style={{ marginBottom: 16, background: '#f5f5f5', padding: 12, borderRadius: 4 }}>
                     <h4>Új szakasz hozzáadása</h4>

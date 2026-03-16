@@ -507,7 +507,7 @@ const Services: React.FC = () => {
       return;
     }
 
-    let base = name.substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    let base = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!base) base = 'SERV';
     
     // Existing codes

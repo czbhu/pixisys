@@ -247,7 +247,7 @@ const QRScannerModal: React.FC<QRScannerModalProps> = ({ open, onClose, isMobile
                     </Button>
                 )
             ]}
-            destroyOnClose
+            destroyOnHidden
         >
             <Tabs 
                 activeKey={activeTab} 

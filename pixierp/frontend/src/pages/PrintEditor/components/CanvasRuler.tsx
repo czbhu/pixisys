@@ -77,16 +77,28 @@ function drawRuler(
     }
     ctx.stroke();
 
-    if (isMajor && mm > 0) {
+    if (isMajor) {
       ctx.save();
+      // highlight the origin (0 mm = print corner)
+      const isOrigin = mm === 0;
+      ctx.fillStyle = isOrigin ? CURSOR_COLOR : LABEL_COLOR;
       if (dir === 'h') {
-        ctx.fillText(String(mm), px + 2 * dpr, 2 * dpr);
+        // 0-nál ne lógjon ki a sarok tglövel: csak ha van hely
+        if (!isOrigin || canvasLen > 8) {
+          ctx.fillText(String(mm), px + 2 * dpr, 2 * dpr);
+        }
       } else {
-        ctx.translate(px, (rulerSize * 0.1) * dpr);
-        ctx.rotate(-Math.PI / 2);
-        ctx.fillText(String(mm), -9 * dpr * String(mm).length * 0.55, 0);
+        if (!isOrigin) {
+          ctx.translate(px, (rulerSize * 0.1) * dpr);
+          ctx.rotate(-Math.PI / 2);
+          ctx.fillText(String(mm), -9 * dpr * String(mm).length * 0.55, 0);
+        } else if (canvasLen > 8) {
+          // Vízszintes "0" felirat a függőleges vonalzó tetején
+          ctx.fillText('0', 2 * dpr, px + 2 * dpr);
+        }
       }
       ctx.restore();
+      ctx.fillStyle = LABEL_COLOR;  // reset
     }
   }
 

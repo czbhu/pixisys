@@ -1453,7 +1453,7 @@ const SupplierInvoices: React.FC = () => {
         width={1200}
         footer={null}
         style={{ top: 20 }}
-        bodyStyle={{ padding: 0, height: '80vh' }}
+        styles={{ body: { padding: 0, height: '80vh' } }}
       >
         <iframe 
           src="https://inv.pixisys.eu/incoming-invoices?mode=select"

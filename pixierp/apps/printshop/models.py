@@ -117,11 +117,34 @@ class PrintOrder(models.Model):
         return sum((item.total_price or Decimal('0')) for item in self.items.all())
 
 
+class PrintMaterial(models.Model):
+    """Nyomtatáshoz választható alapanyag (papír, fólia, stb.)"""
+    name = models.CharField(max_length=200, verbose_name='Neve')
+    description = models.TextField(blank=True, verbose_name='Leírás')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    sort_order = models.IntegerField(default=0, verbose_name='Sorrend')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name = 'Alapanyag'
+        verbose_name_plural = 'Alapanyagok'
+
+    def __str__(self):
+        return self.name
+
+
 class PrintOrderItem(models.Model):
     order = models.ForeignKey(
         PrintOrder, related_name='items',
         on_delete=models.CASCADE, verbose_name='Megrendelés')
     product_name = models.CharField(max_length=200, default='Nyomtatvány', verbose_name='Termék neve')
+    material = models.ForeignKey(
+        PrintMaterial, null=True, blank=True,
+        on_delete=models.SET_NULL, related_name='order_items',
+        verbose_name='Alapanyag')
     quantity = models.PositiveIntegerField(default=100, verbose_name='Mennyiség (db)')
 
     # Méretek
@@ -173,6 +196,14 @@ class PrintOrderItem(models.Model):
     total_price = models.DecimalField(
         max_digits=12, decimal_places=2, default=0, verbose_name='Végösszeg (HUF)')
     price_breakdown = models.JSONField(null=True, blank=True, verbose_name='Árkalkuláció részlet')
+
+    # Zárolás
+    editor_locked = models.BooleanField(default=False, verbose_name='Szerkesztő zárolva')
+    preview_locked = models.BooleanField(default=False, verbose_name='Preview zárolva')
+    locked_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='locked_print_items', verbose_name='Zárolta')
+    locked_at = models.DateTimeField(null=True, blank=True, verbose_name='Zárolás időpontja')
 
     class Meta:
         verbose_name = 'Nyomtatási tétel'

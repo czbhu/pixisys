@@ -1,5 +1,11 @@
 from rest_framework import serializers
-from .models import PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem
+from .models import PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial
+
+
+class PrintMaterialSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = PrintMaterial
+        fields = ['id', 'name', 'description', 'is_active', 'sort_order']
 
 
 class PrintSizePresetSerializer(serializers.ModelSerializer):
@@ -22,11 +28,12 @@ class PrintPricingConfigSerializer(serializers.ModelSerializer):
 
 class PrintOrderItemSerializer(serializers.ModelSerializer):
     generated_pdf_url = serializers.SerializerMethodField()
+    material_name = serializers.SerializerMethodField()
 
     class Meta:
         model = PrintOrderItem
         fields = [
-            'id', 'order', 'product_name', 'quantity',
+            'id', 'order', 'product_name', 'material', 'material_name', 'quantity',
             'width_mm', 'height_mm', 'sides',
             'side1_mode', 'side2_mode',
             'binding', 'folding_count', 'folding_specs',
@@ -34,8 +41,10 @@ class PrintOrderItemSerializer(serializers.ModelSerializer):
             'artwork_side1', 'artwork_side2',
             'generated_pdf', 'generated_pdf_url',
             'unit_price', 'total_price', 'price_breakdown',
+            'editor_locked', 'preview_locked', 'locked_at', 'locked_by',
         ]
-        read_only_fields = ['id', 'order', 'generated_pdf', 'generated_pdf_url']
+        read_only_fields = ['id', 'order', 'generated_pdf', 'generated_pdf_url',
+                            'editor_locked', 'preview_locked', 'locked_at', 'locked_by']
 
     def get_generated_pdf_url(self, obj):
         if obj.generated_pdf:
@@ -45,17 +54,21 @@ class PrintOrderItemSerializer(serializers.ModelSerializer):
             return obj.generated_pdf.url
         return None
 
+    def get_material_name(self, obj):
+        return obj.material.name if obj.material else None
+
 
 class PrintOrderItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = PrintOrderItem
         fields = [
-            'id', 'product_name', 'quantity',
+            'id', 'product_name', 'material', 'quantity',
             'width_mm', 'height_mm', 'sides',
             'side1_mode', 'side2_mode',
             'binding', 'folding_count', 'folding_specs',
             'design_json_side1', 'design_json_side2',
             'unit_price', 'total_price', 'price_breakdown',
+            'editor_locked', 'preview_locked',
         ]
 
 

@@ -8,12 +8,14 @@ from rest_framework.filters import SearchFilter, OrderingFilter
 from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
-    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem
+    CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
+    ProductTemplate, ProductTemplateSize
 )
 from .serializers import (
     ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer, 
     CurrencySerializer, ServiceSerializer, ServiceGroupSerializer, CalculatorTemplateSerializer, 
-    CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer
+    CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer,
+    ProductTemplateSerializer
 )
 from apps.crm.models import Contact
 from apps.hr.models import Employee
@@ -320,3 +322,19 @@ class ServiceCostItemViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_internal=is_internal.lower() == 'true')
         
         return queryset
+
+
+class ProductTemplateViewSet(viewsets.ModelViewSet):
+    """Termék sablonok CRUD"""
+    serializer_class = ProductTemplateSerializer
+    permission_classes = [AllowAny]
+
+    def get_queryset(self):
+        qs = ProductTemplate.objects.select_related('category').prefetch_related('calculators', 'sizes')
+        is_active = self.request.query_params.get('is_active')
+        category = self.request.query_params.get('category')
+        if is_active is not None:
+            qs = qs.filter(is_active=is_active.lower() == 'true')
+        if category:
+            qs = qs.filter(category_id=category)
+        return qs
