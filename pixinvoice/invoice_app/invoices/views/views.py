@@ -13143,6 +13143,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
     def _resolve_payment_batch_item_account(self, batch, batch_item):
         acct_type = None
         account = None
+        swift_bic = None
         try:
             q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=batch_item.invoice_number)
             if batch_item.supplier_tax_number:
@@ -13156,36 +13157,38 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 acct_type, account = self._extract_supplier_account('', batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
         except Exception:
             pass
+
+        # Build a helper to resolve customer candidates by tax/name (used below for both account fallback and SWIFT)
+        def _get_customer_candidates():
+            supplier_tax_raw = str(batch_item.supplier_tax_number or '').strip()
+            supplier_name_raw = str(batch_item.supplier_name or '').strip()
+            normalized_tax = re.sub(r'[^A-Za-z0-9]', '', supplier_tax_raw).upper() if supplier_tax_raw else ''
+            digit_tax = ''.join(ch for ch in supplier_tax_raw if ch.isdigit()) if supplier_tax_raw else ''
+            tax8 = digit_tax[:8] if len(digit_tax) >= 8 else ''
+            candidates = []
+            if supplier_tax_raw or normalized_tax or tax8:
+                tax_q = Q()
+                for value in {supplier_tax_raw, normalized_tax}:
+                    if not value:
+                        continue
+                    tax_q |= Q(tax_number__iexact=value)
+                    tax_q |= Q(full_tax_number__iexact=value)
+                    tax_q |= Q(vat_group_member_tax_number__iexact=value)
+                    tax_q |= Q(eu_tax_number__iexact=value)
+                if tax8:
+                    tax_q |= Q(tax_number__iexact=tax8)
+                    tax_q |= Q(full_tax_number__istartswith=tax8)
+                    tax_q |= Q(vat_group_member_tax_number__istartswith=tax8)
+                if tax_q:
+                    candidates = list(Customer.objects.filter(tax_q).distinct()[:20])
+            if not candidates and supplier_name_raw:
+                by_exact_name = list(Customer.objects.filter(name__iexact=supplier_name_raw)[:10])
+                candidates = by_exact_name or list(Customer.objects.filter(name__icontains=supplier_name_raw)[:10])
+            return candidates
+
         if not account:
             try:
-                supplier_tax_raw = str(batch_item.supplier_tax_number or '').strip()
-                supplier_name_raw = str(batch_item.supplier_name or '').strip()
-
-                normalized_tax = re.sub(r'[^A-Za-z0-9]', '', supplier_tax_raw).upper() if supplier_tax_raw else ''
-                digit_tax = ''.join(ch for ch in supplier_tax_raw if ch.isdigit()) if supplier_tax_raw else ''
-                tax8 = digit_tax[:8] if len(digit_tax) >= 8 else ''
-
-                candidates = []
-                if supplier_tax_raw or normalized_tax or tax8:
-                    tax_q = Q()
-                    for value in {supplier_tax_raw, normalized_tax}:
-                        if not value:
-                            continue
-                        tax_q |= Q(tax_number__iexact=value)
-                        tax_q |= Q(full_tax_number__iexact=value)
-                        tax_q |= Q(vat_group_member_tax_number__iexact=value)
-                        tax_q |= Q(eu_tax_number__iexact=value)
-                    if tax8:
-                        tax_q |= Q(tax_number__iexact=tax8)
-                        tax_q |= Q(full_tax_number__istartswith=tax8)
-                        tax_q |= Q(vat_group_member_tax_number__istartswith=tax8)
-                    if tax_q:
-                        candidates = list(Customer.objects.filter(tax_q).distinct()[:20])
-
-                if not candidates and supplier_name_raw:
-                    by_exact_name = list(Customer.objects.filter(name__iexact=supplier_name_raw)[:10])
-                    candidates = by_exact_name or list(Customer.objects.filter(name__icontains=supplier_name_raw)[:10])
-
+                candidates = _get_customer_candidates()
                 for customer in candidates:
                     bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
                     if not bank_acc:
@@ -13195,10 +13198,25 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     if fallback_value:
                         acct_type = fallback_type
                         account = fallback_value
+                        if not swift_bic and bank_acc.swift_bic:
+                            swift_bic = (bank_acc.swift_bic or '').strip() or None
                         break
             except Exception:
                 pass
-        return acct_type, account
+
+        # If account was resolved (e.g. from XML) but SWIFT still missing, look up from customer records
+        if account and not swift_bic:
+            try:
+                candidates = _get_customer_candidates()
+                for customer in candidates:
+                    bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
+                    if bank_acc and bank_acc.swift_bic:
+                        swift_bic = (bank_acc.swift_bic or '').strip() or None
+                        break
+            except Exception:
+                pass
+
+        return acct_type, account, swift_bic
 
     def _enrich_batch_export_accounts(self, batch_queryset, serialized_batches):
         try:
@@ -13212,10 +13230,12 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     item_obj = item_map.get(str(item_data.get('id')))
                     if not item_obj:
                         continue
-                    acct_type, account = self._resolve_payment_batch_item_account(batch_obj, item_obj)
+                    acct_type, account, swift_bic = self._resolve_payment_batch_item_account(batch_obj, item_obj)
                     item_data['export_account'] = account
                     item_data['export_account_type'] = acct_type
                     item_data['export_account_missing'] = not bool(account)
+                    item_data['export_swift_bic'] = swift_bic
+                    item_data['export_missing_swift'] = (acct_type not in ('IBAN', None) and not swift_bic)
         except Exception:
             pass
         return serialized_batches
@@ -13439,7 +13459,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         grouped_data = {}
 
         for it in batch.items.all():
-            acct_type, account = self._resolve_payment_batch_item_account(batch, it)
+            acct_type, account, swift_bic = self._resolve_payment_batch_item_account(batch, it)
             if not account:
                 missing_accounts.append({
                     'invoice_number': it.invoice_number,
@@ -13467,8 +13487,11 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                     'name': it.supplier_name or (it.supplier_tax_number or 'Ismeretlen partner'),
                     'acct_type': acct_type or 'IBAN',
                     'account': account,
-                    'first_invoice': it.invoice_number
+                    'first_invoice': it.invoice_number,
+                    'swift_bic': swift_bic,
                 }
+            elif not grouped_data[key]['swift_bic'] and swift_bic:
+                grouped_data[key]['swift_bic'] = swift_bic
             
             grouped_data[key]['amount'] += amount_val
             grouped_data[key]['invoices'].append(it.invoice_number)
@@ -13488,7 +13511,21 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 'acct_type': data['acct_type'],
                 'account': account,
                 'remittance': remittance,
+                'swift_bic': data.get('swift_bic'),
             })
+
+        # Validate: non-IBAN (deviza utalás) requires SWIFT/BIC
+        missing_swift = [
+            {'account': it['account'], 'supplier': it['name']}
+            for it in tx_items
+            if it['acct_type'] != 'IBAN' and not it.get('swift_bic')
+        ]
+        if missing_swift and fmt in sepa_aliases:
+            error_details = '\n'.join(
+                f"{m['supplier']}: {m['account']}: Hiányzó SWIFT/BIC kód (deviza utaláshoz kötelező)"
+                for m in missing_swift
+            )
+            return Response({'error': f'Hiányzó SWIFT/BIC kódok:\n{error_details}', 'missing_swift': missing_swift}, status=status.HTTP_400_BAD_REQUEST)
 
         if missing_accounts and not skip_missing:
             error_details = '\n'.join([
@@ -13621,68 +13658,117 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         return None, None
 
     def _build_pain_001(self, batch: PaymentBatch, items: list, execution_date: date, debtor_account):
+        """Build a pain.001.001.03 credit transfer initiation XML.
+
+        Transfer type logic (per item):
+          - IBAN + HUF  → belföldi átutalás  (no SvcLvl, no CdtrAgt)
+          - IBAN + !HUF → SEPA átutalás      (SvcLvl/Cd=SEPA, no CdtrAgt)
+          - non-IBAN    → deviza átutalás     (no SvcLvl, CdtrAgt/BIC required)
+
+        Items are grouped into separate PmtInf blocks by transfer type so that
+        the bank-level service-level declaration is homogeneous within each block.
+        """
         ns = 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03'
         ET.register_namespace('', ns)
+
+        def _transfer_type(it):
+            if it['acct_type'] == 'IBAN':
+                return 'SEPA' if it['currency'] != 'HUF' else 'DOMESTIC'
+            return 'DEVIZA'
+
+        # Group items by transfer type preserving declaration order
+        from collections import OrderedDict
+        type_groups = OrderedDict()
+        for it in items:
+            tt = _transfer_type(it)
+            type_groups.setdefault(tt, []).append(it)
+
         d = ET.Element(ET.QName(ns, 'Document'))
         c = ET.SubElement(d, ET.QName(ns, 'CstmrCdtTrfInitn'))
 
-        # Group Header
+        # Group Header — totals across all PmtInf blocks
         gh = ET.SubElement(c, ET.QName(ns, 'GrpHdr'))
         ET.SubElement(gh, ET.QName(ns, 'MsgId')).text = f"{batch.name}-{batch.id}"
         ET.SubElement(gh, ET.QName(ns, 'CreDtTm')).text = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-        nb = str(len(items))
-        ET.SubElement(gh, ET.QName(ns, 'NbOfTxs')).text = nb
-        ctrl_sum = sum(decimal.Decimal(it['amount']) for it in items)
-        ET.SubElement(gh, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
+        ET.SubElement(gh, ET.QName(ns, 'NbOfTxs')).text = str(len(items))
+        ctrl_sum_total = sum(decimal.Decimal(it['amount']) for it in items)
+        ET.SubElement(gh, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum_total:.2f}"
         initg = ET.SubElement(gh, ET.QName(ns, 'InitgPty'))
         ET.SubElement(initg, ET.QName(ns, 'Nm')).text = batch.company.name
 
-        # Payment Info
-        pi = ET.SubElement(c, ET.QName(ns, 'PmtInf'))
-        ET.SubElement(pi, ET.QName(ns, 'PmtInfId')).text = f"{batch.name}-{batch.id}"
-        ET.SubElement(pi, ET.QName(ns, 'PmtMtd')).text = 'TRF'
-        ET.SubElement(pi, ET.QName(ns, 'BtchBookg')).text = 'true'
-        ET.SubElement(pi, ET.QName(ns, 'NbOfTxs')).text = nb
-        ET.SubElement(pi, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
-        # Optional service level; some banks require SEPA for EUR
-        # pmt_tp = ET.SubElement(pi, ET.QName(ns, 'PmtTpInf'))
-        # svc = ET.SubElement(pmt_tp, ET.QName(ns, 'SvcLvl'))
-        # ET.SubElement(svc, ET.QName(ns, 'Cd')).text = 'SEPA'
-        ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
-        dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
-        ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
-        
-        dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
-        dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
+        # Debtor account — resolved once, used in every PmtInf block
         if debtor_account.iban:
-            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = debtor_account.iban.replace(' ', '').replace('-', '')
+            _dbtr_iban = debtor_account.iban.replace(' ', '').replace('-', '')
+            _dbtr_bban = None
         elif debtor_account.account_number:
-            othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
-            ET.SubElement(othr, ET.QName(ns, 'Id')).text = debtor_account.account_number.replace(' ', '').replace('-', '')
+            _dbtr_iban = None
+            _dbtr_bban = debtor_account.account_number.replace(' ', '').replace('-', '')
         else:
             raise ValueError(f'{batch.company.name}: A bankszámlának IBAN vagy számlaszám szükséges')
-        ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV'
 
-        # Transactions
-        for it in items:
-            tx = ET.SubElement(pi, ET.QName(ns, 'CdtTrfTxInf'))
-            pmtid = ET.SubElement(tx, ET.QName(ns, 'PmtId'))
-            ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = it['end_to_end']
-            amt = ET.SubElement(tx, ET.QName(ns, 'Amt'))
-            instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
-            instd.set('Ccy', it['currency'])
-            instd.text = f"{decimal.Decimal(it['amount']):.2f}"
-            cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
-            ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = it['name']
-            cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
-            cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
-            if it['acct_type'] == 'IBAN':
-                ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account'].replace(' ', '').replace('-', '')
+        # One PmtInf block per transfer type
+        for idx, (tt, grp_items) in enumerate(type_groups.items()):
+            ctrl_sum = sum(decimal.Decimal(it['amount']) for it in grp_items)
+
+            pi = ET.SubElement(c, ET.QName(ns, 'PmtInf'))
+            ET.SubElement(pi, ET.QName(ns, 'PmtInfId')).text = f"{batch.name}-{batch.id}-{tt.lower()}"
+            ET.SubElement(pi, ET.QName(ns, 'PmtMtd')).text = 'TRF'
+            ET.SubElement(pi, ET.QName(ns, 'BtchBookg')).text = 'true'
+            ET.SubElement(pi, ET.QName(ns, 'NbOfTxs')).text = str(len(grp_items))
+            ET.SubElement(pi, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
+
+            # Service level: SEPA only for IBAN non-HUF transfers
+            if tt == 'SEPA':
+                pmt_tp = ET.SubElement(pi, ET.QName(ns, 'PmtTpInf'))
+                svc = ET.SubElement(pmt_tp, ET.QName(ns, 'SvcLvl'))
+                ET.SubElement(svc, ET.QName(ns, 'Cd')).text = 'SEPA'
+
+            ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
+
+            dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
+            ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
+
+            dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
+            dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
+            if _dbtr_iban:
+                ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = _dbtr_iban
             else:
-                othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
-                ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
-            rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
-            ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
+                othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
+                ET.SubElement(othr, ET.QName(ns, 'Id')).text = _dbtr_bban
+
+            # ChrgBr: SLEV for SEPA, SHAR for others (deviza standard)
+            ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV' if tt == 'SEPA' else 'SHAR'
+
+            # Transactions
+            for it in grp_items:
+                tx = ET.SubElement(pi, ET.QName(ns, 'CdtTrfTxInf'))
+                pmtid = ET.SubElement(tx, ET.QName(ns, 'PmtId'))
+                ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = it['end_to_end']
+
+                amt = ET.SubElement(tx, ET.QName(ns, 'Amt'))
+                instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
+                instd.set('Ccy', it['currency'])
+                instd.text = f"{decimal.Decimal(it['amount']):.2f}"
+
+                # CdtrAgt (SWIFT/BIC) required for deviza transfers to non-IBAN accounts
+                if tt == 'DEVIZA' and it.get('swift_bic'):
+                    cdtr_agt = ET.SubElement(tx, ET.QName(ns, 'CdtrAgt'))
+                    fin_instn = ET.SubElement(cdtr_agt, ET.QName(ns, 'FinInstnId'))
+                    ET.SubElement(fin_instn, ET.QName(ns, 'BIC')).text = it['swift_bic'].strip()
+
+                cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
+                ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = it['name']
+
+                cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
+                cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
+                if it['acct_type'] == 'IBAN':
+                    ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account'].replace(' ', '').replace('-', '')
+                else:
+                    othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
+                    ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
+
+                rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
+                ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
 
         return ET.tostring(d, encoding='utf-8', xml_declaration=True)
 

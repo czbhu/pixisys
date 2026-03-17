@@ -2,7 +2,8 @@ from rest_framework import serializers
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
-    ManufacturingCostItem, ProductTemplate, ProductTemplateSize
+    ManufacturingCostItem, ProductTemplate, ProductTemplateSize,
+    ProductTemplateQuantityDiscount,
 )
 from apps.crm.models import Contact, Company as CRMCompany
 from apps.crm.utils import sync_company_to_local_db
@@ -459,53 +460,129 @@ class ServiceCostItemSerializer(serializers.ModelSerializer):
             'rounding_step',
             'is_active', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_at', 'updated_at', 'selling_price']
+        read_only_fields = ['created_at', 'updated_at']
 
 
 class ProductTemplateSizeSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductTemplateSize
-        fields = ['id', 'label', 'width_mm', 'height_mm', 'sort_order']
+        fields = ['id', 'label', 'width_mm', 'width_max_mm', 'height_mm', 'height_max_mm', 'sort_order', 'unit']
+
+
+class ProductTemplateQuantityDiscountSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductTemplateQuantityDiscount
+        fields = ['id', 'min_quantity', 'discount_type', 'discount_value']
 
 
 class ProductTemplateSerializer(serializers.ModelSerializer):
     sizes = ProductTemplateSizeSerializer(many=True, required=False)
+    quantity_discounts = ProductTemplateQuantityDiscountSerializer(many=True, required=False)
     category_name = serializers.CharField(source='category.name', read_only=True)
-    calculators_details = serializers.SerializerMethodField()
+    allowed_materials_details = serializers.SerializerMethodField()
+    allowed_material_groups_details = serializers.SerializerMethodField()
+    allowed_services_details = serializers.SerializerMethodField()
+    service_groups_1 = serializers.SerializerMethodField()
+    service_groups_2 = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductTemplate
         fields = [
             'id', 'name', 'code', 'description',
             'category', 'category_name',
-            'calculators', 'calculators_details',
-            'sizes',
+            'calculator_type',
+            'default_material_markup_percentage',
+            'default_service_markup_percentage',
+            'allowed_materials', 'allowed_materials_details',
+            'allowed_material_groups', 'allowed_material_groups_details',
+            'allowed_services', 'allowed_services_details',
+            'service_groups_1', 'service_groups_2',
+            'custom_size_enabled', 'custom_size_unit',
+            'custom_size_width_min', 'custom_size_width_max',
+            'custom_size_height_min', 'custom_size_height_max',
+            'sizes', 'quantity_discounts',
             'is_active', 'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
 
-    def get_calculators_details(self, obj):
-        return [{'id': c.id, 'name': c.name, 'code': c.code} for c in obj.calculators.all()]
+    def get_allowed_materials_details(self, obj):
+        return [{'id': m.id, 'name': m.name, 'code': m.code} for m in obj.allowed_materials.all()]
+
+    def get_allowed_material_groups_details(self, obj):
+        return [{'id': g.id, 'name': g.name} for g in obj.allowed_material_groups.all()]
+
+    def get_allowed_services_details(self, obj):
+        return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.allowed_services.all()]
+
+    def get_service_groups_1(self, obj):
+        groups = obj.service_groups.filter(side='1').order_by('group_index').prefetch_related('services')
+        return [[s.id for s in g.services.all()] for g in groups]
+
+    def get_service_groups_2(self, obj):
+        groups = obj.service_groups.filter(side='2').order_by('group_index').prefetch_related('services')
+        return [[s.id for s in g.services.all()] for g in groups]
+
+    def _save_service_groups(self, instance, sg1, sg2):
+        """Recreate service groups and sync allowed_services (flat union)."""
+        from .models import ProductTemplateServiceGroup
+        instance.service_groups.all().delete()
+        all_ids: set = set()
+        for side, groups in (('1', sg1), ('2', sg2)):
+            for idx, svc_ids in enumerate(groups):
+                grp = ProductTemplateServiceGroup.objects.create(
+                    product=instance, side=side, group_index=idx
+                )
+                grp.services.set(svc_ids)
+                all_ids.update(svc_ids)
+        instance.allowed_services.set(list(all_ids))
 
     def create(self, validated_data):
+        from .models import ProductTemplateServiceGroup  # noqa: F811
         sizes_data = validated_data.pop('sizes', [])
-        calculators = validated_data.pop('calculators', [])
+        discounts_data = validated_data.pop('quantity_discounts', [])
+        allowed_materials = validated_data.pop('allowed_materials', [])
+        allowed_material_groups = validated_data.pop('allowed_material_groups', [])
+        validated_data.pop('allowed_services', None)  # derived from groups
+        sg1 = self.initial_data.get('service_groups_1', [])
+        sg2 = self.initial_data.get('service_groups_2', [])
         template = ProductTemplate.objects.create(**validated_data)
-        template.calculators.set(calculators)
+        template.allowed_materials.set(allowed_materials)
+        template.allowed_material_groups.set(allowed_material_groups)
+        self._save_service_groups(template, sg1, sg2)
         for size in sizes_data:
             ProductTemplateSize.objects.create(product=template, **size)
+        template.quantity_discounts.all().delete()
+        for d in discounts_data:
+            ProductTemplateQuantityDiscount.objects.create(product=template, **d)
         return template
 
     def update(self, instance, validated_data):
         sizes_data = validated_data.pop('sizes', None)
-        calculators = validated_data.pop('calculators', None)
+        discounts_data = validated_data.pop('quantity_discounts', None)
+        allowed_materials = validated_data.pop('allowed_materials', None)
+        allowed_material_groups = validated_data.pop('allowed_material_groups', None)
+        validated_data.pop('allowed_services', None)  # derived from groups
+        sg1 = self.initial_data.get('service_groups_1', None)
+        sg2 = self.initial_data.get('service_groups_2', None)
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         instance.save()
-        if calculators is not None:
-            instance.calculators.set(calculators)
+        if allowed_materials is not None:
+            instance.allowed_materials.set(allowed_materials)
+        if allowed_material_groups is not None:
+            instance.allowed_material_groups.set(allowed_material_groups)
+        if sg1 is not None or sg2 is not None:
+            self._save_service_groups(
+                instance,
+                sg1 if sg1 is not None else self.get_service_groups_1(instance),
+                sg2 if sg2 is not None else self.get_service_groups_2(instance),
+            )
         if sizes_data is not None:
             instance.sizes.all().delete()
             for size in sizes_data:
                 ProductTemplateSize.objects.create(product=instance, **size)
+        if discounts_data is not None:
+            instance.quantity_discounts.all().delete()
+            for d in discounts_data:
+                ProductTemplateQuantityDiscount.objects.create(product=instance, **d)
         return instance

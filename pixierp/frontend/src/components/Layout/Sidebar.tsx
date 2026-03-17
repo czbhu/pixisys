@@ -44,11 +44,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   const getSelectedKey = () => {
     const path = location.pathname;
 
-    // Special mappings
-    if (path.startsWith('/manufacturing/calculator/')) {
-      return '/manufacturing/calculators';
-    }
-
     // Check for exact match first
     const allMenuKeys = [
       '/dashboard',
@@ -59,7 +54,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/hr/employees', '/hr/departments', '/hr/attendance', '/hr/work-logs', '/hr/payroll', '/hr/leaves', '/hr/analytics', '/hr/activity-log', '/hr/task-settings',
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/product-editor', '/manufacturing/services', '/manufacturing/service-groups',
-      '/manufacturing/calculators', '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
+      '/manufacturing/boms', '/manufacturing/inventory', '/manufacturing/work-orders', '/manufacturing/quality',
       '/finance/invoices', '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports', '/finance/accounts',
       '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities', '/crm/campaigns',
       '/orders/orders', '/orders/returns',
@@ -356,10 +351,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           label: 'Szolgáltatás csoportok',
         },
         {
-          key: '/manufacturing/calculators',
-          label: 'Kalkulátorok',
-        },
-        {
           key: '/manufacturing/boms',
           label: 'BOM-ok',
         },
@@ -604,7 +595,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/manufacturing/product-classes': 'manufacturing.products',
     '/manufacturing/product-editor': 'manufacturing.products',
     '/manufacturing/services': 'manufacturing.products',
-    '/manufacturing/calculators': 'manufacturing.products',
     '/manufacturing/boms': 'manufacturing.materials',
     '/manufacturing/inventory': 'warehouse.inventory',
     '/manufacturing/work-orders': 'manufacturing.work_sheets',

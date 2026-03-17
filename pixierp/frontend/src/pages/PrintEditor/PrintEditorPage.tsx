@@ -44,6 +44,7 @@ const PrintEditorPage: React.FC = () => {
   const canvasRef = useRef<CanvasEditorHandle>(null);
   const [viewMode, setViewMode] = useState<'editor' | 'preview'>('editor');
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
+  const [canvasPanelOpen, setCanvasPanelOpen] = useState(true);
   const [params, setParams] = useState<PrintParams>(() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
@@ -52,7 +53,7 @@ const PrintEditorPage: React.FC = () => {
     return DEFAULT_PARAMS;
   });
 
-  const [initialDesign] = useState<{ d1: any; d2: any } | null>(() => {
+  const initialDesignRef = useRef<{ d1: any; d2: any } | null>((() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
       if (s) {
@@ -61,7 +62,7 @@ const PrintEditorPage: React.FC = () => {
       }
     } catch {}
     return null;
-  });
+  })());
 
   const paramsRef = useRef(params);
   useEffect(() => { paramsRef.current = params; }, [params]);
@@ -75,6 +76,7 @@ const PrintEditorPage: React.FC = () => {
   }, [params]);
 
   const handleDesignChange = useCallback((d1: any, d2: any) => {
+    initialDesignRef.current = { d1, d2 };
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: paramsRef.current, d1, d2 }));
     } catch {}
@@ -294,7 +296,8 @@ const PrintEditorPage: React.FC = () => {
         {/* Left params panel — collapsible, hidden in preview mode */}
         {viewMode === 'editor' && (
           <div style={{
-            width: leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W,
+            width: !canvasPanelOpen ? undefined : (leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W),
+            flex: !canvasPanelOpen ? 1 : undefined,
             flexShrink: 0,
             borderRight: '1px solid #e8e8e8',
             background: '#fff',
@@ -355,28 +358,71 @@ const PrintEditorPage: React.FC = () => {
           </div>
         )}
 
-        {/* Canvas editor / Preview */}
-        <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-          {viewMode === 'editor' ? (
-            <Step2CanvasEditor
-              ref={canvasRef}
-              params={params}
-              isAdmin={isAdmin}
-              priceBreakdown={priceBreakdown}
-              leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
-              onParamsChange={setParams}
-              initialDesign={initialDesign}
-              onDesignChange={handleDesignChange}
-              locked={!isAdmin && editorLocked}
+        {/* Canvas / Preview panel — collapsible */}
+        <div style={{
+          flex: canvasPanelOpen ? 1 : undefined,
+          width: canvasPanelOpen ? undefined : COLLAPSED_W,
+          flexShrink: 0,
+          overflow: 'hidden',
+          minWidth: 0,
+          display: 'flex',
+          flexDirection: 'column',
+          borderLeft: '1px solid #e8e8e8',
+        }}>
+          {/* Panel header + toggle */}
+          <div style={{
+            height: 36, flexShrink: 0, display: 'flex', alignItems: 'center',
+            borderBottom: '1px solid #f0f0f0',
+            padding: canvasPanelOpen ? '0 8px' : 0,
+            justifyContent: canvasPanelOpen ? 'space-between' : 'center',
+          }}>
+            {canvasPanelOpen && (
+              <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
+                {viewMode === 'editor' ? 'VÁSZON SZERKESZTŐ' : 'PREVIEW & KOMMENT'}
+              </Text>
+            )}
+            <Button
+              type="text" size="small"
+              icon={canvasPanelOpen ? <RightOutlined /> : <LeftOutlined />}
+              onClick={() => setCanvasPanelOpen(v => !v)}
+              style={{ padding: '0 4px', flexShrink: 0 }}
             />
+          </div>
+          {canvasPanelOpen ? (
+            <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
+              {viewMode === 'editor' ? (
+                <Step2CanvasEditor
+                  ref={canvasRef}
+                  params={params}
+                  isAdmin={isAdmin}
+                  priceBreakdown={priceBreakdown}
+                  leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
+                  onParamsChange={setParams}
+                  initialDesign={initialDesignRef.current}
+                  onDesignChange={handleDesignChange}
+                  locked={!isAdmin && editorLocked}
+                />
+              ) : (
+                <PrintCommentView
+                  orderId={orderId}
+                  itemId={itemId}
+                  isAdmin={isAdmin}
+                  locked={!isAdmin && previewLocked}
+                  authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+                />
+              )}
+            </div>
           ) : (
-            <PrintCommentView
-              orderId={orderId}
-              itemId={itemId}
-              isAdmin={isAdmin}
-              locked={!isAdmin && previewLocked}
-              authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
-            />
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              onClick={() => setCanvasPanelOpen(true)}
+            >
+              <span style={{
+                writingMode: 'vertical-rl', textOrientation: 'mixed',
+                transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
+                userSelect: 'none', whiteSpace: 'nowrap',
+              }}>Vászon szerkesztő</span>
+            </div>
           )}
         </div>
       </div>

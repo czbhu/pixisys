@@ -18,8 +18,9 @@ from .serializers import (
 
 
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
-                     binding, folding_count, config):
+                     binding, folding_count, config, selected_service_ids=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
+    from manufacturing.models import Service
     w = Decimal(str(width_mm))
     h = Decimal(str(height_mm))
     qty = Decimal(str(max(quantity, 1)))
@@ -48,7 +49,54 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
     else:
         finishing_cost = config.cutting_cost
 
-    subtotal = paper_cost + print_cost + finishing_cost
+    # Szolgáltatás költség
+    service_cost = Decimal('0')
+    service_breakdown = []
+    if selected_service_ids:
+        from manufacturing.models import ServiceCostItem
+        services = Service.objects.filter(id__in=selected_service_ids).prefetch_related(
+            'cost_items'
+        )
+        for svc in services:
+            ptype = svc.pricing_type or 'per_sheet'
+            cap = Decimal(str(svc.capacity or 1)) if svc.capacity else Decimal('1')
+            svc_total = Decimal('0')
+            standalone_items = [ci for ci in svc.cost_items.all()
+                                 if not ci.supplier_id and not ci.is_internal and ci.is_active]
+            if standalone_items:
+                # New cost-item based calculation
+                for ci in standalone_items:
+                    price = Decimal(str(ci.selling_price or 0))
+                    if ci.calculation_type == 'fixed':
+                        svc_total += price
+                    else:  # 'unit' or anything else → per-unit
+                        if ptype == 'per_job':
+                            svc_total += price
+                        elif ptype == 'per_cut':
+                            cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
+                            svc_total += price * cuts
+                        else:  # per_sheet
+                            svc_total += price * qty
+            else:
+                # Fallback: legacy flat fields
+                setup = Decimal(str(svc.setup_cost_selling or 0))
+                unit_c = Decimal(str(svc.unit_cost_selling or 0))
+                if ptype == 'per_job':
+                    svc_total = setup + unit_c
+                elif ptype == 'per_cut':
+                    cuts = (qty / cap).to_integral_value(rounding='ROUND_CEILING') if cap > 0 else qty
+                    svc_total = setup + unit_c * cuts
+                else:  # per_sheet
+                    svc_total = setup + unit_c * qty
+            service_cost += svc_total
+            service_breakdown.append({
+                'id': svc.id,
+                'name': svc.name,
+                'pricing_type': ptype,
+                'total': float(svc_total.quantize(Decimal('0.01'))),
+            })
+
+    subtotal = paper_cost + print_cost + finishing_cost + service_cost
     margin_mult = Decimal('1') + config.margin_pct / 100
     total = (subtotal * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
     unit_price = (total / qty).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
@@ -58,6 +106,8 @@ def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mod
         'print_cost_side1': float(print_cost_s1.quantize(Decimal('0.01'))),
         'print_cost_side2': float(print_cost_s2.quantize(Decimal('0.01'))),
         'finishing_cost': float(finishing_cost.quantize(Decimal('0.01'))),
+        'service_cost': float(service_cost.quantize(Decimal('0.01'))),
+        'service_breakdown': service_breakdown,
         'subtotal': float(subtotal.quantize(Decimal('0.01'))),
         'margin_pct': float(config.margin_pct),
         'total': float(total),
@@ -152,6 +202,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 binding=str(d.get('binding', 'cut')),
                 folding_count=int(d.get('folding_count', 0)),
                 config=config,
+                selected_service_ids=d.get('selected_service_ids') or [],
             )
             return Response(breakdown)
         except Exception as e:

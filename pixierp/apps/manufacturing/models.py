@@ -574,7 +574,46 @@ class Service(models.Model):
         verbose_name="Belső gyártási költség (deprecated)",
         help_text="Használd helyette az árkalkulációs komponenseket"
     )
-    
+
+    # ── Méretkorlát ─────────────────────────────────────────────────────────
+    max_width_mm = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name="Max szélesség (mm)",
+        help_text="0 = korlátlan / végtelen"
+    )
+    max_height_mm = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name="Max magasság (mm)",
+        help_text="0 = korlátlan / végtelen"
+    )
+
+    # ── Egyszerűsített árazási modell ────────────────────────────────────────
+    PRICING_TYPE_CHOICES = [
+        ('per_sheet', 'Ívenként'),
+        ('per_job',   'Munkánként (flat)'),
+        ('per_cut',   'Vágásonként (kapacitással)'),
+    ]
+    pricing_type = models.CharField(
+        max_length=20, choices=PRICING_TYPE_CHOICES, default='per_sheet', blank=True,
+        verbose_name="Árazás típusa",
+    )
+    setup_cost_selling = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Beállítási díj (eladási Ft)",
+        help_text="Fix beállítási / indítási díj, egyszer számolódik munkánként",
+    )
+    unit_cost_selling = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Egységköltség (eladási Ft / ív|db|vágás)",
+    )
+    capacity = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name="Kapacitás (ív/vágás)",
+        help_text="Pl. 1 vágással hány ívet lehet feldolgozni. 0 = korlátlan.",
+    )
+
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
@@ -623,6 +662,33 @@ class CalculatorTemplate(models.Model):
     name = models.CharField(max_length=200, verbose_name="Kalkulátor neve")
     code = models.CharField(max_length=50, unique=True, verbose_name="Kód")
     description = models.TextField(blank=True, verbose_name="Leírás")
+
+    CATEGORY_CHOICES = [
+        ('sheet_print', 'Íves/Táblás nyomtatás'),
+        ('roll_print', 'Tekercses nyomtatás'),
+        ('lightbox', 'Világító tábla'),
+        ('other', 'Egyéb'),
+    ]
+    category = models.CharField(
+        max_length=50,
+        choices=CATEGORY_CHOICES,
+        default='other',
+        blank=True,
+        verbose_name="Kategória",
+    )
+
+    CALCULATOR_TYPE_CHOICES = [
+        ('generic', 'Általános'),
+        ('sheet_print', 'Íves/Táblás optimalizálás'),
+        ('roll_print', 'Tekercses kalkuláció'),
+    ]
+    calculator_type = models.CharField(
+        max_length=50,
+        choices=CALCULATOR_TYPE_CHOICES,
+        default='generic',
+        blank=True,
+        verbose_name="Működési logika",
+    )
     
     # Megengedett alapanyagok és szolgáltatások
     allowed_materials = models.ManyToManyField(
@@ -1098,7 +1164,7 @@ class ServiceCostItem(models.Model):
 
 
 class ProductTemplate(models.Model):
-    """Termék sablon – újrafelhasználható termékdefiníció kalkulátorokkal és méretekkel."""
+    """Termék sablon – újrafelhasználható termékdefiníció kalkulátor-beállításokkal és méretekkel."""
     name = models.CharField(max_length=200, verbose_name="Termék neve")
     code = models.CharField(max_length=50, blank=True, null=True, unique=True, verbose_name="Cikkszám")
     description = models.TextField(blank=True, verbose_name="Leírás")
@@ -1109,12 +1175,56 @@ class ProductTemplate(models.Model):
         related_name='product_templates',
         verbose_name="Termékkategória",
     )
-    calculators = models.ManyToManyField(
-        CalculatorTemplate,
+
+    CALCULATOR_TYPE_CHOICES = [
+        ('generic', 'Általános'),
+        ('sheet_print', 'Íves/Táblás optimalizálás'),
+        ('roll_print', 'Tekercses kalkuláció'),
+    ]
+    calculator_type = models.CharField(
+        max_length=50,
+        choices=CALCULATOR_TYPE_CHOICES,
+        default='generic',
+        blank=True,
+        verbose_name="Működési logika",
+    )
+    default_material_markup_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=30.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Alapanyag haszonkulcs %",
+    )
+    default_service_markup_percentage = models.DecimalField(
+        max_digits=5, decimal_places=2, default=35.00,
+        validators=[MinValueValidator(0)],
+        verbose_name="Szolgáltatás haszonkulcs %",
+    )
+    allowed_materials = models.ManyToManyField(
+        Material,
         blank=True,
         related_name='product_templates',
-        verbose_name="Kalkulátorok",
+        verbose_name="Engedélyezett alapanyagok",
     )
+    allowed_services = models.ManyToManyField(
+        Service,
+        blank=True,
+        related_name='product_templates',
+        verbose_name="Engedélyezett szolgáltatások",
+    )
+    allowed_material_groups = models.ManyToManyField(
+        'warehouse.MaterialGroup',
+        blank=True,
+        related_name='product_templates',
+        verbose_name="Engedélyezett alapanyag kategóriák",
+    )
+
+    custom_size_enabled = models.BooleanField(default=False, verbose_name="Egyedi méret engedélyezett")
+    UNIT_CHOICES = [('mm', 'mm'), ('cm', 'cm'), ('m', 'm')]
+    custom_size_unit = models.CharField(max_length=5, choices=UNIT_CHOICES, default='mm', blank=True, verbose_name="Egyedi méret egység")
+    custom_size_width_min = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi Sz. min")
+    custom_size_width_max = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi Sz. max")
+    custom_size_height_min = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi M. min")
+    custom_size_height_max = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi M. max")
+
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
@@ -1137,9 +1247,12 @@ class ProductTemplateSize(models.Model):
         verbose_name="Termék sablon",
     )
     label = models.CharField(max_length=100, blank=True, verbose_name="Méret neve (pl. A4, B2)")
-    width_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Szélesség (mm)")
-    height_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Magasság (mm)")
+    width_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Szélesség min (mm)")
+    width_max_mm = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, verbose_name="Szélesség max (mm)")
+    height_mm = models.DecimalField(max_digits=8, decimal_places=2, verbose_name="Magasság min (mm)")
+    height_max_mm = models.DecimalField(max_digits=8, decimal_places=2, null=True, blank=True, verbose_name="Magasság max (mm)")
     sort_order = models.IntegerField(default=0, verbose_name="Sorrend")
+    unit = models.CharField(max_length=5, choices=[('mm', 'mm'), ('cm', 'cm'), ('m', 'm')], default='mm', verbose_name="Mértékegység")
 
     class Meta:
         verbose_name = "Termék méret"
@@ -1149,3 +1262,73 @@ class ProductTemplateSize(models.Model):
     def __str__(self):
         label = self.label or f"{self.width_mm}×{self.height_mm} mm"
         return f"{self.product.name} – {label}"
+
+
+class ProductTemplateServiceGroup(models.Model):
+    """Egy OR-csoport: a csoporton belül VAGY logika, csoportok között ÉS logika."""
+    product = models.ForeignKey(
+        ProductTemplate,
+        on_delete=models.CASCADE,
+        related_name='service_groups',
+        verbose_name="Termék sablon",
+    )
+    side = models.CharField(
+        max_length=1,
+        choices=[('1', '1. oldal'), ('2', '2. oldal')],
+        default='1',
+        verbose_name="Oldal",
+    )
+    group_index = models.IntegerField(default=0, verbose_name="Csoport sorrend")
+    services = models.ManyToManyField(
+        Service,
+        blank=True,
+        related_name='template_service_groups',
+        verbose_name="Szolgáltatások",
+    )
+
+    class Meta:
+        verbose_name = "Szolgáltatás csoport"
+        verbose_name_plural = "Szolgáltatás csoportok"
+        ordering = ['side', 'group_index']
+
+    def __str__(self):
+        return f"{self.product.name} – {self.side}. oldal / {self.group_index}. csoport"
+
+
+class ProductTemplateQuantityDiscount(models.Model):
+    """Mennyiségi kedvezmény – összehatárhoz kötött % vagy fix árengedmény."""
+    DISCOUNT_TYPE_CHOICES = [
+        ('percent', 'Százalékos (%)'),
+        ('fixed',   'Fix összeg (Ft)'),
+    ]
+    product = models.ForeignKey(
+        ProductTemplate,
+        on_delete=models.CASCADE,
+        related_name='quantity_discounts',
+        verbose_name="Termék sablon",
+    )
+    min_quantity = models.IntegerField(
+        default=1,
+        verbose_name="Min. mennyiség (db-tól)",
+    )
+    discount_type = models.CharField(
+        max_length=10,
+        choices=DISCOUNT_TYPE_CHOICES,
+        default='percent',
+        verbose_name="Kedvezmény típusa",
+    )
+    discount_value = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Kedvezmény értéke",
+    )
+
+    class Meta:
+        verbose_name = "Mennyiségi kedvezmény"
+        verbose_name_plural = "Mennyiségi kedvezmények"
+        ordering = ['min_quantity']
+
+    def __str__(self):
+        return f"{self.product.name} – {self.min_quantity} db felett {self.discount_value} {'%' if self.discount_type == 'percent' else 'Ft'}"

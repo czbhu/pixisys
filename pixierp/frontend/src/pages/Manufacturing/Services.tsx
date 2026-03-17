@@ -41,6 +41,12 @@ interface Service {
   internal_price_per_weight: number;
   internal_price_per_time: number;
   calculation_unit?: string;
+  max_width_mm?: number | null;
+  max_height_mm?: number | null;
+  pricing_type?: string;
+  setup_cost_selling?: number;
+  unit_cost_selling?: number;
+  capacity?: number | null;
 }
 
 interface Supplier {
@@ -71,6 +77,14 @@ interface CostItem {
   rounding_step?: number;
 }
 
+interface PrintCostItem {
+  _key: number;
+  id?: number;
+  name: string;
+  calculation_type: 'fixed' | 'unit';
+  selling_price: number;
+}
+
 const Services: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [services, setServices] = useState<Service[]>([]);
@@ -92,6 +106,9 @@ const Services: React.FC = () => {
   const [costItemModalVisible, setCostItemModalVisible] = useState(false);
   const [selectedCalculationType, setSelectedCalculationType] = useState<string>('unit');
   
+  // Print editor pricing cost items
+  const [printCostItems, setPrintCostItems] = useState<PrintCostItem[]>([]);
+
   // Added suppliers management
   const [addedSuppliers, setAddedSuppliers] = useState<(Supplier & { is_internal?: boolean })[]>([]);
   const [supplierSearchValue, setSupplierSearchValue] = useState<string>('');
@@ -318,6 +335,22 @@ const Services: React.FC = () => {
     }
   };
 
+  const fetchPrintCostItems = async (serviceId: number) => {
+    try {
+      const res = await api.get(`/manufacturing/service-cost-items/?service_id=${serviceId}&is_standalone=true`);
+      const data: any[] = Array.isArray(res.data) ? res.data : (res.data.results ?? []);
+      setPrintCostItems(data.map(item => ({
+        _key: item.id,
+        id: item.id,
+        name: item.name,
+        calculation_type: item.calculation_type as 'fixed' | 'unit',
+        selling_price: Number(item.selling_price || 0),
+      })));
+    } catch {
+      setPrintCostItems([]);
+    }
+  };
+
   const fetchAddedSuppliers = async (service: Service) => {
     try {
       const response = await api.get(`/manufacturing/service-cost-items/?service_id=${service.id}`);
@@ -414,6 +447,7 @@ const Services: React.FC = () => {
     setSelectedSourceForCost(null);
     setCostItems([]);
     setAddedSuppliers([]);
+    setPrintCostItems([]);
     setSupplierSearchValue('');
     setModalVisible(true);
   };
@@ -429,33 +463,36 @@ const Services: React.FC = () => {
         onOk: () => {
           setModalVisible(false);
           form.resetFields();
+          setPrintCostItems([]);
         },
       });
     } else {
       setModalVisible(false);
       form.resetFields();
+      setPrintCostItems([]);
     }
   };
 
   const handleEdit = (service: Service) => {
     setEditingService(service);
     setIsInternalProduction(service.is_internal_production);
+
+    // Compute the unified source key for the Select
+    let defaultSourceUnified: string | null = null;
+    if (service.is_internal_production && service.internal_production_department) {
+      defaultSourceUnified = `int_${service.internal_production_department}`;
+    } else if (service.default_supplier) {
+      defaultSourceUnified = `ext_${service.default_supplier}`;
+    }
+
     form.setFieldsValue({
         ...service,
-        groups: service.groups || []
+        groups: service.groups || [],
+        default_source_unified: defaultSourceUnified,
     });
     
     // Load added suppliers
     fetchAddedSuppliers(service);
-    
-    // Load default source cost items
-    const defSupp = service.default_supplier || (service.is_internal_production ? 'internal' : null);
-    // If default is not set, pick first added
-    let initSource = defSupp;
-    // However, addedSuppliers is populated async in fetchAddedSuppliers...
-    // We can't synchronously anticipate addedSuppliers here easily without awaiting.
-    // But fetchAddedSuppliers calls setAddedSuppliers.
-    // We can just set selectedSourceForCost based on service data.
     
     if (service.is_internal_production) {
       setSelectedSourceForCost('internal');
@@ -464,17 +501,24 @@ const Services: React.FC = () => {
       setSelectedSourceForCost(service.default_supplier);
       fetchCostItems(service.id, service.default_supplier);
     } else {
-        // Try to fetch first available?
-        // Let's rely on fetchAddedSuppliers being fast or user clicking manually.
         setSelectedSourceForCost(null);
         setCostItems([]);
     }
+    fetchPrintCostItems(service.id);
     setModalVisible(true);
   };
 
   const handleCopy = (service: Service) => {
       setEditingService(null);
       setIsInternalProduction(service.is_internal_production);
+
+      let defaultSourceUnified: string | null = null;
+      if (service.is_internal_production && service.internal_production_department) {
+        defaultSourceUnified = `int_${service.internal_production_department}`;
+      } else if (service.default_supplier) {
+        defaultSourceUnified = `ext_${service.default_supplier}`;
+      }
+
       form.setFieldsValue({
           ...service,
           id: undefined,
@@ -483,8 +527,8 @@ const Services: React.FC = () => {
           groups: service.groups || [],
           created_at: undefined,
           created_by_name: undefined,
+          default_source_unified: defaultSourceUnified,
       });
-      // Clear specific fields
       form.setFieldValue('unit_selling_price', service.unit_selling_price);
       setModalVisible(true);
   };
@@ -545,6 +589,35 @@ const Services: React.FC = () => {
         savedService = res.data;
         message.success('Szolgáltatás létrehozva');
       }
+
+      // Save print cost items: delete all existing standalone, then recreate from state
+      try {
+        const existingRes = await api.get(`/manufacturing/service-cost-items/?service_id=${savedService.id}&is_standalone=true`);
+        const existing: any[] = Array.isArray(existingRes.data) ? existingRes.data : (existingRes.data.results ?? []);
+        for (const item of existing) {
+          await api.delete(`/manufacturing/service-cost-items/${item.id}/`);
+        }
+        for (const item of printCostItems) {
+          if (item.name || item.selling_price > 0) {
+            await api.post('/manufacturing/service-cost-items/', {
+              service: savedService.id,
+              name: item.name || 'Költség',
+              calculation_type: item.calculation_type,
+              selling_price: item.selling_price,
+              unit_price: 0,
+              markup_percentage: 0,
+              unit: 'db',
+              is_internal: false,
+              is_active: true,
+              currency: 'HUF',
+              rounding_step: 1,
+            });
+          }
+        }
+      } catch (e) {
+        console.error('Hiba a print árazás mentésekor:', e);
+      }
+
       setModalVisible(false);
       fetchServices();
       
@@ -1193,6 +1266,123 @@ const Services: React.FC = () => {
                   <Option value="perimeter">kerület (méter)</Option>
                 </Select>
               </Form.Item>
+
+              {/* ── Méretkorlát ──────────────────────────────────────────── */}
+              <h4 style={{ marginTop: 16, marginBottom: 8 }}>Méretkorlát</h4>
+              <Tooltip title="Add meg a maximálisan feldolgozható méretet. Ha 0 vagy üres, nincs korlát (végtelen).">
+                <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+                  <Form.Item name="max_width_mm" label="Max szélesség (mm)" style={{ flex: 1, marginBottom: 0 }}>
+                    <InputNumber min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
+                  </Form.Item>
+                  <Form.Item name="max_height_mm" label="Max magasság (mm)" style={{ flex: 1, marginBottom: 0 }}>
+                    <InputNumber min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
+                  </Form.Item>
+                </div>
+              </Tooltip>
+
+              {/* ── Egyszerűsített árazási modell ─────────────────────────── */}
+              <h4 style={{ marginTop: 8, marginBottom: 8 }}>Egyszerűsített árazás (Print Editorhoz)</h4>
+              <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 6, border: '1px solid #bae0ff', marginBottom: 16 }}>
+                <Form.Item
+                  name="pricing_type"
+                  label="Árazás típusa"
+                  tooltip="Meghatározza, hogy az 'Egységnyi' típusú költség elemek mire vonatkoznak: ívenként, munkánként, vagy vágásonként."
+                  style={{ marginBottom: 8 }}
+                >
+                  <Select style={{ width: '100%' }}>
+                    <Option value="per_sheet">Ívenként</Option>
+                    <Option value="per_job">Munkánként (flat)</Option>
+                    <Option value="per_cut">Vágásonként (kapacitással)</Option>
+                  </Select>
+                </Form.Item>
+                <Form.Item shouldUpdate={(p, c) => p.pricing_type !== c.pricing_type} noStyle>
+                  {({ getFieldValue }) => getFieldValue('pricing_type') === 'per_cut' && (
+                    <Form.Item
+                      name="capacity"
+                      label="Kapacitás (ív/vágás)"
+                      tooltip="Hány ívet lehet 1 vágással feldolgozni. 0 = korlátlan."
+                      style={{ marginBottom: 8 }}
+                    >
+                      <InputNumber min={0} style={{ width: '100%' }} addonAfter="ív/vágás" />
+                    </Form.Item>
+                  )}
+                </Form.Item>
+
+                {/* Ár elemek */}
+                {printCostItems.length > 0 && (
+                  <Table
+                    size="small"
+                    pagination={false}
+                    dataSource={printCostItems}
+                    rowKey="_key"
+                    style={{ marginBottom: 8 }}
+                    columns={[
+                      {
+                        title: 'Megnevezés',
+                        key: 'name',
+                        render: (_: any, rec: PrintCostItem, idx: number) => (
+                          <Input
+                            value={rec.name}
+                            onChange={e => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, name: e.target.value } : it))}
+                            placeholder="pl. Beállítási díj"
+                            size="small"
+                          />
+                        ),
+                      },
+                      {
+                        title: 'Típus',
+                        key: 'calculation_type',
+                        width: 170,
+                        render: (_: any, rec: PrintCostItem, idx: number) => (
+                          <Select
+                            size="small"
+                            value={rec.calculation_type}
+                            onChange={val => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, calculation_type: val } : it))}
+                            style={{ width: '100%' }}
+                          >
+                            <Option value="fixed">Fix (munkánként 1×)</Option>
+                            <Option value="unit">Egységnyi (ív/vágás)</Option>
+                          </Select>
+                        ),
+                      },
+                      {
+                        title: 'Ár (Ft)',
+                        key: 'selling_price',
+                        width: 150,
+                        render: (_: any, rec: PrintCostItem, idx: number) => (
+                          <InputNumber
+                            size="small"
+                            min={0}
+                            value={rec.selling_price}
+                            onChange={val => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, selling_price: val ?? 0 } : it))}
+                            addonAfter="Ft"
+                            style={{ width: '100%' }}
+                          />
+                        ),
+                      },
+                      {
+                        key: 'del',
+                        width: 40,
+                        render: (_: any, _rec: PrintCostItem, idx: number) => (
+                          <Button
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            onClick={() => setPrintCostItems(prev => prev.filter((_, i) => i !== idx))}
+                          />
+                        ),
+                      },
+                    ]}
+                  />
+                )}
+                <Button
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => setPrintCostItems(prev => [...prev, { _key: Date.now(), name: '', calculation_type: 'fixed', selling_price: 0 }])}
+                >
+                  Ár elem hozzáadása
+                </Button>
+              </div>
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók / Források</h4>
               <div style={{ marginBottom: 16 }}>

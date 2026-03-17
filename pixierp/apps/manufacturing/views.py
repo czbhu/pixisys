@@ -203,7 +203,15 @@ class ServiceViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'code', 'description']
     ordering_fields = ['name', 'category', 'unit_price', 'created_at']
     ordering = ['category', 'name']
-    
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        ids_param = self.request.query_params.get('ids')
+        if ids_param:
+            id_list = [int(i) for i in ids_param.split(',') if i.strip().isdigit()]
+            qs = qs.filter(id__in=id_list)
+        return qs
+
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
 
@@ -320,7 +328,11 @@ class ServiceCostItemViewSet(viewsets.ModelViewSet):
         
         if is_internal is not None:
             queryset = queryset.filter(is_internal=is_internal.lower() == 'true')
-        
+
+        is_standalone = self.request.query_params.get('is_standalone')
+        if is_standalone == 'true':
+            queryset = queryset.filter(supplier__isnull=True, is_internal=False)
+
         return queryset
 
 
@@ -330,7 +342,10 @@ class ProductTemplateViewSet(viewsets.ModelViewSet):
     permission_classes = [AllowAny]
 
     def get_queryset(self):
-        qs = ProductTemplate.objects.select_related('category').prefetch_related('calculators', 'sizes')
+        qs = ProductTemplate.objects.select_related('category').prefetch_related(
+            'allowed_materials', 'allowed_material_groups', 'allowed_services',
+            'sizes', 'service_groups__services', 'quantity_discounts',
+        )
         is_active = self.request.query_params.get('is_active')
         category = self.request.query_params.get('category')
         if is_active is not None:
