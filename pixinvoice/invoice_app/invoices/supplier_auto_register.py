@@ -367,12 +367,13 @@ def get_supplier_bank_account_for_invoice(company, supplier_tax_number: str, inv
     def _normalized_bank_value(bank):
         if not bank:
             return None
-        iban = (getattr(bank, 'iban', None) or '').strip()
-        if iban:
-            return iban.replace(' ', '').replace('-', '')
+        # Prefer account_number (BBAN) → belföldi, olcsóbb utalás
         account_number = (getattr(bank, 'account_number', None) or '').strip()
         if account_number:
             return account_number.replace(' ', '').replace('-', '')
+        iban = (getattr(bank, 'iban', None) or '').strip()
+        if iban:
+            return iban.replace(' ', '').replace('-', '')
         return None
 
     # Ha nincs XML-ben, ügyféltörzsből

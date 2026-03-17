@@ -13117,12 +13117,31 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         enriched = self._enrich_batch_export_accounts([batch], [data])
         return Response(enriched[0] if enriched else data)
 
+    # Ismert országok IBAN hosszai
+    _IBAN_LENGTHS = {'HU': 28, 'DE': 22, 'AT': 20, 'SK': 24, 'RO': 24, 'CZ': 24,
+                     'PL': 28, 'HR': 21, 'SI': 19, 'RS': 22, 'UA': 29}
+
+    def _validate_and_classify_iban(self, iban_str):
+        """IBAN érvényesítés hossz alapján. Hibás hosszúságú (pl. HU+18 jegy=20 char)
+        IBAN-t BBAN/OTHER-ré alakít, hogy <Othr> tagként kerüljön az XML-be."""
+        upper = iban_str.upper()
+        country = upper[:2]
+        expected = self._IBAN_LENGTHS.get(country)
+        if expected and len(upper) != expected:
+            # Érvénytelen IBAN hossz → levágjuk az országkód+ellenőrző jegyeket
+            bban = re.sub(r'^[A-Z]{2}\d{2}', '', upper)
+            if re.match(r'^\d{24}$', bban):
+                return 'BBAN', bban
+            return 'OTHER', bban or upper
+        return 'IBAN', upper
+
     def _normalize_export_account(self, raw_account):
         clean_account = str(raw_account or '').strip().replace(' ', '').replace('-', '')
         if not clean_account:
             return None, None
-        if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account.upper()):
-            return 'IBAN', clean_account.upper()
+        upper = clean_account.upper()
+        if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', upper):
+            return self._validate_and_classify_iban(upper)
         if re.match(r'^\d{24}$', clean_account):
             return 'BBAN', clean_account
         return 'OTHER', clean_account
@@ -13132,33 +13151,30 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             return None
         qs = customer.bank_accounts
         if preferred_currency:
+            # BBAN (account_number kitöltött) előnyt élvez IBAN felett → belföldi, olcsóbb
+            cand = qs.filter(currency=preferred_currency, is_primary=True).exclude(account_number='').exclude(account_number=None).first()
+            if cand:
+                return cand
             cand = qs.filter(currency=preferred_currency, is_primary=True).first()
+            if cand:
+                return cand
+            cand = qs.filter(currency=preferred_currency).exclude(account_number='').exclude(account_number=None).first()
             if cand:
                 return cand
             cand = qs.filter(currency=preferred_currency).first()
             if cand:
                 return cand
+        cand = qs.filter(is_primary=True).exclude(account_number='').exclude(account_number=None).first()
+        if cand:
+            return cand
         return qs.filter(is_primary=True).first() or qs.first()
 
     def _resolve_payment_batch_item_account(self, batch, batch_item):
         acct_type = None
         account = None
         swift_bic = None
-        try:
-            q = IncomingInvoiceData.objects.filter(company=batch.company, invoice_number=batch_item.invoice_number)
-            if batch_item.supplier_tax_number:
-                q = q.filter(supplier_tax_number=batch_item.supplier_tax_number)
-            invdata = q.order_by('-created_at').first()
-            if invdata and invdata.xml_text:
-                acct_type, account = self._extract_supplier_account(invdata.xml_text, batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
-            elif invdata:
-                acct_type, account = self._extract_supplier_account('', batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
-            else:
-                acct_type, account = self._extract_supplier_account('', batch.company, batch_item.supplier_tax_number, batch_item.currency or batch.currency)
-        except Exception:
-            pass
 
-        # Build a helper to resolve customer candidates by tax/name (used below for both account fallback and SWIFT)
+        # Kizárólag a CRM törzsből vesszük a bankszámlaszámot
         def _get_customer_candidates():
             supplier_tax_raw = str(batch_item.supplier_tax_number or '').strip()
             supplier_name_raw = str(batch_item.supplier_name or '').strip()
@@ -13186,35 +13202,19 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 candidates = by_exact_name or list(Customer.objects.filter(name__icontains=supplier_name_raw)[:10])
             return candidates
 
-        if not account:
-            try:
-                candidates = _get_customer_candidates()
-                for customer in candidates:
-                    bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
-                    if not bank_acc:
-                        continue
-                    fallback_account = (bank_acc.account_number or '').strip() or (bank_acc.iban or '').strip()
-                    fallback_type, fallback_value = self._normalize_export_account(fallback_account)
-                    if fallback_value:
-                        acct_type = fallback_type
-                        account = fallback_value
-                        if not swift_bic and bank_acc.swift_bic:
-                            swift_bic = (bank_acc.swift_bic or '').strip() or None
-                        break
-            except Exception:
-                pass
-
-        # If account was resolved (e.g. from XML) but SWIFT still missing, look up from customer records
-        if account and not swift_bic:
-            try:
-                candidates = _get_customer_candidates()
-                for customer in candidates:
-                    bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
-                    if bank_acc and bank_acc.swift_bic:
-                        swift_bic = (bank_acc.swift_bic or '').strip() or None
-                        break
-            except Exception:
-                pass
+        try:
+            candidates = _get_customer_candidates()
+            for customer in candidates:
+                bank_acc = self._pick_customer_bank_account(customer, batch_item.currency or batch.currency)
+                if not bank_acc:
+                    continue
+                raw = (bank_acc.account_number or '').strip() or (bank_acc.iban or '').strip()
+                acct_type, account = self._normalize_export_account(raw)
+                if account:
+                    swift_bic = (bank_acc.swift_bic or '').strip() or None
+                    break
+        except Exception:
+            pass
 
         return acct_type, account, swift_bic
 
@@ -13514,19 +13514,6 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 'swift_bic': data.get('swift_bic'),
             })
 
-        # Validate: non-IBAN (deviza utalás) requires SWIFT/BIC
-        missing_swift = [
-            {'account': it['account'], 'supplier': it['name']}
-            for it in tx_items
-            if it['acct_type'] != 'IBAN' and not it.get('swift_bic')
-        ]
-        if missing_swift and fmt in sepa_aliases:
-            error_details = '\n'.join(
-                f"{m['supplier']}: {m['account']}: Hiányzó SWIFT/BIC kód (deviza utaláshoz kötelező)"
-                for m in missing_swift
-            )
-            return Response({'error': f'Hiányzó SWIFT/BIC kódok:\n{error_details}', 'missing_swift': missing_swift}, status=status.HTTP_400_BAD_REQUEST)
-
         if missing_accounts and not skip_missing:
             error_details = '\n'.join([
                 f"{m.get('supplier') or 'Ismeretlen partner'} (adószám: {m.get('supplier_tax_number') or 'n/a'}, cég: {m.get('company')}): Bankszámlaszám üres!"
@@ -13622,8 +13609,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')
-                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account):
-                        return 'IBAN', clean_account
+                    upper = clean_account.upper()
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', upper):
+                        return self._validate_and_classify_iban(upper)
                     elif re.match(r'^\d{24}$', clean_account):  # 24 számjegy (8+8+8 kötőjel nélkül)
                         return 'BBAN', clean_account
                     else:
@@ -13632,14 +13620,14 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         try:
             # Először tisztítsuk meg az XML-t szóközöktől
             clean_xml = xml_text.replace(' ', '').replace('-', '')
-            # Prefer IBAN
-            iban_match = re.search(r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b', clean_xml)
-            if iban_match:
-                return 'IBAN', iban_match.group(0)
-            # Fallback: Hungarian domestic account number (24 számjegy)
+            # Prefer BBAN (24 jegyű magyar számlaszám) → belföldi, olcsóbb utalás
             acct_match = re.search(r'\b\d{24}\b', clean_xml)
             if acct_match:
                 return 'BBAN', acct_match.group(0)
+            # Fallback: IBAN (külföldi vagy IBAN-formátumú hazai) — hossz validációval
+            iban_match = re.search(r'\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b', clean_xml)
+            if iban_match:
+                return self._validate_and_classify_iban(iban_match.group(0))
             
             # Ha nincs az XML-ben, próbáljuk az ügyféltörzsből
             if company and supplier_tax_number:
@@ -13647,8 +13635,9 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 if account:
                     # Tisztítjuk és detektáljuk az account típusát
                     clean_account = account.replace(' ', '').replace('-', '')
-                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', clean_account):
-                        return 'IBAN', clean_account
+                    upper = clean_account.upper()
+                    if re.match(r'^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$', upper):
+                        return self._validate_and_classify_iban(upper)
                     elif re.match(r'^\d{24}$', clean_account):  # 24 számjegy
                         return 'BBAN', clean_account
                     else:
@@ -13658,117 +13647,64 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         return None, None
 
     def _build_pain_001(self, batch: PaymentBatch, items: list, execution_date: date, debtor_account):
-        """Build a pain.001.001.03 credit transfer initiation XML.
-
-        Transfer type logic (per item):
-          - IBAN + HUF  → belföldi átutalás  (no SvcLvl, no CdtrAgt)
-          - IBAN + !HUF → SEPA átutalás      (SvcLvl/Cd=SEPA, no CdtrAgt)
-          - non-IBAN    → deviza átutalás     (no SvcLvl, CdtrAgt/BIC required)
-
-        Items are grouped into separate PmtInf blocks by transfer type so that
-        the bank-level service-level declaration is homogeneous within each block.
-        """
         ns = 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03'
         ET.register_namespace('', ns)
-
-        def _transfer_type(it):
-            if it['acct_type'] == 'IBAN':
-                return 'SEPA' if it['currency'] != 'HUF' else 'DOMESTIC'
-            return 'DEVIZA'
-
-        # Group items by transfer type preserving declaration order
-        from collections import OrderedDict
-        type_groups = OrderedDict()
-        for it in items:
-            tt = _transfer_type(it)
-            type_groups.setdefault(tt, []).append(it)
-
         d = ET.Element(ET.QName(ns, 'Document'))
         c = ET.SubElement(d, ET.QName(ns, 'CstmrCdtTrfInitn'))
 
-        # Group Header — totals across all PmtInf blocks
+        # Group Header
         gh = ET.SubElement(c, ET.QName(ns, 'GrpHdr'))
         ET.SubElement(gh, ET.QName(ns, 'MsgId')).text = f"{batch.name}-{batch.id}"
         ET.SubElement(gh, ET.QName(ns, 'CreDtTm')).text = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-        ET.SubElement(gh, ET.QName(ns, 'NbOfTxs')).text = str(len(items))
-        ctrl_sum_total = sum(decimal.Decimal(it['amount']) for it in items)
-        ET.SubElement(gh, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum_total:.2f}"
+        nb = str(len(items))
+        ET.SubElement(gh, ET.QName(ns, 'NbOfTxs')).text = nb
+        ctrl_sum = sum(decimal.Decimal(it['amount']) for it in items)
+        ET.SubElement(gh, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
         initg = ET.SubElement(gh, ET.QName(ns, 'InitgPty'))
         ET.SubElement(initg, ET.QName(ns, 'Nm')).text = batch.company.name
 
-        # Debtor account — resolved once, used in every PmtInf block
+        # Payment Info
+        pi = ET.SubElement(c, ET.QName(ns, 'PmtInf'))
+        ET.SubElement(pi, ET.QName(ns, 'PmtInfId')).text = f"{batch.name}-{batch.id}"
+        ET.SubElement(pi, ET.QName(ns, 'PmtMtd')).text = 'TRF'
+        ET.SubElement(pi, ET.QName(ns, 'BtchBookg')).text = 'true'
+        ET.SubElement(pi, ET.QName(ns, 'NbOfTxs')).text = nb
+        ET.SubElement(pi, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
+        ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
+        dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
+        ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
+
+        dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
+        dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
         if debtor_account.iban:
-            _dbtr_iban = debtor_account.iban.replace(' ', '').replace('-', '')
-            _dbtr_bban = None
+            ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = debtor_account.iban.replace(' ', '').replace('-', '')
         elif debtor_account.account_number:
-            _dbtr_iban = None
-            _dbtr_bban = debtor_account.account_number.replace(' ', '').replace('-', '')
+            othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
+            ET.SubElement(othr, ET.QName(ns, 'Id')).text = debtor_account.account_number.replace(' ', '').replace('-', '')
         else:
             raise ValueError(f'{batch.company.name}: A bankszámlának IBAN vagy számlaszám szükséges')
+        ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV'
 
-        # One PmtInf block per transfer type
-        for idx, (tt, grp_items) in enumerate(type_groups.items()):
-            ctrl_sum = sum(decimal.Decimal(it['amount']) for it in grp_items)
-
-            pi = ET.SubElement(c, ET.QName(ns, 'PmtInf'))
-            ET.SubElement(pi, ET.QName(ns, 'PmtInfId')).text = f"{batch.name}-{batch.id}-{tt.lower()}"
-            ET.SubElement(pi, ET.QName(ns, 'PmtMtd')).text = 'TRF'
-            ET.SubElement(pi, ET.QName(ns, 'BtchBookg')).text = 'true'
-            ET.SubElement(pi, ET.QName(ns, 'NbOfTxs')).text = str(len(grp_items))
-            ET.SubElement(pi, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
-
-            # Service level: SEPA only for IBAN non-HUF transfers
-            if tt == 'SEPA':
-                pmt_tp = ET.SubElement(pi, ET.QName(ns, 'PmtTpInf'))
-                svc = ET.SubElement(pmt_tp, ET.QName(ns, 'SvcLvl'))
-                ET.SubElement(svc, ET.QName(ns, 'Cd')).text = 'SEPA'
-
-            ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
-
-            dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
-            ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
-
-            dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
-            dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
-            if _dbtr_iban:
-                ET.SubElement(dbtr_id, ET.QName(ns, 'IBAN')).text = _dbtr_iban
+        # Transactions
+        for it in items:
+            tx = ET.SubElement(pi, ET.QName(ns, 'CdtTrfTxInf'))
+            pmtid = ET.SubElement(tx, ET.QName(ns, 'PmtId'))
+            ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = it['end_to_end']
+            amt = ET.SubElement(tx, ET.QName(ns, 'Amt'))
+            instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
+            instd.set('Ccy', it['currency'])
+            instd.text = f"{decimal.Decimal(it['amount']):.2f}"
+            cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
+            ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = it['name']
+            cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
+            cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
+            if it['acct_type'] == 'IBAN':
+                ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account'].replace(' ', '').replace('-', '')
             else:
-                othr = ET.SubElement(dbtr_id, ET.QName(ns, 'Othr'))
-                ET.SubElement(othr, ET.QName(ns, 'Id')).text = _dbtr_bban
-
-            # ChrgBr: SLEV for SEPA, SHAR for others (deviza standard)
-            ET.SubElement(pi, ET.QName(ns, 'ChrgBr')).text = 'SLEV' if tt == 'SEPA' else 'SHAR'
-
-            # Transactions
-            for it in grp_items:
-                tx = ET.SubElement(pi, ET.QName(ns, 'CdtTrfTxInf'))
-                pmtid = ET.SubElement(tx, ET.QName(ns, 'PmtId'))
-                ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = it['end_to_end']
-
-                amt = ET.SubElement(tx, ET.QName(ns, 'Amt'))
-                instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
-                instd.set('Ccy', it['currency'])
-                instd.text = f"{decimal.Decimal(it['amount']):.2f}"
-
-                # CdtrAgt (SWIFT/BIC) required for deviza transfers to non-IBAN accounts
-                if tt == 'DEVIZA' and it.get('swift_bic'):
-                    cdtr_agt = ET.SubElement(tx, ET.QName(ns, 'CdtrAgt'))
-                    fin_instn = ET.SubElement(cdtr_agt, ET.QName(ns, 'FinInstnId'))
-                    ET.SubElement(fin_instn, ET.QName(ns, 'BIC')).text = it['swift_bic'].strip()
-
-                cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
-                ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = it['name']
-
-                cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
-                cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
-                if it['acct_type'] == 'IBAN':
-                    ET.SubElement(cdtr_id, ET.QName(ns, 'IBAN')).text = it['account'].replace(' ', '').replace('-', '')
-                else:
-                    othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
-                    ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
-
-                rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
-                ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
+                othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
+                ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
+            rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
+            ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
 
         return ET.tostring(d, encoding='utf-8', xml_declaration=True)
 
