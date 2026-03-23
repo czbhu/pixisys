@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="hu">
+{% load invoice_extras %}
+<head>
+    <meta charset="UTF-8">
+    <title>Díjbekérő {{ proforma.proforma_number }}</title>
+    <style>
+        @page {
+            size: A4;
+            margin: 10mm 10mm 15mm 10mm;
+        }
+        * { box-sizing: border-box; }
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+            color: #000;
+            margin: 0; padding: 0;
+            background: #fff;
+            font-size: 12px;
+        }
+        .print-only { display: block; }
+        table { page-break-inside: auto !important; }
+        thead { display: table-header-group !important; }
+        tfoot { display: table-footer-group !important; }
+        tr { page-break-inside: avoid !important; page-break-after: auto !important; }
+
+        .print-proforma .inv-main-table {
+            page-break-inside: auto !important;
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .print-proforma .inv-main-table > tbody > tr { page-break-inside: auto !important; page-break-after: auto !important; }
+        .print-proforma .inv-main-table > tbody > tr > td { page-break-inside: auto !important; }
+        .print-proforma .inv-header-first-page { page-break-after: avoid !important; }
+        .print-proforma {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Helvetica Neue', Arial, sans-serif;
+            color: #000; width: 100%;
+        }
+        .print-proforma .inv-container { width: 100%; margin: 0 auto; padding: 0; background: #fff; }
+        .print-proforma .inv-header { display: grid; grid-template-columns: 1fr 1fr; gap: 6mm; align-items: start; margin-bottom: 6mm; }
+        .print-proforma .inv-seller { max-width: 100%; font-size: 9pt; line-height: 1.25; }
+        .print-proforma .inv-seller-name { font-weight: 700; font-size: 11pt; margin-bottom: 2mm; }
+        .print-proforma .inv-meta-row { display: flex; justify-content: space-between; gap: 4mm; font-size: 9.5pt; margin-bottom: 6mm; border-top: 1px solid #eee; padding-top: 4mm; }
+        .print-proforma .inv-meta-row > div { flex: 1; }
+        .print-proforma .inv-col-left { max-width: 100mm; }
+        .print-proforma .inv-col-right { max-width: 100mm; }
+        .print-proforma .muted { color: #555; font-size: 9pt; }
+        .print-proforma .inv-title { font-size: 16pt; font-weight: 700; margin-bottom: 2mm; }
+        .print-proforma .inv-number { font-weight: 600; margin-bottom: 2mm; font-size: 11pt; white-space: nowrap; }
+        .print-proforma .inv-block-title { font-weight: 700; margin-bottom: 2mm; font-size: 0.9em; color: #666; }
+        .print-proforma .inv-buyer-name { font-weight: 600; white-space: normal; overflow-wrap: anywhere; word-break: break-word; line-height: 1.2; max-height: 2.4em; overflow: hidden; }
+        .print-proforma .inv-top-buyer-name { display: block; font-size: 7pt; line-height: 1.2; white-space: normal; overflow-wrap: anywhere; word-break: break-word; max-height: 2.4em; overflow: hidden; text-align: right; }
+        .print-proforma .inv-items { width: 100%; border-collapse: collapse; font-size: 8.5pt; table-layout: fixed; margin-top: 4mm; }
+        .print-proforma .inv-items tr { page-break-inside: avoid; }
+        .print-proforma .inv-items th, .print-proforma .inv-items td { border: 1px solid #ccc; padding: 1mm 2px; vertical-align: middle; }
+        .print-proforma .inv-items th { font-size: 6pt; font-weight: 700; vertical-align: bottom; padding-bottom: 2mm; line-height: 1.1; white-space: normal; overflow-wrap: break-word; }
+        .print-proforma .col-desc { width: 24%; word-break: break-word; }
+        .print-proforma .col-qty { width: 8%; }
+        .print-proforma .col-unit { width: 8%; }
+        .print-proforma .col-unitnet { width: 12%; }
+        .print-proforma .col-vatrate { width: 11%; }
+        .print-proforma .col-net { width: 13%; }
+        .print-proforma .col-vat { width: 11%; }
+        .print-proforma .col-gross { width: 13%; }
+        .print-proforma table.vat-summary-table { margin-top: 2mm; width: 100%; border-collapse: collapse; table-layout: auto; }
+        .print-proforma table.vat-summary-table th, .print-proforma table.vat-summary-table td { padding: 1px 4px; font-size: 8.5pt; line-height: 1.25; border: 1px solid #ccc; }
+        .print-proforma table.vat-summary-table th { font-weight: 700; }
+        .print-proforma table.vat-summary-table .num, .print-proforma table.vat-summary-table th.num, .print-proforma table.vat-summary-table td.num { text-align: right !important; }
+        .print-proforma table.vat-summary-table .cen { text-align: center !important; }
+        .print-proforma .inv-notes { margin-top: 3mm; font-size: 7.5pt; line-height: 1.3; }
+        .print-proforma .inv-items td.num { text-align: right; white-space: nowrap; }
+        .print-proforma .inv-items th.num { text-align: right; }
+        .print-proforma .inv-items td.cen, .print-proforma .inv-items th.cen { text-align: center; }
+        .print-proforma .inv-summary-wrap { margin-top: 4mm; page-break-inside: avoid; }
+        .print-proforma .inv-footer { margin-top: 5mm; font-size: 7.5pt; }
+        .print-proforma .inv-highlight { display: block; margin-top: 4mm; }
+        .print-proforma .inv-amount .value { font-weight: 800; font-size: 16pt; }
+        .print-proforma .date-pill { border: 1px solid #000; padding: 1px 6px; border-radius: 12px; }
+        .print-proforma .inv-fineprint { color: #555; margin-top: 2mm; font-size: 8pt; }
+        .print-proforma .proforma-watermark { color: #3498db; font-size: 8pt; font-weight: 700; margin-bottom: 2mm; text-transform: uppercase; letter-spacing: 1px; }
+    </style>
+</head>
+<body>
+    <div class="print-proforma print-only">
+        <table class="inv-main-table">
+            <thead>
+                <tr style="border-bottom: 2px solid #000;">
+                    <td colspan="2" style="border: none; padding: 2mm;">
+                        <table style="width: 100%; border-collapse: collapse;">
+                            <tbody>
+                                <tr>
+                                    <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top;">
+                                        <strong>{% if proforma.company %}{{ proforma.company.name }}{% else %}—{% endif %}</strong><br/>
+                                        {% if proforma.company %}
+                                            {% if proforma.company.full_tax_number %}
+                                                {{ proforma.company.full_tax_number }}
+                                            {% elif proforma.company.tax_number %}
+                                                {{ proforma.company.tax_number }}{% if proforma.company.vat_code %}-{{ proforma.company.vat_code }}{% endif %}{% if proforma.company.county_code %}-{{ proforma.company.county_code }}{% endif %}
+                                            {% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td style="width: 30%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: center;">
+                                        <div class="proforma-watermark">Díjbekérő</div>
+                                        <strong style="font-size: 11pt;">{{ proforma.proforma_number }}</strong><br/>
+                                        Kelt: {{ proforma.issue_date|date:"Y-m-d" }}
+                                    </td>
+                                    <td style="width: 35%; border: none; padding: 0; font-size: 9pt; vertical-align: top; text-align: right;">
+                                        <strong class="inv-top-buyer-name">{% if proforma.customer %}{{ proforma.customer.name }}{% else %}—{% endif %}</strong><br/>
+                                        Fizetendő: <strong>{{ payable_amount|invoice_number_format:display_decimals }} {{ proforma.currency }}</strong>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </td>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td colspan="2" style="border: none; padding: 0;">
+                        <div class="inv-header-wrapper inv-header-first-page">
+                            <div class="inv-header">
+                                <!-- SELLER -->
+                                <div class="inv-col-left">
+                                    <div class="inv-seller">
+                                        <div class="inv-block-title">Eladó:</div>
+                                        <div class="inv-seller-name">{{ proforma.company.name|default:"—" }}</div>
+                                        {% if proforma.company.full_tax_number %}
+                                            <div>Adószám: {{ proforma.company.full_tax_number }}</div>
+                                        {% elif proforma.company.tax_number %}
+                                            <div>Adószám: {{ proforma.company.tax_number }}</div>
+                                        {% endif %}
+                                        {% if proforma.company.eu_tax_number %}
+                                            <div>EU adószám: {{ proforma.company.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if proforma.company.postal_code or proforma.company.city %}
+                                            <div>{{ proforma.company.postal_code }} {{ proforma.company.city }}</div>
+                                        {% endif %}
+                                        {% if proforma.company.street_name %}
+                                            <div>
+                                                {{ proforma.company.street_name }}
+                                                {{ proforma.company.public_place_category|default:"" }}
+                                                {{ proforma.company.street_number }}
+                                            </div>
+                                        {% endif %}
+                                        {% if proforma.company.email or proforma.company.phone %}
+                                            <div style="margin-top: 1mm;">
+                                                {% if proforma.company.email %}<div>E-mail: {{ proforma.company.email }}</div>{% endif %}
+                                                {% if proforma.company.phone %}<div>Telefon: {{ proforma.company.phone }}</div>{% endif %}
+                                            </div>
+                                        {% endif %}
+                                        {% if proforma.company.bank_accounts.all %}
+                                            <div style="margin-top: 2mm;">
+                                                <div style="font-weight: 600;">Bankszámlák</div>
+                                                {% for acc in proforma.company.bank_accounts.all %}
+                                                    {% if acc.currency == proforma.currency %}
+                                                        <div>
+                                                            {% if acc.account_number %}{{ acc.currency }}: {{ acc.account_number }} {% endif %}
+                                                            {% if acc.iban %}IBAN: {{ acc.iban }} {% endif %}
+                                                            {% if acc.bank_name %}({{ acc.bank_name }}){% endif %}
+                                                        </div>
+                                                    {% endif %}
+                                                {% endfor %}
+                                            </div>
+                                        {% endif %}
+                                    </div>
+                                </div>
+
+                                <!-- BUYER / TITLE -->
+                                <div class="inv-col-right">
+                                    <div class="inv-title" style="color: #2c3e50;">Díjbekérő</div>
+                                    <div class="inv-number">
+                                        Sorszám: {{ proforma.proforma_number }}
+                                    </div>
+
+                                    <div class="inv-buyer-sm" style="margin-top: 4mm;">
+                                        <div class="inv-block-title">Vevő</div>
+                                        <div class="inv-buyer-name" style="font-size: 7pt;">{{ proforma.customer.name|default:"—" }}</div>
+                                        {% if proforma.customer.full_tax_number %}
+                                            <div>Adószám: {{ proforma.customer.full_tax_number }}</div>
+                                        {% elif proforma.customer.tax_number %}
+                                            <div>Adószám: {{ proforma.customer.tax_number }}</div>
+                                        {% endif %}
+                                        {% if proforma.customer.eu_tax_number %}
+                                            <div>EU adószám: {{ proforma.customer.eu_tax_number }}</div>
+                                        {% endif %}
+                                        {% if proforma.customer.postal_code or proforma.customer.city %}
+                                            <div>{{ proforma.customer.postal_code }} {{ proforma.customer.city }}</div>
+                                        {% endif %}
+                                        {% if proforma.customer.address %}
+                                            <div>{{ proforma.customer.address }}</div>
+                                        {% else %}
+                                            <div>
+                                                {{ proforma.customer.street_name }}
+                                                {{ proforma.customer.street_number }}
+                                                {{ proforma.customer.building }}
+                                            </div>
+                                        {% endif %}
+                                        {% if proforma.customer.country %}
+                                            <div style="margin-top: 1mm;">{{ proforma.customer.country }}</div>
+                                        {% endif %}
+                                    </div>
+
+                                    <div class="inv-highlight">
+                                        <div class="inv-amount">
+                                            <span class="label">Fizetendő:</span>
+                                            <span class="value">{{ payable_amount|invoice_number_format:display_decimals }} {{ proforma.currency }}</span>
+                                        </div>
+                                        <div class="inv-deadline">
+                                            <span class="muted">Fizetési határidő</span>
+                                            <span class="date-pill" style="font-weight:600; margin-left:3mm;">{{ proforma.due_date|date:"Y-m-d" }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- META -->
+                            <div class="inv-meta-row" style="margin-top: 0; padding-top: 4mm;">
+                                <div>
+                                    <div class="muted">Kelt</div>
+                                    <div>{{ proforma.issue_date|date:"Y-m-d" }}</div>
+                                </div>
+                                <div>
+                                    <div class="muted">Teljesítés</div>
+                                    <div>{{ proforma.delivery_date|default:proforma.issue_date|date:"Y-m-d" }}</div>
+                                </div>
+                                <div>
+                                    <div class="muted">Pénznem</div>
+                                    <div>{{ proforma.currency }}</div>
+                                </div>
+                                <div>
+                                    <div class="muted">Fizetési mód</div>
+                                    <div>
+                                        {% if proforma.payment_method == 'transfer' %}Átutalás
+                                        {% elif proforma.payment_method == 'cash' %}Készpénz
+                                        {% elif proforma.payment_method == 'card' %}Bankkártya
+                                        {% elif proforma.payment_method == 'voucher' %}Utalvány
+                                        {% elif proforma.payment_method == 'cod' %}Utánvét
+                                        {% else %}{{ proforma.payment_method }}{% endif %}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+
+                <!-- ITEMS -->
+                <tr>
+                    <td colspan="2" style="border: none; padding: 0;">
+                        <table class="inv-items">
+                            <thead>
+                                <tr>
+                                    <th class="col-desc">Megnevezés</th>
+                                    <th class="cen col-qty">Menny.</th>
+                                    <th class="cen col-unit">Egység</th>
+                                    <th class="num col-unitnet">Egységár<br class="print-only"><span class="muted" style="font-weight: normal; font-size: 0.8em;">(Nettó)</span></th>
+                                    <th class="cen col-vatrate">ÁFA</th>
+                                    <th class="num col-net">Nettó</th>
+                                    <th class="num col-vat">ÁFA értéke</th>
+                                    <th class="num col-gross">Bruttó</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for item in proforma.items.all %}
+                                <tr>
+                                    <td class="col-desc">{{ item.description }}</td>
+                                    <td class="cen col-qty">{{ item.quantity|invoice_quantity_format }}</td>
+                                    <td class="cen col-unit">{{ item.unit_of_measure|default:"db" }}</td>
+                                    <td class="num col-unitnet">{{ item.unit_price|invoice_number_format:display_decimals }}</td>
+                                    <td class="cen col-vatrate">
+                                        {% if item.vat_type and item.vat_type.category != 'PERCENT' %}
+                                            <span style="font-size: 8pt;">{{ item.vat_type.name }}</span>
+                                        {% else %}
+                                            {% if item.vat_rate|add:0 == item.vat_rate %}{{ item.vat_rate|floatformat:0 }}%{% else %}{{ item.vat_rate }}%{% endif %}
+                                        {% endif %}
+                                    </td>
+                                    <td class="num col-net">{{ item.net_amount|invoice_number_format:display_decimals }}</td>
+                                    <td class="num col-vat">{{ item.vat_amount|invoice_number_format:display_decimals }}</td>
+                                    <td class="num col-gross">{{ item.gross_amount|invoice_number_format:display_decimals }}</td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+
+                        <!-- SUMMARY -->
+                        <div class="inv-summary-wrap">
+                            <table class="vat-summary-table">
+                                <colgroup>
+                                    <col style="width: 20%" />
+                                    <col style="width: 26%" />
+                                    <col style="width: 27%" />
+                                    <col style="width: 27%" />
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th class="cen">ÁFA</th>
+                                        <th class="num">Nettó összeg</th>
+                                        <th class="num">ÁFA összeg</th>
+                                        <th class="num">Bruttó összeg</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {% for row in vat_summary %}
+                                    <tr>
+                                        <td class="cen vat-desc-col">{{ row.label }}</td>
+                                        <td class="num">{{ row.net|invoice_number_format:display_decimals }}</td>
+                                        <td class="num">{{ row.vat|invoice_number_format:display_decimals }}</td>
+                                        <td class="num">{{ row.gross|invoice_number_format:display_decimals }}</td>
+                                    </tr>
+                                    {% endfor %}
+                                    <tr>
+                                        <th style="white-space: nowrap;">Összesen ({{ proforma.currency }})</th>
+                                        <th class="num">{{ proforma.total_net_amount|invoice_number_format:display_decimals }}</th>
+                                        <th class="num">{{ proforma.total_vat_amount|invoice_number_format:display_decimals }}</th>
+                                        <th class="num inv-gross-total">{{ payable_amount|invoice_number_format:display_decimals }}</th>
+                                    </tr>
+                                </tbody>
+                            </table>
+
+                            {% if amount_words %}
+                            <div class="inv-words" style="margin-top: 4mm;">{{ amount_words }}</div>
+                            {% endif %}
+
+                            {% if proforma.notes %}
+                            <div class="inv-notes">
+                                <div class="inv-block-title">Megjegyzés</div>
+                                <div>{{ proforma.notes|safe }}</div>
+                            </div>
+                            {% endif %}
+                        </div>
+
+                        <!-- FOOTER -->
+                        <div class="inv-footer">
+                            <div style="margin-bottom: 2mm;">
+                                {% if proforma.payment_method == 'transfer' %}
+                                    Kérjük az összeget átutalással rendezni a fenti bankszámlára.
+                                {% endif %}
+                            </div>
+                            <div class="inv-fineprint">
+                                Ez a díjbekérő nem számla, nem minősül számviteli bizonylatnak.
+                                Elektronikus úton készült, aláírás nélkül is érvényes.
+                            </div>
+                        </div>
+                    </td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>

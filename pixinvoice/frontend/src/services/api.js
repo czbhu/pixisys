@@ -563,6 +563,8 @@ export const proformaAPI = {
   copyProforma: (id) => api.post(`/api/proformas/${id}/copy/`),
   createInvoice: (id, data) => api.post(`/api/proformas/${id}/create_invoice/`, data),
   createAdvanceInvoice: (id, data) => api.post(`/api/proformas/${id}/create_advance_invoice/`, data),
+  sendEmail: (id, payload) => api.post(`/api/proformas/${id}/send_email/`, payload),
+  getPdfUrl: (id) => `/api/proformas/${id}/pdf/`,
 };
 
 export const incomingProformaAPI = {

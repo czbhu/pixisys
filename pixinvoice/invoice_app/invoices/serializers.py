@@ -5,6 +5,7 @@ import decimal
 from rest_framework import serializers
 from django.db import models
 from django.db import transaction
+from django.db import IntegrityError
 from django.utils import timezone
 from .models import (
     Customer, Invoice, InvoiceItem, NAVConfiguration, Contact, Company, SystemUser, Role,
@@ -978,6 +979,25 @@ class ProformaCreateSerializer(serializers.ModelSerializer):
             'proforma_number': {'required': False},
         }
 
+    def _next_daily_proforma_number(self):
+        today = timezone.localdate().strftime('%Y%m%d')
+        numbers = ProformaInvoice.objects.filter(
+            proforma_number__startswith=today
+        ).values_list('proforma_number', flat=True)
+
+        max_seq = 0
+        for raw in numbers:
+            value = str(raw or '')
+            tail = value[len(today):]
+            if tail.isdigit():
+                try:
+                    seq = int(tail)
+                except Exception:
+                    continue
+                if seq > max_seq:
+                    max_seq = seq
+        return f"{today}{max_seq + 1:03d}"
+
     def create(self, validated_data):
         items_data = validated_data.pop('items')
         company_id = validated_data.pop('company_id')
@@ -1000,27 +1020,32 @@ class ProformaCreateSerializer(serializers.ModelSerializer):
             except Customer.DoesNotExist:
                 raise serializers.ValidationError({'customer_id': 'Ügyfél nem található'})
 
-            # Generate number if missing: YYYYMMDD + daily 3-digit
-            pfnum = (validated_data.get('proforma_number') or '').strip()
+            # Generate number if missing: YYYYMMDD + daily seq, collision-safe.
+            user_provided_pfnum = (validated_data.pop('proforma_number', None) or '').strip()
+            pfnum = user_provided_pfnum
             if not pfnum:
-                from datetime import datetime
-                today = datetime.now().strftime('%Y%m%d')
-                last = ProformaInvoice.objects.filter(proforma_number__startswith=today).order_by('-proforma_number').first()
-                seq = 1
-                if last and last.proforma_number.startswith(today):
-                    tail = last.proforma_number[len(today):]
-                    try:
-                        seq = int(tail) + 1
-                    except Exception:
-                        seq = 1
-                pfnum = f"{today}{seq:03d}"
+                pfnum = self._next_daily_proforma_number()
+
             request = self.context.get('request')
-            proforma = ProformaInvoice.objects.create(
-                proforma_number=pfnum,
-                company=company,
-                customer=customer,
-                **validated_data
-            )
+            attempts = 1 if user_provided_pfnum else 5
+            proforma = None
+            for _ in range(attempts):
+                try:
+                    proforma = ProformaInvoice.objects.create(
+                        proforma_number=pfnum,
+                        company=company,
+                        customer=customer,
+                        **validated_data
+                    )
+                    break
+                except IntegrityError:
+                    if user_provided_pfnum:
+                        raise serializers.ValidationError({'proforma_number': 'Ez a díjbekérő sorszám már létezik.'})
+                    pfnum = self._next_daily_proforma_number()
+
+            if proforma is None:
+                raise serializers.ValidationError({'proforma_number': 'Nem sikerült egyedi díjbekérő sorszámot generálni.'})
+
             for item in items_data:
                 it = InvoiceItem.objects.create(**item)
                 proforma.items.add(it)

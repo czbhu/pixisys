@@ -78,6 +78,7 @@ import os
 import re
 import calendar
 import decimal
+import uuid
 from django.http import HttpResponse
 from datetime import datetime, date, timedelta
 import xml.etree.ElementTree as ET
@@ -12975,7 +12976,11 @@ class ProformaViewSet(viewsets.ModelViewSet):
         company_id = self.request.query_params.get('company') or self.request.query_params.get('company_id')
         search = self.request.query_params.get('search')
         if company_id:
-            qs = qs.filter(company_id=company_id)
+            try:
+                parsed_company_id = uuid.UUID(str(company_id))
+            except (ValueError, TypeError, AttributeError):
+                return qs.none()
+            qs = qs.filter(company_id=parsed_company_id)
         if search:
             qs = qs.filter(Q(proforma_number__icontains=search) | Q(customer__name__icontains=search))
         return qs
@@ -12992,19 +12997,22 @@ class ProformaViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='next_number')
     def next_number(self, request):
         """Preview the next auto-generated proforma number (YYYYMMDD + 3-digit seq)."""
-        from datetime import datetime
-        today = datetime.now().strftime('%Y%m%d')
-        last = ProformaInvoice.objects.filter(
+        today = timezone.localdate().strftime('%Y%m%d')
+        numbers = ProformaInvoice.objects.filter(
             proforma_number__startswith=today
-        ).order_by('-proforma_number').first()
-        seq = 1
-        if last and last.proforma_number.startswith(today):
-            tail = last.proforma_number[len(today):]
-            try:
-                seq = int(tail) + 1
-            except Exception:
-                seq = 1
-        pfnum = f"{today}{seq:03d}"
+        ).values_list('proforma_number', flat=True)
+        max_seq = 0
+        for raw in numbers:
+            value = str(raw or '')
+            tail = value[len(today):]
+            if tail.isdigit():
+                try:
+                    seq = int(tail)
+                except Exception:
+                    continue
+                if seq > max_seq:
+                    max_seq = seq
+        pfnum = f"{today}{max_seq + 1:03d}"
         return Response({'proforma_number': pfnum})
 
     @action(detail=True, methods=['post'])
@@ -13092,6 +13100,349 @@ class ProformaViewSet(viewsets.ModelViewSet):
         ser.is_valid(raise_exception=True)
         inv = ser.save()
         return Response(InvoiceSerializer(inv).data, status=status.HTTP_201_CREATED)
+
+    # ── Proforma PDF ─────────────────────────────────────────────
+    @action(detail=True, methods=['get'])
+    def pdf(self, request, pk=None):
+        import io
+        from django.http import HttpResponse
+        from django.template.loader import render_to_string
+        try:
+            from weasyprint import HTML
+        except Exception:
+            HTML = None
+
+        pf = ProformaInvoice.objects.select_related(
+            'company', 'customer'
+        ).prefetch_related(
+            'items', 'items__vat_type', 'company__bank_accounts'
+        ).get(pk=pk)
+
+        from collections import defaultdict
+        from decimal import Decimal, ROUND_HALF_UP
+
+        vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
+        for item in pf.items.all():
+            r = item.vat_rate
+            vt = item.vat_type
+            if vt and vt.category != 'PERCENT':
+                eff_rate = vt.percentage if vt.percentage is not None else r
+                label = f"{int(eff_rate)}%" if eff_rate % 1 == 0 else f"{eff_rate}%"
+                key = (r, vt.code)
+            else:
+                label = f"{int(r)}%" if r % 1 == 0 else f"{r}%"
+                key = (r, 'PERCENT')
+            vat_map[key]['rate'] = r
+            vat_map[key]['label'] = label
+            vat_map[key]['net'] += item.net_amount
+            vat_map[key]['vat'] += item.vat_amount
+            vat_map[key]['gross'] += item.gross_amount
+        vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
+
+        _is_huf = (pf.currency or 'HUF').upper() == 'HUF'
+        display_decimals = 0 if _is_huf else 2
+        if not _is_huf:
+            try:
+                _curr_obj = Currency.objects.get(code=pf.currency)
+                display_decimals = _curr_obj.display_decimals
+            except Exception:
+                pass
+        _dec_fmt = Decimal('1') if display_decimals == 0 else Decimal('0.' + '0' * display_decimals)
+        def _rnd(v):
+            return float(Decimal(str(v)).quantize(_dec_fmt, rounding=ROUND_HALF_UP))
+        for row in vat_summary:
+            row['net'] = _rnd(row['net'])
+            row['vat'] = _rnd(row['vat'])
+            row['gross'] = _rnd(row['gross'])
+
+        payable_amount = pf.total_gross_amount
+        amount_words = get_amount_words_hu(payable_amount, pf.currency or 'HUF')
+
+        pdf_buf = io.BytesIO()
+        if HTML:
+            try:
+                ctx = {
+                    'proforma': pf,
+                    'vat_summary': vat_summary,
+                    'payable_amount': payable_amount,
+                    'amount_words': amount_words,
+                    'display_decimals': display_decimals,
+                }
+                html = render_to_string('invoices/print_proforma.html', ctx)
+                HTML(string=html).write_pdf(target=pdf_buf)
+            except Exception as e:
+                print(f"Proforma WeasyPrint PDF error: {e}")
+                import traceback; traceback.print_exc()
+                HTML = None
+                pdf_buf = io.BytesIO()
+
+        if not HTML or pdf_buf.tell() == 0:
+            from reportlab.pdfgen import canvas as rl_canvas
+            from reportlab.lib.pagesizes import A4
+            c = rl_canvas.Canvas(pdf_buf, pagesize=A4)
+            w, h = A4
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(40, h - 50, f"Díjbekérő: {pf.proforma_number}")
+            c.setFont("Helvetica", 11)
+            c.drawString(40, h - 70, f"Kelt: {pf.issue_date}")
+            c.drawString(40, h - 85, f"Vevő: {getattr(pf.customer, 'name', '')}")
+            c.drawString(40, h - 100, f"Összeg (bruttó): {float(pf.total_gross_amount):,.2f} {pf.currency}")
+            c.showPage(); c.save()
+        pdf_buf.seek(0)
+        resp = HttpResponse(pdf_buf.read(), content_type='application/pdf')
+        cust_name = getattr(pf.customer, 'name', '') or ''
+        cust_prefix = cust_name[:5] or 'Client'
+        filename = f"{cust_prefix}_{pf.proforma_number or 'dijbekero'}.pdf"
+        resp['Content-Disposition'] = f'inline; filename="{filename}"'
+        return resp
+
+    # ── Proforma Send Email ──────────────────────────────────────
+    @action(detail=True, methods=['post'])
+    def send_email(self, request, pk=None):
+        import sys, datetime as _dt, io, smtplib, ssl, imaplib, email as _email_mod
+        from email.message import EmailMessage as _EM
+        from django.template.loader import render_to_string
+        try:
+            from weasyprint import HTML
+        except Exception:
+            HTML = None
+
+        def log(msg):
+            ts = _dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            print(f"[PROFORMA-EMAIL {ts}] {msg}")
+            sys.stdout.flush()
+
+        pf = ProformaInvoice.objects.select_related(
+            'company', 'customer'
+        ).prefetch_related(
+            'items', 'items__vat_type', 'company__bank_accounts'
+        ).get(pk=pk)
+        log(f"send_email called for proforma {pf.proforma_number}")
+
+        data = request.data or {}
+        to = data.get('to') or []
+        cc = data.get('cc') or []
+        bcc = data.get('bcc') or []
+        reply_to = data.get('reply_to') or None
+        subject = data.get('subject') or ''
+        body = data.get('body') or ''
+
+        if not subject:
+            subject = f"Díjbekérő {pf.proforma_number}"
+        if not body:
+            company = pf.company
+            customer = pf.customer
+            default_signature_html = get_default_signature_html(company)
+            tpl = get_company_email_template(company, EmailTemplate.TEMPLATE_INVOICE_SEND, 'hu')
+
+            def render_curly(tpl_str, ctx_dict):
+                out = str(tpl_str or '')
+                for key, value in (ctx_dict or {}).items():
+                    out = out.replace('{' + str(key) + '}', str(value if value is not None else ''))
+                return out
+
+            pf_ctx = {
+                'invoice_number': pf.proforma_number or '',
+                'customer_name': getattr(customer, 'name', '') or '',
+                'company_name': getattr(company, 'name', '') or '',
+                'signature_html': default_signature_html,
+            }
+            subject = render_curly(tpl.get('subject_template') or '', pf_ctx).strip()
+            if subject:
+                subject = subject.replace('Számla', 'Díjbekérő').replace('számla', 'díjbekérő').replace('Invoice', 'Proforma')
+            else:
+                subject = f"Díjbekérő {pf.proforma_number}"
+            body = render_curly(tpl.get('body_template') or '', pf_ctx).strip()
+            if body:
+                body = body.replace('számlát', 'díjbekérőt').replace('számlákat', 'díjbekérőket').replace('Számla', 'Díjbekérő').replace('számla', 'díjbekérő')
+
+        if not to:
+            try:
+                if pf.customer and pf.customer.email:
+                    to = [pf.customer.email]
+            except Exception:
+                pass
+        if not to:
+            return Response({'error': 'Nincs címzett megadva'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Generate PDF
+        from collections import defaultdict
+        from decimal import Decimal, ROUND_HALF_UP
+        vat_map = defaultdict(lambda: {'net': 0, 'vat': 0, 'gross': 0, 'rate': 0, 'label': ''})
+        for item in pf.items.all():
+            r = item.vat_rate
+            vt = item.vat_type
+            if vt and vt.category != 'PERCENT':
+                eff_rate = vt.percentage if vt.percentage is not None else r
+                label = f"{int(eff_rate)}%" if eff_rate % 1 == 0 else f"{eff_rate}%"
+                key = (r, vt.code)
+            else:
+                label = f"{int(r)}%" if r % 1 == 0 else f"{r}%"
+                key = (r, 'PERCENT')
+            vat_map[key]['rate'] = r
+            vat_map[key]['label'] = label
+            vat_map[key]['net'] += item.net_amount
+            vat_map[key]['vat'] += item.vat_amount
+            vat_map[key]['gross'] += item.gross_amount
+        vat_summary = sorted(vat_map.values(), key=lambda x: x['rate'])
+        _is_huf = (pf.currency or 'HUF').upper() == 'HUF'
+        display_decimals = 0 if _is_huf else 2
+        if not _is_huf:
+            try:
+                _curr_obj = Currency.objects.get(code=pf.currency)
+                display_decimals = _curr_obj.display_decimals
+            except Exception:
+                pass
+        _dec_fmt = Decimal('1') if display_decimals == 0 else Decimal('0.' + '0' * display_decimals)
+        def _rnd(v):
+            return float(Decimal(str(v)).quantize(_dec_fmt, rounding=ROUND_HALF_UP))
+        for row in vat_summary:
+            row['net'] = _rnd(row['net'])
+            row['vat'] = _rnd(row['vat'])
+            row['gross'] = _rnd(row['gross'])
+        payable_amount = pf.total_gross_amount
+        amount_words = get_amount_words_hu(payable_amount, pf.currency or 'HUF')
+
+        pdf_buf = io.BytesIO()
+        log("Generating proforma PDF...")
+        if HTML:
+            try:
+                ctx = {
+                    'proforma': pf,
+                    'vat_summary': vat_summary,
+                    'payable_amount': payable_amount,
+                    'amount_words': amount_words,
+                    'display_decimals': display_decimals,
+                }
+                html = render_to_string('invoices/print_proforma.html', ctx)
+                HTML(string=html).write_pdf(target=pdf_buf)
+            except Exception as e:
+                log(f"WeasyPrint error: {e}")
+                pdf_buf = io.BytesIO()
+
+        if pdf_buf.tell() == 0:
+            from reportlab.pdfgen import canvas as rl_canvas
+            from reportlab.lib.pagesizes import A4
+            c = rl_canvas.Canvas(pdf_buf, pagesize=A4)
+            w, h = A4
+            c.setFont("Helvetica-Bold", 14)
+            c.drawString(40, h - 50, f"Díjbekérő: {pf.proforma_number}")
+            c.setFont("Helvetica", 11)
+            c.drawString(40, h - 70, f"Kelt: {pf.issue_date}")
+            c.drawString(40, h - 85, f"Vevő: {getattr(pf.customer, 'name', '')}")
+            c.drawString(40, h - 100, f"Összeg: {float(pf.total_gross_amount):,.2f} {pf.currency}")
+            c.showPage(); c.save()
+        log("PDF generation finished.")
+        pdf_buf.seek(0)
+
+        # Build email
+        msg = _EM()
+        msg['Subject'] = subject
+
+        try:
+            ces = getattr(pf.company, 'email_settings', None)
+        except Exception:
+            ces = None
+
+        from_addr = (data.get('from') or '').strip() or (ces.smtp_from if ces and ces.smtp_from else None) or os.environ.get('SMTP_FROM') or os.environ.get('SMTP_USER')
+        if not from_addr:
+            return Response({'error': 'SMTP_FROM vagy SMTP_USER nincs beállítva'}, status=status.HTTP_400_BAD_REQUEST)
+
+        msg['From'] = from_addr
+        msg['To'] = ', '.join(to)
+        if cc:
+            msg['Cc'] = ', '.join(cc)
+        if bcc:
+            msg['Bcc'] = ', '.join(bcc)
+        if reply_to:
+            msg['Reply-To'] = reply_to
+
+        if ces:
+            sig_lines = []
+            if getattr(ces, 'default_sender_name', None):
+                sig_lines.append(str(ces.default_sender_name))
+            if getattr(ces, 'default_sender_phone', None):
+                sig_lines.append(str(ces.default_sender_phone))
+            if sig_lines and (body or '').find('--') == -1:
+                body = (body or '') + "<br><br>--<br>" + "<br>".join(sig_lines)
+
+        is_html = (body and ('<' in body and '>' in body))
+        if is_html:
+            msg.set_content("HTML-only e-mail")
+            msg.add_alternative(body, subtype='html')
+        else:
+            msg.set_content(body)
+
+        cust_name = getattr(pf.customer, 'name', '') or ''
+        cust_prefix = cust_name[:5] or 'Client'
+        filename = f"{cust_prefix}_{pf.proforma_number or 'dijbekero'}.pdf"
+        msg.add_attachment(pdf_buf.read(), maintype='application', subtype='pdf', filename=filename)
+
+        # SMTP
+        host = (ces.smtp_host if ces and ces.smtp_host else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
+        port = int((ces.smtp_port if ces and ces.smtp_port else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
+        user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+        pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+        if ces and ces.smtp_use_tls is not None:
+            use_tls = bool(ces.smtp_use_tls)
+        else:
+            use_tls = (os.environ.get('SMTP_USE_TLS', '1') == '1') or (os.environ.get('EMAIL_USE_TLS', '1') == '1')
+
+        log(f"SMTP: Host={host}, Port={port}, User={user}, TLS={use_tls}")
+        if not host or not user or not pwd:
+            return Response({'error': 'SMTP beállítások hiányoznak (HOST/USER/PASSWORD)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            log("Connecting to SMTP...")
+            if port == 465:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            elif use_tls:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(host, port) as server:
+                    server.starttls(context=context)
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            log("SMTP send success.")
+        except Exception as e:
+            log(f"SMTP Error: {e}")
+            import traceback; traceback.print_exc()
+            return Response({'error': f'E-mail küldési hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        # IMAP save to Sent
+        try:
+            imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
+            imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or user
+            imap_pwd = (ces.imap_password if ces and ces.imap_password else None) or os.environ.get('IMAP_PASSWORD') or pwd
+            imap_port = int((ces.imap_port if ces and getattr(ces, 'imap_port', None) else None) or os.environ.get('IMAP_PORT') or 993)
+            sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
+            if imap_host and imap_user and imap_pwd:
+                log(f"Saving to IMAP {imap_host}")
+                raw = msg.as_bytes()
+                try:
+                    M = imaplib.IMAP4_SSL(imap_host, imap_port)
+                except Exception:
+                    try:
+                        M = imaplib.IMAP4(imap_host, 143)
+                        M.starttls(ssl_context=ssl.create_default_context())
+                    except Exception:
+                        M = imaplib.IMAP4(imap_host)
+                M.login(imap_user, imap_pwd)
+                try:
+                    M.append(sent_folder, '(\\Seen)', None, raw)
+                except Exception:
+                    pass
+                M.logout()
+        except Exception as e:
+            log(f"IMAP save error: {e}")
+
+        return Response({'success': True})
 
 
 class PaymentBatchViewSet(viewsets.ModelViewSet):
