@@ -7,7 +7,13 @@ export const notificationService = {
     },
     
     async markAsReadByLink(link: string) {
-        await api.post('/notifications/mark-read-by-link/', { link });
+        try {
+            await api.post('/notifications/mark-read-by-link/', { link });
+            return true;
+        } catch {
+            // Non-critical endpoint; ignore server failures to avoid noisy app-level errors.
+            return false;
+        }
     },
     
     async markAsRead(id: number) {

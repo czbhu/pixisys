@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
   Button, Space, Tooltip, Select, InputNumber, Popover, Divider,
-  Upload, message, Slider, Typography, Switch,
+  Upload, message, Slider, Typography, Switch, Modal, Input, Segmented, Badge,
 } from 'antd';
 import {
   UndoOutlined, RedoOutlined, DeleteOutlined, BoldOutlined,
@@ -10,7 +10,9 @@ import {
   AlignRightOutlined, CopyOutlined, VerticalAlignTopOutlined,
   VerticalAlignBottomOutlined, BorderOutlined, LeftOutlined,
   RightOutlined, LoadingOutlined, ZoomInOutlined, ZoomOutOutlined,
-  FullscreenOutlined, LockOutlined, CompressOutlined, ExpandOutlined, EyeOutlined,
+  FullscreenOutlined, LockOutlined, CompressOutlined, ExpandOutlined, EyeOutlined, FilePdfOutlined,
+  CommentOutlined, EditOutlined, HighlightOutlined, CheckOutlined, CloseOutlined,
+  ArrowRightOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import CanvasRuler from './CanvasRuler';
@@ -75,7 +77,6 @@ function checkFontHasHU(fontName: string): boolean {
 // 1mm hány px legyen a canvason (96 DPI)
 const MM_TO_PX = 3.7795;
 const BLEED_MM = 3;
-const SAFE_MM = 3;
 const RULER_SIZE = 20;  // px
 const SNAP_THRESHOLD_PX = 6;  // px távolságon belül snap
 const GUIDE_COLOR = '#1890ff';
@@ -111,6 +112,30 @@ interface PdfDialogState {
   svgFile?: File;  // eredeti fájl, szerver-oldali SVG konverzióhoz
 }
 
+// ── Comment annotation types ──
+type EditorMode = 'design' | 'comment';
+type CommentTool = 'area' | 'pin' | 'arrow';
+interface CommentAnnotation {
+  id: string;
+  side: Side;
+  type: 'area' | 'pin' | 'arrow';
+  // Position in canvas-native coords (before zoom)
+  x: number; y: number;
+  width?: number; height?: number;
+  x2?: number; y2?: number;    // Arrow endpoint
+  pathData?: string;           // SVG path for freehand drawings
+  text: string;
+  author: string;
+  timestamp: number;
+  resolved: boolean;
+  color: string;               // annotation border/pin color
+}
+
+const COMMENT_COLORS = ['#ff4d4f', '#fa8c16', '#52c41a', '#1890ff', '#722ed1'];
+const COMMENT_AREA_FILL = 'rgba(255,77,79,0.12)';
+const COMMENT_AREA_STROKE = '#ff4d4f';
+const COMMENT_PIN_RADIUS = 10;
+
 interface Props {
   params: PrintParams;
   isAdmin: boolean;
@@ -131,6 +156,8 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const canvasRef2 = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement);
   const fabricRef1 = useRef<fabric.Canvas | null>(null);
   const fabricRef2 = useRef<fabric.Canvas | null>(null);
+  const overlayCanvasRef = useRef<HTMLCanvasElement>(null);
+  const initGenRef = useRef(0); // incremented on each canvas reinit to cancel stale async callbacks
   const [activeSide, setActiveSide] = useState<Side>('1');
   const [history1, setHistory1] = useState<string[]>([]);
   const [history2, setHistory2] = useState<string[]>([]);
@@ -148,8 +175,26 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const pendingPdfPagesRef = useRef<string[]>([]);
   const restoredSidesRef = useRef<Set<Side>>(new Set());
   const sidesFullyRestoredRef = useRef<Set<Side>>(new Set());  // tracks async enliven completion
+  const savedCanvasDataRef = useRef<{ d1: any[] | null; d2: any[] | null }>({ d1: null, d2: null });
   const onDesignChangeRef = useRef(onDesignChange);
   useEffect(() => { onDesignChangeRef.current = onDesignChange; }, [onDesignChange]);
+
+  // Refs for keyboard shortcuts — always point to the latest undo/redo/delete functions
+  const undoRef = useRef<() => void>(() => {});
+  const redoRef = useRef<() => void>(() => {});
+  const deleteSelectedRef = useRef<() => void>(() => {});
+
+  // Refs for auto-nyomatlan: remember the previous (non-none) mode so we can restore on content add
+  const prevSide1ModeRef = useRef<string>(params.side1_mode !== 'none' ? params.side1_mode : 'color');
+  const prevSide2ModeRef = useRef<string>(params.side2_mode !== 'none' ? params.side2_mode : 'color');
+  const prevObj1CountRef = useRef<number>(-1);  // -1 = not yet initialized
+  const prevObj2CountRef = useRef<number>(-1);
+
+  // Track previous params.side_mode to detect user-initiated 'none' selection from the panel
+  const prevParamMode1Ref = useRef<string>(params.side1_mode);
+  const prevParamMode2Ref = useRef<string>(params.side2_mode);
+  // Flag: true while the auto-nyomatlan effect (object count change) is updating mode — skip confirm in that case
+  const autoNyomatlanRef = useRef(false);
 
   // On mount: check system fonts immediately, then pre-load + test all Google Fonts in background
   useEffect(() => {
@@ -173,6 +218,18 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const [layerDrawerOpen, setLayerDrawerOpen] = useState(false);
   const [objects1, setObjects1] = useState<fabric.Object[]>([]);
   const [objects2, setObjects2] = useState<fabric.Object[]>([]);
+
+  // ── Comment mode state ──
+  const [editorMode, setEditorMode] = useState<EditorMode>('design');
+  const [commentAnnotations, setCommentAnnotations] = useState<CommentAnnotation[]>([]);
+  const [commentLayerVisible, setCommentLayerVisible] = useState(true);
+  const [commentTool, setCommentTool] = useState<CommentTool>('area');
+  const [commentColor, setCommentColor] = useState(COMMENT_COLORS[0]);
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [commentTextDraft, setCommentTextDraft] = useState('');
+  const [newCommentDraft, setNewCommentDraft] = useState<CommentAnnotation | null>(null);
+  const commentDrawStartRef = useRef<{ x: number; y: number } | null>(null);
+  const commentNextId = useRef(1);
 
   // Tool panel collapse
   const [toolPanelOpen, setToolPanelOpen] = useState(true);
@@ -220,8 +277,13 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const CHROME_W = RULER_SIZE + 32; // padding + ruler
   const availW = containerSize.w > 0 ? containerSize.w - CHROME_W : window.innerWidth - (leftOffset + 220 + 48) - CHROME_W;
   const availH = containerSize.h > 0 ? containerSize.h - CHROME_H : window.innerHeight - 140 - CHROME_H;
-  const canvasW = params.width_mm * MM_TO_PX;
-  const canvasH = params.height_mm * MM_TO_PX;
+  const bleedPx = BLEED_MM * MM_TO_PX;
+  const sheetW_mm = params.width_mm + 2 * BLEED_MM;
+  const sheetH_mm = params.height_mm + 2 * BLEED_MM;
+  const canvasW = sheetW_mm * MM_TO_PX;   // sheet = product + 2×bleed
+  const canvasH = sheetH_mm * MM_TO_PX;
+  const cutW = params.width_mm * MM_TO_PX; // cut/product area
+  const cutH = params.height_mm * MM_TO_PX;
   // baseScale = fit the canvas to the container at zoom=1
   const baseScale = Math.min(
     availW > 0 ? availW / canvasW : 1,
@@ -257,6 +319,41 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     return () => el.removeEventListener('wheel', handler);
   });
 
+  // Keyboard shortcuts: Ctrl+Z = Undo, Ctrl+Y / Ctrl+Shift+Z = Redo, Delete/Backspace = delete selected
+  const editorModeRef = useRef(editorMode);
+  useEffect(() => { editorModeRef.current = editorMode; }, [editorMode]);
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Skip in comment mode — design shortcuts should not fire
+      if (editorModeRef.current === 'comment') return;
+      // Don't intercept when typing in an input/textarea/contenteditable
+      const tag = (e.target as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable) return;
+      // Also skip when actively editing a fabric IText (keyboard needed for typing)
+      const fc = (activeSide === '1' ? fabricRef1 : fabricRef2).current;
+      if (fc) {
+        const active = fc.getActiveObject();
+        if (active && (active.type === 'i-text' || active.type === 'textbox') && (active as any).isEditing) return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        undoRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.key === 'y') {
+        e.preventDefault();
+        redoRef.current();
+      } else if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'z') {
+        e.preventDefault();
+        redoRef.current();
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        e.preventDefault();
+        deleteSelectedRef.current();
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [activeSide]);
+
   // Frissíti a Fabric zoom-ot és canvas méretét, ha a skála megváltozik (zoom / container resize)
   // A canvas fizikailag displayW × displayH méretű → nincs CSS upscale → éles kép
   useEffect(() => {
@@ -265,20 +362,30 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       if (!fc) return;
       fc.setZoom(scale);
       fc.setDimensions({ width: displayW, height: displayH });
-      // Segédelemek strokeWidth frissítése (1px vizuális vastagság marad)
-      fc.getObjects().forEach((obj: any) => {
-        if (!obj.__guideHelper || !obj.__baseDash) return;
-        obj.set({
-          strokeWidth: 1 / scale,
-          strokeDashArray: [
-            obj.__baseDash[0] / scale,
-            obj.__baseDash[1] / scale,
-          ],
-        });
-      });
       fc.requestRenderAll();
     });
   }, [scale, displayW, displayH]);  // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Toggle fabric interactivity based on editor mode
+  useEffect(() => {
+    [fabricRef1, fabricRef2].forEach(fRef => {
+      const fc = fRef.current;
+      if (!fc) return;
+      if (editorMode === 'comment') {
+        fc.selection = false;
+        fc.discardActiveObject();
+        fc.forEachObject(o => { o.selectable = false; o.evented = false; });
+        fc.requestRenderAll();
+      } else {
+        fc.selection = true;
+        fc.forEachObject(o => {
+          if ((o as any).__guideHelper) return;
+          o.selectable = true; o.evented = true;
+        });
+        fc.requestRenderAll();
+      }
+    });
+  }, [editorMode]);
 
   // Expose getDesignJson via ref
   useImperativeHandle(ref, () => ({
@@ -370,13 +477,13 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     await new Promise<void>((resolve, reject) => {
       fabric.Image.fromURL(dataUrl, (img) => {
         if (!img) { reject(new Error('SVG betöltési hiba')); return; }
-        const iw = img.width ?? canvasW;
-        const ih = img.height ?? canvasH;
-        const ratio = Math.min(canvasW / iw, canvasH / ih);
+        const iw = img.width ?? cutW;
+        const ih = img.height ?? cutH;
+        const ratio = Math.min(cutW / iw, cutH / ih);
         img.scale(ratio);
         img.set({
-          left: (canvasW - iw * ratio) / 2,
-          top:  (canvasH - ih * ratio) / 2,
+          left: bleedPx + (cutW - iw * ratio) / 2,
+          top:  bleedPx + (cutH - ih * ratio) / 2,
         });
         (img as any).name = `PDF ${page}. oldal (SVG)`;
         fc.add(img);
@@ -424,9 +531,9 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const fc = getActiveFabric();
     if (!fc) return;
 
-    const ratio    = Math.min(canvasW / viewport.width, canvasH / viewport.height);
-    const imgLeft  = (canvasW - viewport.width  * ratio) / 2;
-    const imgTop   = (canvasH - viewport.height * ratio) / 2;
+    const ratio    = Math.min(cutW / viewport.width, cutH / viewport.height);
+    const imgLeft  = bleedPx + (cutW - viewport.width  * ratio) / 2;
+    const imgTop   = bleedPx + (cutH - viewport.height * ratio) / 2;
 
     // 1. Place graphics background
     await new Promise<void>(resolve => {
@@ -480,9 +587,9 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fabric.Image.fromURL(imgDataUrl, (img: fabric.Image) => {
       const fc = getActiveFabric();
       if (!fc) return;
-      const ratio = Math.min(canvasW / (img.width ?? canvasW), canvasH / (img.height ?? canvasH));
+      const ratio = Math.min(cutW / (img.width ?? cutW), cutH / (img.height ?? cutH));
       img.scale(ratio);
-      img.set({ left: (canvasW - (img.width ?? 0) * ratio) / 2, top: (canvasH - (img.height ?? 0) * ratio) / 2 });
+      img.set({ left: bleedPx + (cutW - (img.width ?? 0) * ratio) / 2, top: bleedPx + (cutH - (img.height ?? 0) * ratio) / 2 });
       (img as any).name = label;
       fc.add(img);
       fc.setActiveObject(img);
@@ -636,23 +743,6 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
 
     fabricRef.current = fc;
 
-    // Bleed háttér (szürkés kitöltés) - a szegély és a biztonsági zóna vonal a GuideOverlay-en jelenik meg
-    const bleedPx = BLEED_MM * MM_TO_PX;
-    const bleedRect = new fabric.Rect({
-      left: -bleedPx,
-      top: -bleedPx,
-      width: canvasW + bleedPx * 2,
-      height: canvasH + bleedPx * 2,
-      fill: 'rgba(200,200,200,0.15)',
-      stroke: undefined,
-      selectable: false,
-      evented: false,
-      excludeFromExport: true,
-    });
-    (bleedRect as any).__guideHelper = true;
-    fc.add(bleedRect);
-    fc.sendToBack(bleedRect);
-
     // Eseménykezelők
     fc.on('selection:created', (e: any) => {
       const obj = e.selected?.[0] ?? null;
@@ -673,7 +763,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc.on('mouse:move', (e: any) => {
       const p = e.absolutePointer;
       if (!p) return;
-      setCursorMm({ x: p.x / MM_TO_PX, y: p.y / MM_TO_PX });
+      setCursorMm({ x: p.x / MM_TO_PX - BLEED_MM, y: params.height_mm - (p.y / MM_TO_PX - BLEED_MM) });
     });
     fc.on('mouse:out', () => setCursorMm({ x: null, y: null }));
 
@@ -686,7 +776,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const top = obj.top ?? 0;
       const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
       const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
-      setObjPosMm({ x: left / MM_TO_PX, y: top / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+      setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: params.height_mm - ((top + oh - bleedPx) / MM_TO_PX), w: ow / MM_TO_PX, h: oh / MM_TO_PX });
     });
 
     // Set initial zoom + dimensions (Fabric zoom instead of CSS transform = sharp rendering)
@@ -701,14 +791,35 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     if (pendingImg) {
       pendingPdfPagesRef.current[sideIdx] = '';
       fabric.Image.fromURL(pendingImg, (img: fabric.Image) => {
-        const ratio = Math.min(canvasW / (img.width ?? canvasW), canvasH / (img.height ?? canvasH));
+        const ratio = Math.min(cutW / (img.width ?? cutW), cutH / (img.height ?? cutH));
         img.scale(ratio);
-        img.set({ left: 0, top: 0 });
+        img.set({ left: bleedPx, top: bleedPx });
         (img as any).name = `PDF ${side}. oldal`;
         fc.add(img);
         fc.renderAll();
         saveHistory(side);
       });
+    }
+
+    // Capture current generation to detect if a new reinit happens while async is in flight
+    const myGen = initGenRef.current;
+
+    // Restore objects: prefer savedCanvasDataRef (param-change carry-over), then initialDesign (first load)
+    const savedFromRef = side === '1' ? savedCanvasDataRef.current.d1 : savedCanvasDataRef.current.d2;
+    if (savedFromRef && savedFromRef.length > 0) {
+      // Clear the ref so we don't re-apply stale data on next reinit
+      if (side === '1') savedCanvasDataRef.current.d1 = null;
+      else savedCanvasDataRef.current.d2 = null;
+      restoredSidesRef.current.add(side);
+      fabric.util.enlivenObjects(savedFromRef, (enlivened: fabric.Object[]) => {
+        if (initGenRef.current !== myGen) return; // canvas already remounted — discard
+        enlivened.forEach((obj: fabric.Object) => fc.add(obj));
+        fc.renderAll();
+        updateObjects(side);
+        sidesFullyRestoredRef.current.add(side);
+        saveHistory(side);
+      }, 'fabric' as any);
+      return;
     }
 
     // Restore saved design on initial load (once per side)
@@ -718,6 +829,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const savedObjs = (designData?.objects ?? []).filter((o: any) => !o.__guideHelper);
       if (savedObjs.length > 0) {
         fabric.util.enlivenObjects(savedObjs, (enlivened: fabric.Object[]) => {
+          if (initGenRef.current !== myGen) return; // canvas already remounted — discard
           enlivened.forEach((obj: fabric.Object) => fc.add(obj));
           fc.renderAll();
           updateObjects(side);
@@ -753,6 +865,19 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     }, 100);
     return () => {
       clearTimeout(t);
+      // Increment generation — causes any in-flight enlivenObjects callbacks to discard their work
+      initGenRef.current++;
+      // Save user objects before disposing so they survive parameter changes
+      const extractObjs = (fc: fabric.Canvas | null) => {
+        if (!fc) return null;
+        const objs = fc.getObjects().filter((o: any) => !o.__guideHelper);
+        if (objs.length === 0) return null;
+        return objs.map(o => o.toObject(['id', 'name']));
+      };
+      savedCanvasDataRef.current = { d1: extractObjs(fabricRef1.current), d2: extractObjs(fabricRef2.current) };
+      // Clear restore guards so the next initCanvas always does a full fresh restore
+      restoredSidesRef.current = new Set();
+      sidesFullyRestoredRef.current = new Set();
       fabricRef1.current?.dispose();
       fabricRef2.current?.dispose();
       fabricRef1.current = null;
@@ -768,7 +893,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const top = obj.top ?? 0;
     const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
     const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
-    setObjPosMm({ x: left / MM_TO_PX, y: top / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+    setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: params.height_mm - ((top + oh - bleedPx) / MM_TO_PX), w: ow / MM_TO_PX, h: oh / MM_TO_PX });
   };
 
   // Snap object to nearest guide (includes fold lines) + page edges + trim/safe zone
@@ -791,23 +916,24 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       else if (Math.abs(newTop + oh    - target) < threshold) newTop = target - oh;
     };
 
-    // 1. Page edges + trim/safe-zone lines (alapset)
+    // 1. Sheet edges + cut/product edges
     if (snapEdgesRef.current) {
-      const safePx = SAFE_MM * MM_TO_PX;
-      // Vertical lines: left edge (0), safe-left, safe-right, right edge
-      for (const x of [0, safePx, canvasW - safePx, canvasW]) tryX(x);
-      // Horizontal lines: top (0), safe-top, safe-bottom, bottom
-      for (const y of [0, safePx, canvasH - safePx, canvasH]) tryY(y);
-      // Center axes
+      // Sheet edges (outermost)
+      for (const x of [0, canvasW]) tryX(x);
+      for (const y of [0, canvasH]) tryY(y);
+      // Cut/product edges (inset by bleed)
+      for (const x of [bleedPx, canvasW - bleedPx]) tryX(x);
+      for (const y of [bleedPx, canvasH - bleedPx]) tryY(y);
+      // Center (same for sheet and product)
       tryX(canvasW / 2);
       tryY(canvasH / 2);
     }
 
-    // 2. User guides + fold lines
+    // 2. User guides + fold lines (stored in cut-relative mm, convert to fabric px)
     if (snapRef.current) {
       const guideList = [...guidesRef.current, ...foldLinesRef.current];
       for (const g of guideList) {
-        const gPx = g.mm * MM_TO_PX;
+        const gPx = g.mm * MM_TO_PX + bleedPx;  // cut-relative → sheet fabric px
         if (g.axis === 'x') tryX(gPx);
         else                tryY(gPx);
       }
@@ -845,9 +971,9 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const rect = canvasWrapperRef.current?.getBoundingClientRect();
     if (!rect) return;
     const pos = draggingItem.axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top;
-    const newMm = pos / displayScale;
+    const newMm = pos / displayScale - BLEED_MM;  // convert to cut-relative mm
     const max = draggingItem.axis === 'x' ? params.width_mm : params.height_mm;
-    const clamped = Math.max(0, Math.min(max, parseFloat(newMm.toFixed(1))));
+    const clamped = Math.max(-BLEED_MM, Math.min(max + BLEED_MM, parseFloat(newMm.toFixed(1))));
     if (draggingItem.type === 'guide') updateGuide(draggingItem.id, clamped);
     else updateFoldLine(draggingItem.id, clamped);
   };
@@ -857,8 +983,8 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const handleRulerMouseDown = (axis: 'x' | 'y') => (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const posPx = axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top;
-    const mm = Math.round((posPx / displayScale) * 2) / 2;  // 0.5mm precision
-    const clamped = Math.max(0, Math.min(axis === 'x' ? params.width_mm : params.height_mm, mm));
+    const mm = Math.round(((posPx / displayScale) - BLEED_MM) * 2) / 2;  // 0.5mm precision, cut-relative
+    const clamped = Math.max(-BLEED_MM, Math.min(axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM, mm));
     addGuide(axis, clamped);
   };
 
@@ -894,10 +1020,12 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     if (!fc) return;
     fc.loadFromJSON(hist[newIdx], () => {
       fc.renderAll();
+      updateObjects(side);
       if (side === '1') setHistIdx1(newIdx);
       else setHistIdx2(newIdx);
     });
   };
+  undoRef.current = undo;
 
   const redo = () => {
     const side = activeSide;
@@ -909,10 +1037,12 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     if (!fc) return;
     fc.loadFromJSON(hist[newIdx], () => {
       fc.renderAll();
+      updateObjects(side);
       if (side === '1') setHistIdx1(newIdx);
       else setHistIdx2(newIdx);
     });
   };
+  redoRef.current = redo;
 
   // Szöveg hozzáadása
   const addText = () => {
@@ -1028,6 +1158,127 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc!.renderAll();
     saveHistory(activeSide);
   };
+  deleteSelectedRef.current = deleteSelected;
+
+  // ── Comment annotation helpers ──
+  const addCommentAnnotation = (ann: CommentAnnotation) => {
+    setCommentAnnotations(prev => [...prev, ann]);
+  };
+
+  const updateCommentText = (id: string, text: string) => {
+    setCommentAnnotations(prev => prev.map(a => a.id === id ? { ...a, text } : a));
+  };
+
+  const resolveComment = (id: string) => {
+    setCommentAnnotations(prev => prev.map(a => a.id === id ? { ...a, resolved: true } : a));
+  };
+
+  const deleteComment = (id: string) => {
+    setCommentAnnotations(prev => prev.filter(a => a.id !== id));
+    if (editingCommentId === id) { setEditingCommentId(null); setCommentTextDraft(''); }
+  };
+
+  // Comment overlay mouse handlers (area + pin + arrow creation)
+  const handleCommentMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (editorMode !== 'comment') return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / scale;
+    const y = (e.clientY - rect.top) / scale;
+    if (commentTool === 'pin') {
+      const id = `c-${commentNextId.current++}`;
+      const ann: CommentAnnotation = {
+        id, side: activeSide, type: 'pin',
+        x, y, text: '', author: 'Felhasználó',
+        timestamp: Date.now(), resolved: false, color: commentColor,
+      };
+      setNewCommentDraft(ann);
+      setCommentTextDraft('');
+    } else if (commentTool === 'area') {
+      commentDrawStartRef.current = { x, y };
+    } else if (commentTool === 'arrow') {
+      commentDrawStartRef.current = { x, y };
+    }
+  };
+
+  const handleCommentMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (editorMode !== 'comment' || !commentDrawStartRef.current) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / scale;
+    const y = (e.clientY - rect.top) / scale;
+    const start = commentDrawStartRef.current;
+    if (commentTool === 'area') {
+      const draft: CommentAnnotation = {
+        id: 'draft', side: activeSide, type: 'area',
+        x: Math.min(start.x, x), y: Math.min(start.y, y),
+        width: Math.abs(x - start.x), height: Math.abs(y - start.y),
+        text: '', author: 'Felhasználó',
+        timestamp: Date.now(), resolved: false, color: commentColor,
+      };
+      setNewCommentDraft(draft);
+    } else if (commentTool === 'arrow') {
+      const draft: CommentAnnotation = {
+        id: 'draft', side: activeSide, type: 'arrow',
+        x: start.x, y: start.y, x2: x, y2: y,
+        text: '', author: 'Felhasználó',
+        timestamp: Date.now(), resolved: false, color: commentColor,
+      };
+      setNewCommentDraft(draft);
+    }
+  };
+
+  const handleCommentMouseUp = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (editorMode !== 'comment') return;
+    if (commentTool === 'area' && commentDrawStartRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+      const start = commentDrawStartRef.current;
+      commentDrawStartRef.current = null;
+      const w = Math.abs(x - start.x);
+      const h = Math.abs(y - start.y);
+      if (w < 5 && h < 5) { setNewCommentDraft(null); return; } // too small — ignore
+      const id = `c-${commentNextId.current++}`;
+      const ann: CommentAnnotation = {
+        id, side: activeSide, type: 'area',
+        x: Math.min(start.x, x), y: Math.min(start.y, y),
+        width: w, height: h,
+        text: '', author: 'Felhasználó',
+        timestamp: Date.now(), resolved: false, color: commentColor,
+      };
+      setNewCommentDraft(ann);
+      setCommentTextDraft('');
+    } else if (commentTool === 'arrow' && commentDrawStartRef.current) {
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / scale;
+      const y = (e.clientY - rect.top) / scale;
+      const start = commentDrawStartRef.current;
+      commentDrawStartRef.current = null;
+      const dist = Math.sqrt((x - start.x) ** 2 + (y - start.y) ** 2);
+      if (dist < 8) { setNewCommentDraft(null); return; } // too short — ignore
+      const id = `c-${commentNextId.current++}`;
+      const ann: CommentAnnotation = {
+        id, side: activeSide, type: 'arrow',
+        x: start.x, y: start.y, x2: x, y2: y,
+        text: '', author: 'Felhasználó',
+        timestamp: Date.now(), resolved: false, color: commentColor,
+      };
+      setNewCommentDraft(ann);
+      setCommentTextDraft('');
+    }
+  };
+
+  const confirmNewComment = () => {
+    if (!newCommentDraft) return;
+    addCommentAnnotation({ ...newCommentDraft, id: newCommentDraft.id === 'draft' ? `c-${commentNextId.current++}` : newCommentDraft.id, text: commentTextDraft });
+    setNewCommentDraft(null);
+    setCommentTextDraft('');
+  };
+
+  const cancelNewComment = () => {
+    setNewCommentDraft(null);
+    setCommentTextDraft('');
+    commentDrawStartRef.current = null;
+  };
 
   /** Lapszélig húzás — arányos, az első lapszélt elérő oldalt veszi figyelembe (contain) */
   const fitToPage = () => {
@@ -1092,12 +1343,168 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const obj = fc?.getActiveObject();
     if (!obj) return;
     fc!.sendToBack(obj);
-    // Move guide helpers back
-    const guides = fc!.getObjects().filter(o => (o as any).__guideHelper);
-    guides.forEach(g => fc!.sendToBack(g));
     fc!.renderAll();
     saveHistory(activeSide);
   };
+
+  // ===== Nyomdakész PDF export (admin) =====
+  const handleExportPrintPDF = async () => {
+    const fc1 = fabricRef1.current;
+    if (!fc1) return;
+    message.loading({ content: 'Nyomdakész PDF generálása…', key: 'pdfexp', duration: 0 });
+    try {
+      // Dynamic import — jsPDF is already in dependencies
+      const { jsPDF } = await import('jspdf');
+
+      const widthMm  = Number(params.width_mm);
+      const heightMm = Number(params.height_mm);
+      if (!Number.isFinite(widthMm) || !Number.isFinite(heightMm) || widthMm <= 0 || heightMm <= 0) {
+        throw new Error(`Invalid print size: ${params.width_mm} x ${params.height_mm}`);
+      }
+      const bleedMm  = BLEED_MM;          // 3 mm
+      const CROP_GAP = 1;                  // mm: gap from cut edge to crop mark start
+      const pageW = widthMm  + 2 * bleedMm;
+      const pageH = heightMm + 2 * bleedMm;
+      const orientation = pageW >= pageH ? 'landscape' : 'portrait';
+
+      // -- helper: export one fabric canvas as JPEG data URL (full sheet incl. bleed, ~300 DPI) --
+      const exportSheet = (fc: fabric.Canvas): string => {
+        const savedZoom = fc.getZoom();
+        const savedW    = fc.getWidth();
+        const savedH    = fc.getHeight();
+        const helpers   = fc.getObjects().filter((o: any) => o.__guideHelper);
+        helpers.forEach((o: any) => o.set('visible', false));
+        fc.setZoom(1);
+        fc.setDimensions({ width: canvasW, height: canvasH });
+        fc.renderAll();
+        // canvas is at 96 DPI (MM_TO_PX = 96/25.4 ≈ 3.78); target ~300 DPI → multiplier 3
+        const url = fc.toDataURL({ format: 'jpeg', quality: 0.95, multiplier: 3 });
+        helpers.forEach((o: any) => o.set('visible', true));
+        fc.setZoom(savedZoom);
+        fc.setDimensions({ width: savedW, height: savedH });
+        fc.renderAll();
+        return url;
+      };
+
+      // -- helper: draw crop marks on current page --
+      const drawCropMarks = (doc: InstanceType<typeof jsPDF>) => {
+        doc.setDrawColor(0);          // K=100 registration black
+        doc.setLineWidth(0.25);
+        doc.setLineDashPattern([], 0);
+        const x0 = bleedMm;               // left  cut edge
+        const x1 = bleedMm + widthMm;     // right cut edge
+        const y0 = bleedMm;               // top   cut edge
+        const y1 = bleedMm + heightMm;    // bottom cut edge
+        const g  = CROP_GAP;
+        // top-left
+        doc.line(0, y0, x0 - g, y0);      // ← horizontal
+        doc.line(x0, 0, x0, y0 - g);      // ↑ vertical
+        // top-right
+        doc.line(x1 + g, y0, pageW, y0);
+        doc.line(x1, 0, x1, y0 - g);
+        // bottom-left
+        doc.line(0, y1, x0 - g, y1);
+        doc.line(x0, y1 + g, x0, pageH);
+        // bottom-right
+        doc.line(x1 + g, y1, pageW, y1);
+        doc.line(x1, y1 + g, x1, pageH);
+      };
+
+      // -- helper: draw fold-line indicators in bleed (dashed) --
+      const drawFoldMarks = (doc: InstanceType<typeof jsPDF>) => {
+        if (foldLines.length === 0) return;
+        doc.setDrawColor(0);
+        doc.setLineWidth(0.25);
+        doc.setLineDashPattern([1.5, 1], 0);
+        const x0 = bleedMm;
+        const x1 = bleedMm + widthMm;
+        const y0 = bleedMm;
+        const y1 = bleedMm + heightMm;
+        const g  = CROP_GAP;
+        for (const f of foldLines) {
+          if (f.axis === 'x') {
+            // vertical fold line at cut-relative f.mm
+            const fx = bleedMm + f.mm;
+            doc.line(fx, 0,        fx, y0 - g);    // top bleed
+            doc.line(fx, y1 + g,   fx, pageH);     // bottom bleed
+          } else {
+            // horizontal fold line at cut-relative f.mm
+            const fy = bleedMm + f.mm;
+            doc.line(0,      fy, x0 - g, fy);      // left bleed
+            doc.line(x1 + g, fy, pageW,  fy);      // right bleed
+          }
+        }
+        doc.setLineDashPattern([], 0);
+      };
+
+      const doc = new jsPDF({
+        unit: 'mm',
+        orientation,
+        format: [pageW, pageH],
+        compress: true,
+      });
+
+      // Inject TrimBox / BleedBox into each page dictionary (PDF points, bottom-left origin)
+      const MM2PT = 72 / 25.4;
+      doc.internal.events.subscribe('putPage', (_data: any) => {
+        const b  = (bleedMm           * MM2PT).toFixed(3);
+        const w  = ((bleedMm + widthMm)  * MM2PT).toFixed(3);
+        const h  = ((bleedMm + heightMm) * MM2PT).toFixed(3);
+        const pw = (pageW * MM2PT).toFixed(3);
+        const ph = (pageH * MM2PT).toFixed(3);
+        (doc as any).internal.write(`/TrimBox [${b} ${b} ${w} ${h}]`);
+        (doc as any).internal.write(`/BleedBox [0 0 ${pw} ${ph}]`);
+      });
+
+      // === Page 1 ===
+      const raw1 = exportSheet(fc1);
+      const img1 = params.side1_mode === 'bw' ? await toGrayscaleDataUrl(raw1) : raw1;
+      doc.addImage(img1, 'JPEG', 0, 0, pageW, pageH);
+      drawCropMarks(doc);
+      drawFoldMarks(doc);
+
+      // === Page 2 (if 2-sided) ===
+      if (params.sides === '2' && fabricRef2.current) {
+        doc.addPage([pageW, pageH], orientation);
+        const raw2 = exportSheet(fabricRef2.current);
+        const img2 = params.side2_mode === 'bw' ? await toGrayscaleDataUrl(raw2) : raw2;
+        doc.addImage(img2, 'JPEG', 0, 0, pageW, pageH);
+        drawCropMarks(doc);
+        drawFoldMarks(doc);
+      }
+
+      doc.setProperties({
+        title:    `Nyomdakész PDF — ${params.product_name}`,
+        subject:  `Vágott: ${widthMm}×${heightMm}mm | Kifutó: ${bleedMm}mm | CMYK`,
+        creator:  'PixiSys PrintEditor',
+        keywords: 'CMYK nyomdakész print-ready bleed crop-marks',
+      });
+
+      const fname = `${params.product_name.replace(/[^\w\u00C0-\u024F]/g, '_')}_nyomdakesz.pdf`;
+      doc.save(fname);
+      message.success({ content: 'PDF letöltve!', key: 'pdfexp', duration: 3 });
+    } catch (err) {
+      console.error('[PDF export]', err);
+      message.error({ content: 'PDF exportálás sikertelen', key: 'pdfexp', duration: 4 });
+    }
+  };
+
+  // Converts any PNG/JPEG data URL to a grayscale version via an offscreen canvas.
+  // Used for fekete-fehér (BW) sides in 3D preview.
+  const toGrayscaleDataUrl = (dataUrl: string): Promise<string> =>
+    new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d')!;
+        ctx.filter = 'grayscale(1)';
+        ctx.drawImage(img, 0, 0);
+        resolve(c.toDataURL('image/png'));
+      };
+      img.src = dataUrl;
+    });
 
   const handlePreview3D = () => {
     const fc1 = fabricRef1.current;
@@ -1141,12 +1548,17 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       return url;
     };
 
-    const data1 = exportFc(fc1);
-    const data2 = (params.sides === '2' && fc2) ? exportFc(fc2) : '';
-    const W = params.width_mm;
-    const H = params.height_mm;
-    const productName = params.product_name.replace(/`/g, "'");
-    const sidesLabel = params.sides === '2' ? '2 oldalas' : '1 oldalas';
+    const rawData1 = exportFc(fc1);
+    const rawData2 = (params.sides === '2' && fc2) ? exportFc(fc2) : '';
+
+    // Apply grayscale conversion for BW sides then open the 3D window
+    const buildPreview = async () => {
+      const data1 = params.side1_mode === 'bw' ? await toGrayscaleDataUrl(rawData1) : rawData1;
+      const data2 = params.side2_mode === 'bw' && rawData2 ? await toGrayscaleDataUrl(rawData2) : rawData2;
+      const W = params.width_mm;
+      const H = params.height_mm;
+      const productName = params.product_name.replace(/`/g, "'");
+      const sidesLabel = params.sides === '2' ? '2 oldalas' : '1 oldalas';
 
     const html = `<!DOCTYPE html>
 <html lang="hu">
@@ -1232,10 +1644,12 @@ window.addEventListener('resize',()=>{
 <\/script>
 </body></html>`;
 
-    const blob = new Blob([html], { type: 'text/html' });
-    const blobUrl = URL.createObjectURL(blob);
-    window.open(blobUrl, '_blank');
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+      const blob = new Blob([html], { type: 'text/html' });
+      const blobUrl = URL.createObjectURL(blob);
+      window.open(blobUrl, '_blank');
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60000);
+    };
+    void buildPreview();
   };
 
   // Szöveg igazítás
@@ -1272,92 +1686,213 @@ window.addEventListener('resize',()=>{
 
   const activeFc = getActiveFabric();
   const currentObjects = activeSide === '1' ? objects1 : objects2;
+  const hasActiveObjects = currentObjects.length > 0;
+  // Side mode comes directly from params (synced via the useEffect below)
+  const activeSideMode = activeSide === '1' ? params.side1_mode : params.side2_mode;
+  const activeSideUnprinted = activeSideMode === 'none';
   const histIdx = activeSide === '1' ? histIdx1 : histIdx2;
   const histLen = activeSide === '1' ? history1.length : history2.length;
 
-  // Guide + FoldLine overlay canvas
-  const GuideOverlay = () => {
-    const overlayRef = useRef<HTMLCanvasElement>(null);
-    useEffect(() => {
-      const canvas = overlayRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.clearRect(0, 0, displayW, displayH);
+  // ── Auto-nyomatlan: when a side becomes empty → 'none', when it gets content → restore previous mode ──
+  useEffect(() => {
+    if (!onParamsChange) return;
+    const c1 = objects1.length;
+    const c2 = objects2.length;
+    const p1 = prevObj1CountRef.current;
+    const p2 = prevObj2CountRef.current;
+    // On first render (p === -1) just seed refs, don't change params
+    if (p1 === -1) { prevObj1CountRef.current = c1; prevObj2CountRef.current = c2; return; }
+    let newM1 = params.side1_mode;
+    let newM2 = params.side2_mode;
+    // Side 1: had objects → now empty
+    if (p1 > 0 && c1 === 0) {
+      if (params.side1_mode !== 'none') prevSide1ModeRef.current = params.side1_mode;
+      newM1 = 'none';
+    }
+    // Side 1: was empty → now has objects
+    if (p1 === 0 && c1 > 0) {
+      newM1 = prevSide1ModeRef.current || 'color';
+    }
+    // Side 2: had objects → now empty
+    if (p2 > 0 && c2 === 0) {
+      if (params.side2_mode !== 'none') prevSide2ModeRef.current = params.side2_mode;
+      newM2 = 'none';
+    }
+    // Side 2: was empty → now has objects
+    if (p2 === 0 && c2 > 0) {
+      newM2 = prevSide2ModeRef.current || 'color';
+    }
+    prevObj1CountRef.current = c1;
+    prevObj2CountRef.current = c2;
+    if (newM1 !== params.side1_mode || newM2 !== params.side2_mode) {
+      autoNyomatlanRef.current = true;
+      onParamsChange({ ...params, side1_mode: newM1, side2_mode: newM2 });
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [objects1.length, objects2.length]);
 
-      // Bleed boundary (trim line) — always on top
-      ctx.strokeStyle = '#aaa';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 4]);
-      ctx.strokeRect(0.5, 0.5, displayW - 1, displayH - 1);
+  // Keep prevMode refs in sync when user explicitly changes mode (via PrintParamsPanel service selection)
+  useEffect(() => {
+    if (params.side1_mode !== 'none') prevSide1ModeRef.current = params.side1_mode;
+    if (params.side2_mode !== 'none') prevSide2ModeRef.current = params.side2_mode;
+  }, [params.side1_mode, params.side2_mode]);
 
-      // Safe zone border — always on top
-      const safeDsp = SAFE_MM * displayScale;
-      ctx.strokeStyle = '#ff4d4f';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([6, 3]);
-      ctx.strokeRect(safeDsp, safeDsp, displayW - safeDsp * 2, displayH - safeDsp * 2);
+  // ── Confirm dialog when user manually selects "Nyomatlan" while the side has objects ──
+  useEffect(() => {
+    // If the change came from the auto-nyomatlan effect above (object count change), skip
+    if (autoNyomatlanRef.current) {
+      autoNyomatlanRef.current = false;
+      prevParamMode1Ref.current = params.side1_mode;
+      prevParamMode2Ref.current = params.side2_mode;
+      return;
+    }
+    const clearSide = (side: '1' | '2') => {
+      const fc = side === '1' ? fabricRef1.current : fabricRef2.current;
+      if (!fc) return;
+      const objs = fc.getObjects().filter((o: any) => !o.__guideHelper);
+      objs.forEach(o => fc.remove(o));
+      fc.discardActiveObject();
+      fc.renderAll();
+      updateObjects(side);
+      saveHistory(side);
+    };
+    const revert = (side: '1' | '2', prevMode: string) => {
+      if (!onParamsChange) return;
+      const key = side === '1' ? 'side1_mode' : 'side2_mode';
+      onParamsChange({ ...params, [key]: prevMode });
+    };
 
-      // Draw guides
-      ctx.strokeStyle = GUIDE_COLOR;
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 3]);
-      for (const g of guides) {
-        const px = g.mm * displayScale;
-        ctx.beginPath();
-        if (g.axis === 'x') { ctx.moveTo(px, 0); ctx.lineTo(px, displayH); }
-        else { ctx.moveTo(0, px); ctx.lineTo(displayW, px); }
-        ctx.stroke();
+    // Side 1: user changed to 'none' while having objects
+    if (params.side1_mode === 'none' && prevParamMode1Ref.current !== 'none' && objects1.length > 0) {
+      const prev = prevParamMode1Ref.current;
+      Modal.confirm({
+        title: 'Nyomatlan oldal',
+        content: 'Az oldal jelenleg nem üres. Töröljem az összes elemet az oldalról?',
+        okText: 'Igen, törlés',
+        cancelText: 'Mégse',
+        onOk: () => clearSide('1'),
+        onCancel: () => revert('1', prev),
+      });
+    }
+    // Side 2: user changed to 'none' while having objects
+    if (params.side2_mode === 'none' && prevParamMode2Ref.current !== 'none' && objects2.length > 0) {
+      const prev = prevParamMode2Ref.current;
+      Modal.confirm({
+        title: 'Nyomatlan oldal',
+        content: 'Az oldal jelenleg nem üres. Töröljem az összes elemet az oldalról?',
+        okText: 'Igen, törlés',
+        cancelText: 'Mégse',
+        onOk: () => clearSide('2'),
+        onCancel: () => revert('2', prev),
+      });
+    }
+    prevParamMode1Ref.current = params.side1_mode;
+    prevParamMode2Ref.current = params.side2_mode;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [params.side1_mode, params.side2_mode]);
+
+  // Guide + FoldLine overlay — rendered via a stable ref (never remounts → no flicker on mouse/object move)
+  const dpr = window.devicePixelRatio || 1;
+  useEffect(() => {
+    const canvas = overlayCanvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    // DPR-aware: canvas element is displayW*dpr × displayH*dpr, CSS size is displayW×displayH
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, displayW, displayH);
+
+    // Bleed area fill (semi-transparent grey frame between sheet edge and cut line)
+    const bleedDsp = BLEED_MM * displayScale;
+    ctx.fillStyle = 'rgba(200,200,200,0.25)';
+    ctx.fillRect(0, 0, displayW, bleedDsp);                                   // top strip
+    ctx.fillRect(0, displayH - bleedDsp, displayW, bleedDsp);                 // bottom strip
+    ctx.fillRect(0, bleedDsp, bleedDsp, displayH - 2 * bleedDsp);             // left strip
+    ctx.fillRect(displayW - bleedDsp, bleedDsp, bleedDsp, displayH - 2 * bleedDsp); // right strip
+
+    // Sheet edge (outer) — light grey solid
+    ctx.strokeStyle = '#bbb';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([]);
+    ctx.strokeRect(0.5, 0.5, displayW - 1, displayH - 1);
+
+    if (hasActiveObjects) {
+      // Cut / product edge (inner) — dark dashed
+      ctx.strokeStyle = '#333';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 4]);
+      ctx.strokeRect(bleedDsp, bleedDsp, displayW - 2 * bleedDsp, displayH - 2 * bleedDsp);
+
+      // Dimension labels on the cut area edges
+      ctx.save();
+      ctx.fillStyle = '#999';
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`${params.width_mm} mm`, displayW / 2, bleedDsp - 3);
+      ctx.save();
+      ctx.translate(bleedDsp - 3, displayH / 2);
+      ctx.rotate(-Math.PI / 2);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText(`${params.height_mm} mm`, 0, 0);
+      ctx.restore();
+      ctx.restore();
+    }
+
+    // Draw guides (stored in cut-relative mm, offset by bleedDsp)
+    ctx.strokeStyle = GUIDE_COLOR;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    for (const g of guides) {
+      const px = g.mm * displayScale + bleedDsp;
+      ctx.beginPath();
+      if (g.axis === 'x') { ctx.moveTo(px, 0); ctx.lineTo(px, displayH); }
+      else { ctx.moveTo(0, px); ctx.lineTo(displayW, px); }
+      ctx.stroke();
+    }
+    // Draw fold lines
+    ctx.strokeStyle = FOLD_COLOR;
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([8, 4]);
+    for (const f of foldLines) {
+      const px = f.mm * displayScale + bleedDsp;
+      ctx.beginPath();
+      if (f.axis === 'x') { ctx.moveTo(px, 0); ctx.lineTo(px, displayH); }
+      else { ctx.moveTo(0, px); ctx.lineTo(displayW, px); }
+      ctx.stroke();
+      ctx.save();
+      ctx.setLineDash([]);
+      ctx.fillStyle = FOLD_COLOR;
+      ctx.font = '10px sans-serif';
+      if (f.axis === 'x') {
+        ctx.fillText(f.label, px + 3, 4);
+      } else {
+        ctx.fillText(f.label, 4, px - 3);
       }
-      // Draw fold lines
+      ctx.restore();
       ctx.strokeStyle = FOLD_COLOR;
       ctx.lineWidth = 1.5;
       ctx.setLineDash([8, 4]);
-      for (const f of foldLines) {
-        const px = f.mm * displayScale;
-        ctx.beginPath();
-        if (f.axis === 'x') { ctx.moveTo(px, 0); ctx.lineTo(px, displayH); }
-        else { ctx.moveTo(0, px); ctx.lineTo(displayW, px); }
-        ctx.stroke();
-        // Label
-        ctx.save();
-        ctx.setLineDash([]);
-        ctx.fillStyle = FOLD_COLOR;
-        ctx.font = '10px sans-serif';
-        if (f.axis === 'x') {
-          ctx.fillText(f.label, px + 3, 4);
-        } else {
-          ctx.fillText(f.label, 4, px - 3);
-        }
-        ctx.restore();
-        ctx.strokeStyle = FOLD_COLOR;
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([8, 4]);
-      }
-      // Origin marker at (0,0) = print top-left corner
-      ctx.save();
-      const OL = 10; // px
-      ctx.strokeStyle = '#1890ff';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([]);
-      ctx.beginPath();
-      ctx.moveTo(OL, 0); ctx.lineTo(0, 0); ctx.lineTo(0, OL);
-      ctx.stroke();
-      ctx.fillStyle = '#1890ff';
-      ctx.beginPath();
-      ctx.arc(0, 0, 2.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    });
-    return (
-      <canvas
-        ref={overlayRef}
-        width={displayW}
-        height={displayH}
-        style={{ position: 'absolute', top: 0, left: 0, pointerEvents: 'none', zIndex: 20 }}
-      />
-    );
-  };
+    }
+    // Origin marker at product bottom-left (cut area corner, 0;0)
+    ctx.save();
+    const OL = 10;
+    const ox = bleedDsp;
+    const oy = displayH - bleedDsp;
+    ctx.strokeStyle = '#1890ff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(ox + OL, oy); ctx.lineTo(ox, oy); ctx.lineTo(ox, oy - OL);
+    ctx.stroke();
+    ctx.fillStyle = '#1890ff';
+    ctx.beginPath();
+    ctx.arc(ox, oy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayW, displayH, displayScale, params.width_mm, params.height_mm, guides, foldLines, dpr, hasActiveObjects]);
 
   return (
     <>
@@ -1418,7 +1953,50 @@ window.addEventListener('resize',()=>{
           </div>
         )}
         {/* Expanded content */}
-        {toolPanelOpen && (
+        {toolPanelOpen && editorMode === 'comment' && (
+        <div style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
+          <Text strong style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>
+            <CommentOutlined /> KOMMENT MÓD
+          </Text>
+          <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 10 }}>
+            Kattints a vászonra jelölő elhelyezéséhez, húzz egy területet a kijelöléshez, vagy rajzolj nyilat az irány mutatásához.
+          </Text>
+          <Divider style={{ margin: '8px 0' }} />
+          <Text strong style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>ESZKÖZ</Text>
+          <Segmented
+            size="small"
+            block
+            value={commentTool}
+            onChange={v => setCommentTool(v as CommentTool)}
+            options={[
+              { value: 'area', label: 'Terület' },
+              { value: 'pin', label: 'Jelölő' },
+              { value: 'arrow', label: 'Nyíl' },
+            ]}
+            style={{ marginBottom: 10 }}
+          />
+          <Text strong style={{ fontSize: 11, color: '#888', display: 'block', marginBottom: 4 }}>SZÍN</Text>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 10 }}>
+            {COMMENT_COLORS.map(c => (
+              <div
+                key={c}
+                onClick={() => setCommentColor(c)}
+                style={{
+                  width: 22, height: 22, borderRadius: '50%', background: c, cursor: 'pointer',
+                  border: commentColor === c ? '3px solid #333' : '3px solid transparent',
+                  transition: 'border 0.15s',
+                }}
+              />
+            ))}
+          </div>
+          <Divider style={{ margin: '8px 0' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+            <Switch size="small" checked={commentLayerVisible} onChange={v => setCommentLayerVisible(v)} />
+            <Text style={{ fontSize: 11 }}>Komment réteg látható</Text>
+          </div>
+        </div>
+        )}
+        {toolPanelOpen && editorMode === 'design' && (
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px 8px' }}>
         <Text strong style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>ELEMEK</Text>
 
@@ -1439,6 +2017,7 @@ window.addEventListener('resize',()=>{
             accept=".pdf,.svg,.jpg,.jpeg,.png,.webp"
             showUploadList={false}
             beforeUpload={handleImageUpload}
+            disabled={false}
           >
             <div
               style={{
@@ -1545,8 +2124,8 @@ window.addEventListener('resize',()=>{
             <Option value="y">Y —</Option>
           </Select>
           <InputNumber
-            size="small" min={0}
-            max={newGuideAxis === 'x' ? params.width_mm : params.height_mm}
+            size="small" min={-BLEED_MM}
+            max={newGuideAxis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
             step={0.5} addonAfter="mm" value={newGuideMm}
             onChange={v => v !== null && setNewGuideMm(v)}
             style={{ flex: 1 }}
@@ -1559,8 +2138,8 @@ window.addEventListener('resize',()=>{
             <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
               <Text style={{ fontSize: 11, width: 18, color: GUIDE_COLOR, fontWeight: 700 }}>{g.axis.toUpperCase()}</Text>
               <InputNumber
-                size="small" value={g.mm} step={0.5} min={0}
-                max={g.axis === 'x' ? params.width_mm : params.height_mm}
+                size="small" value={g.mm} step={0.5} min={-BLEED_MM}
+                max={g.axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
                 onChange={v => v !== null && updateGuide(g.id, v)}
                 style={{ flex: 1 }} addonAfter="mm"
               />
@@ -1578,8 +2157,8 @@ window.addEventListener('resize',()=>{
             <Option value="y">Y —</Option>
           </Select>
           <InputNumber
-            size="small" min={0}
-            max={newFoldAxis === 'x' ? params.width_mm : params.height_mm}
+            size="small" min={-BLEED_MM}
+            max={newFoldAxis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
             step={0.5} addonAfter="mm" value={newFoldMm}
             onChange={v => v !== null && setNewFoldMm(v)}
             style={{ flex: 1 }}
@@ -1601,8 +2180,8 @@ window.addEventListener('resize',()=>{
             <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
               <Text style={{ fontSize: 11, width: 18, color: FOLD_COLOR, fontWeight: 700 }}>{f.axis.toUpperCase()}</Text>
               <InputNumber
-                size="small" value={f.mm} step={0.5} min={0}
-                max={f.axis === 'x' ? params.width_mm : params.height_mm}
+                size="small" value={f.mm} step={0.5} min={-BLEED_MM}
+                max={f.axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
                 onChange={v => v !== null && updateFoldLine(f.id, v)}
                 style={{ flex: 1 }} addonAfter="mm"
               />
@@ -1621,15 +2200,71 @@ window.addEventListener('resize',()=>{
           background: '#fff', borderBottom: '1px solid #e8e8e8',
           padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap',
         }}>
-          {/* Undo/Redo */}
-          <Tooltip title="Visszavon (Ctrl+Z)">
-            <Button size="small" icon={<UndoOutlined />} disabled={histIdx <= 0} onClick={undo} />
-          </Tooltip>
-          <Tooltip title="Előre (Ctrl+Y)">
-            <Button size="small" icon={<RedoOutlined />} disabled={histIdx >= histLen - 1} onClick={redo} />
-          </Tooltip>
+          {/* Editor mode switcher */}
+          {isAdmin && (
+            <>
+              <Segmented
+                size="small"
+                value={editorMode}
+                onChange={v => setEditorMode(v as EditorMode)}
+                options={[
+                  { value: 'design', icon: <EditOutlined />, label: 'Szerkesztés' },
+                  { value: 'comment', icon: <CommentOutlined />, label: <Badge count={commentAnnotations.filter(a => !a.resolved && a.side === activeSide).length} size="small" offset={[6, -2]}>Komment</Badge> },
+                ]}
+              />
+              <Divider type="vertical" />
+            </>
+          )}
 
-          <Divider type="vertical" />
+          {/* Undo/Redo — only in design mode */}
+          {editorMode === 'design' && (
+            <>
+              <Tooltip title="Visszavon (Ctrl+Z)">
+                <Button size="small" icon={<UndoOutlined />} disabled={histIdx <= 0} onClick={undo} />
+              </Tooltip>
+              <Tooltip title="Előre (Ctrl+Y)">
+                <Button size="small" icon={<RedoOutlined />} disabled={histIdx >= histLen - 1} onClick={redo} />
+              </Tooltip>
+              <Divider type="vertical" />
+            </>
+          )}
+
+          {/* Comment tools — only in comment mode */}
+          {editorMode === 'comment' && (
+            <>
+              <Segmented
+                size="small"
+                value={commentTool}
+                onChange={v => setCommentTool(v as CommentTool)}
+                options={[
+                  { value: 'area', label: 'Terület' },
+                  { value: 'pin', label: 'Jelölő' },
+                  { value: 'arrow', label: 'Nyíl' },
+                ]}
+              />
+              <div style={{ display: 'flex', gap: 3, alignItems: 'center' }}>
+                {COMMENT_COLORS.map(c => (
+                  <div
+                    key={c}
+                    onClick={() => setCommentColor(c)}
+                    style={{
+                      width: 16, height: 16, borderRadius: '50%', background: c, cursor: 'pointer',
+                      border: commentColor === c ? '2px solid #333' : '2px solid transparent',
+                    }}
+                  />
+                ))}
+              </div>
+              <Tooltip title={commentLayerVisible ? 'Komment réteg elrejtése' : 'Komment réteg megjelenítése'}>
+                <Button
+                  size="small"
+                  type={commentLayerVisible ? 'primary' : 'default'}
+                  icon={<EyeOutlined />}
+                  onClick={() => setCommentLayerVisible(v => !v)}
+                />
+              </Tooltip>
+              <Divider type="vertical" />
+            </>
+          )}
 
           {/* Zoom controls */}
           <Tooltip title="Kicsinyít (Ctrl+görgő)">
@@ -1648,9 +2283,30 @@ window.addEventListener('resize',()=>{
           <Tooltip title="Igazítás képernyőhöz">
             <Button size="small" icon={<FullscreenOutlined />} onClick={zoomFit} />
           </Tooltip>
-          <Tooltip title="3D el\u0151n\u00e9zet \u2014 \u00faj lapon, forgathat\u00f3">
+          <Tooltip title="3D előnézet — új lapon, forgatható">
             <Button size="small" icon={<EyeOutlined />} onClick={handlePreview3D}>3D</Button>
           </Tooltip>
+          {isAdmin && (
+            <Tooltip title="Nyomdakész PDF letöltése (CMYK, vágójel, kifutó)">
+              <Button size="small" icon={<FilePdfOutlined />} onClick={handleExportPrintPDF} style={{ color: '#d4380d' }}>
+                PDF
+              </Button>
+            </Tooltip>
+          )}
+
+          {/* Comment layer toggle — visible in both modes */}
+          {isAdmin && commentAnnotations.length > 0 && editorMode === 'design' && (
+            <Tooltip title={commentLayerVisible ? 'Kommentek elrejtése' : 'Kommentek megjelenítése'}>
+              <Badge count={commentAnnotations.filter(a => !a.resolved && a.side === activeSide).length} size="small" offset={[-4, 0]}>
+                <Button
+                  size="small"
+                  type={commentLayerVisible ? 'primary' : 'default'}
+                  icon={<CommentOutlined />}
+                  onClick={() => setCommentLayerVisible(v => !v)}
+                />
+              </Badge>
+            </Tooltip>
+          )}
 
           <Divider type="vertical" />
 
@@ -1876,13 +2532,13 @@ window.addEventListener('resize',()=>{
                   icon={<LeftOutlined />}
                   onClick={() => setActiveSide('1')}
                 >
-                  1. oldal
+                  Cím oldal
                 </Button>
                 <Button
                   type={activeSide === '2' ? 'primary' : 'default'}
                   onClick={() => setActiveSide('2')}
                 >
-                  2. oldal <RightOutlined />
+                  Hátoldal <RightOutlined />
                 </Button>
               </Space.Compact>
             </div>
@@ -1915,10 +2571,11 @@ window.addEventListener('resize',()=>{
               >
                 <CanvasRuler
                   direction="h"
-                  totalMm={params.width_mm}
+                  totalMm={sheetW_mm}
                   scale={displayScale}
                   size={RULER_SIZE}
                   cursorMm={cursorMm.x}
+                  offsetMm={-BLEED_MM}
                 />
               </div>
             </div>
@@ -1932,10 +2589,12 @@ window.addEventListener('resize',()=>{
               >
                 <CanvasRuler
                   direction="v"
-                  totalMm={params.height_mm}
+                  totalMm={sheetH_mm}
                   scale={displayScale}
                   size={RULER_SIZE}
                   cursorMm={cursorMm.y}
+                  offsetMm={-BLEED_MM}
+                  reverse
                 />
               </div>
 
@@ -1952,10 +2611,15 @@ window.addEventListener('resize',()=>{
                 onMouseUp={handleWrapperMouseUp}
                 onMouseLeave={handleWrapperMouseUp}
               >
-                <GuideOverlay />
+                <canvas
+                  ref={overlayCanvasRef}
+                  width={Math.round(displayW * dpr)}
+                  height={Math.round(displayH * dpr)}
+                  style={{ position: 'absolute', top: 0, left: 0, width: displayW, height: displayH, pointerEvents: 'none', zIndex: 20 }}
+                />
                 {/* Hit zones: guides */}
                 {guides.map(g => {
-                  const px = g.mm * displayScale;
+                  const px = g.mm * displayScale + BLEED_MM * displayScale;
                   return (
                     <div
                       key={`g-${g.id}`}
@@ -1976,7 +2640,7 @@ window.addEventListener('resize',()=>{
                 })}
                 {/* Hit zones: fold lines */}
                 {foldLines.map(f => {
-                  const px = f.mm * displayScale;
+                  const px = f.mm * displayScale + BLEED_MM * displayScale;
                   return (
                     <div
                       key={`f-${f.id}`}
@@ -2002,6 +2666,7 @@ window.addEventListener('resize',()=>{
                     overflow: 'hidden',
                     boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
                     background: '#fff',
+                    filter: params.side1_mode === 'bw' ? 'grayscale(1)' : undefined,
                   }}
                 >
                   <canvas ref={canvasRef1} />
@@ -2014,23 +2679,329 @@ window.addEventListener('resize',()=>{
                       overflow: 'hidden',
                       boxShadow: '0 4px 20px rgba(0,0,0,0.15)',
                       background: '#fff',
+                      filter: params.side2_mode === 'bw' ? 'grayscale(1)' : undefined,
                     }}
                   >
                     <canvas ref={canvasRef2} />
                   </div>
+                )}
+                {/* Nyomatlan overlay — szerkesztő UI csak, PDF/3D előnézetben NEM jelenik meg */}
+                {activeSideUnprinted && (
+                  <div style={{
+                    position: 'absolute', inset: 0, zIndex: 25,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    background: 'rgba(245,245,245,0.45)',
+                    userSelect: 'none',
+                    pointerEvents: 'none',
+                  }}>
+                    <span style={{
+                      fontSize: Math.max(28, Math.min(displayW, displayH) / 4),
+                      fontWeight: 900,
+                      color: 'rgba(0,0,0,0.09)',
+                      letterSpacing: 8,
+                      transform: 'rotate(-30deg)',
+                      textTransform: 'uppercase',
+                      fontFamily: 'sans-serif',
+                      display: 'block',
+                    }}>NYOMATLAN</span>
+                  </div>
+                )}
+                {/* ── Comment annotations overlay ── */}
+                {commentLayerVisible && (
+                  <div style={{ position: 'absolute', inset: 0, zIndex: 30, pointerEvents: 'none' }}>
+                    {commentAnnotations
+                      .filter(a => a.side === activeSide && !a.resolved)
+                      .map(ann => {
+                        const sx = ann.x * scale;
+                        const sy = ann.y * scale;
+                        if (ann.type === 'pin') {
+                          return (
+                            <div key={ann.id} style={{ position: 'absolute', left: sx - COMMENT_PIN_RADIUS, top: sy - COMMENT_PIN_RADIUS, pointerEvents: 'auto' }}>
+                              <Tooltip title={ann.text || '(nincs szöveg)'}>
+                                <div
+                                  onClick={() => { setEditingCommentId(ann.id); setCommentTextDraft(ann.text); }}
+                                  style={{
+                                    width: COMMENT_PIN_RADIUS * 2, height: COMMENT_PIN_RADIUS * 2,
+                                    borderRadius: '50%', background: ann.color,
+                                    border: '2px solid #fff', boxShadow: '0 1px 4px rgba(0,0,0,0.3)',
+                                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    fontSize: 10, color: '#fff', fontWeight: 700,
+                                  }}
+                                >
+                                  <CommentOutlined />
+                                </div>
+                              </Tooltip>
+                            </div>
+                          );
+                        }
+                        if (ann.type === 'area' && ann.width && ann.height) {
+                          const sw = ann.width * scale;
+                          const sh = ann.height * scale;
+                          return (
+                            <div key={ann.id} style={{ position: 'absolute', left: sx, top: sy, pointerEvents: 'auto' }}>
+                              <Tooltip title={ann.text || '(nincs szöveg)'}>
+                                <div
+                                  onClick={() => { setEditingCommentId(ann.id); setCommentTextDraft(ann.text); }}
+                                  style={{
+                                    width: sw, height: sh,
+                                    border: `2px solid ${ann.color}`,
+                                    background: `${ann.color}11`,
+                                    borderRadius: 3, cursor: 'pointer',
+                                  }}
+                                >
+                                  <span style={{
+                                    position: 'absolute', top: -18, left: 0,
+                                    fontSize: 10, background: ann.color,
+                                    color: '#fff', padding: '1px 6px', borderRadius: 3,
+                                    whiteSpace: 'nowrap', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis',
+                                  }}>
+                                    {ann.text || '...'}
+                                  </span>
+                                </div>
+                              </Tooltip>
+                            </div>
+                          );
+                        }
+                        if (ann.type === 'arrow' && ann.x2 != null && ann.y2 != null) {
+                          const ex = ann.x2 * scale;
+                          const ey = ann.y2 * scale;
+                          const angle = Math.atan2(ey - sy, ex - sx);
+                          const headLen = 14;
+                          return (
+                            <Tooltip key={ann.id} title={ann.text || '(nincs szöveg)'}>
+                              <svg
+                                style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}
+                              >
+                                <defs>
+                                  <marker id={`ah-${ann.id}`} markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                                    <polygon points="0 0, 10 3.5, 0 7" fill={ann.color} />
+                                  </marker>
+                                </defs>
+                                <line
+                                  x1={sx} y1={sy} x2={ex} y2={ey}
+                                  stroke={ann.color} strokeWidth={2.5} markerEnd={`url(#ah-${ann.id})`}
+                                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                                  onClick={() => { setEditingCommentId(ann.id); setCommentTextDraft(ann.text); }}
+                                />
+                                {/* Wider invisible stroke for easier click target */}
+                                <line
+                                  x1={sx} y1={sy} x2={ex} y2={ey}
+                                  stroke="transparent" strokeWidth={12}
+                                  style={{ pointerEvents: 'auto', cursor: 'pointer' }}
+                                  onClick={() => { setEditingCommentId(ann.id); setCommentTextDraft(ann.text); }}
+                                />
+                                {/* Label near midpoint */}
+                                {ann.text && (
+                                  <foreignObject
+                                    x={(sx + ex) / 2 - 60} y={(sy + ey) / 2 - 10}
+                                    width={120} height={20}
+                                    style={{ pointerEvents: 'none', overflow: 'visible' }}
+                                  >
+                                    <div style={{
+                                      fontSize: 10, background: ann.color, color: '#fff',
+                                      padding: '1px 6px', borderRadius: 3, textAlign: 'center',
+                                      whiteSpace: 'nowrap', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis',
+                                    }}>
+                                      {ann.text}
+                                    </div>
+                                  </foreignObject>
+                                )}
+                              </svg>
+                            </Tooltip>
+                          );
+                        }
+                        return null;
+                      })}
+                    {/* Draft annotation being drawn */}
+                    {newCommentDraft && newCommentDraft.type === 'area' && newCommentDraft.width && newCommentDraft.height && (
+                      <div style={{
+                        position: 'absolute',
+                        left: newCommentDraft.x * scale,
+                        top: newCommentDraft.y * scale,
+                        width: newCommentDraft.width * scale,
+                        height: newCommentDraft.height * scale,
+                        border: `2px dashed ${commentColor}`,
+                        background: `${commentColor}11`,
+                        borderRadius: 3,
+                        pointerEvents: 'none',
+                      }} />
+                    )}
+                    {/* Draft arrow being drawn */}
+                    {newCommentDraft && newCommentDraft.type === 'arrow' && newCommentDraft.x2 != null && newCommentDraft.y2 != null && (
+                      <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
+                        <defs>
+                          <marker id="ah-draft" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+                            <polygon points="0 0, 10 3.5, 0 7" fill={commentColor} />
+                          </marker>
+                        </defs>
+                        <line
+                          x1={newCommentDraft.x * scale} y1={newCommentDraft.y * scale}
+                          x2={newCommentDraft.x2 * scale} y2={newCommentDraft.y2 * scale}
+                          stroke={commentColor} strokeWidth={2.5} strokeDasharray="6 3"
+                          markerEnd="url(#ah-draft)"
+                        />
+                      </svg>
+                    )}
+                  </div>
+                )}
+                {/* Comment interaction overlay — captures mouse events in comment mode */}
+                {editorMode === 'comment' && (
+                  <div
+                    style={{
+                      position: 'absolute', inset: 0, zIndex: 35,
+                      cursor: 'crosshair',
+                    }}
+                    onMouseDown={handleCommentMouseDown}
+                    onMouseMove={handleCommentMouseMove}
+                    onMouseUp={handleCommentMouseUp}
+                  />
                 )}
               </div>
             </div>
           </div>
 
           {/* Info legend */}
-          <div style={{ marginTop: 8, fontSize: 11, color: '#aaa', display: 'flex', gap: 16 }}>
-            <span style={{ color: '#aaa' }}>Bleed: {BLEED_MM}mm szürke kéret</span>
-            <span style={{ color: '#ff4d4f' }}>Biztonsági zóna: {SAFE_MM}mm</span>
-            <span>{params.width_mm}×{params.height_mm}mm — {params.quantity} db</span>
+          <div style={{ marginTop: 8, fontSize: 11, color: '#aaa', display: 'flex', gap: 16, alignItems: 'center' }}>
+            <span style={{ color: '#bbb' }}>Lap: {sheetW_mm}×{sheetH_mm}mm</span>
+            <span style={{ color: '#333' }}>Vágott: {params.width_mm}×{params.height_mm}mm</span>
+            <span>Kifutó: {BLEED_MM}mm — {params.quantity} db</span>
             {snapEnabled && <span style={{ color: GUIDE_COLOR }}>Snap: BE</span>}
+            {cursorMm.x !== null && cursorMm.y !== null && (
+              <span style={{ color: '#1890ff', fontWeight: 600, fontFamily: 'monospace' }}>
+                X: {cursorMm.x.toFixed(1)} &nbsp; Y: {cursorMm.y.toFixed(1)} mm
+              </span>
+            )}
           </div>
         </div>
+
+        {/* ── Comment text input popover (new or editing) ── */}
+        {(newCommentDraft || editingCommentId) && editorMode === 'comment' && (
+          <div style={{
+            position: 'absolute', bottom: 60, right: 16, zIndex: 100,
+            background: '#fff', borderRadius: 8, padding: 12,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.2)', width: 280,
+            border: `2px solid ${editingCommentId ? (commentAnnotations.find(a => a.id === editingCommentId)?.color ?? '#1890ff') : commentColor}`,
+          }}>
+            <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>
+              {editingCommentId ? 'Komment szerkesztése' : 'Új komment'}
+            </Text>
+            <Input.TextArea
+              autoFocus
+              rows={3}
+              placeholder="Írd ide a kommentet…"
+              value={commentTextDraft}
+              onChange={e => setCommentTextDraft(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+                  e.preventDefault();
+                  if (editingCommentId) {
+                    updateCommentText(editingCommentId, commentTextDraft);
+                    setEditingCommentId(null); setCommentTextDraft('');
+                  } else {
+                    confirmNewComment();
+                  }
+                }
+              }}
+              style={{ marginBottom: 8 }}
+            />
+            <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+              {editingCommentId && (
+                <>
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => deleteComment(editingCommentId!)}>
+                    Törlés
+                  </Button>
+                  <Button size="small" icon={<CheckOutlined />} onClick={() => resolveComment(editingCommentId!)}>
+                    Megoldva
+                  </Button>
+                </>
+              )}
+              <Button size="small" onClick={() => { if (editingCommentId) { setEditingCommentId(null); setCommentTextDraft(''); } else { cancelNewComment(); } }}>
+                Mégse
+              </Button>
+              <Button size="small" type="primary" onClick={() => {
+                if (editingCommentId) {
+                  updateCommentText(editingCommentId, commentTextDraft);
+                  setEditingCommentId(null); setCommentTextDraft('');
+                } else {
+                  confirmNewComment();
+                }
+              }}>
+                Mentés
+              </Button>
+            </div>
+            <Text type="secondary" style={{ fontSize: 10, display: 'block', marginTop: 4 }}>
+              Ctrl+Enter: mentés
+            </Text>
+          </div>
+        )}
+
+        {/* ── Comment list panel (right sidebar when in comment mode) ── */}
+        {editorMode === 'comment' && (
+          <div style={{
+            position: 'absolute', top: 50, right: 0, bottom: 0, width: 260,
+            background: '#fafafa', borderLeft: '1px solid #e8e8e8',
+            overflowY: 'auto', padding: 10, zIndex: 50,
+          }}>
+            <Text strong style={{ fontSize: 12, color: '#888', display: 'block', marginBottom: 8 }}>
+              KOMMENTEK ({commentAnnotations.filter(a => a.side === activeSide && !a.resolved).length})
+            </Text>
+            {commentAnnotations.filter(a => a.side === activeSide && !a.resolved).length === 0 && (
+              <Text type="secondary" style={{ fontSize: 11 }}>
+                Nincs komment ezen az oldalon. Kattints vagy húzz egy területet a vásznon.
+              </Text>
+            )}
+            {commentAnnotations
+              .filter(a => a.side === activeSide)
+              .sort((a, b) => b.timestamp - a.timestamp)
+              .map(ann => (
+                <div
+                  key={ann.id}
+                  style={{
+                    background: ann.resolved ? '#f5f5f5' : '#fff',
+                    border: `1px solid ${ann.resolved ? '#d9d9d9' : ann.color}`,
+                    borderRadius: 6, padding: 8, marginBottom: 6,
+                    opacity: ann.resolved ? 0.6 : 1,
+                    cursor: 'pointer',
+                  }}
+                  onClick={() => {
+                    if (!ann.resolved) {
+                      setEditingCommentId(ann.id);
+                      setCommentTextDraft(ann.text);
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 4 }}>
+                    <div style={{ width: 8, height: 8, borderRadius: '50%', background: ann.color, flexShrink: 0 }} />
+                    <Text style={{ fontSize: 11, color: '#888', flex: 1 }}>
+                      {ann.type === 'pin' ? 'Jelölő' : ann.type === 'arrow' ? 'Nyíl' : 'Terület'} — {new Date(ann.timestamp).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' })}
+                    </Text>
+                    {ann.resolved && <CheckOutlined style={{ color: '#52c41a', fontSize: 12 }} />}
+                  </div>
+                  <Text style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap' }}>
+                    {ann.text || <span style={{ color: '#ccc', fontStyle: 'italic' }}>(üres)</span>}
+                  </Text>
+                  {!ann.resolved && (
+                    <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
+                      <Button size="small" type="text" icon={<CheckOutlined />} onClick={e => { e.stopPropagation(); resolveComment(ann.id); }} style={{ fontSize: 10, color: '#52c41a' }}>
+                        Megoldva
+                      </Button>
+                      <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={e => { e.stopPropagation(); deleteComment(ann.id); }} style={{ fontSize: 10 }}>
+                        Törlés
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            {commentAnnotations.some(a => a.side === activeSide && a.resolved) && (
+              <>
+                <Divider style={{ margin: '8px 0' }} />
+                <Text type="secondary" style={{ fontSize: 10, display: 'block', marginBottom: 4 }}>
+                  MEGOLDOTT
+                </Text>
+              </>
+            )}
+          </div>
+        )}
       </div>
 
     </div>

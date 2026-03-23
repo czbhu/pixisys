@@ -70,3 +70,4 @@ wcwidth==0.6.0
 websocket-client==1.8.0
 websockets==16.0
 zope.interface==8.2
+PyMuPDF>=1.27.0

@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Space } from 'antd';
-import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined } from '@ant-design/icons';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col } from 'antd';
+import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
 
@@ -23,6 +23,38 @@ interface ServiceDetail {
   capacity: number | null;
   max_width_mm: number | null;
   max_height_mm: number | null;
+  calculation_unit: string;
+  cost_summary?: { fixed: number; unit: number };
+}
+interface PrintServiceOption {
+  id: number;
+  name: string;
+  code: string;
+  setup_cost_selling: number;
+  unit_cost_selling: number;
+  max_width_mm: number | null;
+  max_height_mm: number | null;
+}
+interface MaterialDetail {
+  id: number;
+  name: string;
+  code?: string | null;
+  width_mm?: number | null;
+  length_mm?: number | null;
+  unit_selling_price?: number;
+  sizes?: { id: number; name: string; width_mm: number; length_mm: number; price: number }[];
+}
+interface SizeComparison {
+  label: string;
+  size_mm: [number, number];
+  price_per_sheet: number;
+  sheets_needed: number;
+  items_per_sheet: number;
+  material_cost: number;
+  needs_cutting: boolean;
+  is_default?: boolean;
+  is_best?: boolean;
+  size_id?: number;
 }
 interface ProductTemplate {
   id: number; name: string; code: string | null; sizes: ProductTemplateSize[];
@@ -33,6 +65,15 @@ interface ProductTemplate {
   custom_size_height_max?: number | null;
   service_groups_1?: number[][];
   service_groups_2?: number[][];
+  finishing_service_groups?: number[][];
+  calculator_type?: string;
+  print_sides?: 1 | 2;
+  print_service_options_details?: PrintServiceOption[];
+  fix_cost_first_side_only?: boolean;
+  allowed_materials_details?: MaterialDetail[];
+  required_services?: number[];
+  finishing_services?: number[];
+  quantity_discounts?: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
 }
 
 export interface PriceBreakdown {
@@ -47,6 +88,62 @@ export interface PriceBreakdown {
   total: number;
   unit_price: number;
   quantity: number;
+}
+
+interface ClickPriceBreakdown {
+  items_per_sheet: number;
+  fit_w: number;
+  fit_h: number;
+  rotated: boolean;
+  sheets_needed: number;
+  clicks_total: number;
+  print_sides: number;
+  // production layout
+  full_sheets: number;
+  partial_sheet_items: number;
+  partial_coverage_pct: number;
+  waste_items: number;
+  sheet_w_mm: number;
+  sheet_h_mm: number;
+  // cutting
+  cutting_info: {
+    needs_cutting: boolean;
+    cutting_mode: string;
+    material_size_mm: [number, number] | null;
+    cut_sheet_size_mm: [number, number];
+    cut_sheets_per_material: number;
+    raw_material_sheets_needed: number;
+    total_cut_sheets: number;
+  };
+  // per-side detailed
+  print_service_name_1?: string | null;
+  print_service_name_2?: string | null;
+  print_service_items_1?: CostItem[];
+  print_service_items_2?: CostItem[];
+  print_cost_side1: number;
+  print_cost_side2: number;
+  print_cost: number;
+  // material
+  material_cost: number;
+  material_name?: string | null;
+  material_items?: CostItem[];
+  size_comparison?: SizeComparison[];
+  // extra services
+  service_cost: number;
+  service_breakdown: { id: number; name: string; total: number; items?: CostItem[]; category?: 'required' | 'side' | 'finishing' }[];
+  subtotal: number;
+  margin_pct: number;
+  total: number;
+  unit_price: number;
+  quantity: number;
+}
+
+interface CostItem {
+  name: string;
+  type: 'fixed' | 'click' | 'unit';
+  price_per: number;
+  units: number;
+  total: number;
 }
 
 interface Props {
@@ -94,28 +191,93 @@ const SectionLabel: React.FC<{ label: string }> = ({ label }) => (
   </Text>
 );
 
+const STORAGE_KEY = 'pixierp_editor_state';
+
+/** Read click-state sub-object from localStorage */
+const readClickState = (): any => {
+  try {
+    const s = localStorage.getItem(STORAGE_KEY);
+    if (s) return JSON.parse(s).click_state ?? {};
+  } catch {}
+  return {};
+};
+
 const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, isAdmin }) => {
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(null);
   const [selectedPreset, setSelectedPreset] = useState<number | null>(null);
-  const [productSizeKey, setProductSizeKey] = useState<string | null>(null); // 'idx_N' or 'custom'
+  const [productSizeKey, setProductSizeKey] = useState<string | null>(() => readClickState().productSizeKey ?? null);
   const [pricing, setPricing] = useState<PriceBreakdown | null>(null);
   const [calcLoading, setCalcLoading] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Click-sheet-print specific state – initialize from storage
+  const _cs = readClickState();
+  const [clickPricing, setClickPricing] = useState<ClickPriceBreakdown | null>(null);
+  const [selectedPrintSvcId1, setSelectedPrintSvcId1] = useState<number | null>(_cs.svcId1 ?? null);
+  const [selectedPrintSvcId2, setSelectedPrintSvcId2] = useState<number | null>(_cs.svcId2 ?? null);
+  // Refs to remember previous service selection before auto-nyomatlan switched it to 0
+  const prevSvcId1Ref = useRef<number | null>(_cs.svcId1 ?? null);
+  const prevSvcId2Ref = useRef<number | null>(_cs.svcId2 ?? null);
+  const [clickSheetW, setClickSheetW] = useState<number>(_cs.sheetW ?? 330);
+  const [clickSheetH, setClickSheetH] = useState<number>(_cs.sheetH ?? 487);
+  const [clickBleed, setClickBleed] = useState<number>(_cs.bleed ?? 3);
+  const [clickSides, setClickSides] = useState<1 | 2>((_cs.sides as 1 | 2) ?? 1);
+  const clickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const restoringRef = useRef(true); // true during initial load
+
+  // Materials – derived from selectedProduct, not loaded globally
+
+  // Imposition modal
+  const [impositionModalOpen, setImpositionModalOpen] = useState(false);
+  const [modalSheetW, setModalSheetW] = useState(330);
+  const [modalSheetH, setModalSheetH] = useState(487);
+  const [modalBleed, setModalBleed] = useState(3);
+  const [modalForceRotate, setModalForceRotate] = useState<'auto' | 'normal' | 'rotated'>('auto');
+  const [modalCuttingMode, setModalCuttingMode] = useState<'auto' | 'material' | 'print'>('auto');
+  const [clickForceRotate, setClickForceRotate] = useState<'auto' | 'normal' | 'rotated'>((_cs.forceRotate as any) ?? 'auto');
+  const [cuttingMode, setCuttingMode] = useState<'auto' | 'material' | 'print'>((_cs.cuttingMode as any) ?? 'auto');
+
   // Service selection: per AND-group for side 1 and side 2
   // selectedServices1[i] = chosen service ID (or null) for group i on side 1
   const [allServices, setAllServices] = useState<ServiceDetail[]>([]);
-  const [selectedServices1, setSelectedServices1] = useState<(number | null)[]>([]);
-  const [selectedServices2, setSelectedServices2] = useState<(number | null)[]>([]);
+  const [selectedServices1, setSelectedServices1] = useState<(number | null)[]>(_cs.services1 ?? []);
+  const [selectedServices2, setSelectedServices2] = useState<(number | null)[]>(_cs.services2 ?? []);
+  const [selectedFinishingServices, setSelectedFinishingServices] = useState<(number | null)[]>(_cs.finishingServices ?? []);
 
   const svcById = new Map(allServices.map(s => [s.id, s]));
-  const flatSelectedIds = [
+  const flatSelectedIds = useMemo(() => [
     ...selectedServices1.filter((id): id is number => id != null),
     ...selectedServices2.filter((id): id is number => id != null),
-  ];
+  ], [selectedServices1, selectedServices2]);
+  const flatFinishingIds = useMemo(() =>
+    selectedFinishingServices.filter((id): id is number => id != null),
+  [selectedFinishingServices]);
+
+  // ── Persist click-state to localStorage ────────────────────────────────
+  useEffect(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const o = s ? JSON.parse(s) : {};
+      o.click_state = {
+        svcId1: selectedPrintSvcId1,
+        svcId2: selectedPrintSvcId2,
+        sheetW: clickSheetW,
+        sheetH: clickSheetH,
+        bleed: clickBleed,
+        sides: clickSides,
+        forceRotate: clickForceRotate,
+        cuttingMode,
+        productSizeKey,
+        services1: selectedServices1,
+        services2: selectedServices2,
+        finishingServices: selectedFinishingServices,
+      };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(o));
+    } catch {}
+  }, [selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickSides, clickForceRotate, cuttingMode, productSizeKey, selectedServices1, selectedServices2, selectedFinishingServices]);
 
   useEffect(() => {
     api.get('/printshop/size-presets/').then(res => {
@@ -126,17 +288,19 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
       const data = res.data?.results ?? res.data;
       const list: ProductTemplate[] = Array.isArray(data) ? data : [];
       setProducts(list);
-      // Preload product if coming from ProductEditor
+      // Preload product if coming from ProductEditor, or restore last selected
       try {
         const s = localStorage.getItem('pixierp_editor_state');
         if (s) {
           const stored = JSON.parse(s);
-          const pid = stored.preload_product_id;
+          const pid = stored.preload_product_id ?? stored.selected_product_id;
           if (pid) {
             const found = list.find(p => p.id === pid);
             if (found) setSelectedProductId(pid);
-            delete stored.preload_product_id;
-            localStorage.setItem('pixierp_editor_state', JSON.stringify(stored));
+            if (stored.preload_product_id) {
+              delete stored.preload_product_id;
+              localStorage.setItem('pixierp_editor_state', JSON.stringify(stored));
+            }
           }
         }
       } catch {}
@@ -167,23 +331,78 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
 
   useEffect(() => { calculatePrice(params); }, [params, flatSelectedIds]); // eslint-disable-line
 
+  // ── Click-sheet-print calculation ────────────────────────────────────────
+  const calculateClickPrice = useCallback(async () => {
+    const product = products.find(p => p.id === selectedProductId);
+    if (!product || product.calculator_type !== 'click_sheet_print') return;
+    if (clickTimerRef.current) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = setTimeout(async () => {
+      setCalcLoading(true);
+      try {
+        const svcId1 = (selectedPrintSvcId1 != null && selectedPrintSvcId1 > 0) ? selectedPrintSvcId1 : null;
+        const svcId2 = selectedPrintSvcId2 === null
+          ? svcId1
+          : (selectedPrintSvcId2 > 0 ? selectedPrintSvcId2 : null);
+        const res = await api.post('/printshop/orders/calculate-price-click/', {
+          width_mm:             params.width_mm,
+          height_mm:            params.height_mm,
+          quantity:             params.quantity,
+          print_sides:          clickSides,
+          print_service_id_1:   svcId1,
+          print_service_id_2:   clickSides === 2 ? svcId2 : null,
+          sheet_w_mm:           clickSheetW,
+          sheet_h_mm:           clickSheetH,
+          bleed_mm:             clickBleed,
+          material_id:          params.material_id ?? null,
+          selected_service_ids: flatSelectedIds,
+          required_service_ids: product?.required_services ?? [],
+          finishing_service_ids: flatFinishingIds,
+          force_rotate:         clickForceRotate === 'auto' ? null : clickForceRotate === 'rotated',
+          fix_cost_first_side_only: product?.fix_cost_first_side_only ?? false,
+          cutting_mode:         cuttingMode,
+        });
+        setClickPricing(res.data);
+        onPriceChange?.(null);
+      } catch {
+        setClickPricing(null);
+      } finally {
+        setCalcLoading(false);
+      }
+    }, 400);
+  }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.material_id,
+      clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
+
+  useEffect(() => {
+    const product = products.find(p => p.id === selectedProductId);
+    if (product?.calculator_type === 'click_sheet_print') {
+      calculateClickPrice();
+    }
+  }, [calculateClickPrice]); // eslint-disable-line
+
   // Load service details whenever the selected product changes
   useEffect(() => {
     const product = products.find(p => p.id === selectedProductId);
-    if (!product) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); return; }
+    if (!product) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
     const sg1 = product.service_groups_1 ?? [];
     const sg2 = product.service_groups_2 ?? [];
-    const allIds = Array.from(new Set([...sg1.flat(), ...sg2.flat()]));
-    if (allIds.length === 0) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); return; }
+    const sgf = product.finishing_service_groups ?? [];
+    const allIds = Array.from(new Set([...sg1.flat(), ...sg2.flat(), ...sgf.flat()]));
+    if (allIds.length === 0) { setAllServices([]); setSelectedServices1([]); setSelectedServices2([]); setSelectedFinishingServices([]); return; }
     api.get(`/manufacturing/services/?ids=${allIds.join(',')}&page_size=200`)
       .then(res => {
         const data: ServiceDetail[] = Array.isArray(res.data) ? res.data : (res.data.results ?? []);
         setAllServices(data);
       })
       .catch(() => setAllServices([]));
-    // Reset selections to blank per group
-    setSelectedServices1(sg1.map(() => null));
-    setSelectedServices2(sg2.map(() => null));
+    if (restoringRef.current) {
+      // On initial load, keep the restored selections (already set from localStorage)
+      restoringRef.current = false;
+    } else {
+      // User changed product — reset selections
+      setSelectedServices1(sg1.map(() => null));
+      setSelectedServices2(sg2.map(() => null));
+      setSelectedFinishingServices(sgf.map(() => null));
+    }
   }, [selectedProductId, products]); // eslint-disable-line
 
   const update = (partial: Partial<PrintParams>) => {
@@ -196,11 +415,34 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
   };
 
   const handleProductChange = (productId: number | undefined) => {
-    if (!productId) { setSelectedProductId(null); setProductSizeKey(null); return; }
+    if (!productId) {
+      setSelectedProductId(null); setProductSizeKey(null);
+      try { const s = localStorage.getItem('pixierp_editor_state'); if (s) { const o = JSON.parse(s); delete o.selected_product_id; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } } catch {}
+      return;
+    }
     setSelectedProductId(productId);
+    try { const s = localStorage.getItem('pixierp_editor_state'); const o = s ? JSON.parse(s) : {}; o.selected_product_id = productId; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } catch {}
     const product = products.find(p => p.id === productId);
     if (!product) return;
     setSelectedPreset(null);
+    // Reset click-state for new product
+    setClickPricing(null);
+    setSelectedPrintSvcId1(null);
+    setSelectedPrintSvcId2(null);
+    setClickSides((product.print_sides ?? 1) as 1 | 2);
+    // Auto-select material if exactly one is available
+    const mats = product.allowed_materials_details ?? [];
+    if (mats.length === 1) {
+      update({ material_id: mats[0].id });
+    } else if (mats.length === 0) {
+      update({ material_id: null });
+    }
+    if (product.print_service_options_details && product.print_service_options_details.length >= 1) {
+      const svc = product.print_service_options_details[0];
+      setSelectedPrintSvcId1(svc.id);
+      if (svc.max_width_mm) setClickSheetW(svc.max_width_mm);
+      if (svc.max_height_mm) setClickSheetH(svc.max_height_mm);
+    }
     if (product.sizes.length > 0) {
       const first = product.sizes[0];
       setProductSizeKey('idx_0');
@@ -252,7 +494,88 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
   const heightExceeded = effectiveHMax != null && (params.height_mm ?? 0) > effectiveHMax;
   const sizeExceeded   = widthExceeded || heightExceeded;
 
+  const isClickSheet = selectedProduct?.calculator_type === 'click_sheet_print';
+  const clickSvcOptions: PrintServiceOption[] = selectedProduct?.print_service_options_details ?? [];
+
+  // ── Sync click-sheet print service selection → params.side1_mode / side2_mode ──
+  // This ensures the canvas editor can show grayscale / nyomatlan overlays in click-sheet mode too.
+  useEffect(() => {
+    if (!isClickSheet) return;
+    const deriveMode = (svcId: number | null): string => {
+      if (svcId === 0) return 'none';                       // Nyomatlan
+      if (svcId == null) return 'none';                     // not selected yet
+      const svc = clickSvcOptions.find(s => s.id === svcId);
+      if (!svc) return 'color';
+      const code = (svc.code ?? '').toUpperCase();
+      const name = (svc.name ?? '').toLowerCase();
+      if (code.includes('_K') || code === 'BW' || name.includes('fekete')) return 'bw';
+      if (code.includes('WHITE') || name.includes('fehér') && !name.includes('fekete')) return 'white';
+      return 'color';
+    };
+    const m1 = deriveMode(selectedPrintSvcId1);
+    const m2 = clickSides === 2 ? deriveMode(selectedPrintSvcId2) : 'none';
+    const s  = String(clickSides) as '1' | '2';
+    if (params.side1_mode !== m1 || params.side2_mode !== m2 || params.sides !== s) {
+      onChange({ ...params, side1_mode: m1, side2_mode: m2, sides: s });
+    }
+  }, [isClickSheet, selectedPrintSvcId1, selectedPrintSvcId2, clickSides, clickSvcOptions]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Reverse sync: when canvas editor sets mode to 'none' (empty side) → save svcId & switch to Nyomatlan (0)
+  //    When mode restored from 'none' (objects added back) → restore previous svcId
+  useEffect(() => {
+    if (!isClickSheet) return;
+    // Side 1
+    if (params.side1_mode === 'none' && selectedPrintSvcId1 !== 0 && selectedPrintSvcId1 !== null) {
+      prevSvcId1Ref.current = selectedPrintSvcId1;
+      setSelectedPrintSvcId1(0);
+    } else if (params.side1_mode !== 'none' && selectedPrintSvcId1 === 0 && prevSvcId1Ref.current != null && prevSvcId1Ref.current !== 0) {
+      setSelectedPrintSvcId1(prevSvcId1Ref.current);
+    }
+    // Side 2
+    if (params.side2_mode === 'none' && selectedPrintSvcId2 !== 0 && selectedPrintSvcId2 !== null) {
+      prevSvcId2Ref.current = selectedPrintSvcId2;
+      setSelectedPrintSvcId2(0);
+    } else if (params.side2_mode !== 'none' && selectedPrintSvcId2 === 0 && prevSvcId2Ref.current != null && prevSvcId2Ref.current !== 0) {
+      setSelectedPrintSvcId2(prevSvcId2Ref.current);
+    }
+  }, [isClickSheet, params.side1_mode, params.side2_mode, selectedPrintSvcId1, selectedPrintSvcId2]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep prevSvcId refs in sync when user explicitly changes service selection (not auto-nyomatlan)
+  useEffect(() => {
+    if (selectedPrintSvcId1 != null && selectedPrintSvcId1 !== 0) prevSvcId1Ref.current = selectedPrintSvcId1;
+    if (selectedPrintSvcId2 != null && selectedPrintSvcId2 !== 0) prevSvcId2Ref.current = selectedPrintSvcId2;
+  }, [selectedPrintSvcId1, selectedPrintSvcId2]);
+
+  // Estimate per-db cost for a service option using cost_summary from backend
+  const estimateSvcCostPerDb = useCallback((svc: ServiceDetail | undefined): number | null => {
+    if (!svc) return null;
+    const cs = svc.cost_summary;
+    const fixedCost = cs?.fixed ?? (svc.setup_cost_selling || 0);
+    const unitCost = cs?.unit ?? (svc.unit_cost_selling || 0);
+    if (!fixedCost && !unitCost) return null;
+    const qty = params.quantity || 1;
+    const sheets = clickPricing?.sheets_needed ?? 1;
+    const isSheetBased = (svc.calculation_unit === 'click' || svc.calculation_unit === 'sheet');
+    const cap = svc.capacity || 1;
+    let units: number;
+    if (isSheetBased) {
+      units = sheets;
+    } else if (svc.pricing_type === 'per_job') {
+      units = 1;
+    } else if (svc.pricing_type === 'per_cut') {
+      units = Math.ceil(qty / cap);
+    } else {
+      units = qty;
+    }
+    const total = fixedCost + unitCost * units;
+    return total / qty;
+  }, [params.quantity, clickPricing?.sheets_needed]);
+  const materials = selectedProduct?.allowed_materials_details ?? [];
+  const activePricing = isClickSheet ? null : pricing;
+  const activeClickPricing = isClickSheet ? clickPricing : null;
+
   return (
+    <>
     <div style={{ padding: '8px 12px', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <SectionLabel label="Termék" />
       <Select
@@ -345,62 +668,180 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           </Text>
         )}
 
-          <SectionLabel label="Nyomtatási mód" />
-          <Radio.Group
-            value={params.sides}
-            onChange={e => update({
-              sides: e.target.value,
-              side2_mode: e.target.value === '1' ? 'none' : (params.side2_mode === 'none' ? 'color' : params.side2_mode),
-              quantity_input: params.quantity_input ?? params.quantity,
-            })}
-            size="small"
-            optionType="button"
-            buttonStyle="solid"
-            style={{ width: '100%', display: 'flex', marginBottom: 4 }}
-          >
-            <Radio.Button value="1" style={{ flex: 1, textAlign: 'center' }}>1 oldalas</Radio.Button>
-            <Radio.Button value="2" style={{ flex: 1, textAlign: 'center' }}>2 oldalas</Radio.Button>
-          </Radio.Group>
-
-          <SectionLabel label="Nyomtatási szín" />
-          <div style={{ marginBottom: 6 }}>
-            <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>1. oldal</Text>
-            <Select
-              value={params.side1_mode}
-              onChange={v => update({ side1_mode: v })}
-              style={{ width: '100%' }}
-              size="small"
-            >
-              {COLOR_MODE_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
-            </Select>
-          </div>
-
-          {params.sides === '2' && (
-            <div style={{ marginBottom: 6 }}>
-              <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>2. oldal</Text>
+          {/* Klikkdíjas nyomtatás: alapanyag → oldalszám → oldalankénti szolgáltatás → ívméret */}
+          {isClickSheet && (
+            <>
+              <SectionLabel label="Alapanyag" />
               <Select
-                value={params.side2_mode}
-                onChange={v => update({ side2_mode: v })}
+                allowClear
+                showSearch
+                placeholder="Válassz alapanyagot…"
+                optionFilterProp="children"
+                value={params.material_id ?? undefined}
+                onChange={(id: number | undefined) => update({ material_id: id ?? null })}
+                onClear={() => update({ material_id: null })}
                 style={{ width: '100%' }}
                 size="small"
               >
-                {COLOR_MODE_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                {materials.map(m => <Option key={m.id} value={m.id}>{m.name}</Option>)}
+                {materials.length === 0 && <Option disabled value={-1}>Nincs alapanyag beállítva</Option>}
               </Select>
-            </div>
+              <SectionLabel label="Nyomtatás oldalai" />
+              <Radio.Group
+                value={clickSides}
+                onChange={e => {
+                  const v = e.target.value as 1 | 2;
+                  setClickSides(v);
+                  if (v !== 2) setSelectedPrintSvcId2(null);
+                }}
+                size="small"
+                optionType="button"
+                buttonStyle="solid"
+                style={{ width: '100%', display: 'flex', marginBottom: 4 }}
+              >
+                <Radio.Button value={1} style={{ flex: 1, textAlign: 'center' }}>1 oldalas</Radio.Button>
+                <Radio.Button
+                  value={2}
+                  disabled={(selectedProduct?.print_sides ?? 2) < 2}
+                  style={{ flex: 1, textAlign: 'center' }}
+                >
+                  2 oldalas
+                </Radio.Button>
+              </Radio.Group>
+
+              <SectionLabel label="Nyomtatás" />
+              <div style={{ marginBottom: 4 }}>
+                <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>
+                <Select
+                  allowClear
+                  showSearch
+                  placeholder="Válassz nyomtatási szolgáltatást…"
+                  optionFilterProp="children"
+                  value={selectedPrintSvcId1 ?? undefined}
+                  onChange={(id: number | undefined) => {
+                    const v = id ?? null;
+                    setSelectedPrintSvcId1(v);
+                    if (v && v > 0) {
+                      const svc = clickSvcOptions.find(s => s.id === v);
+                      if (svc) {
+                        if (svc.max_width_mm) setClickSheetW(svc.max_width_mm);
+                        if (svc.max_height_mm) setClickSheetH(svc.max_height_mm);
+                      }
+                    }
+                  }}
+                  onClear={() => setSelectedPrintSvcId1(null)}
+                  style={{ width: '100%' }}
+                  size="small"
+                >
+                  <Option value={0}>Nyomatlan</Option>
+                  {clickSvcOptions.map(s => (
+                    <Option key={s.id} value={s.id}>
+                      {s.name}
+                      {s.setup_cost_selling > 0 || s.unit_cost_selling > 0
+                        ? ` (ind.: ${s.setup_cost_selling.toLocaleString('hu-HU')} Ft + ${s.unit_cost_selling.toLocaleString('hu-HU')} Ft/klikk)`
+                        : ''}
+                    </Option>
+                  ))}
+                  {clickSvcOptions.length === 0 && (
+                    <Option disabled value={-1}>Nincs klikkdíjas nyomtatási opció beállítva</Option>
+                  )}
+                </Select>
+              </div>
+              {clickSides === 2 && (
+                <div style={{ marginBottom: 4 }}>
+                  <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Hátoldal</Text>
+                  <Select
+                    allowClear
+                    showSearch
+                    placeholder="Ua. mint Cím oldal…"
+                    optionFilterProp="children"
+                    value={selectedPrintSvcId2 ?? undefined}
+                    onChange={(id: number | undefined) => setSelectedPrintSvcId2(id ?? null)}
+                    onClear={() => setSelectedPrintSvcId2(null)}
+                    style={{ width: '100%' }}
+                    size="small"
+                  >
+                    <Option value={0}>Nyomatlan</Option>
+                    {clickSvcOptions.map(s => (
+                      <Option key={s.id} value={s.id}>
+                        {s.name}
+                        {s.setup_cost_selling > 0 || s.unit_cost_selling > 0
+                          ? ` (ind.: ${s.setup_cost_selling.toLocaleString('hu-HU')} Ft + ${s.unit_cost_selling.toLocaleString('hu-HU')} Ft/klikk)`
+                          : ''}
+                      </Option>
+                    ))}
+                    {clickSvcOptions.length === 0 && (
+                      <Option disabled value={-1}>Nincs klikkdíjas nyomtatási opció beállítva</Option>
+                    )}
+                  </Select>
+                </div>
+              )}
+
+
+            </>
           )}
 
-          <SectionLabel label="Kötészet" />
-          <Radio.Group
-            value={params.binding}
-            onChange={e => update({ binding: e.target.value })}
-            size="small"
-            optionType="button"
-            buttonStyle="solid"
-            style={{ width: '100%', display: 'flex', marginBottom: 4 }}
-          >
-            <Radio.Button value="cut" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Méretre vágás</Radio.Button>
-            <Radio.Button value="fold" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Hajtogatás</Radio.Button>
-          </Radio.Group>
+          {/* Standard nyomtatási mód – nem klikkdíjas termékekhez */}
+          {!isClickSheet && (
+            <>
+              <SectionLabel label="Nyomtatási mód" />
+              <Radio.Group
+                value={params.sides}
+                onChange={e => update({
+                  sides: e.target.value,
+                  side2_mode: e.target.value === '1' ? 'none' : (params.side2_mode === 'none' ? 'color' : params.side2_mode),
+                  quantity_input: params.quantity_input ?? params.quantity,
+                })}
+                size="small"
+                optionType="button"
+                buttonStyle="solid"
+                style={{ width: '100%', display: 'flex', marginBottom: 4 }}
+              >
+                <Radio.Button value="1" style={{ flex: 1, textAlign: 'center' }}>1 oldalas</Radio.Button>
+                <Radio.Button value="2" style={{ flex: 1, textAlign: 'center' }}>2 oldalas</Radio.Button>
+              </Radio.Group>
+
+              <SectionLabel label="Nyomtatási szín" />
+              <div style={{ marginBottom: 6 }}>
+                <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>
+                <Select
+                  value={params.side1_mode}
+                  onChange={v => update({ side1_mode: v })}
+                  style={{ width: '100%' }}
+                  size="small"
+                >
+                  {COLOR_MODE_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                </Select>
+              </div>
+
+              {params.sides === '2' && (
+                <div style={{ marginBottom: 6 }}>
+                  <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Hátoldal</Text>
+                  <Select
+                    value={params.side2_mode}
+                    onChange={v => update({ side2_mode: v })}
+                    style={{ width: '100%' }}
+                    size="small"
+                  >
+                    {COLOR_MODE_OPTIONS.map(o => <Option key={o.value} value={o.value}>{o.label}</Option>)}
+                  </Select>
+                </div>
+              )}
+
+              <SectionLabel label="Kötészet" />
+              <Radio.Group
+                value={params.binding}
+                onChange={e => update({ binding: e.target.value })}
+                size="small"
+                optionType="button"
+                buttonStyle="solid"
+                style={{ width: '100%', display: 'flex', marginBottom: 4 }}
+              >
+                <Radio.Button value="cut" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Méretre vágás</Radio.Button>
+                <Radio.Button value="fold" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>Hajtogatás</Radio.Button>
+              </Radio.Group>
+            </>
+          )}
 
           <SectionLabel label="Mennyiség" />
           {(() => {
@@ -454,11 +895,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
             );
           })()}
 
-      {/* ── Szolgáltatások (termék sablon alapján) ─────────────────────── */}
+      {/* ── Extrák (termék sablon alapján) ─────────────────────────────── */}
       {selectedProduct && ((selectedProduct.service_groups_1 ?? []).some(g => g.length > 0) ||
                            (selectedProduct.service_groups_2 ?? []).some(g => g.length > 0)) && (
         <>
-          <SectionLabel label="Szolgáltatások" />
+          <SectionLabel label="Extrák" />
           {[{ side: '1' as const, groups: selectedProduct.service_groups_1 ?? [], sel: selectedServices1, setSel: setSelectedServices1 },
             { side: '2' as const, groups: selectedProduct.service_groups_2 ?? [], sel: selectedServices2, setSel: setSelectedServices2 },
           ].map(({ side, groups, sel, setSel }) => {
@@ -488,16 +929,58 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
                     >
                       {group.map(svcId => {
                         const svc = svcById.get(svcId);
+                        const costPerDb = estimateSvcCostPerDb(svc);
                         return (
                           <Option key={svcId} value={svcId}>
                             {svc?.name ?? `#${svcId}`}
-                            {svc?.unit_cost_selling ? ` (+${svc.unit_cost_selling.toLocaleString('hu-HU')} Ft/${svc.pricing_type === 'per_sheet' ? 'ív' : svc.pricing_type === 'per_cut' ? 'vágás' : 'munka'})` : ''}
+                            {costPerDb != null ? ` (+${costPerDb.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db)` : ''}
                           </Option>
                         );
                       })}
                     </Select>
                   </div>
                 ))}
+              </div>
+            );
+          })}
+        </>
+      )}
+
+      {/* ── Kész termékre vonatkozó extrák ─────────────────────────────── */}
+      {selectedProduct && (selectedProduct.finishing_service_groups ?? []).some(g => g.length > 0) && (
+        <>
+          <SectionLabel label="Kész termék extrák" />
+          {(selectedProduct.finishing_service_groups ?? []).map((group, gIdx) => {
+            if (group.length === 0) return null;
+            return (
+              <div key={gIdx}>
+                {gIdx > 0 && (
+                  <div style={{ display: 'flex', alignItems: 'center', margin: '4px 0' }}>
+                    <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
+                    <Tag color="blue" style={{ margin: '0 6px', fontSize: 10, lineHeight: '16px' }}>ÉS</Tag>
+                    <div style={{ flex: 1, height: 1, background: '#e8e8e8' }} />
+                  </div>
+                )}
+                <Select
+                  allowClear
+                  size="small"
+                  style={{ width: '100%' }}
+                  placeholder="Nem kérem / válassz…"
+                  value={selectedFinishingServices[gIdx] ?? undefined}
+                  onChange={v => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? (v ?? null) : s))}
+                  onClear={() => setSelectedFinishingServices(prev => prev.map((s, i) => i === gIdx ? null : s))}
+                >
+                  {group.map(svcId => {
+                    const svc = svcById.get(svcId);
+                    const costPerDb = estimateSvcCostPerDb(svc);
+                    return (
+                      <Option key={svcId} value={svcId}>
+                        {svc?.name ?? `#${svcId}`}
+                        {costPerDb != null ? ` (+${costPerDb.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Ft/db)` : ''}
+                      </Option>
+                    );
+                  })}
+                </Select>
               </div>
             );
           })}
@@ -510,20 +993,87 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
       <div style={{ textAlign: 'center', minHeight: 56 }}>
         {calcLoading ? (
           <Spin size="small" />
-        ) : pricing ? (
-          <>
-            <Text style={{ fontSize: 11, color: '#888' }}>
-              Egységár: <strong>{fmt(pricing.unit_price)}</strong>
-            </Text>
-            <br />
-            <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(pricing.total)}</Title>
-            <Text style={{ fontSize: 10, color: '#aaa' }}>{pricing.quantity} db</Text>
-          </>
-        ) : null}
+        ) : isClickSheet ? (
+          activeClickPricing ? (() => {
+            const discounts = selectedProduct?.quantity_discounts ?? [];
+            const total = activeClickPricing.total;
+            const applicable = discounts.filter(d => total >= d.min_amount).sort((a, b) => b.min_amount - a.min_amount);
+            const best = applicable.length > 0 ? applicable[0] : null;
+            const discountAmt = best ? (best.discount_type === 'percent' ? Math.round(total * best.discount_value / 100) : best.discount_value) : 0;
+            const hasDiscount = best && discountAmt > 0;
+            const discountedTotal = total - discountAmt;
+            const discountedUnit = discountedTotal / (activeClickPricing.quantity || 1);
+            return (
+              <>
+                {hasDiscount ? (
+                  <>
+                    <Text style={{ fontSize: 11, color: '#888' }}>
+                      Egységár: <span style={{ textDecoration: 'line-through' }}>{fmt(activeClickPricing.unit_price)}</span>{' '}
+                      <strong style={{ color: '#52c41a' }}>{discountedUnit.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} Ft/db</strong>
+                    </Text>
+                    <br />
+                    <Title level={5} style={{ margin: '2px 0 0', textDecoration: 'line-through', color: '#999' }}>{fmt(total)}</Title>
+                    <Title level={5} style={{ margin: '0', color: '#52c41a' }}>{fmt(discountedTotal)}</Title>
+                    <Text style={{ fontSize: 10, color: '#52c41a' }}>−{fmt(discountAmt)} kedvezmény{best!.discount_type === 'percent' ? ` (${best!.discount_value}%)` : ''}</Text>
+                    <br />
+                  </>
+                ) : (
+                  <>
+                    <Text style={{ fontSize: 11, color: '#888' }}>
+                      Egységár: <strong>{fmt(activeClickPricing.unit_price)}</strong>
+                    </Text>
+                    <br />
+                    <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(activeClickPricing.total)}</Title>
+                  </>
+                )}
+                <Text style={{ fontSize: 10, color: '#aaa' }}>{activeClickPricing.quantity} db · {activeClickPricing.sheets_needed} ív · {activeClickPricing.clicks_total} klikk</Text>
+              </>
+            );
+          })() : selectedPrintSvcId1 ? (
+            <Text type="secondary" style={{ fontSize: 11 }}>Kalkulál…</Text>
+          ) : (
+            <Text type="secondary" style={{ fontSize: 11 }}>Válassz nyomtatási szolgáltatást</Text>
+          )
+        ) : activePricing ? (() => {
+          const discounts = selectedProduct?.quantity_discounts ?? [];
+          const total = activePricing.total;
+          const applicable = discounts.filter(d => total >= d.min_amount).sort((a, b) => b.min_amount - a.min_amount);
+          const best = applicable.length > 0 ? applicable[0] : null;
+          const discountAmt = best ? (best.discount_type === 'percent' ? Math.round(total * best.discount_value / 100) : best.discount_value) : 0;
+          const hasDiscount = best && discountAmt > 0;
+          const discountedTotal = total - discountAmt;
+          const discountedUnit = discountedTotal / (activePricing.quantity || 1);
+          return (
+            <>
+              {hasDiscount ? (
+                <>
+                  <Text style={{ fontSize: 11, color: '#888' }}>
+                    Egységár: <span style={{ textDecoration: 'line-through' }}>{fmt(activePricing.unit_price)}</span>{' '}
+                    <strong style={{ color: '#52c41a' }}>{discountedUnit.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 0 })} Ft/db</strong>
+                  </Text>
+                  <br />
+                  <Title level={5} style={{ margin: '2px 0 0', textDecoration: 'line-through', color: '#999' }}>{fmt(total)}</Title>
+                  <Title level={5} style={{ margin: '0', color: '#52c41a' }}>{fmt(discountedTotal)}</Title>
+                  <Text style={{ fontSize: 10, color: '#52c41a' }}>−{fmt(discountAmt)} kedvezmény{best!.discount_type === 'percent' ? ` (${best!.discount_value}%)` : ''}</Text>
+                  <br />
+                </>
+              ) : (
+                <>
+                  <Text style={{ fontSize: 11, color: '#888' }}>
+                    Egységár: <strong>{fmt(activePricing.unit_price)}</strong>
+                  </Text>
+                  <br />
+                  <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(activePricing.total)}</Title>
+                </>
+              )}
+              <Text style={{ fontSize: 10, color: '#aaa' }}>{activePricing.quantity} db</Text>
+            </>
+          );
+        })() : null}
       </div>
 
       {/* Collapsible price breakdown (admin only) */}
-      {isAdmin && pricing && (
+      {isAdmin && (isClickSheet ? activeClickPricing : activePricing) && (
         <>
           <Divider style={{ margin: '6px 0' }} />
           <div
@@ -535,32 +1085,509 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           </div>
           {priceOpen && (
             <div style={{ fontSize: 12, paddingTop: 4, paddingBottom: 8 }}>
-              <div>Papír: <strong>{fmt(pricing.paper_cost)}</strong></div>
-              <div>Nyomtatás 1.o: <strong>{fmt(pricing.print_cost_side1)}</strong></div>
-              {pricing.print_cost_side2 > 0 && (
-                <div>Nyomtatás 2.o: <strong>{fmt(pricing.print_cost_side2)}</strong></div>
-              )}
-              <div>Kötészet: <strong>{fmt(pricing.finishing_cost)}</strong></div>
-              {(pricing.service_cost ?? 0) > 0 && (
+              {isClickSheet && activeClickPricing ? (
                 <>
-                  {(pricing.service_breakdown ?? []).map(sb => (
-                    <div key={sb.id} style={{ paddingLeft: 8, color: '#555' }}>
-                      {sb.name}: <strong>{fmt(sb.total)}</strong>
-                      {sb.setup_cost > 0 && <span style={{ fontSize: 10, color: '#aaa' }}> (beáll.: {fmt(sb.setup_cost)})</span>}
+                  {/* Kattintható impozíció sor */}
+                  <div
+                    onClick={() => {
+                      setModalSheetW(clickSheetW);
+                      setModalSheetH(clickSheetH);
+                      setModalBleed(clickBleed);
+                      setModalForceRotate(clickForceRotate);
+                      setModalCuttingMode(cuttingMode);
+                      setImpositionModalOpen(true);
+                    }}
+                    style={{
+                      marginBottom: 4, padding: '4px 6px',
+                      background: '#f6ffed', borderRadius: 4, border: '1px solid #b7eb8f',
+                      cursor: 'pointer',
+                    }}
+                    title="Kattints az impozíció szerkesztéséhez"
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <AppstoreOutlined style={{ color: '#52c41a', fontSize: 11 }} />
+                      <span>Impozíció: <strong>{activeClickPricing.fit_w} × {activeClickPricing.fit_h}</strong> = <strong>{activeClickPricing.items_per_sheet} db/ív</strong>
+                        {activeClickPricing.rotated && <Tag color="orange" style={{ marginLeft: 6, fontSize: 10 }}>forgatva</Tag>}
+                      </span>
                     </div>
-                  ))}
-                  <div>Szolgáltatások: <strong>{fmt(pricing.service_cost!)}</strong></div>
+                    <div>Ívszám: <strong>{activeClickPricing.sheets_needed}</strong> · Klikkszám: <strong>{activeClickPricing.clicks_total}</strong> ({activeClickPricing.print_sides === 2 ? 'duplex' : 'simplex'})
+                      {activeClickPricing.partial_sheet_items > 0 && (
+                        <span style={{ color: '#fa8c16' }}> · Utolsó ív: {activeClickPricing.partial_sheet_items}/{activeClickPricing.items_per_sheet} ({activeClickPricing.partial_coverage_pct}%)</span>
+                      )}
+                      {activeClickPricing.cutting_info?.needs_cutting && (
+                        <Tag color="gold" style={{ marginLeft: 6, fontSize: 10 }}>darabolás</Tag>
+                      )}
+                    </div>
+                  </div>
+                  {/* Helper: renders a list of CostItems as detail rows */}
+                  {(() => {
+                    const renderItems = (items: CostItem[] | undefined) => {
+                      if (!items || items.length === 0) return null;
+                      return items.map((ci, i) => (
+                        <div key={i} style={{ paddingLeft: 12, color: '#666', fontSize: 11 }}>
+                          {ci.type === 'fixed'
+                            ? <span>Fix: {ci.name}: <strong>{fmt(ci.total)}</strong></span>
+                            : ci.type === 'click'
+                            ? <span>Ív: {ci.name}: {ci.units} ív × {Number(ci.price_per).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft = <strong>{fmt(ci.total)}</strong></span>
+                            : <span>Db: {ci.name}: {ci.units} db × {Number(ci.price_per).toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft = <strong>{fmt(ci.total)}</strong></span>
+                          }
+                        </div>
+                      ));
+                    };
+                    return (
+                      <>
+                        {/* Cím oldal nyomtatás */}
+                        {activeClickPricing.print_sides > 0 && (
+                          <>
+                            <div style={{ marginTop: 2 }}>Cím oldal – <em>{activeClickPricing.print_service_name_1 ?? '—'}</em>: <strong>{fmt(activeClickPricing.print_cost_side1)}</strong></div>
+                            {renderItems(activeClickPricing.print_service_items_1)}
+                          </>
+                        )}
+                        {/* Hátoldal */}
+                        {activeClickPricing.print_sides === 2 && (
+                          <>
+                            <div style={{ marginTop: 2 }}>Hátoldal – <em>{activeClickPricing.print_service_name_2 ?? activeClickPricing.print_service_name_1 ?? '—'}</em>: <strong>{fmt(activeClickPricing.print_cost_side2)}</strong></div>
+                            {renderItems(activeClickPricing.print_service_items_2)}
+                          </>
+                        )}
+                        {/* Alapanyag */}
+                        {activeClickPricing.material_cost > 0 && (
+                          <>
+                            <div style={{ marginTop: 2 }}>Alapanyag – <em>{activeClickPricing.material_name ?? '—'}</em>: <strong>{fmt(activeClickPricing.material_cost)}</strong></div>
+                            {renderItems(activeClickPricing.material_items)}
+                          </>
+                        )}
+                        {/* Extrák – kategória szerint csoportosítva */}
+                        {activeClickPricing.service_breakdown.length > 0 && (
+                          <>
+                            <div style={{ marginTop: 2 }}>Extrák: <strong>{fmt(activeClickPricing.service_cost)}</strong></div>
+                            {(['required', 'side', 'finishing'] as const).map(cat => {
+                              const items = activeClickPricing.service_breakdown.filter(sb => (sb.category ?? 'side') === cat);
+                              if (items.length === 0) return null;
+                              const catLabel = cat === 'required' ? 'Kötelező' : cat === 'finishing' ? 'Kész termék' : 'Oldalankénti';
+                              return (
+                                <div key={cat}>
+                                  <div style={{ paddingLeft: 4, fontSize: 11, color: '#999', marginTop: 4 }}>{catLabel}:</div>
+                                  {items.map(sb => (
+                                    <div key={sb.id}>
+                                      <div style={{ paddingLeft: 12, color: '#555' }}>{sb.name}: <strong>{fmt(sb.total)}</strong></div>
+                                      {renderItems(sb.items)}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })}
+                          </>
+                        )}
+                      </>
+                    );
+                  })()}
+                  <div>Fedezet: <strong>{activeClickPricing.margin_pct}%</strong></div>
+                  <Divider style={{ margin: '4px 0' }} />
+                  <div style={{ fontWeight: 600 }}>Összesen: {fmt(activeClickPricing.total)}</div>
+                  <div>Egységár: {activeClickPricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                  {(() => {
+                    const discounts = selectedProduct?.quantity_discounts ?? [];
+                    if (discounts.length === 0) return null;
+                    const total = activeClickPricing.total;
+                    const applicable = discounts
+                      .filter(d => total >= d.min_amount)
+                      .sort((a, b) => b.min_amount - a.min_amount);
+                    if (applicable.length === 0) return null;
+                    const best = applicable[0];
+                    const discountAmt = best.discount_type === 'percent'
+                      ? Math.round(total * best.discount_value / 100)
+                      : best.discount_value;
+                    const discountedTotal = total - discountAmt;
+                    const discountedUnit = discountedTotal / (activeClickPricing.quantity || 1);
+                    return (
+                      <>
+                        <Divider style={{ margin: '4px 0' }} />
+                        <div style={{ color: '#52c41a' }}>
+                          Kedvezmény: <strong>−{fmt(discountAmt)}</strong>
+                          {best.discount_type === 'percent' && <span> ({best.discount_value}%)</span>}
+                        </div>
+                        <div style={{ fontWeight: 600, color: '#52c41a' }}>Kedvezményes ár: {fmt(discountedTotal)}</div>
+                        <div style={{ color: '#52c41a' }}>Egységár: {discountedUnit.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                      </>
+                    );
+                  })()}
                 </>
-              )}
-              <div>Fedezet: <strong>{pricing.margin_pct}%</strong></div>
-              <Divider style={{ margin: '4px 0' }} />
-              <div style={{ fontWeight: 600 }}>Összesen: {fmt(pricing.total)}</div>
-              <div>Egységár: {pricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+              ) : activePricing ? (
+                <>
+                  <div>Papír: <strong>{fmt(activePricing.paper_cost)}</strong></div>
+                  <div>Nyomtatás 1.o: <strong>{fmt(activePricing.print_cost_side1)}</strong></div>
+                  {activePricing.print_cost_side2 > 0 && (
+                    <div>Nyomtatás 2.o: <strong>{fmt(activePricing.print_cost_side2)}</strong></div>
+                  )}
+                  <div>Kötészet: <strong>{fmt(activePricing.finishing_cost)}</strong></div>
+                  {(activePricing.service_breakdown ?? []).length > 0 && (
+                    <>
+                      {(activePricing.service_breakdown ?? []).map(sb => (
+                        <div key={sb.id} style={{ paddingLeft: 8, color: '#555' }}>
+                          {sb.name}: <strong>{fmt(sb.total)}</strong>
+                          {sb.setup_cost > 0 && <span style={{ fontSize: 10, color: '#aaa' }}> (beáll.: {fmt(sb.setup_cost)})</span>}
+                        </div>
+                      ))}
+                      <div>Extrák: <strong>{fmt(activePricing.service_cost ?? 0)}</strong></div>
+                    </>
+                  )}
+                  <div>Fedezet: <strong>{activePricing.margin_pct}%</strong></div>
+                  <Divider style={{ margin: '4px 0' }} />
+                  <div style={{ fontWeight: 600 }}>Összesen: {fmt(activePricing.total)}</div>
+                  <div>Egységár: {activePricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                  {(() => {
+                    const discounts = selectedProduct?.quantity_discounts ?? [];
+                    if (discounts.length === 0) return null;
+                    const total = activePricing.total;
+                    const applicable = discounts
+                      .filter(d => total >= d.min_amount)
+                      .sort((a, b) => b.min_amount - a.min_amount);
+                    if (applicable.length === 0) return null;
+                    const best = applicable[0];
+                    const discountAmt = best.discount_type === 'percent'
+                      ? Math.round(total * best.discount_value / 100)
+                      : best.discount_value;
+                    const discountedTotal = total - discountAmt;
+                    const discountedUnit = discountedTotal / (activePricing.quantity || 1);
+                    return (
+                      <>
+                        <Divider style={{ margin: '4px 0' }} />
+                        <div style={{ color: '#52c41a' }}>
+                          Kedvezmény: <strong>−{fmt(discountAmt)}</strong>
+                          {best.discount_type === 'percent' && <span> ({best.discount_value}%)</span>}
+                        </div>
+                        <div style={{ fontWeight: 600, color: '#52c41a' }}>Kedvezményes ár: {fmt(discountedTotal)}</div>
+                        <div style={{ color: '#52c41a' }}>Egységár: {discountedUnit.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
+                      </>
+                    );
+                  })()}
+                </>
+              ) : null}
             </div>
           )}
         </>
       )}
     </div>
+
+      {/* ── Impozíció modal ───────────────────────────────────────────────── */}
+      <Modal
+        title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás</span>}
+        open={impositionModalOpen}
+        onCancel={() => setImpositionModalOpen(false)}
+        onOk={() => {
+          setClickSheetW(modalSheetW);
+          setClickSheetH(modalSheetH);
+          setClickBleed(modalBleed);
+          setClickForceRotate(modalForceRotate);
+          setCuttingMode(modalCuttingMode);
+          setImpositionModalOpen(false);
+        }}
+        okText="Alkalmaz"
+        cancelText="Mégse"
+        width={540}
+      >
+        {(() => {
+          const bleed = modalBleed ?? 0;
+          const pw = Number(params.width_mm) + 2 * bleed;
+          const ph = Number(params.height_mm) + 2 * bleed;
+          const sw = modalSheetW;
+          const sh = modalSheetH;
+          const fitNormal  = Math.floor(sw / pw) * Math.floor(sh / ph);
+          const fitRotated = Math.floor(sw / ph) * Math.floor(sh / pw);
+          const autoRotated = fitRotated > fitNormal;
+          const rotated = modalForceRotate === 'rotated' ? true
+                        : modalForceRotate === 'normal'  ? false
+                        : autoRotated;
+          const itemsW = rotated ? Math.floor(sw / ph) : Math.floor(sw / pw);
+          const itemsH = rotated ? Math.floor(sh / pw) : Math.floor(sh / ph);
+          const bestFit = itemsW * itemsH;
+          const cols = bestFit > 0 ? itemsW : 0;
+          const rows = bestFit > 0 ? itemsH : 0;
+          const sheetsNeeded = bestFit > 0 ? Math.ceil(params.quantity / bestFit) : 0;
+          const clicks = sheetsNeeded * clickSides;
+          return (
+            <div>
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={12}>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)</Text>
+                  <Row gutter={8}>
+                    <Col span={12}>
+                      <InputNumber
+                        style={{ width: '100%' }} placeholder="Szélesség" min={1}
+                        value={modalSheetW} onChange={v => setModalSheetW(v ?? 330)} addonAfter="mm"
+                      />
+                    </Col>
+                    <Col span={12}>
+                      <InputNumber
+                        style={{ width: '100%' }} placeholder="Magasság" min={1}
+                        value={modalSheetH} onChange={v => setModalSheetH(v ?? 487)} addonAfter="mm"
+                      />
+                    </Col>
+                  </Row>
+                </Col>
+                <Col span={12}>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Termékméret (mm)</Text>
+                  <div style={{ padding: '7px 11px', background: '#fafafa', border: '1px solid #d9d9d9', borderRadius: 6, fontSize: 13 }}>
+                    {params.width_mm} × {params.height_mm} mm
+                  </div>
+                </Col>
+              </Row>
+              <Row gutter={16} style={{ marginBottom: 16 }}>
+                <Col span={12}>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Nyomdai ráhagyás (mm/oldal)</Text>
+                  <InputNumber
+                    style={{ width: '100%' }} min={0} value={modalBleed}
+                    onChange={v => setModalBleed(v ?? 0)} addonAfter="mm"
+                  />
+                </Col>
+                <Col span={12}>
+                  <Text strong style={{ display: 'block', marginBottom: 6 }}>Termék elforgatása</Text>
+                  <Radio.Group
+                    value={modalForceRotate}
+                    onChange={e => setModalForceRotate(e.target.value)}
+                    optionType="button"
+                    buttonStyle="solid"
+                    size="small"
+                    style={{ width: '100%', display: 'flex' }}
+                  >
+                    <Radio.Button value="auto" style={{ flex: 1, textAlign: 'center' }}>Auto</Radio.Button>
+                    <Radio.Button value="normal" style={{ flex: 1, textAlign: 'center' }}>0°</Radio.Button>
+                    <Radio.Button value="rotated" style={{ flex: 1, textAlign: 'center' }}>90°</Radio.Button>
+                  </Radio.Group>
+                  {modalForceRotate === 'auto' && (
+                    <div style={{ fontSize: 11, color: '#888', marginTop: 4 }}>Automatikus: {autoRotated ? 'forgatva' : 'normál'}</div>
+                  )}
+                </Col>
+              </Row>
+
+              {bestFit > 0 ? (
+                <>
+                  {/* Vizuális rácspreview */}
+                  <div style={{ background: '#f5f5f5', borderRadius: 8, padding: 16, marginBottom: 16, textAlign: 'center' }}>
+                    <div style={{ display: 'inline-block', border: '2px solid #1677ff', padding: 4, background: '#fff' }}>
+                      <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 2 }}>
+                        {Array.from({ length: cols * rows }).map((_, i) => (
+                          <div
+                            key={i}
+                            style={{
+                              width: 28,
+                              height: Math.round(28 * (rotated ? pw / ph : ph / pw)),
+                              background: i < bestFit ? '#bae0ff' : '#f0f0f0',
+                              border: '1px solid #91caff',
+                              borderRadius: 2,
+                              display: 'flex', alignItems: 'center', justifyContent: 'center',
+                              fontSize: 9, color: '#0958d9',
+                            }}
+                          >
+                            {i < bestFit ? i + 1 : ''}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
+                      {rotated ? 'Elforgatva elhelyezve' : 'Normál elhelyezés'} · {cols} × {rows} elrendezés
+                    </div>
+                  </div>
+
+                  {/* Eredmények */}
+                  <Row gutter={12}>
+                    <Col span={8} style={{ textAlign: 'center', background: '#f6ffed', borderRadius: 8, padding: '12px 8px' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: '#52c41a' }}>{bestFit}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>db / ív</div>
+                    </Col>
+                    <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>ív ({params.quantity} db)</div>
+                    </Col>
+                    <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{clicks}</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>klikk ({clickSides} oldal)</div>
+                    </Col>
+                  </Row>
+                  <div style={{ marginTop: 12, fontSize: 11, color: '#8c8c8c' }}>
+                    Termék (+ráhagyás): {pw.toFixed(1)} × {ph.toFixed(1)} mm · Ív: {modalSheetW} × {modalSheetH} mm{bleed > 0 ? ` · ${bleed} mm ráhagyás` : ''}
+                  </div>
+
+                  {/* ── Produkciós ívek vizualizáció ─────────────────── */}
+                  {(() => {
+                    const remainingOnLast = params.quantity % bestFit;
+                    const fullSheets = remainingOnLast === 0 ? sheetsNeeded : sheetsNeeded - 1;
+                    const partialItems = remainingOnLast;
+                    const partialPct = partialItems > 0 ? Math.round(partialItems / bestFit * 100) : 0;
+                    const wasteItems = sheetsNeeded * bestFit - params.quantity;
+
+                    const cellW = rotated ? ph : pw;
+                    const cellH = rotated ? pw : ph;
+                    const scale = Math.min(180 / sw, 100 / sh, 1);
+                    const svgW = Math.round(sw * scale);
+                    const svgH = Math.round(sh * scale);
+
+                    const renderSheet = (idx: number, itemsOnThis: number, label: string) => {
+                      const isFull = itemsOnThis === bestFit;
+                      return (
+                        <div key={idx} style={{ display: 'inline-block', margin: '0 4px 8px 0', textAlign: 'center' }}>
+                          <div style={{
+                            border: `2px solid ${isFull ? '#91caff' : '#ffc069'}`,
+                            borderRadius: 3, background: '#fff', display: 'inline-block', overflow: 'hidden',
+                          }}>
+                            <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
+                              <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
+                              {Array.from({ length: cols * rows }).map((_, ci) => {
+                                const col = ci % cols;
+                                const row = Math.floor(ci / cols);
+                                const x = col * cellW;
+                                const y = row * cellH;
+                                const filled = ci < itemsOnThis;
+                                return (
+                                  <rect key={ci} x={x} y={y} width={cellW - 0.5} height={cellH - 0.5}
+                                    fill={filled ? '#bae0ff' : '#f5f5f5'} stroke={filled ? '#69b1ff' : '#d9d9d9'} strokeWidth={0.5}
+                                  />
+                                );
+                              })}
+                            </svg>
+                          </div>
+                          <div style={{ fontSize: 9, color: isFull ? '#1677ff' : '#fa8c16', marginTop: 2 }}>{label}</div>
+                        </div>
+                      );
+                    };
+
+                    return (
+                      <div style={{ marginTop: 16, padding: '12px', background: '#f9f9f9', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Produkciós ívek</Text>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+                          {fullSheets > 0 && (
+                            <div style={{ display: 'inline-block', margin: '0 4px 8px 0', textAlign: 'center' }}>
+                              {renderSheet(0, bestFit, `${bestFit} db`)}
+                              {fullSheets > 1 && (
+                                <div style={{ fontSize: 11, color: '#1677ff', fontWeight: 600, marginTop: -4 }}>×{fullSheets}</div>
+                              )}
+                            </div>
+                          )}
+                          {partialItems > 0 && renderSheet(sheetsNeeded - 1, partialItems,
+                            `${partialItems}/${bestFit} db (${partialPct}%)`
+                          )}
+                        </div>
+                        {wasteItems > 0 && (
+                          <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 4 }}>
+                            Kihasználatlan: {wasteItems} pozíció az utolsó íven
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Darabolás módja ────────────────────────────── */}
+                  {(() => {
+                    const mat = materials.find(m => m.id === params.material_id);
+                    const hasDims = mat?.width_mm && mat?.length_mm;
+                    const svc = clickSvcOptions.find(s => s.id === selectedPrintSvcId1);
+                    const exceeds = hasDims && svc?.max_width_mm && svc?.max_height_mm && (mat!.width_mm! > svc.max_width_mm || mat!.length_mm! > svc.max_height_mm);
+                    if (!hasDims) return null;
+
+                    return (
+                      <div style={{ marginTop: 12, padding: '12px', background: exceeds ? '#fffbe6' : '#f6ffed', borderRadius: 8, border: `1px solid ${exceeds ? '#ffe58f' : '#b7eb8f'}` }}>
+                        <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 6 }}>Alapanyag</Text>
+                        <div style={{ fontSize: 12, marginBottom: 4 }}>
+                          Méret: <strong>{mat!.width_mm} × {mat!.length_mm} mm</strong>
+                          {svc?.max_width_mm && svc?.max_height_mm && (
+                            <span style={{ color: '#888' }}> · Nyomtató max: {svc.max_width_mm} × {svc.max_height_mm} mm</span>
+                          )}
+                        </div>
+                        {exceeds ? (
+                          <>
+                            <div style={{ fontSize: 11, color: '#d48806', fontWeight: 600, marginBottom: 6 }}>Az alapanyag nagyobb mint a nyomtató maximum — darabolás szükséges</div>
+                            {activeClickPricing?.cutting_info && (
+                              <div style={{ fontSize: 11, marginBottom: 6, lineHeight: 1.8 }}>
+                                Eredeti ív ({activeClickPricing.cutting_info.material_size_mm?.[0]} × {activeClickPricing.cutting_info.material_size_mm?.[1]} mm): <strong>{activeClickPricing.cutting_info.raw_material_sheets_needed} db</strong>
+                                <br />
+                                Vágott ív ({activeClickPricing.cutting_info.cut_sheet_size_mm[0]} × {activeClickPricing.cutting_info.cut_sheet_size_mm[1]} mm): <strong>{activeClickPricing.cutting_info.total_cut_sheets} db</strong>
+                                <span style={{ color: '#888' }}> · ({activeClickPricing.cutting_info.cut_sheets_per_material} vágott ív / eredeti ív)</span>
+                              </div>
+                            )}
+                            <Text strong style={{ fontSize: 11, display: 'block', marginBottom: 4 }}>Darabolás módja</Text>
+                            <Radio.Group
+                              value={modalCuttingMode}
+                              onChange={e => setModalCuttingMode(e.target.value)}
+                              size="small"
+                              optionType="button"
+                              buttonStyle="solid"
+                              style={{ width: '100%', display: 'flex' }}
+                            >
+                              <Radio.Button value="auto" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>
+                                <Tooltip title="A legköltséghatékonyabb módot választja">Auto</Tooltip>
+                              </Radio.Button>
+                              <Radio.Button value="material" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>
+                                <Tooltip title="A legkevesebb alapanyag felhasználást részesíti előnyben">Alapanyag</Tooltip>
+                              </Radio.Button>
+                              <Radio.Button value="print" style={{ flex: 1, textAlign: 'center', fontSize: 11 }}>
+                                <Tooltip title="A legkevesebb nyomtatást részesíti előnyben">Nyomtatás</Tooltip>
+                              </Radio.Button>
+                            </Radio.Group>
+                          </>
+                        ) : (
+                          <div style={{ fontSize: 11, color: '#52c41a' }}>
+                            Nem szükséges darabolás
+                            {activeClickPricing?.cutting_info && (
+                              <span> · Szükséges ívek: <strong>{activeClickPricing.cutting_info.raw_material_sheets_needed} db</strong></span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
+
+                  {/* ── Méret összehasonlítás ───────────────────────── */}
+                  {activeClickPricing?.size_comparison && activeClickPricing.size_comparison.length > 1 && (
+                    <div style={{ marginTop: 12, padding: '12px', background: '#f0f5ff', borderRadius: 8, border: '1px solid #d6e4ff' }}>
+                      <Text strong style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>Rendelhető méretek összehasonlítása</Text>
+                      <table style={{ width: '100%', fontSize: 11, borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr style={{ borderBottom: '1px solid #d6e4ff', color: '#666' }}>
+                            <th style={{ textAlign: 'left', padding: '4px 6px' }}>Méret</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ív méret</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>db/ív</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ívek</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Ár/ív</th>
+                            <th style={{ textAlign: 'right', padding: '4px 6px' }}>Anyagköltség</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {activeClickPricing.size_comparison.map((sc, i) => (
+                            <tr key={i} style={{
+                              background: sc.is_best ? '#f6ffed' : 'transparent',
+                              fontWeight: sc.is_best ? 600 : 400,
+                              borderBottom: '1px solid #f0f0f0',
+                            }}>
+                              <td style={{ padding: '4px 6px' }}>
+                                {sc.label}
+                                {sc.is_default && <Tag color="blue" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>alap</Tag>}
+                                {sc.is_best && <Tag color="green" style={{ marginLeft: 4, fontSize: 9, lineHeight: '14px', padding: '0 4px' }}>legjobb</Tag>}
+                              </td>
+                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.size_mm[0]}×{sc.size_mm[1]}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.items_per_sheet}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.sheets_needed}{sc.needs_cutting && ' ✂'}</td>
+                              <td style={{ textAlign: 'right', padding: '4px 6px' }}>{sc.price_per_sheet.toLocaleString('hu-HU')} Ft</td>
+                              <td style={{ textAlign: 'right', padding: '4px 6px', color: sc.is_best ? '#52c41a' : undefined }}>
+                                {sc.material_cost.toLocaleString('hu-HU')} Ft
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <div style={{ textAlign: 'center', color: '#8c8c8c', padding: '32px 0' }}>
+                  A megadott ívméreten nem fér el a termék. Adj meg nagyobb ívméretet vagy csökkentsd a ráhagyást.
+                </div>
+              )}
+            </div>
+          );
+        })()}
+      </Modal>
+    </>
   );
 };
 

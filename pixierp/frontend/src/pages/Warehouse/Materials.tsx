@@ -96,6 +96,23 @@ interface CostItem {
   is_active: boolean;
 }
 
+interface MaterialSizeItem {
+  id?: number;
+  material: number;
+  name: string;
+  width: number;
+  length: number;
+  height?: number | null;
+  dimension_unit: string;
+  pricing_type: 'custom' | 'area' | 'weight' | 'volume';
+  pricing_type_display?: string;
+  custom_price: number;
+  calculated_price: number;
+  effective_price: number;
+  is_active: boolean;
+  sort_order: number;
+}
+
 interface Warehouse {
   id: number;
   name: string;
@@ -387,6 +404,13 @@ const Materials: React.FC = () => {
   const [editingCostItem, setEditingCostItem] = useState<CostItem | null>(null);
   const [costItemModalVisible, setCostItemModalVisible] = useState(false);
   const [selectedCalculationType, setSelectedCalculationType] = useState<string>('unit');
+  const [duplicateSourceId, setDuplicateSourceId] = useState<number | null>(null);
+
+  // Material sizes management
+  const [materialSizes, setMaterialSizes] = useState<MaterialSizeItem[]>([]);
+  const [sizeModalVisible, setSizeModalVisible] = useState(false);
+  const [editingSizeItem, setEditingSizeItem] = useState<MaterialSizeItem | null>(null);
+  const [sizeForm] = Form.useForm();
   
   // Added suppliers management
   const [addedSuppliers, setAddedSuppliers] = useState<(Supplier & { is_internal?: boolean })[]>([]);
@@ -627,6 +651,75 @@ const Materials: React.FC = () => {
     }
   };
 
+  // ── Material sizes ──────────────────────────────────────────────────────
+  const fetchMaterialSizes = async (materialId: number) => {
+    try {
+      const res = await api.get(`/warehouse/material-sizes/?material_id=${materialId}`);
+      const data = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      setMaterialSizes(data);
+    } catch (error) {
+      console.error('Hiba a méretek betöltésekor:', error);
+      setMaterialSizes([]);
+    }
+  };
+
+  const handleAddSize = () => {
+    if (!editingMaterial) { message.warning('Először mentsd el az alapanyagot'); return; }
+    setEditingSizeItem(null);
+    sizeForm.resetFields();
+    sizeForm.setFieldsValue({
+      material: editingMaterial.id,
+      dimension_unit: editingMaterial.dimension_unit || 'mm',
+      pricing_type: 'custom',
+      custom_price: 0,
+      is_active: true,
+      sort_order: materialSizes.length,
+    });
+    setSizeModalVisible(true);
+  };
+
+  const handleEditSize = (item: MaterialSizeItem) => {
+    setEditingSizeItem(item);
+    sizeForm.setFieldsValue(item);
+    setSizeModalVisible(true);
+  };
+
+  const handleDuplicateSize = (item: MaterialSizeItem) => {
+    setEditingSizeItem(null);
+    sizeForm.setFieldsValue({ ...item, id: undefined, name: item.name ? `${item.name} (másolat)` : '' });
+    setSizeModalVisible(true);
+  };
+
+  const handleDeleteSize = async (id: number) => {
+    try {
+      await api.delete(`/warehouse/material-sizes/${id}/`);
+      message.success('Méret törölve');
+      if (editingMaterial) fetchMaterialSizes(editingMaterial.id);
+    } catch { message.error('Hiba a törlés során'); }
+  };
+
+  const handleSizeSubmit = async (values: any) => {
+    try {
+      if (editingSizeItem?.id) {
+        await api.patch(`/warehouse/material-sizes/${editingSizeItem.id}/`, values);
+        message.success('Méret frissítve');
+      } else {
+        await api.post('/warehouse/material-sizes/', values);
+        message.success('Méret létrehozva');
+      }
+      setSizeModalVisible(false);
+      if (editingMaterial) fetchMaterialSizes(editingMaterial.id);
+    } catch (error: any) {
+      const data = error.response?.data;
+      if (data && typeof data === 'object' && !data.detail) {
+        const msgs = Object.entries(data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+        message.error(msgs.join(' | ') || 'Hiba a mentés során');
+      } else {
+        message.error(data?.detail || 'Hiba a mentés során');
+      }
+    }
+  };
+
   const fetchAddedSuppliers = async (materialId: number) => {
     try {
       const [costResponse, suppliersResponse] = await Promise.all([
@@ -677,6 +770,7 @@ const Materials: React.FC = () => {
 
   const handleCreate = () => {
     setEditingMaterial(null);
+    setDuplicateSourceId(null);
     form.resetFields();
     setIsInternalProduction(false);
     setSelectedMaterialFormat('piece');
@@ -739,6 +833,7 @@ const Materials: React.FC = () => {
     // Load stocks and receipts
     fetchStocks(material.id);
     fetchReceipts(material.id);
+    fetchMaterialSizes(material.id);
     
     // Load default source cost items
     if (material.is_internal_production) {
@@ -862,6 +957,35 @@ const Materials: React.FC = () => {
         savedMaterial = res.data;
         message.success('Alapanyag/Termék létrehozva');
         
+        // Copy cost items from source material when duplicating
+        if (savedMaterial && duplicateSourceId) {
+          try {
+            const costRes = await api.get(`/warehouse/material-cost-items/?material_id=${duplicateSourceId}`);
+            const sourceCostItems = costRes.data?.results || costRes.data || [];
+            for (const ci of sourceCostItems) {
+              await api.post('/warehouse/material-cost-items/', {
+                material: savedMaterial.id,
+                supplier: ci.supplier || null,
+                is_internal: ci.is_internal,
+                name: ci.name,
+                calculation_type: ci.calculation_type,
+                unit: ci.unit,
+                unit_price: ci.unit_price,
+                markup_percentage: ci.markup_percentage,
+                currency: ci.currency,
+                is_active: ci.is_active,
+              });
+            }
+            if (sourceCostItems.length > 0) {
+              message.success(`${sourceCostItems.length} költségelem átmásolva`);
+            }
+          } catch (err) {
+            console.error('Failed to copy cost items:', err);
+            message.warning('Költségelemek másolása sikertelen');
+          }
+          setDuplicateSourceId(null);
+        }
+
         // Save added suppliers immediately for new material
         if (savedMaterial && addedSuppliers.length > 0) {
              for (const supplier of addedSuppliers) {
@@ -1225,8 +1349,14 @@ const Materials: React.FC = () => {
         fetchCostItems(editingMaterial.id, selectedSourceForCost);
       }
     } catch (error: any) {
-      message.error(error.response?.data?.detail || 'Hiba a mentés során');
-      console.error(error);
+      const data = error.response?.data;
+      if (data && typeof data === 'object' && !data.detail) {
+        const msgs = Object.entries(data).map(([k, v]) => `${k}: ${Array.isArray(v) ? v.join(', ') : v}`);
+        message.error(msgs.join(' | ') || 'Hiba a mentés során');
+      } else {
+        message.error(data?.detail || 'Hiba a mentés során');
+      }
+      console.error('CostItem save error:', data);
     }
   };
 
@@ -1427,9 +1557,8 @@ const Materials: React.FC = () => {
         const { id, created_at, created_by_name, ...rest } = data;
         
         setEditingMaterial(null);
+        setDuplicateSourceId(record.id);
         form.setFieldsValue(rest);
-        // Opcionális: jelezni a másolatot a kódban vagy névben
-        // form.setFieldValue('code', `${rest.code || ''}-COPY`);
         setModalVisible(true);
     } catch (err) {
         console.error(err);
@@ -2547,8 +2676,134 @@ const Materials: React.FC = () => {
             </Space>
               ),
             },
+            {
+              key: '5',
+              label: 'Rendelhető méretek',
+              disabled: !editingMaterial,
+              children: (
+                <div>
+                  <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontWeight: 600 }}>Rendelhető méret variánsok</span>
+                    <Button type="primary" icon={<PlusOutlined />} onClick={handleAddSize} size="small">
+                      Új méret
+                    </Button>
+                  </div>
+                  <Table
+                    size="small"
+                    dataSource={materialSizes}
+                    rowKey="id"
+                    pagination={false}
+                    columns={[
+                      { title: 'Név', dataIndex: 'name', key: 'name', width: 120,
+                        render: (v: string) => v || <span style={{ color: '#ccc' }}>—</span> },
+                      { title: 'Szélesség', dataIndex: 'width', key: 'width', width: 100,
+                        render: (v: number, r: MaterialSizeItem) => `${v} ${r.dimension_unit}` },
+                      { title: 'Hosszúság', dataIndex: 'length', key: 'length', width: 100,
+                        render: (v: number, r: MaterialSizeItem) => `${v} ${r.dimension_unit}` },
+                      { title: 'Magasság', dataIndex: 'height', key: 'height', width: 100,
+                        render: (v: number | null, r: MaterialSizeItem) => v ? `${v} ${r.dimension_unit}` : '—' },
+                      { title: 'Ár típusa', dataIndex: 'pricing_type_display', key: 'pricing_type_display', width: 120 },
+                      { title: 'Ár (HUF)', key: 'price', width: 120,
+                        render: (_: any, r: MaterialSizeItem) => (
+                          <span style={{ fontWeight: 600 }}>
+                            {Number(r.effective_price).toLocaleString('hu-HU')}
+                          </span>
+                        )},
+                      { title: '', key: 'actions', width: 120,
+                        render: (_: any, record: MaterialSizeItem) => (
+                          <Space size={4}>
+                            <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicateSize(record)} />
+                            <Button size="small" icon={<EditOutlined />} onClick={() => handleEditSize(record)} />
+                            <Popconfirm title="Biztosan törlöd?" onConfirm={() => record.id && handleDeleteSize(record.id)}>
+                              <Button size="small" danger icon={<DeleteOutlined />} />
+                            </Popconfirm>
+                          </Space>
+                        )},
+                    ]}
+                  />
+                  {editingMaterial && (
+                    <div style={{ marginTop: 8, fontSize: 11, color: '#888' }}>
+                      Alap méret: {editingMaterial.width || '—'} × {editingMaterial.length || '—'}
+                      {editingMaterial.height ? ` × ${editingMaterial.height}` : ''} {editingMaterial.dimension_unit}
+                      {editingMaterial.unit_selling_price ? ` · Alap ár: ${Number(editingMaterial.unit_selling_price).toLocaleString('hu-HU')} HUF` : ''}
+                    </div>
+                  )}
+                </div>
+              ),
+            },
           ]}
         />
+      </Modal>
+
+      {/* Size Modal */}
+      <Modal
+        title={editingSizeItem ? 'Méret szerkesztése' : 'Új méret'}
+        open={sizeModalVisible}
+        onCancel={() => setSizeModalVisible(false)}
+        onOk={() => sizeForm.submit()}
+        width={500}
+      >
+        <Form form={sizeForm} layout="vertical" onFinish={handleSizeSubmit}>
+          <Form.Item name="material" hidden><InputNumber /></Form.Item>
+          <Form.Item name="sort_order" hidden><InputNumber /></Form.Item>
+          <Form.Item name="is_active" hidden valuePropName="checked"><Checkbox /></Form.Item>
+          <Form.Item name="name" label="Megnevezés (opcionális)">
+            <Input placeholder="pl. A4, A3, Egyedi" />
+          </Form.Item>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item name="width" label="Szélesség" rules={[{ required: true, message: 'Kötelező' }]}>
+                <InputNumber style={{ width: '100%' }} min={0} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="length" label="Hosszúság" rules={[{ required: true, message: 'Kötelező' }]}>
+                <InputNumber style={{ width: '100%' }} min={0} />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item name="height" label="Magasság">
+                <InputNumber style={{ width: '100%' }} min={0} />
+              </Form.Item>
+            </Col>
+          </Row>
+          <Form.Item name="dimension_unit" label="Mértékegység">
+            <Select>
+              <Option value="mm">mm</Option>
+              <Option value="cm">cm</Option>
+              <Option value="m">m</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item name="pricing_type" label="Ár típusa">
+            <Select onChange={(v: string) => sizeForm.setFieldsValue({ pricing_type: v })}>
+              <Option value="custom">Egyedi</Option>
+              <Option value="area">Terület alapján</Option>
+              <Option value="weight">Súly alapján</Option>
+              <Option value="volume">Térfogat alapján</Option>
+            </Select>
+          </Form.Item>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev.pricing_type !== cur.pricing_type}>
+            {({ getFieldValue }) => {
+              const pType = getFieldValue('pricing_type');
+              if (pType === 'custom') {
+                return (
+                  <Form.Item name="custom_price" label="Egyedi ár (HUF)">
+                    <InputNumber style={{ width: '100%' }} min={0} />
+                  </Form.Item>
+                );
+              }
+              const basePrice = editingMaterial?.unit_selling_price || 0;
+              const baseW = editingMaterial?.width || 0;
+              const baseL = editingMaterial?.length || 0;
+              const baseH = editingMaterial?.height || 1;
+              return (
+                <div style={{ padding: 12, background: '#f6ffed', borderRadius: 8, marginBottom: 16, fontSize: 12 }}>
+                  Az ár automatikusan számítódik az alap ár ({Number(basePrice).toLocaleString('hu-HU')} HUF) és az alap méret ({baseW}×{baseL}{baseH > 1 ? `×${baseH}` : ''}) arányában.
+                </div>
+              );
+            }}
+          </Form.Item>
+        </Form>
       </Modal>
 
       {/* Cost Item Modal */}

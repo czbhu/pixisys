@@ -3,7 +3,7 @@ from rest_framework.routers import DefaultRouter
 from .views import (
     MaterialTypeViewSet, MaterialGroupViewSet, MaterialViewSet, WarehouseViewSet, 
     ShelfViewSet, MaterialSupplierViewSet, InventoryViewSet, 
-    MaterialCostItemViewSet,
+    MaterialCostItemViewSet, MaterialSizeViewSet,
     MaterialStockViewSet, MaterialReceiptViewSet, StockMovementViewSet,
     SupplierInvoiceViewSet, InvoiceItemViewSet,
     ScrapRecordViewSet, ScrapItemViewSet,
@@ -19,6 +19,7 @@ router.register(r'shelves', ShelfViewSet)
 router.register(r'material-suppliers', MaterialSupplierViewSet)
 router.register(r'inventory', InventoryViewSet)
 router.register(r'material-cost-items', MaterialCostItemViewSet)
+router.register(r'material-sizes', MaterialSizeViewSet)
 router.register(r'material-stocks', MaterialStockViewSet)
 router.register(r'material-receipts', MaterialReceiptViewSet)
 router.register(r'stock-movements', StockMovementViewSet)

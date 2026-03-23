@@ -400,6 +400,8 @@ class Service(models.Model):
         ('kg', 'kilogramm'),
         ('hour', 'óra'),
         ('perimeter', 'kerület (méter)'),
+        ('sheet', 'ív (ív alapú)'),
+        ('click', 'klikk (klikkdíjas)'),
     ]
     
     CALCULATION_BASIS_CHOICES = [
@@ -426,8 +428,9 @@ class Service(models.Model):
         max_length=20,
         choices=UNIT_CHOICES + [('minute', 'perc')],
         default='db',
+        blank=True,
         verbose_name="Kalkulációs mértékegység",
-        help_text="Ha eltér az alap mértékegységtől, a rendszer átváltja"
+        help_text="Ha eltér az alap mértékegységtől, a rendszer átváltja. Klikkdíjas esetén az ív nyomtatási klikkszám alapján számol."
     )
 
     calculation_basis = models.CharField(
@@ -1048,6 +1051,7 @@ class ServiceCostItem(models.Model):
     CALCULATION_TYPE_CHOICES = [
         ('fixed', 'Fix költség'),
         ('unit', 'Darab alapú'),
+        ('click', 'Klikkdíjas (ív-produkció alapú)'),
         ('length', 'Folyóméter'),
         ('perimeter', 'Kerület'),
         ('area', 'Terület'),
@@ -1180,6 +1184,7 @@ class ProductTemplate(models.Model):
         ('generic', 'Általános'),
         ('sheet_print', 'Íves/Táblás optimalizálás'),
         ('roll_print', 'Tekercses kalkuláció'),
+        ('click_sheet_print', 'Klikkdíjas íves nyomtatás'),
     ]
     calculator_type = models.CharField(
         max_length=50,
@@ -1216,6 +1221,18 @@ class ProductTemplate(models.Model):
         related_name='product_templates',
         verbose_name="Engedélyezett alapanyag kategóriák",
     )
+    required_services = models.ManyToManyField(
+        Service,
+        blank=True,
+        related_name='required_for_templates',
+        verbose_name="Kötelező kapcsolódó szolgáltatások",
+    )
+    finishing_services = models.ManyToManyField(
+        Service,
+        blank=True,
+        related_name='finishing_for_templates',
+        verbose_name="Kész termékre vonatkozó szolgáltatások",
+    )
 
     custom_size_enabled = models.BooleanField(default=False, verbose_name="Egyedi méret engedélyezett")
     UNIT_CHOICES = [('mm', 'mm'), ('cm', 'cm'), ('m', 'm')]
@@ -1224,6 +1241,44 @@ class ProductTemplate(models.Model):
     custom_size_width_max = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi Sz. max")
     custom_size_height_min = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi M. min")
     custom_size_height_max = models.DecimalField(max_digits=10, decimal_places=3, null=True, blank=True, verbose_name="Egyedi M. max")
+
+    # ── Nyomtatási beállítások (sheet_print kalkulátor típushoz) ────────────
+    PRINT_SIDES_CHOICES = [
+        (1, 'Egyoldalas (simplex)'),
+        (2, 'Kétoldalas (duplex)'),
+    ]
+    print_sides = models.PositiveSmallIntegerField(
+        choices=PRINT_SIDES_CHOICES,
+        default=1,
+        verbose_name="Nyomtatás oldalak száma",
+        help_text="1 = simplex, 2 = duplex. Klikkdíjas számításnál 1 ív = 1×sides klikk.",
+    )
+    print_service = models.ForeignKey(
+        'Service',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='print_service_templates',
+        verbose_name="Nyomtatási szolgáltatás",
+        help_text="Az íves nyomtatáshoz rendelt szolgáltatás (pl. Fekete-fehér íves nyomtatás). Ha klikkdíjas, a klikk díjjal számol.",
+    )
+    print_service_options = models.ManyToManyField(
+        'Service',
+        blank=True,
+        related_name='click_print_product_templates',
+        verbose_name="Klikkdíjas nyomtatási opciók",
+        help_text="Válasszon klikkdíjas nyomtatási szolgáltatásokat (pl. Konica 1 old. színes, Konica 2 old. FH). A felhasználó ezek közül választ a PrintEditorban.",
+    )
+    print_service_options_order = models.JSONField(
+        default=list, blank=True,
+        verbose_name="Klikkdíjas opciók sorrendje",
+        help_text="A print_service_options M2M mezőhöz tartozó rendezési sorrend (ID-k listája).",
+    )
+    fix_cost_first_side_only = models.BooleanField(
+        default=False,
+        verbose_name="Fix költségek csak az 1. oldalra",
+        help_text="Ha igaz, 2 oldalas nyomtatásnál a fix költségeket csak az 1. oldalra számolja.",
+    )
 
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
@@ -1274,7 +1329,7 @@ class ProductTemplateServiceGroup(models.Model):
     )
     side = models.CharField(
         max_length=1,
-        choices=[('1', '1. oldal'), ('2', '2. oldal')],
+        choices=[('1', '1. oldal'), ('2', '2. oldal'), ('F', 'Kész termék')],
         default='1',
         verbose_name="Oldal",
     )
@@ -1296,7 +1351,7 @@ class ProductTemplateServiceGroup(models.Model):
 
 
 class ProductTemplateQuantityDiscount(models.Model):
-    """Mennyiségi kedvezmény – összehatárhoz kötött % vagy fix árengedmény."""
+    """Összeghatárhoz kötött % vagy fix árengedmény."""
     DISCOUNT_TYPE_CHOICES = [
         ('percent', 'Százalékos (%)'),
         ('fixed',   'Fix összeg (Ft)'),
@@ -1307,9 +1362,12 @@ class ProductTemplateQuantityDiscount(models.Model):
         related_name='quantity_discounts',
         verbose_name="Termék sablon",
     )
-    min_quantity = models.IntegerField(
-        default=1,
-        verbose_name="Min. mennyiség (db-tól)",
+    min_amount = models.DecimalField(
+        max_digits=14,
+        decimal_places=2,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Min. rendelési összeg (Ft-tól)",
     )
     discount_type = models.CharField(
         max_length=10,
@@ -1326,9 +1384,9 @@ class ProductTemplateQuantityDiscount(models.Model):
     )
 
     class Meta:
-        verbose_name = "Mennyiségi kedvezmény"
-        verbose_name_plural = "Mennyiségi kedvezmények"
-        ordering = ['min_quantity']
+        verbose_name = "Összeghatáros kedvezmény"
+        verbose_name_plural = "Összeghatáros kedvezmények"
+        ordering = ['min_amount']
 
     def __str__(self):
-        return f"{self.product.name} – {self.min_quantity} db felett {self.discount_value} {'%' if self.discount_type == 'percent' else 'Ft'}"
+        return f"{self.product.name} – {self.min_amount} Ft felett {self.discount_value} {'%' if self.discount_type == 'percent' else 'Ft'}"

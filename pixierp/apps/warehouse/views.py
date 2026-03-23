@@ -12,7 +12,7 @@ from datetime import datetime, date
 from .nav_invoice_service import NavInvoiceService
 from .models import (
     MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
-    Inventory, MaterialCostItem,
+    Inventory, MaterialCostItem, MaterialSize,
     MaterialStock, MaterialReceipt, StockMovement,
     SupplierInvoice, InvoiceItem,
     ScrapRecord, ScrapItem
@@ -20,7 +20,7 @@ from .models import (
 from .serializers import (
     MaterialTypeSerializer, MaterialGroupSerializer, MaterialSerializer, WarehouseSerializer, 
     ShelfSerializer, MaterialSupplierSerializer, InventorySerializer, 
-    MaterialCostItemSerializer,
+    MaterialCostItemSerializer, MaterialSizeSerializer,
     MaterialStockSerializer, MaterialReceiptSerializer, StockMovementSerializer,
     SupplierInvoiceSerializer, InvoiceItemSerializer,
     ScrapRecordSerializer, ScrapItemSerializer
@@ -252,6 +252,19 @@ class MaterialCostItemViewSet(viewsets.ModelViewSet):
         if is_internal is not None:
             queryset = queryset.filter(is_internal=is_internal.lower() == 'true')
         
+        return queryset
+
+
+class MaterialSizeViewSet(viewsets.ModelViewSet):
+    """Rendelhető méretek kezelése"""
+    queryset = MaterialSize.objects.all()
+    serializer_class = MaterialSizeSerializer
+
+    def get_queryset(self):
+        queryset = MaterialSize.objects.select_related('material')
+        material_id = self.request.query_params.get('material_id', None)
+        if material_id:
+            queryset = queryset.filter(material_id=material_id)
         return queryset
 
 

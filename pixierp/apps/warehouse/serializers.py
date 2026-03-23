@@ -2,11 +2,12 @@ from rest_framework import serializers
 from django.db import models
 from .models import (
     MaterialType, MaterialGroup, Material, Warehouse, Shelf, MaterialSupplier, 
-    Inventory, MaterialCostItem,
+    Inventory, MaterialCostItem, MaterialSize,
     MaterialStock, MaterialReceipt, StockMovement,
     SupplierInvoice, InvoiceItem,
     ScrapRecord, ScrapItem
 )
+from apps.crm.models import Company
 
 class MaterialTypeSerializer(serializers.ModelSerializer):
     """Alapanyag típus serializer"""
@@ -226,6 +227,10 @@ class MaterialReceiptCreateSerializer(serializers.ModelSerializer):
 
 class MaterialCostItemSerializer(serializers.ModelSerializer):
     """Alapanyag költség elem serializer"""
+    supplier = serializers.PrimaryKeyRelatedField(
+        queryset=Company.objects.filter(is_supplier=True),
+        required=False, allow_null=True
+    )
     supplier_name = serializers.CharField(source='supplier.name', read_only=True)
     calculation_type_display = serializers.CharField(source='get_calculation_type_display', read_only=True)
     
@@ -238,6 +243,22 @@ class MaterialCostItemSerializer(serializers.ModelSerializer):
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'selling_price']
+
+
+class MaterialSizeSerializer(serializers.ModelSerializer):
+    """Rendelhető méret serializer"""
+    effective_price = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    pricing_type_display = serializers.CharField(source='get_pricing_type_display', read_only=True)
+
+    class Meta:
+        model = MaterialSize
+        fields = [
+            'id', 'material', 'name', 'width', 'length', 'height',
+            'dimension_unit', 'pricing_type', 'pricing_type_display',
+            'custom_price', 'calculated_price', 'effective_price',
+            'is_active', 'sort_order', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'calculated_price']
 
 
 class MaterialStockSerializer(serializers.ModelSerializer):

@@ -663,10 +663,10 @@ class MaterialCostItem(models.Model):
     )
     
     markup_percentage = models.DecimalField(
-        max_digits=5,
+        max_digits=7,
         decimal_places=2,
         default=0,
-        validators=[MinValueValidator(0), MaxValueValidator(100)],
+        validators=[MinValueValidator(0), MaxValueValidator(10000)],
         verbose_name="Haszon kulcs (%)"
     )
     
@@ -707,6 +707,114 @@ class MaterialCostItem(models.Model):
         if self.unit_price and self.markup_percentage:
             self.selling_price = self.unit_price * (1 + self.markup_percentage / 100)
         super().save(*args, **kwargs)
+
+
+class MaterialSize(models.Model):
+    """Rendelhető méret variáns az alapanyaghoz"""
+
+    PRICING_TYPE_CHOICES = [
+        ('custom', 'Egyedi'),
+        ('area', 'Terület alapján'),
+        ('weight', 'Súly alapján'),
+        ('volume', 'Térfogat alapján'),
+    ]
+
+    material = models.ForeignKey(
+        Material,
+        on_delete=models.CASCADE,
+        related_name='sizes',
+        verbose_name="Alapanyag"
+    )
+    name = models.CharField(
+        max_length=200, blank=True,
+        verbose_name="Megnevezés",
+        help_text="Opcionális elnevezés, pl. A4, A3"
+    )
+    width = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name="Szélesség"
+    )
+    length = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name="Hosszúság"
+    )
+    height = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name="Magasság"
+    )
+    dimension_unit = models.CharField(
+        max_length=5, choices=Material.DIMENSION_UNIT_CHOICES,
+        default='mm', verbose_name="Mértékegység"
+    )
+    pricing_type = models.CharField(
+        max_length=10, choices=PRICING_TYPE_CHOICES,
+        default='custom', verbose_name="Ár típusa"
+    )
+    custom_price = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name="Egyedi ár"
+    )
+    calculated_price = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name="Számított ár"
+    )
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    sort_order = models.IntegerField(default=0, verbose_name="Sorrend")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
+    updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
+
+    class Meta:
+        verbose_name = "Rendelhető méret"
+        verbose_name_plural = "Rendelhető méretek"
+        ordering = ['material', 'sort_order', 'width', 'length']
+
+    def __str__(self):
+        label = self.name or f"{self.width}×{self.length}"
+        if self.height:
+            label += f"×{self.height}"
+        return f"{self.material.name} - {label} {self.dimension_unit}"
+
+    @property
+    def effective_price(self):
+        if self.pricing_type == 'custom':
+            return self.custom_price
+        return self.calculated_price
+
+    def save(self, *args, **kwargs):
+        if self.pricing_type != 'custom':
+            self._calculate_price()
+        else:
+            self.calculated_price = self.custom_price
+        super().save(*args, **kwargs)
+
+    def _calculate_price(self):
+        """Ár arányosítás az eredeti mérethez képest."""
+        mat = self.material
+        base_price = mat.unit_selling_price or 0
+        if not base_price:
+            self.calculated_price = 0
+            return
+
+        if self.pricing_type == 'area':
+            orig_area = (mat.width or 0) * (mat.length or 0)
+            new_area = self.width * self.length
+            ratio = (new_area / orig_area) if orig_area else 0
+        elif self.pricing_type == 'weight':
+            # weight ∝ volume (w × l × h)
+            orig_vol = (mat.width or 0) * (mat.length or 0) * (mat.height or 1)
+            new_h = self.height or (mat.height or 1)
+            new_vol = self.width * self.length * new_h
+            ratio = (new_vol / orig_vol) if orig_vol else 0
+        elif self.pricing_type == 'volume':
+            orig_vol = (mat.width or 0) * (mat.length or 0) * (mat.height or 1)
+            new_h = self.height or (mat.height or 1)
+            new_vol = self.width * self.length * new_h
+            ratio = (new_vol / orig_vol) if orig_vol else 0
+        else:
+            ratio = 1
+
+        from decimal import Decimal
+        self.calculated_price = round(base_price * Decimal(str(ratio)), 2)
 
 
 class MaterialStock(models.Model):

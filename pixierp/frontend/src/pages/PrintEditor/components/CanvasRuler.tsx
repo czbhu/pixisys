@@ -22,6 +22,8 @@ interface Props {
   scale: number;        // px per mm on-screen
   size?: number;        // ruler thickness, default 20
   cursorMm: number | null;
+  offsetMm?: number;    // mm offset for labels (e.g. -3 to start from bleed)
+  reverse?: boolean;    // if true, labels count down (for Y axis with 0 at bottom)
 }
 
 function drawRuler(
@@ -33,6 +35,8 @@ function drawRuler(
   canvasLen: number,
   cursorMm: number | null,
   dpr: number,
+  offsetMm: number,
+  reverse: boolean,
 ) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 
@@ -79,21 +83,22 @@ function drawRuler(
 
     if (isMajor) {
       ctx.save();
-      // highlight the origin (0 mm = print corner)
-      const isOrigin = mm === 0;
+      const labelMm = reverse
+        ? Math.round(totalMm + offsetMm - mm)   // reversed: 0 at bottom
+        : Math.round(mm + offsetMm);              // normal: 0 at left/top
+      const isOrigin = labelMm === 0;
       ctx.fillStyle = isOrigin ? CURSOR_COLOR : LABEL_COLOR;
+      const label = String(labelMm);
       if (dir === 'h') {
-        // 0-nál ne lógjon ki a sarok tglövel: csak ha van hely
         if (!isOrigin || canvasLen > 8) {
-          ctx.fillText(String(mm), px + 2 * dpr, 2 * dpr);
+          ctx.fillText(label, px + 2 * dpr, 2 * dpr);
         }
       } else {
         if (!isOrigin) {
           ctx.translate(px, (rulerSize * 0.1) * dpr);
           ctx.rotate(-Math.PI / 2);
-          ctx.fillText(String(mm), -9 * dpr * String(mm).length * 0.55, 0);
+          ctx.fillText(label, -9 * dpr * label.length * 0.55, 0);
         } else if (canvasLen > 8) {
-          // Vízszintes "0" felirat a függőleges vonalzó tetején
           ctx.fillText('0', 2 * dpr, px + 2 * dpr);
         }
       }
@@ -102,24 +107,29 @@ function drawRuler(
     }
   }
 
-  // cursor indicator
-  if (cursorMm !== null && cursorMm >= 0 && cursorMm <= totalMm) {
-    const px = cursorMm * scale * dpr;
-    ctx.strokeStyle = CURSOR_COLOR;
-    ctx.lineWidth = 1.5 * dpr;
-    ctx.beginPath();
-    if (dir === 'h') {
-      ctx.moveTo(px, 0);
-      ctx.lineTo(px, rulerSize * dpr);
-    } else {
-      ctx.moveTo(0, px);
-      ctx.lineTo(rulerSize * dpr, px);
+  // cursor indicator (cursorMm is in user-facing coordinate system)
+  if (cursorMm !== null) {
+    const cursorRulerMm = reverse
+      ? totalMm + offsetMm - cursorMm     // reverse: user 0=bottom → ruler mm
+      : cursorMm - offsetMm;              // normal: user 0=left/cut edge → ruler mm
+    if (cursorRulerMm >= 0 && cursorRulerMm <= totalMm) {
+      const px = cursorRulerMm * scale * dpr;
+      ctx.strokeStyle = CURSOR_COLOR;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.beginPath();
+      if (dir === 'h') {
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, rulerSize * dpr);
+      } else {
+        ctx.moveTo(0, px);
+        ctx.lineTo(rulerSize * dpr, px);
+      }
+      ctx.stroke();
     }
-    ctx.stroke();
   }
 }
 
-const CanvasRuler: React.FC<Props> = ({ direction, totalMm, scale, size = 20, cursorMm }) => {
+const CanvasRuler: React.FC<Props> = ({ direction, totalMm, scale, size = 20, cursorMm, offsetMm = 0, reverse = false }) => {
   const ref = useRef<HTMLCanvasElement>(null);
   const dpr = window.devicePixelRatio || 1;
 
@@ -134,8 +144,8 @@ const CanvasRuler: React.FC<Props> = ({ direction, totalMm, scale, size = 20, cu
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
-    drawRuler(ctx, direction, totalMm, scale, size, displayLen, cursorMm, dpr);
-  }, [direction, totalMm, scale, size, displayLen, cursorMm, dpr]);
+    drawRuler(ctx, direction, totalMm, scale, size, displayLen, cursorMm, dpr, offsetMm, reverse);
+  }, [direction, totalMm, scale, size, displayLen, cursorMm, dpr, offsetMm, reverse]);
 
   return (
     <canvas

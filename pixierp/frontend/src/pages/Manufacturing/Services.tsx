@@ -149,6 +149,8 @@ const Services: React.FC = () => {
       'area': ['cm\u00b2', 'm\u00b2'],
       'weight': ['g', 'kg', 't'],
       'time': ['perc', 'negyed \u00f3ra', 'f\u00e9l\u00f3ra', '\u00f3ra', 'nap'],
+      'sheet': ['\u00edv'],
+      'click': ['klikk'],
     };
     return unitMap[calculationType] || ['db'];
   };
@@ -504,7 +506,6 @@ const Services: React.FC = () => {
         setSelectedSourceForCost(null);
         setCostItems([]);
     }
-    fetchPrintCostItems(service.id);
     setModalVisible(true);
   };
 
@@ -588,34 +589,6 @@ const Services: React.FC = () => {
         const res = await api.post('/manufacturing/services/', values);
         savedService = res.data;
         message.success('Szolgáltatás létrehozva');
-      }
-
-      // Save print cost items: delete all existing standalone, then recreate from state
-      try {
-        const existingRes = await api.get(`/manufacturing/service-cost-items/?service_id=${savedService.id}&is_standalone=true`);
-        const existing: any[] = Array.isArray(existingRes.data) ? existingRes.data : (existingRes.data.results ?? []);
-        for (const item of existing) {
-          await api.delete(`/manufacturing/service-cost-items/${item.id}/`);
-        }
-        for (const item of printCostItems) {
-          if (item.name || item.selling_price > 0) {
-            await api.post('/manufacturing/service-cost-items/', {
-              service: savedService.id,
-              name: item.name || 'Költség',
-              calculation_type: item.calculation_type,
-              selling_price: item.selling_price,
-              unit_price: 0,
-              markup_percentage: 0,
-              unit: 'db',
-              is_internal: false,
-              is_active: true,
-              currency: 'HUF',
-              rounding_step: 1,
-            });
-          }
-        }
-      } catch (e) {
-        console.error('Hiba a print árazás mentésekor:', e);
       }
 
       setModalVisible(false);
@@ -993,14 +966,20 @@ const Services: React.FC = () => {
                 onClick={() => handleCopy(record)}
              />
           </Tooltip>
-          <Popconfirm
-            title="Biztosan törli?"
-            onConfirm={() => handleDelete(record.id)}
-            okText="Igen"
-            cancelText="Nem"
-          >
-            <Button type="link" danger icon={<DeleteOutlined />} />
-          </Popconfirm>
+          {record.code === 'DIGIPR_K' || record.code === 'DIGIPR_CMYK' ? (
+            <Tooltip title="Ez a klikk-díj számítási szolgáltatás nem törölhető">
+              <Button type="link" danger icon={<DeleteOutlined />} disabled />
+            </Tooltip>
+          ) : (
+            <Popconfirm
+              title="Biztosan törli?"
+              onConfirm={() => handleDelete(record.id)}
+              okText="Igen"
+              cancelText="Nem"
+            >
+              <Button type="link" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
@@ -1264,6 +1243,8 @@ const Services: React.FC = () => {
                   <Option value="hour">óra</Option>
                   <Option value="minute">perc</Option>
                   <Option value="perimeter">kerület (méter)</Option>
+                  <Option value="sheet">ív (ív alapú)</Option>
+                  <Option value="click">Ív alapú (klikkdíjas)</Option>
                 </Select>
               </Form.Item>
 
@@ -1279,110 +1260,6 @@ const Services: React.FC = () => {
                   </Form.Item>
                 </div>
               </Tooltip>
-
-              {/* ── Egyszerűsített árazási modell ─────────────────────────── */}
-              <h4 style={{ marginTop: 8, marginBottom: 8 }}>Egyszerűsített árazás (Print Editorhoz)</h4>
-              <div style={{ padding: '12px 16px', background: '#f0f7ff', borderRadius: 6, border: '1px solid #bae0ff', marginBottom: 16 }}>
-                <Form.Item
-                  name="pricing_type"
-                  label="Árazás típusa"
-                  tooltip="Meghatározza, hogy az 'Egységnyi' típusú költség elemek mire vonatkoznak: ívenként, munkánként, vagy vágásonként."
-                  style={{ marginBottom: 8 }}
-                >
-                  <Select style={{ width: '100%' }}>
-                    <Option value="per_sheet">Ívenként</Option>
-                    <Option value="per_job">Munkánként (flat)</Option>
-                    <Option value="per_cut">Vágásonként (kapacitással)</Option>
-                  </Select>
-                </Form.Item>
-                <Form.Item shouldUpdate={(p, c) => p.pricing_type !== c.pricing_type} noStyle>
-                  {({ getFieldValue }) => getFieldValue('pricing_type') === 'per_cut' && (
-                    <Form.Item
-                      name="capacity"
-                      label="Kapacitás (ív/vágás)"
-                      tooltip="Hány ívet lehet 1 vágással feldolgozni. 0 = korlátlan."
-                      style={{ marginBottom: 8 }}
-                    >
-                      <InputNumber min={0} style={{ width: '100%' }} addonAfter="ív/vágás" />
-                    </Form.Item>
-                  )}
-                </Form.Item>
-
-                {/* Ár elemek */}
-                {printCostItems.length > 0 && (
-                  <Table
-                    size="small"
-                    pagination={false}
-                    dataSource={printCostItems}
-                    rowKey="_key"
-                    style={{ marginBottom: 8 }}
-                    columns={[
-                      {
-                        title: 'Megnevezés',
-                        key: 'name',
-                        render: (_: any, rec: PrintCostItem, idx: number) => (
-                          <Input
-                            value={rec.name}
-                            onChange={e => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, name: e.target.value } : it))}
-                            placeholder="pl. Beállítási díj"
-                            size="small"
-                          />
-                        ),
-                      },
-                      {
-                        title: 'Típus',
-                        key: 'calculation_type',
-                        width: 170,
-                        render: (_: any, rec: PrintCostItem, idx: number) => (
-                          <Select
-                            size="small"
-                            value={rec.calculation_type}
-                            onChange={val => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, calculation_type: val } : it))}
-                            style={{ width: '100%' }}
-                          >
-                            <Option value="fixed">Fix (munkánként 1×)</Option>
-                            <Option value="unit">Egységnyi (ív/vágás)</Option>
-                          </Select>
-                        ),
-                      },
-                      {
-                        title: 'Ár (Ft)',
-                        key: 'selling_price',
-                        width: 150,
-                        render: (_: any, rec: PrintCostItem, idx: number) => (
-                          <InputNumber
-                            size="small"
-                            min={0}
-                            value={rec.selling_price}
-                            onChange={val => setPrintCostItems(prev => prev.map((it, i) => i === idx ? { ...it, selling_price: val ?? 0 } : it))}
-                            addonAfter="Ft"
-                            style={{ width: '100%' }}
-                          />
-                        ),
-                      },
-                      {
-                        key: 'del',
-                        width: 40,
-                        render: (_: any, _rec: PrintCostItem, idx: number) => (
-                          <Button
-                            danger
-                            size="small"
-                            icon={<DeleteOutlined />}
-                            onClick={() => setPrintCostItems(prev => prev.filter((_, i) => i !== idx))}
-                          />
-                        ),
-                      },
-                    ]}
-                  />
-                )}
-                <Button
-                  size="small"
-                  icon={<PlusOutlined />}
-                  onClick={() => setPrintCostItems(prev => [...prev, { _key: Date.now(), name: '', calculation_type: 'fixed', selling_price: 0 }])}
-                >
-                  Ár elem hozzáadása
-                </Button>
-              </div>
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók / Források</h4>
               <div style={{ marginBottom: 16 }}>
@@ -1641,6 +1518,7 @@ const Services: React.FC = () => {
             >
               <Option value="fixed">Fix költség</Option>
               <Option value="unit">Darab alapú</Option>
+              <Option value="click">Ív alapú (klikkdíjas)</Option>
               <Option value="length">Folyóméter</Option>
               <Option value="perimeter">Kerület</Option>
               <Option value="area">Terület</Option>

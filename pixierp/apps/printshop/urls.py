@@ -14,4 +14,5 @@ urlpatterns = [
         'post': 'create',
     }), name='print-pricing'),
     path('pdf-to-svg/', views.PdfToSvgView.as_view(), name='pdf-to-svg'),
+    path('pdf-analyze/', views.PdfAnalyzeView.as_view(), name='pdf-analyze'),
 ]

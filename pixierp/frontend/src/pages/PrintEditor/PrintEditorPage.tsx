@@ -78,7 +78,9 @@ const PrintEditorPage: React.FC = () => {
   const handleDesignChange = useCallback((d1: any, d2: any) => {
     initialDesignRef.current = { d1, d2 };
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ params: paramsRef.current, d1, d2 }));
+      const s = localStorage.getItem(STORAGE_KEY);
+      const existing = s ? JSON.parse(s) : {};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params: paramsRef.current, d1, d2 }));
     } catch {}
   }, []);
   const [orderId, setOrderId] = useState<number | null>(null);
@@ -409,6 +411,7 @@ const PrintEditorPage: React.FC = () => {
                   isAdmin={isAdmin}
                   locked={!isAdmin && previewLocked}
                   authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+                  params={params}
                 />
               )}
             </div>

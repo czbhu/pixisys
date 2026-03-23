@@ -28,11 +28,13 @@ class NotificationWebSocketService {
 
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const host = window.location.host;
-    // Assuming backend is on same host/port or proxied correctly. 
-    // If running dev, we might need port 8003/8000 difference but usually proxy handles it.
-    // Development fallback:
-    let wsUrl = process.env.NODE_ENV === 'development' 
-      ? 'ws://localhost:8003/ws/notifications/' 
+    const hostname = window.location.hostname;
+    // In local dev, backend WS may run on 8003; on remote/dev-proxy hosts use same-origin WS path.
+    const useLocalDevWs =
+      process.env.NODE_ENV === 'development' &&
+      (hostname === 'localhost' || hostname === '127.0.0.1');
+    let wsUrl = useLocalDevWs
+      ? 'ws://localhost:8003/ws/notifications/'
       : `${protocol}//${host}/ws/notifications/`;
     
     // Add auth token if available

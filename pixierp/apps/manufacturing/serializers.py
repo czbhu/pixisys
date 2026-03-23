@@ -327,6 +327,7 @@ class ServiceSerializer(serializers.ModelSerializer):
         source='internal_production_department.name', read_only=True
     )
     group_names = serializers.SerializerMethodField()
+    cost_summary = serializers.SerializerMethodField()
     
     class Meta:
         model = Service
@@ -339,6 +340,22 @@ class ServiceSerializer(serializers.ModelSerializer):
 
     def get_group_names(self, obj):
         return [g.name for g in obj.groups.all()]
+
+    def get_cost_summary(self, obj):
+        """Aggregate fixed + per-unit selling prices from active cost items."""
+        fixed_total = 0
+        unit_total = 0
+        for ci in obj.cost_items.filter(is_active=True):
+            if ci.calculation_type in ('length', 'perimeter', 'area', 'weight', 'time'):
+                continue
+            if not (ci.supplier_id or ci.is_internal):
+                continue
+            price = float(ci.selling_price or 0)
+            if ci.calculation_type == 'fixed':
+                fixed_total += price
+            elif ci.calculation_type in ('unit', 'click'):
+                unit_total += price
+        return {'fixed': fixed_total, 'unit': unit_total}
 
 
 class CalculatorTemplateSerializer(serializers.ModelSerializer):
@@ -472,7 +489,7 @@ class ProductTemplateSizeSerializer(serializers.ModelSerializer):
 class ProductTemplateQuantityDiscountSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductTemplateQuantityDiscount
-        fields = ['id', 'min_quantity', 'discount_type', 'discount_value']
+        fields = ['id', 'min_amount', 'discount_type', 'discount_value']
 
 
 class ProductTemplateSerializer(serializers.ModelSerializer):
@@ -482,6 +499,10 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
     allowed_materials_details = serializers.SerializerMethodField()
     allowed_material_groups_details = serializers.SerializerMethodField()
     allowed_services_details = serializers.SerializerMethodField()
+    required_services_details = serializers.SerializerMethodField()
+    finishing_services_details = serializers.SerializerMethodField()
+    finishing_service_groups = serializers.SerializerMethodField()
+    print_service_options_details = serializers.SerializerMethodField()
     service_groups_1 = serializers.SerializerMethodField()
     service_groups_2 = serializers.SerializerMethodField()
 
@@ -496,7 +517,13 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'allowed_materials', 'allowed_materials_details',
             'allowed_material_groups', 'allowed_material_groups_details',
             'allowed_services', 'allowed_services_details',
+            'required_services', 'required_services_details',
+            'finishing_services', 'finishing_services_details',
+            'finishing_service_groups',
             'service_groups_1', 'service_groups_2',
+            'print_sides', 'print_service',
+            'print_service_options', 'print_service_options_details',
+            'print_service_options_order', 'fix_cost_first_side_only',
             'custom_size_enabled', 'custom_size_unit',
             'custom_size_width_min', 'custom_size_width_max',
             'custom_size_height_min', 'custom_size_height_max',
@@ -506,13 +533,69 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         read_only_fields = ['created_at', 'updated_at']
 
     def get_allowed_materials_details(self, obj):
-        return [{'id': m.id, 'name': m.name, 'code': m.code} for m in obj.allowed_materials.all()]
+        def _dim_mm(val, unit):
+            """Convert dimension to mm."""
+            if val is None:
+                return None
+            v = float(val)
+            if unit == 'cm':
+                return v * 10
+            if unit == 'm':
+                return v * 1000
+            return v  # already mm
+
+        result = []
+        for m in obj.allowed_materials.all():
+            sizes = []
+            for s in m.sizes.filter(is_active=True).order_by('sort_order', 'width', 'length'):
+                sizes.append({
+                    'id': s.id,
+                    'name': s.name,
+                    'width_mm': _dim_mm(s.width, s.dimension_unit),
+                    'length_mm': _dim_mm(s.length, s.dimension_unit),
+                    'price': float(s.effective_price or 0),
+                })
+            result.append({
+                'id': m.id, 'name': m.name, 'code': m.code,
+                'width_mm': _dim_mm(m.width, m.dimension_unit),
+                'length_mm': _dim_mm(m.length, m.dimension_unit),
+                'unit_selling_price': float(m.unit_selling_price or 0),
+                'sizes': sizes,
+            })
+        return result
 
     def get_allowed_material_groups_details(self, obj):
         return [{'id': g.id, 'name': g.name} for g in obj.allowed_material_groups.all()]
 
     def get_allowed_services_details(self, obj):
         return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.allowed_services.all()]
+
+    def get_required_services_details(self, obj):
+        return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.required_services.all()]
+
+    def get_finishing_services_details(self, obj):
+        return [{'id': s.id, 'name': s.name, 'code': s.code} for s in obj.finishing_services.all()]
+
+    def get_finishing_service_groups(self, obj):
+        groups = obj.service_groups.filter(side='F').order_by('group_index').prefetch_related('services')
+        return [[s.id for s in g.services.all()] for g in groups]
+
+    def get_print_service_options_details(self, obj):
+        svcs = list(obj.print_service_options.all())
+        order = obj.print_service_options_order or []
+        if order:
+            order_map = {sid: idx for idx, sid in enumerate(order)}
+            svcs.sort(key=lambda s: order_map.get(s.id, 9999))
+        return [
+            {
+                'id': s.id, 'name': s.name, 'code': s.code,
+                'setup_cost_selling': float(s.setup_cost_selling or 0),
+                'unit_cost_selling': float(s.unit_cost_selling or 0),
+                'max_width_mm': float(s.max_width_mm) if s.max_width_mm is not None else None,
+                'max_height_mm': float(s.max_height_mm) if s.max_height_mm is not None else None,
+            }
+            for s in svcs
+        ]
 
     def get_service_groups_1(self, obj):
         groups = obj.service_groups.filter(side='1').order_by('group_index').prefetch_related('services')
@@ -522,11 +605,12 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         groups = obj.service_groups.filter(side='2').order_by('group_index').prefetch_related('services')
         return [[s.id for s in g.services.all()] for g in groups]
 
-    def _save_service_groups(self, instance, sg1, sg2):
-        """Recreate service groups and sync allowed_services (flat union)."""
+    def _save_service_groups(self, instance, sg1, sg2, sgf=None):
+        """Recreate service groups and sync allowed_services / finishing_services (flat union)."""
         from .models import ProductTemplateServiceGroup
         instance.service_groups.all().delete()
         all_ids: set = set()
+        finishing_ids: set = set()
         for side, groups in (('1', sg1), ('2', sg2)):
             for idx, svc_ids in enumerate(groups):
                 grp = ProductTemplateServiceGroup.objects.create(
@@ -535,6 +619,14 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
                 grp.services.set(svc_ids)
                 all_ids.update(svc_ids)
         instance.allowed_services.set(list(all_ids))
+        if sgf is not None:
+            for idx, svc_ids in enumerate(sgf):
+                grp = ProductTemplateServiceGroup.objects.create(
+                    product=instance, side='F', group_index=idx
+                )
+                grp.services.set(svc_ids)
+                finishing_ids.update(svc_ids)
+            instance.finishing_services.set(list(finishing_ids))
 
     def create(self, validated_data):
         from .models import ProductTemplateServiceGroup  # noqa: F811
@@ -542,12 +634,19 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         discounts_data = validated_data.pop('quantity_discounts', [])
         allowed_materials = validated_data.pop('allowed_materials', [])
         allowed_material_groups = validated_data.pop('allowed_material_groups', [])
+        print_service_options = validated_data.pop('print_service_options', [])
+        required_services = validated_data.pop('required_services', [])
+        validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
         sg1 = self.initial_data.get('service_groups_1', [])
         sg2 = self.initial_data.get('service_groups_2', [])
+        sgf = self.initial_data.get('finishing_service_groups', [])
         template = ProductTemplate.objects.create(**validated_data)
         template.allowed_materials.set(allowed_materials)
         template.allowed_material_groups.set(allowed_material_groups)
+        template.print_service_options.set(print_service_options)
+        template.required_services.set(required_services)
+        self._save_service_groups(template, sg1, sg2, sgf)
         self._save_service_groups(template, sg1, sg2)
         for size in sizes_data:
             ProductTemplateSize.objects.create(product=template, **size)
@@ -561,6 +660,9 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         discounts_data = validated_data.pop('quantity_discounts', None)
         allowed_materials = validated_data.pop('allowed_materials', None)
         allowed_material_groups = validated_data.pop('allowed_material_groups', None)
+        print_service_options = validated_data.pop('print_service_options', None)
+        required_services = validated_data.pop('required_services', None)
+        validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
         sg1 = self.initial_data.get('service_groups_1', None)
         sg2 = self.initial_data.get('service_groups_2', None)
@@ -571,11 +673,17 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             instance.allowed_materials.set(allowed_materials)
         if allowed_material_groups is not None:
             instance.allowed_material_groups.set(allowed_material_groups)
-        if sg1 is not None or sg2 is not None:
+        if print_service_options is not None:
+            instance.print_service_options.set(print_service_options)
+        if required_services is not None:
+            instance.required_services.set(required_services)
+        sgf = self.initial_data.get('finishing_service_groups', None)
+        if sg1 is not None or sg2 is not None or sgf is not None:
             self._save_service_groups(
                 instance,
                 sg1 if sg1 is not None else self.get_service_groups_1(instance),
                 sg2 if sg2 is not None else self.get_service_groups_2(instance),
+                sgf if sgf is not None else self.get_finishing_service_groups(instance),
             )
         if sizes_data is not None:
             instance.sizes.all().delete()

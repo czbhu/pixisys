@@ -255,7 +255,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
 
           <Row gutter={16}>
             <Col span={params.sides === '2' ? 12 : 24}>
-              <Form.Item label="1. oldal nyomtatási mód">
+              <Form.Item label="Cím oldal nyomtatási mód">
                 <Select
                   value={params.side1_mode}
                   onChange={v => update({ side1_mode: v })}
@@ -268,7 +268,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
             </Col>
             {params.sides === '2' && (
               <Col span={12}>
-                <Form.Item label="2. oldal nyomtatási mód">
+                <Form.Item label="Hátoldal nyomtatási mód">
                   <Select
                     value={params.side2_mode}
                     onChange={v => update({ side2_mode: v })}
@@ -365,9 +365,9 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
                     <table style={{ width: '100%', fontSize: 13 }}>
                       <tbody>
                         <tr><td>Papírköltség</td><td style={{ textAlign: 'right' }}>{fmt(pricing.paper_cost)}</td></tr>
-                        <tr><td>Nyomtatás 1. oldal</td><td style={{ textAlign: 'right' }}>{fmt(pricing.print_cost_side1)}</td></tr>
+                        <tr><td>Nyomtatás Cím oldal</td><td style={{ textAlign: 'right' }}>{fmt(pricing.print_cost_side1)}</td></tr>
                         {pricing.print_cost_side2 > 0 && (
-                          <tr><td>Nyomtatás 2. oldal</td><td style={{ textAlign: 'right' }}>{fmt(pricing.print_cost_side2)}</td></tr>
+                          <tr><td>Nyomtatás Hátoldal</td><td style={{ textAlign: 'right' }}>{fmt(pricing.print_cost_side2)}</td></tr>
                         )}
                         <tr><td>Kötészet</td><td style={{ textAlign: 'right' }}>{fmt(pricing.finishing_cost)}</td></tr>
                         <tr style={{ borderTop: '1px solid #eee' }}>
