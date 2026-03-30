@@ -10,10 +10,11 @@ import {
   Mail,
   RefreshCw,
   ArrowUp,
-  Calendar
+  Calendar,
+  Pencil
 } from 'lucide-react';
 import styled from 'styled-components';
-import { Tooltip } from 'antd';
+import { Tooltip, Pagination as AntPagination } from 'antd';
 import { toast } from 'react-toastify';
 import { invoiceAPI, invoiceBlockAPI, emailSettingsAPI, emailTemplateAPI } from '../services/api';
 import EmailModal from '../components/EmailModal';
@@ -480,6 +481,7 @@ const Invoices = () => {
   const [statusFilter, setStatusFilter] = useState('');
   const [blockFilter, setBlockFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(50);
   const [issueDateFrom, setIssueDateFrom] = useState('');
   const [issueDateTo, setIssueDateTo] = useState('');
   const [deliveryDateFrom, setDeliveryDateFrom] = useState('');
@@ -580,6 +582,7 @@ const Invoices = () => {
       status: statusFilter, 
       block: blockFilter, 
       page: currentPage, 
+      page_size: pageSize,
       company_id: selectedCompanyId,
       issueDateFrom, issueDateTo, deliveryDateFrom, deliveryDateTo
     }],
@@ -592,6 +595,7 @@ const Invoices = () => {
       delivery_date_from: deliveryDateFrom || undefined,
       delivery_date_to: deliveryDateTo || undefined,
       page: currentPage,
+      page_size: pageSize,
       company_id: selectedCompanyId || undefined,
     }),
     {
@@ -1276,6 +1280,25 @@ const Invoices = () => {
         </SelectionSummaryBar>
       )}
 
+      {invoices?.count > 0 && (
+        <div style={{ padding: '12px 16px', background: 'white', borderBottom: '1px solid #ecf0f1', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+          <div style={{ marginRight: 'auto', fontSize: 13, color: '#7f8c8d' }}>
+            Összesen {invoices.count} számla
+          </div>
+          <AntPagination
+            simple={false}
+            current={currentPage}
+            pageSize={pageSize}
+            total={invoices.count}
+            showSizeChanger
+            onChange={(p, size) => { if (size !== pageSize) { setPageSize(size); setCurrentPage(1); } else { setCurrentPage(p); } }}
+            onShowSizeChange={(current, size) => { setPageSize(size); setCurrentPage(1); }}
+            pageSizeOptions={['20', '50', '100', '200']}
+            showTotal={(total, range) => `${range[0]}-${range[1]} / ${total}`}
+          />
+        </div>
+      )}
+
       <TableContainer>
         <Table>
           <TableHeader>
@@ -1359,6 +1382,16 @@ const Invoices = () => {
                     >
                       <Eye size={16} />
                     </IconButton>
+                    {invoice.status === 'nav_rejected' && (
+                      <IconButton
+                        variant="edit"
+                        title="Javítás szerkesztés (NAV elutasítás után)"
+                        as={Link}
+                        to={`/invoices/${invoice.id}/edit`}
+                      >
+                        <Pencil size={16} />
+                      </IconButton>
+                    )}
                     <IconButton
                       variant="copy"
                       title="Új számla a meglévő alapján"
@@ -1588,33 +1621,22 @@ const Invoices = () => {
       )}
 
       {invoices?.count > 0 && (
-        <Pagination>
-          <PaginationButton
-            onClick={() => setCurrentPage(currentPage - 1)}
-            disabled={!invoices.previous}
-          >
-            Előző
-          </PaginationButton>
-          
-          {Array.from({ length: Math.ceil(invoices.count / 20) }, (_, i) => i + 1)
-            .slice(Math.max(0, currentPage - 3), currentPage + 2)
-            .map((page) => (
-              <PaginationButton
-                key={page}
-                className={page === currentPage ? 'active' : ''}
-                onClick={() => setCurrentPage(page)}
-              >
-                {page}
-              </PaginationButton>
-            ))}
-          
-          <PaginationButton
-            onClick={() => setCurrentPage(currentPage + 1)}
-            disabled={!invoices.next}
-          >
-            Következő
-          </PaginationButton>
-        </Pagination>
+        <div style={{ padding: '12px 16px', background: 'white', borderTop: '1px solid #ecf0f1', display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
+          <div style={{ marginRight: 'auto', fontSize: 13, color: '#7f8c8d' }}>
+            Összesen {invoices.count} számla
+          </div>
+          <AntPagination
+            simple={false}
+            current={currentPage}
+            pageSize={pageSize}
+            total={invoices.count}
+            showSizeChanger
+            onChange={(p, size) => { if (size !== pageSize) { setPageSize(size); setCurrentPage(1); } else { setCurrentPage(p); } }}
+            onShowSizeChange={(current, size) => { setPageSize(size); setCurrentPage(1); }}
+            pageSizeOptions={['20', '50', '100', '200']}
+            showTotal={(total, range) => `${range[0]}-${range[1]} / ${total}`}
+          />
+        </div>
       )}
     </InvoicesContainer>
     {emailModalOpen && (

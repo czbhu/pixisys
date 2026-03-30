@@ -111,6 +111,9 @@ export const invoiceAPI = {
   // Delete invoice
   deleteInvoice: (id) => api.delete(`/api/invoices/${id}/`),
   
+  // Update items for NAV-rejected invoices
+  updateRejectedInvoiceItems: (id, items) => api.post(`/api/invoices/${id}/update_rejected_items/`, { items }),
+
   // Submit to NAV
   submitToNAV: (id) => api.post(`/api/invoices/${id}/submit_to_nav/`),
   

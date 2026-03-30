@@ -9,6 +9,7 @@ map $http_upgrade $connection_upgrade {
 server {
     server_name erp.pixisys.eu e.pixisys.eu;
     client_max_body_size 1000M;
+    types { application/javascript mjs; }
 
     # Backend API
     location /api/ {

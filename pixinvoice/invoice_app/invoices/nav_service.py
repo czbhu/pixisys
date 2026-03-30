@@ -13,6 +13,17 @@ from invoices.models import AdvanceAllocation
 from .models import Invoice, NAVConfiguration
 
 
+def _sanitize_line_description(text: str) -> str:
+    """NAV XML schema nem engedi a sortöréseket a lineDescription mezőben.
+    Cseréljük szimpla szóközre, és trimeljük.
+    """
+    if not text:
+        return ''
+    sanitized = re.sub(r'[\r\n\t]+', ' ', text)
+    sanitized = re.sub(r' {2,}', ' ', sanitized)
+    return sanitized.strip()
+
+
 class NAVService:
     """Service for integrating with NAV Online Invoice API"""
     
@@ -841,7 +852,7 @@ class NAVService:
             # alap adatok
             ET.SubElement(line, '{%s}lineExpressionIndicator' % NS_DATA).text = 'true'
             ET.SubElement(line, '{%s}lineNatureIndicator' % NS_DATA).text = (item.nature_indicator or 'PRODUCT')
-            ET.SubElement(line, '{%s}lineDescription' % NS_DATA).text = item.description
+            ET.SubElement(line, '{%s}lineDescription' % NS_DATA).text = _sanitize_line_description(item.description or '')
             ET.SubElement(line, '{%s}quantity' % NS_DATA).text = q2(item.quantity)
             u_code, u_own = map_uom(getattr(item, 'unit_of_measure', None))
             ET.SubElement(line, '{%s}unitOfMeasure' % NS_DATA).text = u_code
@@ -1011,7 +1022,7 @@ class NAVService:
             lines_xml += f"""
                 <line>
                     <lineNumber>{item.id}</lineNumber>
-                    <lineDescription>{item.description}</lineDescription>
+                    <lineDescription>{_sanitize_line_description(item.description or '')}</lineDescription>
                     <quantity>{item.quantity}</quantity>
                     <unitOfMeasure>PIECE</unitOfMeasure>
                     <unitPrice>{item.unit_price}</unitPrice>

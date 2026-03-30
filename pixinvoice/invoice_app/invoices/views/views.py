@@ -3610,6 +3610,61 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'details': details,
         })
 
+    @action(detail=True, methods=['post'], url_path='update_rejected_items')
+    def update_rejected_items(self, request, pk=None):
+        """NAV által elutasított számla tételeinek szerkesztése.
+        Csak 'nav_rejected' státuszú számlánál engedett.
+        Payload: { items: [{ id, description, quantity, unit_price, vat_rate, ... }] }
+        """
+        invoice = self.get_object()
+        if invoice.status != 'nav_rejected':
+            return Response(
+                {'error': 'Csak NAV által elutasított számlánál szerkeszthetők a tételek.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        items_data = request.data.get('items', [])
+        if not isinstance(items_data, list):
+            return Response({'error': 'items lista szükséges.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from invoices.models import InvoiceItem
+        import re as _re
+
+        def _sanitize(text):
+            if not text:
+                return ''
+            s = _re.sub(r'[\r\n\t]+', ' ', str(text))
+            return _re.sub(r' {2,}', ' ', s).strip()
+
+        updated = []
+        errors = []
+        for item_data in items_data:
+            item_id = item_data.get('id')
+            if not item_id:
+                errors.append({'error': 'id mező hiányzik', 'data': item_data})
+                continue
+            try:
+                item = invoice.items.get(id=item_id)
+            except InvoiceItem.DoesNotExist:
+                errors.append({'id': item_id, 'error': 'Tétel nem tartozik ehhez a számlához'})
+                continue
+            if 'description' in item_data:
+                item.description = _sanitize(item_data['description'])
+            if 'quantity' in item_data:
+                item.quantity = item_data['quantity']
+            if 'unit_price' in item_data:
+                item.unit_price = item_data['unit_price']
+            if 'vat_rate' in item_data:
+                item.vat_rate = item_data['vat_rate']
+            if 'unit_of_measure' in item_data:
+                item.unit_of_measure = item_data['unit_of_measure']
+            if 'nature_indicator' in item_data:
+                item.nature_indicator = item_data['nature_indicator']
+            if 'note' in item_data:
+                item.note = item_data['note']
+            item.save()
+            updated.append(item_id)
+
+        return Response({'updated': updated, 'errors': errors})
 
     @action(detail=True, methods=['post'])
     def submit_to_nav(self, request, pk=None):

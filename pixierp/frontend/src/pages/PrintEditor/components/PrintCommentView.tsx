@@ -142,6 +142,31 @@ const loadPdfFromIDB = async (): Promise<{ buffer: ArrayBuffer; name: string } |
   } catch { return null; }
 };
 
+let pdfWorkerBlobUrl: string | null = null;
+
+const ensurePdfWorkerSrc = async (pdfjs: any): Promise<void> => {
+  if (pdfjs.GlobalWorkerOptions.workerSrc) return;
+
+  const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
+
+  try {
+    const resp = await fetch(workerUrl, { cache: 'force-cache' });
+    if (!resp.ok) throw new Error(`Worker fetch failed (${resp.status})`);
+    const workerSource = await resp.text();
+
+    if (!pdfWorkerBlobUrl) {
+      pdfWorkerBlobUrl = URL.createObjectURL(
+        new Blob([workerSource], { type: 'text/javascript' })
+      );
+    }
+
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerBlobUrl;
+  } catch {
+    // Fallback to direct URL if blob bootstrap fails for any reason.
+    pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
+  }
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = false, authorName, params }) => {
@@ -300,7 +325,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       try {
         const formData = new FormData();
         formData.append('pdf', file);
-        const analyzeResp = await api.post('printshop/pdf-analyze/', formData, {
+        const analyzeResp = await api.post('/printshop/pdf-analyze/', formData, {
           headers: { 'Content-Type': 'multipart/form-data' },
           timeout: 30000,
         });
@@ -312,10 +337,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
       // ── 2) Client-side rendering via pdfjs ──
       const pdfjs = (await import('pdfjs-dist')).default ?? (await import('pdfjs-dist'));
-      if (!pdfjs.GlobalWorkerOptions.workerSrc) {
-        const workerUrl = new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
-        pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
-      }
+      await ensurePdfWorkerSrc(pdfjs);
       const pdf = await pdfjs.getDocument({ data: new Uint8Array(arrayBuffer.slice(0)) }).promise;
       setLoadingProgress(20);
 

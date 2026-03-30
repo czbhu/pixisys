@@ -1625,10 +1625,15 @@ const InvoiceForm = () => {
     setValue('notes', invoice.notes);
     if (invoice.items && invoice.items.length > 0) {
       setValue('items', invoice.items.map(item => ({
+        id: item.id,
         description: item.description,
         quantity: item.quantity,
         unit_price: item.unit_price,
         vat_rate: item.vat_rate,
+        vat_type_id: item.vat_type?.id || undefined,
+        unit_of_measure: item.unit_of_measure,
+        nature_indicator: item.nature_indicator,
+        note: item.note,
       })));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -2268,7 +2273,24 @@ const InvoiceForm = () => {
   }, [incomingDocUrl]);
 
   const updateInvoiceMutation = useMutation(
-    (data) => (isProforma ? proformaAPI.updateProforma(id, data) : invoiceAPI.updateInvoice(id, data)),
+    async (data) => {
+      if (isProforma) {
+        return proformaAPI.updateProforma(id, data);
+      }
+      const res = await invoiceAPI.updateInvoice(id, data);
+      // Ha NAV-elutasított számla, a tételeket is frissítjük
+      if (invoice?.status === 'nav_rejected' && data.items && data.items.length > 0) {
+        const itemsWithId = data.items.filter(it => it.id);
+        if (itemsWithId.length > 0) {
+          try {
+            await invoiceAPI.updateRejectedInvoiceItems(id, itemsWithId);
+          } catch (e) {
+            console.warn('Tételek frissítése részben sikertelen:', e);
+          }
+        }
+      }
+      return res;
+    },
     {
       onSuccess: () => {
         if (isProforma) {
@@ -3580,6 +3602,31 @@ const InvoiceForm = () => {
           <FormHeader>
         <HeaderLeft>
           <Title>{isIncomingManual ? (isIncomingManualEdit ? 'Kézi bejövő számla szerkesztése' : 'Új bejövő számla') : (isProforma ? (isEdit ? 'Díjbekérő megnyitása' : 'Új díjbekérő') : (isEdit ? 'Számla megnyitása' : 'Új számla'))}</Title>
+          {isEdit && invoice?.status === 'nav_rejected' && !isReadOnly && (() => {
+            const getNavErrMsg = (response) => {
+              if (!response) return null;
+              try {
+                const match = response.match(/<(?:\w+:)?message>\s*(.*?)\s*<\/(?:\w+:)?message>/);
+                if (match && match[1]) return match[1];
+                if (response.length < 200) return response;
+                return null;
+              } catch { return null; }
+            };
+            const navMsg = getNavErrMsg(invoice.nav_response);
+            return (
+              <div style={{
+                background: '#fff3cd', border: '1px solid #ffc107', borderRadius: 6,
+                padding: '10px 14px', marginBottom: 8, marginTop: 4, color: '#856404', fontSize: 13
+              }}>
+                <strong>⚠ NAV elutasítás</strong> – A számla NAV által visszautasítva. Javítsd a hibát, majd küld el újra.
+                {navMsg && <div style={{ marginTop: 4, fontFamily: 'monospace', fontSize: 12 }}>{navMsg}</div>}
+                <div style={{ marginTop: 6, fontSize: 12, color: '#555' }}>
+                  Tipp: Ha sortörés van a termék megnevezésben, azt a NAV nem fogadja el.
+                  Mentés után az újraküldésnél automatikusan ki lesz javítva.
+                </div>
+              </div>
+            );
+          })()}
           {!isEdit && (
             <InlineHeaderGroup>
               {!isProforma && !isIncomingManual && (
