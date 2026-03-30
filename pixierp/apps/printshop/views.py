@@ -992,23 +992,12 @@ class PdfAnalyzeView(APIView):
                 except Exception:
                     pass
 
-                # Parse raw page content stream for color operators and color spaces
-                try:
-                    xref = page.xref
-                    raw_stream = doc.xref_stream(xref) or b""
-                    raw_text_page = raw_stream.decode("latin-1", errors="replace")
-
-                    # PDF color operators
-                    if " k " in raw_text_page or " K " in raw_text_page or "\nk " in raw_text_page or "\nK " in raw_text_page:
-                        color_spaces.add("CMYK")
-                    if " rg " in raw_text_page or " RG " in raw_text_page or "\nrg " in raw_text_page or "\nRG " in raw_text_page:
-                        color_spaces.add("RGB")
-                    if " g " in raw_text_page or " G " in raw_text_page or "\ng " in raw_text_page or "\nG " in raw_text_page:
-                        color_spaces.add("Gray")
-                except Exception:
-                    pass
+                # Page-level color detection is done via the detailed content stream
+                # tokenizer below (not crude pattern matching)
 
                 # Check page resources for color space definitions
+                # Build a map of CS resource names → resolved colorspace type
+                cs_resolved = {}  # e.g. {"CS0": "RGB", "CS1": "CMYK", "CS5": "Spot"}
                 try:
                     res_xref = page.xref
                     res_text = doc.xref_object(res_xref)
@@ -1019,48 +1008,217 @@ class PdfAnalyzeView(APIView):
                             color_spaces.add("RGB")
                         if "/DeviceGray" in res_text:
                             color_spaces.add("Gray")
-                        if "/ICCBased" in res_text:
-                            color_spaces.add("CMYK")
                         if "/Separation" in res_text:
                             color_spaces.add("Spot")
-                        # Scan for Pantone
                         if re.search(r'(?i)pantone', res_text):
                             color_spaces.add("PANTONE")
                 except Exception:
                     pass
 
-                # Also scan all xrefs in the document for Separation/Pantone color spaces
-                # (do once, applies to all pages — but we include in every page for simplicity)
-                if page_num == 0:
-                    try:
-                        for x in range(1, doc.xref_length()):
-                            obj_text = doc.xref_object(x)
-                            if obj_text and "/Separation" in obj_text:
-                                color_spaces.add("Spot")
-                                if re.search(r'(?i)pantone', obj_text):
-                                    color_spaces.add("PANTONE")
-                            if obj_text and "/DeviceCMYK" in obj_text:
-                                color_spaces.add("CMYK")
-                    except Exception:
-                        pass
-                    # Store doc-level color info for subsequent pages
-                    doc_colors = set(color_spaces)
-                else:
-                    color_spaces.update(doc_colors)
+                # Scan page-level xrefs for Separation/Pantone (NOT global)
+                # This is done per-page through the resource dict scanning below
 
                 # ── Extract page elements (images, text blocks, drawings) ──
                 elements = []
                 mb_w = mb.width
                 mb_h = mb.height
 
+                # Collect page-level spot color info by scanning xref objects
+                spot_cs_names = set()
+                spot_color_names = {}  # cs_resource_name -> actual spot color name
+
+                def _pdf_name_decode(name):
+                    """Decode PDF hex-encoded name: #20 -> space, etc."""
+                    return re.sub(r'#([0-9A-Fa-f]{2})', lambda m: chr(int(m.group(1), 16)), name)
+
+                def _resolve_icc(obj_text):
+                    """Resolve ICCBased colorspace to RGB/CMYK/Gray by checking /N."""
+                    icc_match = re.search(r'/ICCBased\s+(\d+)\s+0\s+R', obj_text)
+                    if icc_match:
+                        try:
+                            icc_obj = doc.xref_object(int(icc_match.group(1)))
+                            if icc_obj:
+                                n_match = re.search(r'/N\s+(\d+)', icc_obj)
+                                if n_match:
+                                    n = int(n_match.group(1))
+                                    if n == 4: return "CMYK"
+                                    elif n == 3: return "RGB"
+                                    elif n == 1: return "Gray"
+                        except Exception:
+                            pass
+                    return None
+
+                # Special PDF Separation names that are NOT actual spot colors
+                _SPECIAL_SEPARATION_NAMES = {'All', 'None'}
+
+                def _scan_cs_entry(cs_res_name, cs_xref):
+                    """Check if a colorspace xref is Separation/DeviceN/Pantone/ICCBased."""
+                    try:
+                        cs_obj = doc.xref_object(cs_xref)
+                        if not cs_obj:
+                            return
+                        if "/Separation" in cs_obj or "/DeviceN" in cs_obj:
+                            m = re.search(r'/Separation\s*/([^/\s\[\]]+)', cs_obj)
+                            sep_name = _pdf_name_decode(m.group(1)) if m else None
+                            # Skip special PDF separation names (All = all inks, None = invisible)
+                            if sep_name and sep_name in _SPECIAL_SEPARATION_NAMES:
+                                # Resolve alternate space instead
+                                icc_cs = _resolve_icc(cs_obj)
+                                if icc_cs:
+                                    cs_resolved[cs_res_name] = icc_cs
+                                elif '/DeviceCMYK' in cs_obj:
+                                    cs_resolved[cs_res_name] = 'CMYK'
+                                elif '/DeviceRGB' in cs_obj:
+                                    cs_resolved[cs_res_name] = 'RGB'
+                                elif '/DeviceGray' in cs_obj:
+                                    cs_resolved[cs_res_name] = 'Gray'
+                                return
+                            spot_cs_names.add(cs_res_name)
+                            cs_resolved[cs_res_name] = "Spot"
+                            if sep_name:
+                                spot_color_names[cs_res_name] = sep_name
+                        if re.search(r'(?i)pantone', cs_obj):
+                            spot_cs_names.add(cs_res_name)
+                            cs_resolved[cs_res_name] = "Spot"
+                            m = re.search(r'(PANTONE[^/\]\)]+)', cs_obj, re.IGNORECASE)
+                            if m:
+                                spot_color_names[cs_res_name] = _pdf_name_decode(m.group(1).strip())
+                        # Resolve ICCBased profiles
+                        if cs_res_name not in cs_resolved:
+                            icc_cs = _resolve_icc(cs_obj)
+                            if icc_cs:
+                                cs_resolved[cs_res_name] = icc_cs
+                            elif "/DeviceCMYK" in cs_obj:
+                                cs_resolved[cs_res_name] = "CMYK"
+                            elif "/DeviceRGB" in cs_obj:
+                                cs_resolved[cs_res_name] = "RGB"
+                            elif "/DeviceGray" in cs_obj:
+                                cs_resolved[cs_res_name] = "Gray"
+                            elif "/CalRGB" in cs_obj:
+                                cs_resolved[cs_res_name] = "RGB"
+                            elif "/CalGray" in cs_obj:
+                                cs_resolved[cs_res_name] = "Gray"
+                    except Exception:
+                        pass
+
+                def _scan_cs_dict(cs_dict_text):
+                    """Parse a ColorSpace dict text for spot entries."""
+                    for cs_entry in re.finditer(r'/(\S+)\s+(\d+)\s+0\s+R', cs_dict_text):
+                        _scan_cs_entry(cs_entry.group(1), int(cs_entry.group(2)))
+                    # Also handle inline arrays: /CS0 [ /Separation ... ]
+                    for cs_entry in re.finditer(r'/(\S+)\s*\[\s*/Separation', cs_dict_text):
+                        cs_res_name = cs_entry.group(1)
+                        spot_cs_names.add(cs_res_name)
+                        m = re.search(r'/Separation\s*/([^/\s\[\]]+)', cs_dict_text[cs_entry.start():])
+                        if m:
+                            spot_color_names[cs_res_name] = _pdf_name_decode(m.group(1))
+
+                try:
+                    page_obj = doc.xref_object(page.xref)
+
+                    # Strategy 1: /Resources N 0 R (external reference)
+                    res_match = re.search(r'/Resources\s+(\d+)\s+0\s+R', page_obj)
+                    res_text = None
+                    if res_match:
+                        res_xref = int(res_match.group(1))
+                        res_text = doc.xref_object(res_xref)
+                    else:
+                        # Inline resources in page object
+                        res_text = page_obj
+
+                    if res_text:
+                        # Case A: /ColorSpace << /CS0 5 0 R ... >>
+                        cs_block = re.search(r'/ColorSpace\s*<<([^>]*)>>', res_text)
+                        if cs_block:
+                            _scan_cs_dict(cs_block.group(1))
+                        else:
+                            # Case B: /ColorSpace N 0 R (indirect reference)
+                            cs_ref = re.search(r'/ColorSpace\s+(\d+)\s+0\s+R', res_text)
+                            if cs_ref:
+                                cs_dict_xref = int(cs_ref.group(1))
+                                cs_dict_text = doc.xref_object(cs_dict_xref)
+                                if cs_dict_text:
+                                    # It could be a dict: << /CS0 7 0 R >>
+                                    inner = re.search(r'<<(.*)>>', cs_dict_text, re.DOTALL)
+                                    if inner:
+                                        _scan_cs_dict(inner.group(1))
+                                    else:
+                                        _scan_cs_dict(cs_dict_text)
+
+                    # Fallback: scan all document xrefs for Separation
+                    if not spot_cs_names and "Spot" in color_spaces:
+                        for x in range(1, doc.xref_length()):
+                            try:
+                                obj_str = doc.xref_object(x)
+                                if obj_str and ("/Separation" in obj_str or re.search(r'(?i)pantone', obj_str)):
+                                    m = re.search(r'/Separation\s*/([^/\s\[\]]+)', obj_str)
+                                    sep_n = _pdf_name_decode(m.group(1)) if m else None
+                                    if sep_n and sep_n in _SPECIAL_SEPARATION_NAMES:
+                                        continue
+                                    spot_cs_names.add("_global")
+                                    if sep_n:
+                                        spot_color_names["_global"] = sep_n
+                                    m2 = re.search(r'(PANTONE[^/\]\)]+)', obj_str, re.IGNORECASE)
+                                    if m2:
+                                        spot_color_names["_global"] = _pdf_name_decode(m2.group(1).strip())
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+
                 # Images
                 try:
                     for img in page.get_images(full=True):
                         xref = img[0]
+                        # Check if image xref uses Separation/DeviceN/Pantone colorspace
+                        is_spot = False
+                        spot_name = None
+                        img_cs_from_obj = None
                         try:
-                            # Use Pixmap for definitive colorspace detection
+                            img_obj = doc.xref_object(xref)
+                            if img_obj:
+                                if "/Separation" in img_obj or "/DeviceN" in img_obj:
+                                    m = re.search(r'/Separation\s*/([^/\s\[\]]+)', img_obj)
+                                    sep_name = _pdf_name_decode(m.group(1)) if m else None
+                                    if sep_name and sep_name in _SPECIAL_SEPARATION_NAMES:
+                                        # Not a real spot color
+                                        pass
+                                    else:
+                                        is_spot = True
+                                        spot_name = sep_name
+                                elif re.search(r'(?i)pantone', img_obj):
+                                    is_spot = True
+                                    m = re.search(r'(PANTONE[^/\]\)]+)', img_obj, re.IGNORECASE)
+                                    if m:
+                                        spot_name = _pdf_name_decode(m.group(1).strip())
+                                # Check for ICCBased in the image's ColorSpace
+                                icc_cs = _resolve_icc(img_obj)
+                                if icc_cs:
+                                    img_cs_from_obj = icc_cs
+                                # Check for named CS reference: /ColorSpace /CS0
+                                cs_name_match = re.search(r'/ColorSpace\s*/(\S+)', img_obj)
+                                if cs_name_match:
+                                    cs_n = cs_name_match.group(1)
+                                    if cs_n in cs_resolved:
+                                        img_cs_from_obj = cs_resolved[cs_n]
+                                        if cs_resolved[cs_n] == "Spot":
+                                            is_spot = True
+                                            spot_name = spot_color_names.get(cs_n, spot_name)
+                                    elif cs_n == "DeviceCMYK":
+                                        img_cs_from_obj = "CMYK"
+                                    elif cs_n == "DeviceRGB":
+                                        img_cs_from_obj = "RGB"
+                                    elif cs_n == "DeviceGray":
+                                        img_cs_from_obj = "Gray"
+                        except Exception:
+                            pass
+                        try:
+                            # Use Pixmap for colorspace detection
                             pix = fitz.Pixmap(doc, xref)
-                            if pix.colorspace:
+                            if img_cs_from_obj:
+                                # Prefer xref-resolved CS (Pixmap converts Separation → alternate)
+                                el_cs = img_cs_from_obj
+                            elif pix.colorspace:
                                 if pix.colorspace.n == 4:
                                     el_cs = "CMYK"
                                 elif pix.colorspace.n == 3:
@@ -1081,7 +1239,7 @@ class PdfAnalyzeView(APIView):
                         # Find image bbox on page
                         rects = page.get_image_rects(xref)
                         for r in rects:
-                            elements.append({
+                            el_data = {
                                 'type': 'image',
                                 'x': round(r.x0 / mb_w, 4),
                                 'y': round(r.y0 / mb_h, 4),
@@ -1090,7 +1248,12 @@ class PdfAnalyzeView(APIView):
                                 'colorspace': el_cs,
                                 'width_px': w_px,
                                 'height_px': h_px,
-                            })
+                            }
+                            if is_spot:
+                                el_data['spot'] = True
+                                if spot_name:
+                                    el_data['spot_name'] = spot_name
+                            elements.append(el_data)
                 except Exception:
                     pass
 
@@ -1138,31 +1301,295 @@ class PdfAnalyzeView(APIView):
                 # Vector drawings
                 try:
                     drawings = page.get_drawings()
-                    # Group nearby drawings into clusters
                     if drawings:
+                        # Parse content stream to build per-rect colorspace map
+                        # (get_drawings() converts ALL colors to RGB, losing original CS)
+                        rect_cs_map = {}  # "x0,y0,x1,y1" -> (cs, is_spot, spot_name)
+                        page_height = mb_h
+                        used_cs_in_stream = set()  # collect all CS used in this page's stream
+
+                        def _ctm_concat(m, c):
+                            """Multiply affine matrices m × c. Each is (a,b,c,d,e,f)."""
+                            a1,b1,c1,d1,e1,f1 = m
+                            a2,b2,c2,d2,e2,f2 = c
+                            return (
+                                a1*a2+b1*c2, a1*b2+b1*d2,
+                                c1*a2+d1*c2, c1*b2+d1*d2,
+                                e1*a2+f1*c2+e2, e1*b2+f1*d2+f2,
+                            )
+
+                        def _ctm_apply(x, y, ct):
+                            """Transform point (x,y) by CTM ct=(a,b,c,d,e,f)."""
+                            a,b,c,d,e,f = ct
+                            return (a*x+c*y+e, b*x+d*y+f)
+
+                        try:
+                            for c_xref in page.get_contents():
+                                stream = doc.xref_stream(c_xref)
+                                if not stream:
+                                    continue
+                                stream_text = stream.decode("latin-1", errors="replace")
+                                tokens = stream_text.split()
+                                cur_fill_cs = None
+                                cur_stroke_cs = None
+                                cur_fill_spot = False
+                                cur_stroke_spot = False
+                                cur_fill_spot_name = None
+                                cur_stroke_spot_name = None
+                                path_rects = []
+                                path_points = []  # track m/l/c path points for bbox
+                                gs_stack = []  # graphics state stack for q/Q
+                                ctm = (1, 0, 0, 1, 0, 0)  # current transformation matrix (identity)
+                                i = 0
+                                while i < len(tokens):
+                                    tok = tokens[i]
+                                    # Graphics state save/restore
+                                    if tok == 'q':
+                                        gs_stack.append((cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm))
+                                    elif tok == 'Q':
+                                        if gs_stack:
+                                            cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm = gs_stack.pop()
+                                        path_rects = []
+                                        path_points = []
+                                    # Coordinate transform
+                                    elif tok == 'cm' and i >= 6:
+                                        try:
+                                            cm_a = float(tokens[i-6])
+                                            cm_b = float(tokens[i-5])
+                                            cm_c = float(tokens[i-4])
+                                            cm_d = float(tokens[i-3])
+                                            cm_e = float(tokens[i-2])
+                                            cm_f = float(tokens[i-1])
+                                            ctm = _ctm_concat((cm_a, cm_b, cm_c, cm_d, cm_e, cm_f), ctm)
+                                        except (ValueError, IndexError):
+                                            pass
+                                    # Fill color operators
+                                    elif tok == 'k' and i >= 4:
+                                        cur_fill_cs = "CMYK"
+                                        cur_fill_spot = False
+                                        cur_fill_spot_name = None
+                                        used_cs_in_stream.add("CMYK")
+                                    elif tok == 'rg' and i >= 3:
+                                        cur_fill_cs = "RGB"
+                                        cur_fill_spot = False
+                                        cur_fill_spot_name = None
+                                        used_cs_in_stream.add("RGB")
+                                    elif tok == 'g' and i >= 1:
+                                        cur_fill_cs = "Gray"
+                                        cur_fill_spot = False
+                                        cur_fill_spot_name = None
+                                        used_cs_in_stream.add("Gray")
+                                    # Stroke color operators
+                                    elif tok == 'K' and i >= 4:
+                                        cur_stroke_cs = "CMYK"
+                                        cur_stroke_spot = False
+                                        used_cs_in_stream.add("CMYK")
+                                    elif tok == 'RG' and i >= 3:
+                                        cur_stroke_cs = "RGB"
+                                        cur_stroke_spot = False
+                                        used_cs_in_stream.add("RGB")
+                                    elif tok == 'G' and i >= 1:
+                                        cur_stroke_cs = "Gray"
+                                        cur_stroke_spot = False
+                                        used_cs_in_stream.add("Gray")
+                                    # Named colorspace (fill)
+                                    elif tok == 'cs' and i >= 1 and tokens[i-1].startswith('/'):
+                                        cs_name = tokens[i-1][1:]
+                                        if cs_name in spot_cs_names:
+                                            cur_fill_cs = "Spot"
+                                            cur_fill_spot = True
+                                            cur_fill_spot_name = spot_color_names.get(cs_name)
+                                            used_cs_in_stream.add("Spot")
+                                        elif cs_name in ('DeviceCMYK',):
+                                            cur_fill_cs = "CMYK"
+                                            cur_fill_spot = False
+                                            cur_fill_spot_name = None
+                                            used_cs_in_stream.add("CMYK")
+                                        elif cs_name in ('DeviceRGB',):
+                                            cur_fill_cs = "RGB"
+                                            cur_fill_spot = False
+                                            cur_fill_spot_name = None
+                                            used_cs_in_stream.add("RGB")
+                                        elif cs_name in ('DeviceGray',):
+                                            cur_fill_cs = "Gray"
+                                            cur_fill_spot = False
+                                            cur_fill_spot_name = None
+                                            used_cs_in_stream.add("Gray")
+                                        elif cs_name in cs_resolved:
+                                            resolved = cs_resolved[cs_name]
+                                            cur_fill_cs = resolved
+                                            cur_fill_spot = resolved == "Spot"
+                                            cur_fill_spot_name = spot_color_names.get(cs_name) if cur_fill_spot else None
+                                            used_cs_in_stream.add(resolved)
+                                        else:
+                                            cur_fill_spot = False
+                                            cur_fill_spot_name = None
+                                    # Named colorspace (stroke)
+                                    elif tok == 'CS' and i >= 1 and tokens[i-1].startswith('/'):
+                                        cs_name = tokens[i-1][1:]
+                                        if cs_name in spot_cs_names:
+                                            cur_stroke_cs = "Spot"
+                                            cur_stroke_spot = True
+                                            cur_stroke_spot_name = spot_color_names.get(cs_name)
+                                            used_cs_in_stream.add("Spot")
+                                        elif cs_name in ('DeviceCMYK',):
+                                            cur_stroke_cs = "CMYK"
+                                            cur_stroke_spot = False
+                                            cur_stroke_spot_name = None
+                                            used_cs_in_stream.add("CMYK")
+                                        elif cs_name in ('DeviceRGB',):
+                                            cur_stroke_cs = "RGB"
+                                            cur_stroke_spot = False
+                                            cur_stroke_spot_name = None
+                                            used_cs_in_stream.add("RGB")
+                                        elif cs_name in ('DeviceGray',):
+                                            cur_stroke_cs = "Gray"
+                                            cur_stroke_spot = False
+                                            cur_stroke_spot_name = None
+                                            used_cs_in_stream.add("Gray")
+                                        elif cs_name in cs_resolved:
+                                            resolved = cs_resolved[cs_name]
+                                            cur_stroke_cs = resolved
+                                            cur_stroke_spot = resolved == "Spot"
+                                            cur_stroke_spot_name = spot_color_names.get(cs_name) if cur_stroke_spot else None
+                                            used_cs_in_stream.add(resolved)
+                                        else:
+                                            cur_stroke_spot = False
+                                            cur_stroke_spot_name = None
+                                    # scn/SCN - check if setting spot values
+                                    elif tok == 'scn':
+                                        pass  # color values set in current fill CS
+                                    elif tok == 'SCN':
+                                        pass  # color values set in current stroke CS
+                                    # Path construction: m, l, c (non-rect paths)
+                                    elif tok == 'm' and i >= 2:
+                                        try:
+                                            px = float(tokens[i-2])
+                                            py = float(tokens[i-1])
+                                            path_points = [_ctm_apply(px, py, ctm)]
+                                        except (ValueError, IndexError):
+                                            pass
+                                    elif tok == 'l' and i >= 2:
+                                        try:
+                                            px = float(tokens[i-2])
+                                            py = float(tokens[i-1])
+                                            path_points.append(_ctm_apply(px, py, ctm))
+                                        except (ValueError, IndexError):
+                                            pass
+                                    elif tok == 'c' and i >= 6:
+                                        try:
+                                            for ci in range(3):
+                                                px = float(tokens[i-6+ci*2])
+                                                py = float(tokens[i-5+ci*2])
+                                                path_points.append(_ctm_apply(px, py, ctm))
+                                        except (ValueError, IndexError):
+                                            pass
+                                    # Rectangle path: x y w h re
+                                    elif tok == 're' and i >= 4:
+                                        try:
+                                            rx = float(tokens[i-4])
+                                            ry = float(tokens[i-3])
+                                            rw = float(tokens[i-2])
+                                            rh = float(tokens[i-1])
+                                            # Transform all 4 corners through CTM
+                                            corners = [
+                                                _ctm_apply(rx, ry, ctm),
+                                                _ctm_apply(rx+rw, ry, ctm),
+                                                _ctm_apply(rx+rw, ry+rh, ctm),
+                                                _ctm_apply(rx, ry+rh, ctm),
+                                            ]
+                                            cxs = [c[0] for c in corners]
+                                            cys = [c[1] for c in corners]
+                                            # Bounding box in PDF (bottom-up) coords
+                                            bx0 = min(cxs)
+                                            by0 = min(cys)
+                                            bx1 = max(cxs)
+                                            by1 = max(cys)
+                                            # Convert to top-down Y for matching get_drawings()
+                                            td_x0 = bx0
+                                            td_y0 = page_height - by1
+                                            td_x1 = bx1
+                                            td_y1 = page_height - by0
+                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                                        except (ValueError, IndexError):
+                                            pass
+                                    # Paint operators (fill)
+                                    elif tok in ('f', 'F', 'f*', 'B', 'B*', 'b', 'b*'):
+                                        # Also compute bbox from path_points (non-rect paths)
+                                        if path_points and not path_rects:
+                                            xs = [p[0] for p in path_points]
+                                            ys = [p[1] for p in path_points]
+                                            bx0 = min(xs)
+                                            by0 = min(ys)
+                                            bx1 = max(xs)
+                                            by1 = max(ys)
+                                            bh = by1 - by0
+                                            td_x0 = bx0
+                                            td_y0 = page_height - by1
+                                            td_x1 = bx1
+                                            td_y1 = page_height - by0
+                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                                        for pr in path_rects:
+                                            key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
+                                            rect_cs_map[key] = (cur_fill_cs or "Ismeretlen", cur_fill_spot, cur_fill_spot_name)
+                                        path_rects = []
+                                        path_points = []
+                                    elif tok in ('S', 's'):
+                                        if path_points and not path_rects:
+                                            xs = [p[0] for p in path_points]
+                                            ys = [p[1] for p in path_points]
+                                            bx0 = min(xs)
+                                            by0 = min(ys)
+                                            bx1 = max(xs)
+                                            by1 = max(ys)
+                                            td_x0 = bx0
+                                            td_y0 = page_height - by1
+                                            td_x1 = bx1
+                                            td_y1 = page_height - by0
+                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                                        for pr in path_rects:
+                                            key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
+                                            rect_cs_map[key] = (cur_stroke_cs or "Ismeretlen", cur_stroke_spot, cur_stroke_spot_name)
+                                        path_rects = []
+                                        path_points = []
+                                    elif tok == 'n':
+                                        path_rects = []
+                                        path_points = []
+                                    i += 1
+                        except Exception:
+                            pass
+
+                        # Enrich page-level color_spaces from content stream detections
+                        color_spaces.update(used_cs_in_stream)
+                        # Also check for PANTONE names in spot colors used
+                        for sn in spot_color_names.values():
+                            if 'pantone' in sn.lower():
+                                color_spaces.add("PANTONE")
+
                         all_rects = []
                         for d in drawings:
                             r = d.get("rect")
                             if r and r.width > 0 and r.height > 0:
-                                fill_cs = None
-                                stroke_cs = None
-                                fill = d.get("fill")
-                                stroke_col = d.get("color")
-                                if fill and len(fill) == 4:
-                                    fill_cs = "CMYK"
-                                elif fill and len(fill) == 3:
-                                    fill_cs = "RGB"
-                                elif fill and len(fill) == 1:
-                                    fill_cs = "Gray"
-                                if stroke_col and len(stroke_col) == 4:
-                                    stroke_cs = "CMYK"
-                                elif stroke_col and len(stroke_col) == 3:
-                                    stroke_cs = "RGB"
-                                elif stroke_col and len(stroke_col) == 1:
-                                    stroke_cs = "Gray"
+                                # Look up the actual colorspace from content stream
+                                key = f"{r.x0:.1f},{r.y0:.1f},{r.x1:.1f},{r.y1:.1f}"
+                                cs_info = rect_cs_map.get(key)
+                                if cs_info:
+                                    vec_cs, vec_spot, vec_spot_name = cs_info
+                                else:
+                                    # Fallback: try rounding to integers
+                                    key2 = f"{r.x0:.0f},{r.y0:.0f},{r.x1:.0f},{r.y1:.0f}"
+                                    cs_info2 = rect_cs_map.get(key2)
+                                    if cs_info2:
+                                        vec_cs, vec_spot, vec_spot_name = cs_info2
+                                    else:
+                                        vec_cs = "Ismeretlen"
+                                        vec_spot = False
+                                        vec_spot_name = None
                                 all_rects.append({
                                     'rect': r,
-                                    'cs': fill_cs or stroke_cs or "Ismeretlen",
+                                    'cs': vec_cs,
+                                    'spot': vec_spot,
+                                    'spot_name': vec_spot_name,
                                 })
                         # Merge overlapping vector rects into groups
                         merged = []
@@ -1174,20 +1601,29 @@ class PdfAnalyzeView(APIView):
                                     m['rect'] = m['rect'] | r  # union
                                     if vr['cs'] != "Ismeretlen":
                                         m['cs'] = vr['cs']
+                                    if vr.get('spot'):
+                                        m['spot'] = True
+                                    if vr.get('spot_name'):
+                                        m['spot_name'] = vr['spot_name']
                                     found = True
                                     break
                             if not found:
-                                merged.append({'rect': fitz.Rect(r), 'cs': vr['cs']})
+                                merged.append({'rect': fitz.Rect(r), 'cs': vr['cs'], 'spot': vr.get('spot', False), 'spot_name': vr.get('spot_name')})
                         for m in merged:
                             r = m['rect']
-                            elements.append({
+                            vel = {
                                 'type': 'vector',
                                 'x': round(r.x0 / mb_w, 4),
                                 'y': round(r.y0 / mb_h, 4),
                                 'w': round(r.width / mb_w, 4),
                                 'h': round(r.height / mb_h, 4),
                                 'colorspace': m['cs'],
-                            })
+                            }
+                            if m.get('spot'):
+                                vel['spot'] = True
+                                if m.get('spot_name'):
+                                    vel['spot_name'] = m['spot_name']
+                            elements.append(vel)
                 except Exception:
                     pass
 
@@ -1204,3 +1640,332 @@ class PdfAnalyzeView(APIView):
             doc.close()
 
             return Response({'pages': pages_info})
+
+
+class PdfDeletePageView(APIView):
+    """
+    PDF oldal törlése.
+    POST multipart: pdf (file), page (int, 0-indexed).
+    Visszaad: PDF fájl a megadott oldal nélkül.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        pdf_file = request.FILES.get('pdf')
+        page_str = request.data.get('page')
+        if not pdf_file or page_str is None:
+            return Response({'error': 'PDF fájl és oldalszám szükséges'}, status=400)
+
+        try:
+            page_idx = int(page_str)
+        except (ValueError, TypeError):
+            return Response({'error': 'Érvénytelen oldalszám'}, status=400)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({'error': 'PyMuPDF nincs telepítve'}, status=500)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, 'input.pdf')
+            with open(pdf_path, 'wb') as f:
+                for chunk in pdf_file.chunks():
+                    f.write(chunk)
+
+            doc = fitz.open(pdf_path)
+            if page_idx < 0 or page_idx >= len(doc):
+                doc.close()
+                return Response({'error': f'Érvénytelen oldalindex: {page_idx}'}, status=400)
+
+            if len(doc) <= 1:
+                doc.close()
+                return Response({'error': 'Az utolsó oldal nem törölhető'}, status=400)
+
+            doc.delete_page(page_idx)
+
+            out_path = os.path.join(tmpdir, 'result.pdf')
+            doc.save(out_path)
+            doc.close()
+
+            with open(out_path, 'rb') as f:
+                from django.http import HttpResponse
+                response = HttpResponse(f.read(), content_type='application/pdf')
+                response['Content-Disposition'] = 'attachment; filename="result.pdf"'
+                return response
+
+
+class PdfReorderPagesView(APIView):
+    """
+    PDF oldalak átrendezése.
+    POST multipart: pdf (file), order (JSON) = [2, 0, 1, ...] — az új sorrend 0-indexed.
+    Visszaad: átrendezett PDF fájl.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        import json as _json
+        pdf_file = request.FILES.get('pdf')
+        order_json = request.data.get('order')
+        if not pdf_file or not order_json:
+            return Response({'error': 'PDF fájl és sorrend szükséges'}, status=400)
+
+        try:
+            order = _json.loads(order_json) if isinstance(order_json, str) else order_json
+            if not isinstance(order, list):
+                raise ValueError
+            order = [int(x) for x in order]
+        except (ValueError, TypeError):
+            return Response({'error': 'Érvénytelen sorrend'}, status=400)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({'error': 'PyMuPDF nincs telepítve'}, status=500)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, 'input.pdf')
+            with open(pdf_path, 'wb') as f:
+                for chunk in pdf_file.chunks():
+                    f.write(chunk)
+
+            src = fitz.open(pdf_path)
+            n = len(src)
+            if sorted(order) != list(range(n)):
+                src.close()
+                return Response({'error': f'A sorrend nem tartalmazza az összes oldalt (0..{n-1})'}, status=400)
+
+            src.select(order)
+
+            out_path = os.path.join(tmpdir, 'reordered.pdf')
+            src.save(out_path)
+            src.close()
+
+            with open(out_path, 'rb') as f:
+                from django.http import HttpResponse
+                response = HttpResponse(f.read(), content_type='application/pdf')
+                response['Content-Disposition'] = 'attachment; filename="reordered.pdf"'
+                return response
+
+
+class PdfCropView(APIView):
+    """
+    PDF croppolás: a megadott CropBox/MediaBox alkalmazása oldalanként.
+    POST multipart: pdf (file), crop (JSON) = { x, y, w, h } pontban (pt).
+    Visszaad: croppolt PDF fájl.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        import json as _json
+        pdf_file = request.FILES.get('pdf')
+        crop_json = request.data.get('crop')
+        if not pdf_file or not crop_json:
+            return Response({'error': 'PDF fájl és crop paraméterek szükségesek'}, status=400)
+
+        try:
+            crop = _json.loads(crop_json) if isinstance(crop_json, str) else crop_json
+            cx = float(crop['x'])
+            cy = float(crop['y'])
+            cw = float(crop['w'])
+            ch = float(crop['h'])
+            crop_page = int(crop.get('page', 0))  # 1-indexed, 0 = all pages
+        except (KeyError, ValueError, TypeError):
+            return Response({'error': 'Érvénytelen crop paraméterek (x, y, w, h pt-ban)'}, status=400)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({'error': 'PyMuPDF nincs telepítve'}, status=500)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, 'input.pdf')
+            with open(pdf_path, 'wb') as f:
+                for chunk in pdf_file.chunks():
+                    f.write(chunk)
+
+            doc = fitz.open(pdf_path)
+            for page in doc:
+                # Only crop the specified page (1-indexed), or all if 0
+                if crop_page > 0 and page.number != (crop_page - 1):
+                    continue
+                mb = page.mediabox  # (x0, y0, x1, y1) bottom-up
+                page_h = mb.y1 - mb.y0
+                page_w = mb.x1 - mb.x0
+                # Clamp values to page dimensions
+                cx_c = max(0, min(cx, page_w))
+                cy_c = max(0, min(cy, page_h))
+                cw_c = max(0, min(cw, page_w - cx_c))
+                ch_c = max(0, min(ch, page_h - cy_c))
+                if cw_c <= 0 or ch_c <= 0:
+                    continue
+                # Frontend sends top-down Y; convert to PDF bottom-up
+                pdf_y0 = mb.y0 + (page_h - cy_c - ch_c)
+                pdf_y1 = pdf_y0 + ch_c
+                crop_rect = fitz.Rect(mb.x0 + cx_c, pdf_y0, mb.x0 + cx_c + cw_c, pdf_y1)
+                # Intersect with MediaBox to handle float precision mismatches
+                crop_rect = crop_rect & mb
+                if crop_rect.is_empty:
+                    continue
+                # Use low-level xref to set both boxes — avoids PyMuPDF's
+                # internal validation which caches the old MediaBox
+                xref = page.xref
+                arr = "[%g %g %g %g]" % (crop_rect.x0, crop_rect.y0, crop_rect.x1, crop_rect.y1)
+                doc.xref_set_key(xref, "MediaBox", arr)
+                doc.xref_set_key(xref, "CropBox", arr)
+
+            out_path = os.path.join(tmpdir, 'cropped.pdf')
+            doc.save(out_path)
+            doc.close()
+
+            with open(out_path, 'rb') as f:
+                from django.http import HttpResponse
+                response = HttpResponse(f.read(), content_type='application/pdf')
+                response['Content-Disposition'] = 'attachment; filename="cropped.pdf"'
+                return response
+
+
+class PdfMergeView(APIView):
+    """
+    Több PDF összefűzése egyetlen PDF-fé.
+    POST multipart: pdfs (file[]) — több fájl.
+    Visszaad: összefűzött PDF fájl.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        files = request.FILES.getlist('pdfs')
+        if not files or len(files) < 2:
+            return Response({'error': 'Legalább 2 PDF fájl szükséges'}, status=400)
+
+        if len(files) > 50:
+            return Response({'error': 'Maximum 50 PDF fűzhető össze'}, status=400)
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({'error': 'PyMuPDF nincs telepítve'}, status=500)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            merged = fitz.open()
+
+            for idx, pdf_file in enumerate(files):
+                if pdf_file.size > 50 * 1024 * 1024:
+                    merged.close()
+                    return Response({'error': f'A(z) {idx+1}. fájl túl nagy (max 50 MB)'}, status=400)
+
+                path = os.path.join(tmpdir, f'input_{idx}.pdf')
+                with open(path, 'wb') as f:
+                    for chunk in pdf_file.chunks():
+                        f.write(chunk)
+                try:
+                    src = fitz.open(path)
+                    merged.insert_pdf(src)
+                    src.close()
+                except Exception:
+                    merged.close()
+                    return Response({'error': f'A(z) {idx+1}. fájl nem érvényes PDF'}, status=400)
+
+            out_path = os.path.join(tmpdir, 'merged.pdf')
+            merged.save(out_path)
+            merged.close()
+
+            with open(out_path, 'rb') as f:
+                from django.http import HttpResponse
+                response = HttpResponse(f.read(), content_type='application/pdf')
+                response['Content-Disposition'] = 'attachment; filename="merged.pdf"'
+                return response
+
+
+class PdfExportView(APIView):
+    """
+    PDF export: croppolás + guideline-ok mentése annotációként.
+    A fő cél: az eredeti PDF megmarad, a színterek nem változnak.
+    POST multipart: pdf (file), options (JSON).
+    options = {
+      crop?: { x, y, w, h },  // pt koordináták
+      pages?: number[],        // oldalszámok szűrése (1-based)
+      guidelines?: [{ orientation, position, page }],
+    }
+    Visszaad: exportált PDF fájl.
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    def post(self, request):
+        import json as _json
+        pdf_file = request.FILES.get('pdf')
+        if not pdf_file:
+            return Response({'error': 'PDF fájl szükséges'}, status=400)
+
+        options_raw = request.data.get('options', '{}')
+        try:
+            options = _json.loads(options_raw) if isinstance(options_raw, str) else options_raw
+        except (ValueError, TypeError):
+            options = {}
+
+        try:
+            import fitz
+        except ImportError:
+            return Response({'error': 'PyMuPDF nincs telepítve'}, status=500)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            pdf_path = os.path.join(tmpdir, 'input.pdf')
+            with open(pdf_path, 'wb') as f:
+                for chunk in pdf_file.chunks():
+                    f.write(chunk)
+
+            doc = fitz.open(pdf_path)
+
+            # Page selection
+            selected_pages = options.get('pages')
+            if selected_pages:
+                # Keep only selected pages (1-based)
+                keep = sorted(set(int(p) - 1 for p in selected_pages if 1 <= int(p) <= doc.page_count))
+                remove = [i for i in range(doc.page_count) if i not in keep]
+                for idx in reversed(remove):
+                    doc.delete_page(idx)
+
+            # Crop
+            crop = options.get('crop')
+            if crop:
+                try:
+                    cx = float(crop['x'])
+                    cy = float(crop['y'])
+                    cw = float(crop['w'])
+                    ch = float(crop['h'])
+                    crop_rect = fitz.Rect(cx, cy, cx + cw, cy + ch)
+                    for page in doc:
+                        page.set_cropbox(crop_rect)
+                except (KeyError, ValueError):
+                    pass
+
+            # Draw guidelines as thin lines into the PDF
+            guidelines = options.get('guidelines', [])
+            for gl in guidelines:
+                orientation = gl.get('orientation')  # 'h' or 'v'
+                pos = float(gl.get('position', 0))   # pt from top/left of page
+                gl_page = int(gl.get('page', 0)) - 1
+                if 0 <= gl_page < doc.page_count:
+                    page = doc[gl_page]
+                    mb = page.mediabox
+                    shape = page.new_shape()
+                    if orientation == 'h':
+                        shape.draw_line(fitz.Point(mb.x0, pos), fitz.Point(mb.x1, pos))
+                    else:
+                        shape.draw_line(fitz.Point(pos, mb.y0), fitz.Point(pos, mb.y1))
+                    shape.finish(color=(0, 0.75, 1), width=0.5, dashes="[2 2]")
+                    shape.commit()
+
+            out_path = os.path.join(tmpdir, 'export.pdf')
+            doc.save(out_path)
+            doc.close()
+
+            with open(out_path, 'rb') as f:
+                from django.http import HttpResponse
+                response = HttpResponse(f.read(), content_type='application/pdf')
+                response['Content-Disposition'] = 'attachment; filename="export.pdf"'
+                return response

@@ -1,10 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Button, Input, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress } from 'antd';
+import { Button, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal } from 'antd';
 import {
   CommentOutlined, CheckOutlined, DeleteOutlined,
   FilePdfOutlined, MessageOutlined, CloseOutlined, LockOutlined,
   ColumnWidthOutlined, ZoomInOutlined, ZoomOutOutlined, SelectOutlined,
   SafetyCertificateOutlined, ExclamationCircleOutlined,
+  ScissorOutlined, MergeCellsOutlined, ExportOutlined,
+  DragOutlined, PlusOutlined, UndoOutlined, RedoOutlined, ClearOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
@@ -14,7 +16,18 @@ const { TextArea } = Input;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type CommentToolType = 'pointer' | 'area' | 'pin' | 'arrow' | 'measure';
+type CommentToolType = 'pointer' | 'area' | 'pin' | 'arrow' | 'measure' | 'guideline' | 'crop';
+
+interface Guideline {
+  id: number;
+  orientation: 'h' | 'v';
+  position: number; // 0-1 relative
+  page: number;
+}
+
+interface CropRect {
+  x: number; y: number; w: number; h: number; // 0-1 relative
+}
 
 export interface CommentAnnotation {
   id: number;
@@ -53,6 +66,8 @@ interface PdfElement {
   font_size?: number;
   color?: string;
   text?: string;
+  spot?: boolean;
+  spot_name?: string;
 }
 
 interface PdfPageInfo {
@@ -73,6 +88,23 @@ interface Props {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const PT_TO_MM = 25.4 / 72;
+const MM_TO_PT = 72 / 25.4;
+const SNAP_THRESHOLD = 0.015; // relative distance for snapping (~1.5% of page dimension)
+const HISTORY_MAX = 50;
+
+interface HistorySnapshot {
+  pdfPages: string[];
+  pageInfos: PdfPageInfo[];
+  pageColorSpaces: Set<string>[];
+  pageElements: PdfElement[][];
+  guidelines: Guideline[];
+  cropRect: CropRect | null;
+  measureLines: MeasureLine[];
+  annotations: CommentAnnotation[];
+  pdfFile: File | null;
+  canvases: HTMLCanvasElement[];
+}
+
 const COLORS = ['#1890ff', '#fa8c16', '#52c41a', '#722ed1', '#eb2f96', '#13c2c2'];
 let colorIdx = 0;
 const nextColor = () => COLORS[(colorIdx++) % COLORS.length];
@@ -154,6 +186,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   // Color detection
   const [cursorColor, setCursorColor] = useState<{ r: number; g: number; b: number } | null>(null);
+  const [cursorSpotName, setCursorSpotName] = useState<string | null>(null);
   const [pageColorSpaces, setPageColorSpaces] = useState<Set<string>[]>([]);
   const pageCanvasRefs = useRef<HTMLCanvasElement[]>([]);
 
@@ -161,6 +194,36 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   // Check panel state
   const [checkResults, setCheckResults] = useState<{ label: string; issues: { page: number; desc: string; element: PdfElement }[] } | null>(null);
+
+  // Guideline state
+  const [guidelines, setGuidelines] = useState<Guideline[]>([]);
+  const [draggingGuide, setDraggingGuide] = useState<number | null>(null);
+  let guideIdCounter = useRef(1);
+
+  // Crop state
+  const [cropRect, setCropRect] = useState<CropRect | null>(null);
+  const [cropDrawStart, setCropDrawStart] = useState<{ x: number; y: number } | null>(null);
+  const [cropDrawing, setCropDrawing] = useState(false);
+
+  // Merge state
+  const [merging, setMerging] = useState(false);
+
+  // Export state
+  const [exporting, setExporting] = useState(false);
+
+  // PDF file reference for export/crop/merge
+  const pdfFileRef = useRef<File | null>(null);
+
+  // DnD page reorder state
+  const dragPageIdx = useRef<number | null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+
+  // Undo/Redo history
+  const historyStack = useRef<HistorySnapshot[]>([]);
+  const redoStack = useRef<HistorySnapshot[]>([]);
+  const [historyLen, setHistoryLen] = useState(0);
+  const [redoLen, setRedoLen] = useState(0);
+  const skipHistoryRef = useRef(false);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<(HTMLDivElement | null)[]>([]);
@@ -221,6 +284,8 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     setSelectedElement(null);
     pageCanvasRefs.current = [];
     setCurrentPage(1);
+    setCropRect(null);
+    pdfFileRef.current = file;
     try {
       const arrayBuffer = await file.arrayBuffer();
 
@@ -308,6 +373,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               type: el.type, x: el.x, y: el.y, w: el.w, h: el.h,
               colorspace: el.colorspace, width_px: el.width_px, height_px: el.height_px,
               font: el.font, font_size: el.font_size, color: el.color, text: el.text,
+              spot: el.spot, spot_name: el.spot_name,
             });
           }
         }
@@ -431,16 +497,83 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     };
   }, [handlePointerDragMove, handlePointerDragUp]);
 
-  // ESC to deselect element
+  // ── Undo / Redo ─────────────────────────────────────────────────────────────
+  const takeSnapshot = useCallback((): HistorySnapshot => ({
+    pdfPages: [...pdfPages],
+    pageInfos: [...pageInfos],
+    pageColorSpaces: pageColorSpaces.map(s => new Set(s)),
+    pageElements: pageElements.map(arr => [...arr]),
+    guidelines: guidelines.map(g => ({ ...g })),
+    cropRect: cropRect ? { ...cropRect } : null,
+    measureLines: measureLines.map(ml => ({ ...ml })),
+    annotations: annotations.map(a => ({ ...a })),
+    pdfFile: pdfFileRef.current,
+    canvases: [...pageCanvasRefs.current],
+  }), [pdfPages, pageInfos, pageColorSpaces, pageElements, guidelines, cropRect, measureLines, annotations]);
+
+  const pushHistory = useCallback(() => {
+    if (skipHistoryRef.current) return;
+    const snap = takeSnapshot();
+    historyStack.current.push(snap);
+    if (historyStack.current.length > HISTORY_MAX) historyStack.current.shift();
+    redoStack.current = [];
+    setHistoryLen(historyStack.current.length);
+    setRedoLen(0);
+  }, [takeSnapshot]);
+
+  const applySnapshot = useCallback((snap: HistorySnapshot) => {
+    skipHistoryRef.current = true;
+    setPdfPages(snap.pdfPages);
+    setPageInfos(snap.pageInfos);
+    setPageColorSpaces(snap.pageColorSpaces);
+    setPageElements(snap.pageElements);
+    setGuidelines(snap.guidelines);
+    setCropRect(snap.cropRect);
+    setMeasureLines(snap.measureLines);
+    setAnnotations(snap.annotations);
+    pdfFileRef.current = snap.pdfFile;
+    pageCanvasRefs.current = snap.canvases;
+    setTimeout(() => { skipHistoryRef.current = false; }, 0);
+  }, []);
+
+  const undo = useCallback(() => {
+    if (historyStack.current.length === 0) return;
+    const currentSnap = takeSnapshot();
+    redoStack.current.push(currentSnap);
+    const prev = historyStack.current.pop()!;
+    applySnapshot(prev);
+    setHistoryLen(historyStack.current.length);
+    setRedoLen(redoStack.current.length);
+  }, [takeSnapshot, applySnapshot]);
+
+  const redo = useCallback(() => {
+    if (redoStack.current.length === 0) return;
+    const currentSnap = takeSnapshot();
+    historyStack.current.push(currentSnap);
+    const next = redoStack.current.pop()!;
+    applySnapshot(next);
+    setHistoryLen(historyStack.current.length);
+    setRedoLen(redoStack.current.length);
+  }, [takeSnapshot, applySnapshot]);
+
+  // Keyboard shortcuts: ESC, Ctrl+Z, Ctrl+Y
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && selectedElement) {
         setSelectedElement(null);
       }
+      if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        undo();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+        e.preventDefault();
+        redo();
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedElement]);
+  }, [selectedElement, undo, redo]);
 
   const scrollToPage = (pageNum: number) => {
     const el = pageRefs.current[pageNum - 1];
@@ -484,13 +617,29 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     // Sample pixel color from stored canvas
     const canvas = pageCanvasRefs.current[pageNum - 1];
     if (canvas && pos) {
-      const ctx = canvas.getContext('2d');
+      const ctx = canvas.getContext('2d', { willReadFrequently: true });
       if (ctx) {
         const px = Math.min(Math.max(Math.round(pos.x * canvas.width), 0), canvas.width - 1);
         const py = Math.min(Math.max(Math.round(pos.y * canvas.height), 0), canvas.height - 1);
         const data = ctx.getImageData(px, py, 1, 1).data;
         setCursorColor({ r: data[0], g: data[1], b: data[2] });
       }
+    }
+
+    // Check if cursor is over a spot-color element
+    if (pos) {
+      const els = pageElements[pageNum - 1];
+      let foundSpot: string | null = null;
+      if (els) {
+        for (let i = els.length - 1; i >= 0; i--) {
+          const el = els[i];
+          if (el.spot && el.spot_name && pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h) {
+            foundSpot = el.spot_name;
+            break;
+          }
+        }
+      }
+      setCursorSpotName(foundSpot);
     }
 
     if (activeTool === 'pointer') return;
@@ -549,6 +698,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
         setActiveMeasure({ x1: pos.x, y1: pos.y, x2: pos.x, y2: pos.y, page: pageNum });
       } else {
         if (activeMeasure) {
+          pushHistory();
           setMeasureLines(prev => [...prev, activeMeasure]);
         }
         setActiveMeasure(null);
@@ -597,7 +747,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     setNewComment('');
   };
 
-  const handleMouseLeave = () => { setCursorPos(null); setCursorColor(null); };
+  const handleMouseLeave = () => { setCursorPos(null); setCursorColor(null); setCursorSpotName(null); };
 
   // ── Save / delete / resolve ─────────────────────────────────────────────────
   const handleSaveComment = async () => {
@@ -613,8 +763,10 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     try {
       if (itemId) {
         const r = await api.post(`printshop/order-items/${itemId}/comments/`, annotation);
+        pushHistory();
         setAnnotations(prev => [...prev, r.data]);
       } else {
+        pushHistory();
         setAnnotations(prev => [...prev, { ...annotation, id: Date.now(), created_at: new Date().toISOString() }]);
       }
       setPendingShape(null);
@@ -626,6 +778,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   const handleDeleteAnnotation = async (id: number) => {
     try {
       if (itemId) await api.delete(`printshop/order-items/${itemId}/comments/${id}/`);
+      pushHistory();
       setAnnotations(prev => prev.filter(a => a.id !== id));
       if (selectedId === id) setSelectedId(null);
     } catch { message.error('Törlési hiba'); }
@@ -634,11 +787,277 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   const handleResolve = async (id: number) => {
     try {
       if (itemId) await api.patch(`printshop/order-items/${itemId}/comments/${id}/`, { resolved: true });
+      pushHistory();
       setAnnotations(prev => prev.map(a => a.id === id ? { ...a, resolved: true } : a));
     } catch { message.error('Hiba'); }
   };
 
   const cancelPending = () => { setPendingShape(null); setNewComment(''); setDrawStart(null); setDrawing(false); setPendingPage(0); };
+
+  // ── Page delete handler ────────────────────────────────────────────────────
+  const handleDeletePage = async (pageIndex: number) => {
+    if (!pdfFileRef.current) return;
+    if (pdfPages.length <= 1) { message.warning('Az utolsó oldal nem törölhető'); return; }
+    Modal.confirm({
+      title: 'Oldal törlése',
+      content: `Biztosan törölni szeretnéd a(z) ${pageIndex + 1}. oldalt?`,
+      okText: 'Törlés',
+      cancelText: 'Mégse',
+      okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          pushHistory();
+          const formData = new FormData();
+          formData.append('pdf', pdfFileRef.current!);
+          formData.append('page', String(pageIndex));
+          const resp = await api.post('printshop/pdf-delete-page/', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+            responseType: 'blob',
+            timeout: 30000,
+          });
+          const blob = new Blob([resp.data], { type: 'application/pdf' });
+          const newFile = new File([blob], pdfFileRef.current!.name, { type: 'application/pdf' });
+          await renderPdf(newFile, true);
+          message.success(`${pageIndex + 1}. oldal törölve`);
+        } catch (err) {
+          console.error('Page delete error:', err);
+          message.error('Oldal törlési hiba');
+        }
+      },
+    });
+  };
+
+  // ── Page reorder handler ────────────────────────────────────────────────────
+  const handlePageReorder = async (fromIdx: number, toIdx: number) => {
+    if (fromIdx === toIdx || !pdfFileRef.current) return;
+    pushHistory();
+    // Build new order
+    const order = Array.from({ length: pdfPages.length }, (_, i) => i);
+    const [moved] = order.splice(fromIdx, 1);
+    order.splice(toIdx, 0, moved);
+
+    // Reorder client-side arrays instantly for snappy feedback
+    const reorder = <T,>(arr: T[]) => order.map(i => arr[i]);
+    setPdfPages(prev => reorder(prev));
+    setPageInfos(prev => reorder(prev));
+    setPageColorSpaces(prev => reorder(prev));
+    setPageElements(prev => reorder(prev));
+    pageCanvasRefs.current = reorder(pageCanvasRefs.current);
+
+    // Persist reorder in the actual PDF file via backend
+    try {
+      const formData = new FormData();
+      formData.append('pdf', pdfFileRef.current);
+      formData.append('order', JSON.stringify(order));
+      const resp = await api.post('printshop/pdf-reorder/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob',
+        timeout: 30000,
+      });
+      const blob = new Blob([resp.data], { type: 'application/pdf' });
+      pdfFileRef.current = new File([blob], pdfFileRef.current!.name, { type: 'application/pdf' });
+    } catch (err) {
+      console.error('Page reorder error:', err);
+      message.error('Oldal átrendezési hiba');
+      // Re-render from original file as fallback
+      if (pdfFileRef.current) await renderPdf(pdfFileRef.current, true);
+    }
+  };
+
+  // ── Guideline handlers ─────────────────────────────────────────────────────
+  const addGuideline = (orientation: 'h' | 'v') => {
+    pushHistory();
+    const id = guideIdCounter.current++;
+    setGuidelines(prev => [...prev, { id, orientation, position: 0.5, page: currentPage }]);
+  };
+
+  const addGuidelineAtMm = (orientation: 'h' | 'v', mm: number) => {
+    const info = pageInfos[currentPage - 1];
+    if (!info) return;
+    pushHistory();
+    const dimPt = orientation === 'h' ? info.heightPt : info.widthPt;
+    const pos = Math.max(0, Math.min(1, (mm * MM_TO_PT) / dimPt));
+    const id = guideIdCounter.current++;
+    setGuidelines(prev => [...prev, { id, orientation, position: pos, page: currentPage }]);
+  };
+
+  const updateGuidelineMm = (id: number, mm: number) => {
+    pushHistory();
+    setGuidelines(prev => prev.map(g => {
+      if (g.id !== id) return g;
+      const info = pageInfos[g.page - 1];
+      if (!info) return g;
+      const dimPt = g.orientation === 'h' ? info.heightPt : info.widthPt;
+      const pos = Math.max(0, Math.min(1, (mm * MM_TO_PT) / dimPt));
+      return { ...g, position: pos };
+    }));
+  };
+
+  const removeGuideline = (id: number) => {
+    pushHistory();
+    setGuidelines(prev => prev.filter(g => g.id !== id));
+  };
+
+  const clearGuidelines = () => { pushHistory(); setGuidelines([]); };
+
+  // ── Snap helper ─────────────────────────────────────────────────────────────
+  const snapToGuides = (pos: { x: number; y: number }): { x: number; y: number } => {
+    const pageGuides = guidelines.filter(g => g.page === currentPage);
+    let { x, y } = pos;
+    for (const g of pageGuides) {
+      if (g.orientation === 'v' && Math.abs(x - g.position) < SNAP_THRESHOLD) x = g.position;
+      if (g.orientation === 'h' && Math.abs(y - g.position) < SNAP_THRESHOLD) y = g.position;
+    }
+    return { x, y };
+  };
+
+  // ── Crop handlers ──────────────────────────────────────────────────────────
+  const handleCropMouseDown = (e: React.MouseEvent, _pageNum: number) => {
+    if (activeTool !== 'crop') return;
+    e.preventDefault();
+    let pos = getRelPos(e);
+    if (!pos) return;
+    pushHistory();
+    pos = snapToGuides(pos);
+    setCropDrawStart(pos);
+    setCropDrawing(true);
+    setCropRect({ x: pos.x, y: pos.y, w: 0, h: 0 });
+  };
+
+  const handleCropMouseMove = (e: React.MouseEvent) => {
+    if (!cropDrawing || !cropDrawStart) return;
+    let pos = getRelPos(e);
+    if (!pos) return;
+    pos = snapToGuides(pos);
+    setCropRect({
+      x: Math.min(cropDrawStart.x, pos.x),
+      y: Math.min(cropDrawStart.y, pos.y),
+      w: Math.abs(pos.x - cropDrawStart.x),
+      h: Math.abs(pos.y - cropDrawStart.y),
+    });
+  };
+
+  const handleCropMouseUp = () => {
+    setCropDrawing(false);
+    setCropDrawStart(null);
+    if (cropRect && cropRect.w < 0.01 && cropRect.h < 0.01) {
+      setCropRect(null);
+    }
+  };
+
+  const applyCrop = async () => {
+    if (!cropRect || !pdfFileRef.current) return;
+    pushHistory();
+    const info = pageInfos[currentPage - 1];
+    if (!info) return;
+    // Convert relative crop to pt
+    const cropPt = {
+      x: cropRect.x * info.widthPt,
+      y: cropRect.y * info.heightPt,
+      w: cropRect.w * info.widthPt,
+      h: cropRect.h * info.heightPt,
+      page: currentPage,
+    };
+    try {
+      const formData = new FormData();
+      formData.append('pdf', pdfFileRef.current);
+      formData.append('crop', JSON.stringify(cropPt));
+      const resp = await api.post('printshop/pdf-crop/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob',
+        timeout: 30000,
+      });
+      const blob = new Blob([resp.data], { type: 'application/pdf' });
+      const file = new File([blob], 'cropped.pdf', { type: 'application/pdf' });
+      setCropRect(null);
+      setActiveTool('pointer');
+      renderPdf(file);
+      message.success('Croppolás kész');
+    } catch {
+      message.error('Croppolási hiba');
+    }
+  };
+
+  // ── Merge handler ──────────────────────────────────────────────────────────
+  const handleMerge = async (files: File[]) => {
+    if (!pdfFileRef.current || files.length === 0) return;
+    setMerging(true);
+    try {
+      const formData = new FormData();
+      formData.append('pdfs', pdfFileRef.current);
+      for (const f of files) {
+        formData.append('pdfs', f);
+      }
+      const resp = await api.post('printshop/pdf-merge/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob',
+        timeout: 60000,
+      });
+      const blob = new Blob([resp.data], { type: 'application/pdf' });
+      const file = new File([blob], 'merged.pdf', { type: 'application/pdf' });
+      renderPdf(file);
+      message.success('PDF összefűzés kész');
+    } catch {
+      message.error('PDF összefűzési hiba');
+    } finally {
+      setMerging(false);
+    }
+  };
+
+  // ── Export handler ─────────────────────────────────────────────────────────
+  const handleExport = async () => {
+    if (!pdfFileRef.current) return;
+    setExporting(true);
+    try {
+      const glPt = guidelines.map(g => {
+        const info = pageInfos[g.page - 1];
+        if (!info) return null;
+        return {
+          orientation: g.orientation,
+          position: g.orientation === 'h' ? g.position * info.heightPt : g.position * info.widthPt,
+          page: g.page,
+        };
+      }).filter(Boolean);
+
+      const options: any = {};
+      if (cropRect) {
+        const info = pageInfos[currentPage - 1];
+        if (info) {
+          options.crop = {
+            x: cropRect.x * info.widthPt,
+            y: cropRect.y * info.heightPt,
+            w: cropRect.w * info.widthPt,
+            h: cropRect.h * info.heightPt,
+          };
+        }
+      }
+      if (glPt.length > 0) options.guidelines = glPt;
+
+      const formData = new FormData();
+      formData.append('pdf', pdfFileRef.current);
+      formData.append('options', JSON.stringify(options));
+
+      const resp = await api.post('printshop/pdf-export/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+        responseType: 'blob',
+        timeout: 60000,
+      });
+      const blob = new Blob([resp.data], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'export.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      message.success('PDF exportálva');
+    } catch {
+      message.error('Export hiba');
+    } finally {
+      setExporting(false);
+    }
+  };
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const curInfo = pageInfos[currentPage - 1] ?? null;
@@ -730,14 +1149,61 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
           {pdfPages.map((src, idx) => {
             const cs = pageColorSpaces[idx];
             return (
-              <div
+              <Dropdown
                 key={idx}
+                trigger={['contextMenu']}
+                menu={{
+                  items: [
+                    {
+                      key: 'delete',
+                      label: 'Oldal törlése',
+                      icon: <DeleteOutlined />,
+                      danger: true,
+                      disabled: pdfPages.length <= 1,
+                    },
+                  ],
+                  onClick: ({ key }) => {
+                    if (key === 'delete') handleDeletePage(idx);
+                  },
+                }}
+              >
+              <div
+                draggable
+                onDragStart={e => {
+                  dragPageIdx.current = idx;
+                  e.dataTransfer.effectAllowed = 'move';
+                  // Transparent drag image — we show our own indicator
+                  const el = e.currentTarget;
+                  e.dataTransfer.setDragImage(el, el.offsetWidth / 2, 20);
+                }}
+                onDragOver={e => {
+                  e.preventDefault();
+                  e.dataTransfer.dropEffect = 'move';
+                  if (dragOverIdx !== idx) setDragOverIdx(idx);
+                }}
+                onDragLeave={() => { if (dragOverIdx === idx) setDragOverIdx(null); }}
+                onDrop={e => {
+                  e.preventDefault();
+                  setDragOverIdx(null);
+                  if (dragPageIdx.current !== null && dragPageIdx.current !== idx) {
+                    handlePageReorder(dragPageIdx.current, idx);
+                  }
+                  dragPageIdx.current = null;
+                }}
+                onDragEnd={() => { dragPageIdx.current = null; setDragOverIdx(null); }}
                 onClick={() => scrollToPage(idx + 1)}
                 style={{
-                  cursor: 'pointer', borderRadius: 4, overflow: 'hidden', flexShrink: 0,
-                  border: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  cursor: 'grab', borderRadius: 4, overflow: 'hidden', flexShrink: 0,
+                  borderLeft: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderRight: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderBottom: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderTop: dragOverIdx === idx && dragPageIdx.current !== idx
+                    ? '3px solid #1890ff'
+                    : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
                   background: currentPage === idx + 1 ? '#e6f4ff' : '#fafafa',
                   padding: 4, textAlign: 'center',
+                  opacity: dragPageIdx.current === idx ? 0.4 : 1,
+                  transition: 'border-top 0.15s, opacity 0.15s',
                 }}
               >
                 <img src={src} alt={`${idx + 1}. oldal`} style={{ width: '100%', display: 'block', borderRadius: 2 }} />
@@ -752,6 +1218,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                   </div>
                 )}
               </div>
+              </Dropdown>
             );
           })}
           </div>
@@ -768,6 +1235,36 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
           </Upload>
           {pdfPages.length > 0 && (
             <>
+              <Tooltip title="Visszavonás (Ctrl+Z)">
+                <Button size="small" icon={<UndoOutlined />} onClick={undo} disabled={historyLen === 0} />
+              </Tooltip>
+              <Tooltip title="Újra (Ctrl+Y)">
+                <Button size="small" icon={<RedoOutlined />} onClick={redo} disabled={redoLen === 0} />
+              </Tooltip>
+              <Tooltip title="Mindent töröl">
+                <Button size="small" danger icon={<ClearOutlined />} onClick={() => {
+                  Modal.confirm({
+                    title: 'Mindent töröl',
+                    content: 'Biztosan törölni szeretnéd az összes annotációt, segédvonalat, mérést és cropot?',
+                    okText: 'Törlés',
+                    cancelText: 'Mégse',
+                    okButtonProps: { danger: true },
+                    onOk: () => {
+                      pushHistory();
+                      setAnnotations([]);
+                      setGuidelines([]);
+                      setMeasureLines([]);
+                      setCropRect(null);
+                      setActiveMeasure(null);
+                      setMeasuring(false);
+                      setMeasuringStart(null);
+                      setSelectedElement(null);
+                      setActiveTool('pointer');
+                      message.success('Minden törölve');
+                    },
+                  });
+                }} />
+              </Tooltip>
               <Divider type="vertical" />
               <Segmented
                 size="small"
@@ -779,6 +1276,8 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                   { value: 'pin', label: 'Jelölő' },
                   { value: 'arrow', label: 'Nyíl' },
                   { value: 'measure', label: 'Mérő' },
+                  { value: 'guideline', label: <Tooltip title="Segédvonal"><DragOutlined /></Tooltip> },
+                  { value: 'crop', label: <Tooltip title="Croppolás"><ScissorOutlined /></Tooltip> },
                 ]}
               />
               <Divider type="vertical" />
@@ -791,6 +1290,18 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                 </Tooltip>
                 <Tooltip title="Nagyítás"><Button size="small" icon={<ZoomInOutlined />} onClick={zoomIn} disabled={zoomLevel >= ZOOM_MAX} /></Tooltip>
               </div>
+              <Divider type="vertical" />
+              <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
+                if (fileList && fileList.length > 0 && file === fileList[fileList.length - 1]) {
+                  handleMerge(fileList as unknown as File[]);
+                }
+                return false;
+              }}>
+                <Tooltip title="PDF összefűzés"><Button icon={<MergeCellsOutlined />} size="small" loading={merging}>Összefűzés</Button></Tooltip>
+              </Upload>
+              <Tooltip title="Export (színterek megőrzésével)">
+                <Button icon={<ExportOutlined />} size="small" onClick={handleExport} loading={exporting}>Export</Button>
+              </Tooltip>
             </>
           )}
           {(measureLines.length > 0 || (activeMeasure && activeMeasureDist != null)) && (
@@ -803,7 +1314,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                     <Text strong style={{ fontSize: 12, color: '#fa8c16' }}>{d} mm</Text>
                     <Button size="small" type="text" style={{ padding: '0 2px', minWidth: 0 }}
                       icon={<CloseOutlined style={{ fontSize: 10 }} />}
-                      onClick={() => setMeasureLines(prev => prev.filter((_, i) => i !== idx))} />
+                      onClick={() => { pushHistory(); setMeasureLines(prev => prev.filter((_, i) => i !== idx)); }} />
                   </span>
                 ) : null;
               })}
@@ -816,6 +1327,131 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
             </div>
           )}
         </div>
+
+        {/* Guideline sub-toolbar */}
+        {activeTool === 'guideline' && pdfPages.length > 0 && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, fontSize: 11, color: '#555' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+              <DragOutlined style={{ color: '#1890ff' }} />
+              <Button size="small" icon={<PlusOutlined />} onClick={() => addGuideline('h')}>Vízszintes</Button>
+              <Button size="small" icon={<PlusOutlined />} onClick={() => addGuideline('v')}>Függőleges</Button>
+              <Divider type="vertical" style={{ margin: '0 2px' }} />
+              <span style={{ fontSize: 10, color: '#888' }}>Pontos pozíció (mm):</span>
+              <InputNumber
+                size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="X mm"
+                onPressEnter={e => {
+                  const v = parseFloat((e.target as HTMLInputElement).value);
+                  if (!isNaN(v)) { addGuidelineAtMm('v', v); (e.target as HTMLInputElement).value = ''; }
+                }}
+              />
+              <InputNumber
+                size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="Y mm"
+                onPressEnter={e => {
+                  const v = parseFloat((e.target as HTMLInputElement).value);
+                  if (!isNaN(v)) { addGuidelineAtMm('h', v); (e.target as HTMLInputElement).value = ''; }
+                }}
+              />
+              {guidelines.length > 0 && (
+                <Button size="small" type="text" danger icon={<CloseOutlined />} onClick={clearGuidelines}>Összes törlése</Button>
+              )}
+            </div>
+            {guidelines.filter(g => g.page === currentPage).length > 0 && (
+              <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+                {guidelines.filter(g => g.page === currentPage).map(g => {
+                  const info = pageInfos[g.page - 1];
+                  const dim = info ? (g.orientation === 'h' ? info.heightPt : info.widthPt) : 0;
+                  const mm = +(g.position * dim * PT_TO_MM).toFixed(1);
+                  return (
+                    <Tag
+                      key={g.id}
+                      closable
+                      onClose={() => removeGuideline(g.id)}
+                      color={g.orientation === 'h' ? 'cyan' : 'geekblue'}
+                      style={{ fontSize: 10, margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}
+                    >
+                      {g.orientation === 'h' ? 'V' : 'F'}
+                      <InputNumber
+                        size="small"
+                        style={{ width: 58, marginLeft: 2 }}
+                        value={mm}
+                        min={0}
+                        step={0.5}
+                        controls={false}
+                        onChange={v => { if (v != null) updateGuidelineMm(g.id, v); }}
+                      />
+                      mm
+                    </Tag>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Crop sub-toolbar */}
+        {activeTool === 'crop' && pdfPages.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: 11, color: '#555', flexWrap: 'wrap' }}>
+            <ScissorOutlined style={{ color: '#fa541c' }} />
+            <span style={{ fontSize: 10, color: '#888' }}>X:</span>
+            <InputNumber
+              size="small" style={{ width: 65 }} min={0} step={0.5}
+              value={cropRect && curInfo ? +(cropRect.x * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
+              placeholder="0"
+              onChange={v => {
+                if (v == null || !curInfo) return;
+                const rx = (v * MM_TO_PT) / curInfo.widthPt;
+                setCropRect(prev => prev ? { ...prev, x: Math.max(0, Math.min(1, rx)) } : { x: Math.max(0, Math.min(1, rx)), y: 0, w: 0.5, h: 0.5 });
+              }}
+            />
+            <span style={{ fontSize: 10, color: '#888' }}>Y:</span>
+            <InputNumber
+              size="small" style={{ width: 65 }} min={0} step={0.5}
+              value={cropRect && curInfo ? +(cropRect.y * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
+              placeholder="0"
+              onChange={v => {
+                if (v == null || !curInfo) return;
+                const ry = (v * MM_TO_PT) / curInfo.heightPt;
+                setCropRect(prev => prev ? { ...prev, y: Math.max(0, Math.min(1, ry)) } : { x: 0, y: Math.max(0, Math.min(1, ry)), w: 0.5, h: 0.5 });
+              }}
+            />
+            <span style={{ fontSize: 10, color: '#888' }}>Sz:</span>
+            <InputNumber
+              size="small" style={{ width: 65 }} min={0} step={0.5}
+              value={cropRect && curInfo ? +(cropRect.w * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
+              placeholder="W"
+              onChange={v => {
+                if (v == null || !curInfo) return;
+                const rw = (v * MM_TO_PT) / curInfo.widthPt;
+                setCropRect(prev => prev ? { ...prev, w: Math.max(0, Math.min(1 - prev.x, rw)) } : { x: 0, y: 0, w: Math.min(1, rw), h: 0.5 });
+              }}
+            />
+            <span style={{ fontSize: 10, color: '#888' }}>Ma:</span>
+            <InputNumber
+              size="small" style={{ width: 65 }} min={0} step={0.5}
+              value={cropRect && curInfo ? +(cropRect.h * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
+              placeholder="H"
+              onChange={v => {
+                if (v == null || !curInfo) return;
+                const rh = (v * MM_TO_PT) / curInfo.heightPt;
+                setCropRect(prev => prev ? { ...prev, h: Math.max(0, Math.min(1 - prev.y, rh)) } : { x: 0, y: 0, w: 0.5, h: Math.min(1, rh) });
+              }}
+            />
+            <span style={{ fontSize: 10, color: '#aaa' }}>mm</span>
+            {cropRect && cropRect.w > 0.001 && cropRect.h > 0.001 ? (
+              <>
+                <Button size="small" type="primary" onClick={applyCrop}>Alkalmaz</Button>
+                <Button size="small" onClick={() => setCropRect(null)}>Mégse</Button>
+              </>
+            ) : (
+              <Text type="secondary" style={{ fontSize: 10 }}>Húzz téglalapot vagy adj meg koordinátákat</Text>
+            )}
+            {guidelines.filter(g => g.page === currentPage).length > 0 && (
+              <Tooltip title="A crop élei a közeli segédvonalakhoz igazodnak">
+                <Tag color="cyan" style={{ fontSize: 9, margin: 0, cursor: 'default' }}>Snap aktív</Tag>
+              </Tooltip>
+            )}
+          </div>
+        )}
 
         {/* PDF info bar */}
         {pdfPages.length > 0 && curInfo && (
@@ -849,10 +1485,15 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                       border: '1px solid #ccc', flexShrink: 0,
                     }} />
                     {hasCMYK ? (() => {
+                      if (cursorSpotName) {
+                        return <span style={{ color: '#722ed1', fontWeight: 600 }}>{cursorSpotName}</span>;
+                      }
                       const cmyk = rgbToCmyk(cursorColor.r, cursorColor.g, cursorColor.b);
                       return <span>C:{cmyk.c} M:{cmyk.m} Y:{cmyk.y} K:{cmyk.k}</span>;
                     })() : (
-                      <span>R:{cursorColor.r} G:{cursorColor.g} B:{cursorColor.b}</span>
+                      cursorSpotName
+                        ? <span style={{ color: '#722ed1', fontWeight: 600 }}>{cursorSpotName}</span>
+                        : <span>R:{cursorColor.r} G:{cursorColor.g} B:{cursorColor.b}</span>
                     )}
                   </>
                 )}
@@ -936,13 +1577,122 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
                   {/* Interaction overlay */}
                   <div
-                    style={{ position: 'absolute', inset: 0, zIndex: 10, cursor: activeTool === 'pointer' ? 'grab' : 'crosshair' }}
-                    onMouseDown={e => handleMouseDown(e, pageNum)}
-                    onMouseMove={e => handleMouseMove(e, pageNum)}
-                    onMouseUp={handleMouseUp}
+                    style={{
+                      position: 'absolute', inset: 0, zIndex: 10,
+                      cursor: activeTool === 'pointer' ? 'grab'
+                        : activeTool === 'crop' ? 'crosshair'
+                        : activeTool === 'guideline' ? 'default'
+                        : 'crosshair',
+                    }}
+                    onMouseDown={e => {
+                      if (activeTool === 'crop') { handleCropMouseDown(e, pageNum); return; }
+                      handleMouseDown(e, pageNum);
+                    }}
+                    onMouseMove={e => {
+                      if (activeTool === 'crop') { handleCropMouseMove(e); }
+                      handleMouseMove(e, pageNum);
+                    }}
+                    onMouseUp={e => {
+                      if (activeTool === 'crop') { handleCropMouseUp(); return; }
+                      handleMouseUp(e);
+                    }}
                     onMouseLeave={handleMouseLeave}
                     onDoubleClick={() => setSelectedElement(null)}
                   >
+
+                    {/* Guidelines on this page */}
+                    {guidelines.filter(g => g.page === pageNum).map(g => (
+                      <div
+                        key={g.id}
+                        style={{
+                          position: 'absolute',
+                          ...(g.orientation === 'h'
+                            ? { left: 0, right: 0, top: `${g.position * 100}%`, height: 0, borderTop: '1px dashed #00bcd4', cursor: 'ns-resize' }
+                            : { top: 0, bottom: 0, left: `${g.position * 100}%`, width: 0, borderLeft: '1px dashed #00bcd4', cursor: 'ew-resize' }),
+                          zIndex: 18, pointerEvents: 'auto',
+                        }}
+                        onMouseDown={e => {
+                          e.stopPropagation();
+                          e.preventDefault();
+                          pushHistory();
+                          const parentEl = e.currentTarget.parentElement!;
+                          const guideId = g.id;
+                          const orient = g.orientation;
+                          const onMove = (ev: MouseEvent) => {
+                            const rect = parentEl.getBoundingClientRect();
+                            const pos = orient === 'h'
+                              ? Math.max(0, Math.min(1, (ev.clientY - rect.top) / rect.height))
+                              : Math.max(0, Math.min(1, (ev.clientX - rect.left) / rect.width));
+                            setGuidelines(prev => prev.map(gg => gg.id === guideId ? { ...gg, position: pos } : gg));
+                          };
+                          const onUp = () => {
+                            document.removeEventListener('mousemove', onMove);
+                            document.removeEventListener('mouseup', onUp);
+                          };
+                          document.addEventListener('mousemove', onMove);
+                          document.addEventListener('mouseup', onUp);
+                        }}
+                      >
+                        {/* Guideline label */}
+                        <div style={{
+                          position: 'absolute',
+                          ...(g.orientation === 'h'
+                            ? { left: 2, top: -12 }
+                            : { top: 2, left: 4 }),
+                          fontSize: 9, color: '#00bcd4', background: 'rgba(255,255,255,0.9)',
+                          padding: '0 3px', borderRadius: 2, whiteSpace: 'nowrap',
+                          pointerEvents: 'auto', cursor: 'pointer',
+                          zoom: 1 / zoomLevel,
+                        }}>
+                          {pInfo && (g.orientation === 'h'
+                            ? `${(g.position * pInfo.heightPt * PT_TO_MM).toFixed(1)} mm`
+                            : `${(g.position * pInfo.widthPt * PT_TO_MM).toFixed(1)} mm`
+                          )}
+                          <span
+                            style={{ marginLeft: 4, color: '#ff4d4f', cursor: 'pointer', fontWeight: 700 }}
+                            onClick={e => { e.stopPropagation(); removeGuideline(g.id); }}
+                          >×</span>
+                        </div>
+                        {/* Wider hit area */}
+                        <div style={{
+                          position: 'absolute',
+                          ...(g.orientation === 'h'
+                            ? { left: 0, right: 0, top: -4, height: 9 }
+                            : { top: 0, bottom: 0, left: -4, width: 9 }),
+                          cursor: g.orientation === 'h' ? 'ns-resize' : 'ew-resize',
+                        }} />
+                      </div>
+                    ))}
+
+                    {/* Crop overlay */}
+                    {cropRect && cropRect.w > 0.001 && cropRect.h > 0.001 && (
+                      <>
+                        {/* Darken outside crop */}
+                        <div style={{
+                          position: 'absolute', inset: 0, pointerEvents: 'none',
+                          background: 'rgba(0,0,0,0.35)',
+                          clipPath: `polygon(0% 0%, 100% 0%, 100% 100%, 0% 100%, 0% 0%, ${cropRect.x*100}% ${cropRect.y*100}%, ${cropRect.x*100}% ${(cropRect.y+cropRect.h)*100}%, ${(cropRect.x+cropRect.w)*100}% ${(cropRect.y+cropRect.h)*100}%, ${(cropRect.x+cropRect.w)*100}% ${cropRect.y*100}%, ${cropRect.x*100}% ${cropRect.y*100}%)`,
+                          zIndex: 19,
+                        }} />
+                        {/* Crop rectangle border */}
+                        <div style={{
+                          position: 'absolute',
+                          left: `${cropRect.x*100}%`, top: `${cropRect.y*100}%`,
+                          width: `${cropRect.w*100}%`, height: `${cropRect.h*100}%`,
+                          border: '2px dashed #fa541c',
+                          pointerEvents: 'none', zIndex: 20, boxSizing: 'border-box',
+                        }}>
+                          <span style={{
+                            position: 'absolute', top: -16, left: 0,
+                            fontSize: 9, background: '#fa541c', color: '#fff',
+                            padding: '0 4px', borderRadius: 2, whiteSpace: 'nowrap',
+                            zoom: 1 / zoomLevel,
+                          }}>
+                            Crop {pInfo ? `${Math.round(cropRect.w * pInfo.widthPt * PT_TO_MM)}×${Math.round(cropRect.h * pInfo.heightPt * PT_TO_MM)} mm` : ''}
+                          </span>
+                        </div>
+                      </>
+                    )}
                     {/* Existing annotations */}
                     {pAnnotations.map(a => {
                       // ── Pin ──
@@ -1250,7 +2000,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                             whiteSpace: 'nowrap',
                           }}>
                             <div><strong>Típus:</strong> {typeLabel}</div>
-                            {el.colorspace && <div><strong>Színtér:</strong> {el.colorspace}</div>}
+                            {el.colorspace && <div><strong>Színtér:</strong> {el.spot ? `Spot${el.spot_name ? ` (${el.spot_name})` : ''}` : el.colorspace}</div>}
                             {el.type === 'image' && el.width_px && el.height_px && (
                               <div><strong>Méret:</strong> {el.width_px}×{el.height_px} px
                                 {pInfo && el.w > 0 && (
@@ -1320,6 +2070,19 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                   setCheckResults({ label: `Képek < ${dpiLimit} DPI`, issues });
                 }}>DPI {dpiLimit}</Button>
               ))}
+              <Button size="small" onClick={() => {
+                const issues: { page: number; desc: string; element: PdfElement }[] = [];
+                pageElements.forEach((elems, idx) => {
+                  for (const el of elems) {
+                    if (el.spot) {
+                      const typeLabel = el.type === 'image' ? 'Kép' : el.type === 'vector' ? 'Vektor' : 'Szöveg';
+                      const detail = el.spot_name ? ` (${el.spot_name})` : '';
+                      issues.push({ page: idx + 1, desc: `${typeLabel}${detail}`, element: el });
+                    }
+                  }
+                });
+                setCheckResults({ label: 'Spot színek', issues });
+              }}>SPOT</Button>
             </div>
             {checkResults && (
               <div style={{ marginTop: 8, fontSize: 11 }}>
