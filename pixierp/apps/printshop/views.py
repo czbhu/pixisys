@@ -28,19 +28,6 @@ def _get_raw_pdf_box(doc, page_xref, box_name):
     return tuple(map(float, numbers))
 
 
-def _rect_contains(outer_rect, inner_rect, tolerance=0.01):
-    if not outer_rect or not inner_rect:
-        return False
-    ox0, oy0, ox1, oy1 = outer_rect
-    ix0, iy0, ix1, iy1 = inner_rect
-    return (
-        ox0 <= ix0 + tolerance and
-        oy0 <= iy0 + tolerance and
-        ox1 >= ix1 - tolerance and
-        oy1 >= iy1 - tolerance
-    )
-
-
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
@@ -992,7 +979,6 @@ class PdfAnalyzeView(APIView):
                 mb = page.mediabox  # Rect(x0, y0, x1, y1)
                 raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
                 raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
-                raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox')
 
                 mediabox_mm = {
                     'width': round(mb.width * self.PT_TO_MM, 1),
@@ -1003,14 +989,18 @@ class PdfAnalyzeView(APIView):
                 trimbox_mm = None
                 trimbox_pt = None
                 try:
-                    if raw_trim and raw_crop:
+                    tb = page.trimbox
+                    if tb and raw_crop and (tb.width > 0 and tb.height > 0):
                         crop_x0, crop_y0, crop_x1, crop_y1 = raw_crop
-                        trim_x0, trim_y0, trim_x1, trim_y1 = raw_trim
+                        trim_x0 = float(tb.x0)
+                        trim_y0 = float(tb.y0)
+                        trim_x1 = float(tb.x1)
+                        trim_y1 = float(tb.y1)
                         trim_w = trim_x1 - trim_x0
                         trim_h = trim_y1 - trim_y0
-                        # Only report TrimBox if it differs from the visible page box (CropBox)
-                        if (abs(trim_w - (crop_x1 - crop_x0)) > 0.5 or abs(trim_h - (crop_y1 - crop_y0)) > 0.5
-                                or abs(trim_x0 - crop_x0) > 0.5 or abs(trim_y0 - crop_y0) > 0.5):
+                        # Only report TrimBox if it differs from MediaBox
+                        if (abs(tb.width - mb.width) > 0.5 or abs(tb.height - mb.height) > 0.5
+                                or abs(tb.x0 - mb.x0) > 0.5 or abs(tb.y0 - mb.y0) > 0.5):
                             trimbox_mm = {
                                 'x': round((trim_x0 - crop_x0) * self.PT_TO_MM, 1),
                                 'y': round((crop_y1 - trim_y1) * self.PT_TO_MM, 1),
@@ -2014,7 +2004,7 @@ class PdfCropView(APIView):
                     continue
                 raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
                 raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
-                raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox')
+                raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox') or raw_crop
                 if not raw_crop or not raw_media:
                     continue
 
@@ -2049,14 +2039,33 @@ class PdfCropView(APIView):
                     continue
 
                 xref = page.xref
-                new_crop_rect = (new_x0, new_y0, new_x1, new_y1)
-                crop_arr = "[%g %g %g %g]" % new_crop_rect
-                doc.xref_set_key(xref, "CropBox", crop_arr)
+                cropped_arr = "[%g %g %g %g]" % (new_x0, new_y0, new_x1, new_y1)
+                doc.xref_set_key(xref, "MediaBox", cropped_arr)
+                doc.xref_set_key(xref, "CropBox", cropped_arr)
 
-                # Keep the original TrimBox only if the new crop fully contains it.
-                # Otherwise the crop becomes the new TrimBox so preview and boxes stay aligned.
-                next_trim_rect = raw_trim if raw_trim and _rect_contains(new_crop_rect, raw_trim) else new_crop_rect
-                trim_arr = "[%g %g %g %g]" % next_trim_rect
+                # TrimBox rule:
+                # - if crop fully contains the original TrimBox, keep the original TrimBox
+                # - otherwise shrink TrimBox to the crop/intersection area
+                # This keeps TrimBox stable when cropping larger/equal than the old trim,
+                # and moves it to the crop area when the crop is smaller.
+                trim_x0, trim_y0, trim_x1, trim_y1 = raw_trim
+                crop_contains_trim = (
+                    new_x0 <= trim_x0 <= trim_x1 <= new_x1 and
+                    new_y0 <= trim_y0 <= trim_y1 <= new_y1
+                )
+                if crop_contains_trim:
+                    final_trim = (trim_x0, trim_y0, trim_x1, trim_y1)
+                else:
+                    inter_x0 = max(new_x0, trim_x0)
+                    inter_y0 = max(new_y0, trim_y0)
+                    inter_x1 = min(new_x1, trim_x1)
+                    inter_y1 = min(new_y1, trim_y1)
+                    if inter_x1 > inter_x0 and inter_y1 > inter_y0:
+                        final_trim = (inter_x0, inter_y0, inter_x1, inter_y1)
+                    else:
+                        final_trim = (new_x0, new_y0, new_x1, new_y1)
+
+                trim_arr = "[%g %g %g %g]" % final_trim
                 doc.xref_set_key(xref, "TrimBox", trim_arr)
 
             out_path = os.path.join(tmpdir, 'cropped.pdf')
