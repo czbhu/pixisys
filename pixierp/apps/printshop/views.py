@@ -1370,7 +1370,7 @@ class PdfAnalyzeView(APIView):
                     _res_match = re.search(r'/Resources\s+(\d+)\s+0\s+R', _page_obj)
                     if _res_match:
                         _res_text = doc.xref_object(int(_res_match.group(1)))
-                        _dbgw(f"RESOURCES (indirect %s, first 500): %s".replace("%s","{0}").replace("%d","{1}") if False else f"RESOURCES (indirect %s, first 500): %s" % (_res_match.group(1), _res_text[:500] if _res_text else "None",) if "%" in "RESOURCES (indirect %s, first 500): %s" else f"RESOURCES (indirect %s, first 500): %s {_res_match.group(1), _res_text[:500] if _res_text else "None"}")
+                        _dbgw(f"RESOURCES (indirect %s, first 500): %s".replace("%s","{0}").replace("%d","{1}") if False else f"RESOURCES (indirect %s, first 500): %s" % (_res_match.group(1), _res_text[:500] if _res_text else "None",) if "%" in "RESOURCES (indirect %s, first 500): %s" else f"RESOURCES (indirect %s, first 500): %s {_res_match.group(1), _res_text[:500] if _res_text else 'None'}")
                     else:
                         _res_text = _page_obj
                         _dbgw("RESOURCES (inline from page obj)")
@@ -1384,7 +1384,7 @@ class PdfAnalyzeView(APIView):
                             _xobj_ref = re.search(r'/XObject\s+(\d+)\s+0\s+R', _res_text)
                             if _xobj_ref:
                                 _xd = doc.xref_object(int(_xobj_ref.group(1)))
-                                _dbgw(f"XOBJECT DICT (indirect %s): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJECT DICT (indirect %s): %s" % (_xobj_ref.group(1), _xd[:300] if _xd else "None",) if "%" in "XOBJECT DICT (indirect %s): %s" else f"XOBJECT DICT (indirect %s): %s {_xobj_ref.group(1), _xd[:300] if _xd else "None"}")
+                                _dbgw(f"XOBJECT DICT (indirect %s): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJECT DICT (indirect %s): %s" % (_xobj_ref.group(1), _xd[:300] if _xd else "None",) if "%" in "XOBJECT DICT (indirect %s): %s" else f"XOBJECT DICT (indirect %s): %s {_xobj_ref.group(1), _xd[:300] if _xd else 'None'}")
                                 if _xd:
                                     _inner = re.search(r'<<(.*)>>', _xd, re.DOTALL)
                                     _xobj_text = _inner.group(1) if _inner else _xd
@@ -1398,7 +1398,7 @@ class PdfAnalyzeView(APIView):
                                 _dbgw(f"Found XObject ref: /%s -> xref %d".replace("%s","{0}").replace("%d","{1}") if False else f"Found XObject ref: /%s -> xref %d" % (_xo_name, _xo_xref,) if "%" in "Found XObject ref: /%s -> xref %d" else f"Found XObject ref: /%s -> xref %d {_xo_name, _xo_xref}")
                                 try:
                                     _xo_obj = doc.xref_object(_xo_xref)
-                                    _dbgw(f"XObj %s obj (first 200): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s obj (first 200): %s" % (_xo_name, _xo_obj[:200] if _xo_obj else "None",) if "%" in "XObj %s obj (first 200): %s" else f"XObj %s obj (first 200): %s {_xo_name, _xo_obj[:200] if _xo_obj else "None"}")
+                                    _dbgw(f"XObj %s obj (first 200): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s obj (first 200): %s" % (_xo_name, _xo_obj[:200] if _xo_obj else "None",) if "%" in "XObj %s obj (first 200): %s" else f"XObj %s obj (first 200): %s {_xo_name, _xo_obj[:200] if _xo_obj else 'None'}")
                                     if _xo_obj and '/Subtype /Form' in _xo_obj:
                                         _xo_stream = doc.xref_stream(_xo_xref)
                                         _dbgw(f"XObj %s is Form, stream len=%d".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s is Form, stream len=%d" % (_xo_name, len(_xo_stream) if _xo_stream else 0,) if "%" in "XObj %s is Form, stream len=%d" else f"XObj %s is Form, stream len=%d {_xo_name, len(_xo_stream) if _xo_stream else 0}")
