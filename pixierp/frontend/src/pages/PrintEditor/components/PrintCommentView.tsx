@@ -849,7 +849,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
           const formData = new FormData();
           formData.append('pdf', pdfFileRef.current!);
           formData.append('page', String(pageIndex));
-          const resp = await api.post('printshop/pdf-delete-page/', formData, {
+          const resp = await api.post('/printshop/pdf-delete-page/', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
             responseType: 'blob',
             timeout: 30000,
@@ -888,7 +888,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       const formData = new FormData();
       formData.append('pdf', pdfFileRef.current);
       formData.append('order', JSON.stringify(order));
-      const resp = await api.post('printshop/pdf-reorder/', formData, {
+      const resp = await api.post('/printshop/pdf-reorder/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
         timeout: 30000,
@@ -1001,7 +1001,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       const formData = new FormData();
       formData.append('pdf', pdfFileRef.current);
       formData.append('crop', JSON.stringify(cropPt));
-      const resp = await api.post('printshop/pdf-crop/', formData, {
+      const resp = await api.post('/printshop/pdf-crop/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
         timeout: 30000,
@@ -1027,7 +1027,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       for (const f of files) {
         formData.append('pdfs', f);
       }
-      const resp = await api.post('printshop/pdf-merge/', formData, {
+      const resp = await api.post('/printshop/pdf-merge/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
         timeout: 60000,
@@ -1076,7 +1076,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       formData.append('pdf', pdfFileRef.current);
       formData.append('options', JSON.stringify(options));
 
-      const resp = await api.post('printshop/pdf-export/', formData, {
+      const resp = await api.post('/printshop/pdf-export/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
         timeout: 60000,
