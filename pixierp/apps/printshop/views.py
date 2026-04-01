@@ -984,13 +984,13 @@ class PdfAnalyzeView(APIView):
                                 or abs(tb.x0 - mb.x0) > 0.5 or abs(tb.y0 - mb.y0) > 0.5):
                             trimbox_mm = {
                                 'x': round((tb.x0 - mb.x0) * self.PT_TO_MM, 1),
-                                'y': round((mb.y1 - tb.y1) * self.PT_TO_MM, 1),
+                                'y': round((tb.y0 - mb.y0) * self.PT_TO_MM, 1),
                                 'width': round(tb.width * self.PT_TO_MM, 1),
                                 'height': round(tb.height * self.PT_TO_MM, 1),
                             }
                             trimbox_pt = {
                                 'x': round(tb.x0 - mb.x0, 2),
-                                'y': round(mb.y1 - tb.y1, 2),
+                                'y': round(tb.y0 - mb.y0, 2),
                                 'w': round(tb.width, 2),
                                 'h': round(tb.height, 2),
                             }
@@ -1983,28 +1983,49 @@ class PdfCropView(APIView):
                 # Only crop the specified page (1-indexed), or all if 0
                 if crop_page > 0 and page.number != (crop_page - 1):
                     continue
-                mb = page.mediabox  # (x0, y0, x1, y1) bottom-up
-                page_h = mb.y1 - mb.y0
-                page_w = mb.x1 - mb.x0
-                # Clamp values to page dimensions
+                mb = page.mediabox  # fitz coords (top-down, y0=0 at top, normalized)
+                page_h = mb.height  # fitz page height in pt
+                page_w = mb.width   # fitz page width in pt
+
+                # Read raw PDF MediaBox from xref (bottom-up PDF user space)
+                # We need this because xref_set_key writes raw PDF coords,
+                # and fitz normalizes mb to (0,0) even if raw y0 != 0.
+                import re as _re
+                raw_mb_str = doc.xref_get_key(page.xref, "MediaBox")
+                raw_nums = _re.findall(r'[-+]?\d*\.?\d+', raw_mb_str)
+                if len(raw_nums) == 4:
+                    raw_x0, raw_y0, raw_x1, raw_y1 = map(float, raw_nums)
+                else:
+                    raw_x0, raw_y0 = 0.0, 0.0
+                    raw_x1, raw_y1 = mb.x1, mb.y1
+
+                # Clamp crop values (frontend sends fitz/top-down coords in pt)
                 cx_c = max(0, min(cx, page_w))
                 cy_c = max(0, min(cy, page_h))
                 cw_c = max(0, min(cw, page_w - cx_c))
                 ch_c = max(0, min(ch, page_h - cy_c))
                 if cw_c <= 0 or ch_c <= 0:
                     continue
-                # Frontend sends top-down Y; convert to PDF bottom-up
-                pdf_y0 = mb.y0 + (page_h - cy_c - ch_c)
-                pdf_y1 = pdf_y0 + ch_c
-                crop_rect = fitz.Rect(mb.x0 + cx_c, pdf_y0, mb.x0 + cx_c + cw_c, pdf_y1)
-                # Intersect with MediaBox to handle float precision mismatches
-                crop_rect = crop_rect & mb
-                if crop_rect.is_empty:
+
+                # Convert from fitz coords (top-down, fitz y=0 = raw PDF y=raw_y1)
+                # to raw PDF user space coords (bottom-up).
+                # fitz y → raw PDF y:  pdf_y = raw_y1 - fitz_y
+                new_x0 = raw_x0 + cx_c
+                new_x1 = raw_x0 + cx_c + cw_c
+                new_y1 = raw_y1 - cy_c           # top of crop area in raw PDF Y
+                new_y0 = raw_y1 - (cy_c + ch_c)  # bottom of crop area in raw PDF Y
+
+                # Clamp to raw PDF bounds
+                new_x0 = max(raw_x0, min(raw_x1, new_x0))
+                new_x1 = max(raw_x0, min(raw_x1, new_x1))
+                new_y0 = max(raw_y0, min(raw_y1, new_y0))
+                new_y1 = max(raw_y0, min(raw_y1, new_y1))
+
+                if new_x1 <= new_x0 or new_y1 <= new_y0:
                     continue
-                # Use low-level xref to set both boxes — avoids PyMuPDF's
-                # internal validation which caches the old MediaBox
+
                 xref = page.xref
-                arr = "[%g %g %g %g]" % (crop_rect.x0, crop_rect.y0, crop_rect.x1, crop_rect.y1)
+                arr = "[%g %g %g %g]" % (new_x0, new_y0, new_x1, new_y1)
                 doc.xref_set_key(xref, "MediaBox", arr)
                 doc.xref_set_key(xref, "CropBox", arr)
 
