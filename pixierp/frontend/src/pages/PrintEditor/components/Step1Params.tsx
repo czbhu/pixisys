@@ -48,6 +48,8 @@ export interface PrintParams {
   folding_count: number;
   folding_specs: Array<{ axis: 'H' | 'V'; pos_mm: number }>;
   material_id: number | null;
+  multi_sheet_enabled?: boolean;
+  sheet_count?: number;      // ívek száma (multi_sheet_enabled esetén)
 }
 
 interface Props {
@@ -239,6 +241,15 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
           </Form.Item>
 
           <Divider orientation="left" style={{ fontSize: 13 }}>Nyomtatás</Divider>
+          <Form.Item label="Lapok száma" tooltip="Egy lapnak 2 oldala van: cím oldal és hátoldal.">
+            <InputNumber
+              min={1} max={50}
+              value={params.sheet_count ?? 1}
+              onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
+              style={{ width: 120 }}
+              addonAfter="lap"
+            />
+          </Form.Item>
           <Form.Item label="Oldalak száma">
             <Radio.Group
               value={params.sides}
@@ -424,3 +435,4 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
 };
 
 export default Step1Params;
+

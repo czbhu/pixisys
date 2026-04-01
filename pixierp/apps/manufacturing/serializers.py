@@ -524,6 +524,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'print_sides', 'print_service',
             'print_service_options', 'print_service_options_details',
             'print_service_options_order', 'fix_cost_first_side_only',
+            'multi_sheet_enabled',
             'custom_size_enabled', 'custom_size_unit',
             'custom_size_width_min', 'custom_size_width_max',
             'custom_size_height_min', 'custom_size_height_max',

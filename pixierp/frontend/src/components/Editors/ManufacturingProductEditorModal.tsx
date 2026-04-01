@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag } from 'antd';
+import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag, Tooltip } from 'antd';
 import { useNavigate } from 'react-router-dom';
 import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -84,6 +84,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [activeTab, setActiveTab] = useState('1');
   const [dimensionsPerUnit, setDimensionsPerUnit] = useState(true);
   const [calculatedVolumes, setCalculatedVolumes] = useState({ unit: 0, total: 0 });
+  const [calculatedTotalDims, setCalculatedTotalDims] = useState<{ width: number; length: number; height: number; unit: string } | null>(null);
   const [isFixedQuantity, setIsFixedQuantity] = useState(false);
     const [initialEditorSnapshot, setInitialEditorSnapshot] = useState('');
     const [dataLoadedKey, setDataLoadedKey] = useState(0);
@@ -324,7 +325,10 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     const specificWeightUnit = form.getFieldValue('specific_weight_unit') || 'kg/m3';
     const qty = form.getFieldValue('quantity') || 1;
 
-    if ((!width || !length) && (!height)) return;
+    if ((!width || !length) && (!height)) {
+      setCalculatedTotalDims(null);
+      return;
+    }
 
     let widthM = width;
     let lengthM = length;
@@ -353,15 +357,31 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     if (dimensionsPerUnit) {
         uVol = baseVolumeM3;
         tVol = baseVolumeM3 * qty;
+        // Calculate total stacked dimensions (width/length same, height × qty)
+        setCalculatedTotalDims({
+            width: width || 0,
+            length: length || 0,
+            height: parseFloat(((height || 0) * qty).toFixed(2)),
+            unit: dimensionUnit,
+        });
     } else {
         tVol = baseVolumeM3;
         uVol = qty > 0 ? baseVolumeM3 / qty : 0;
+        // Calculate per-unit dimensions (width/length same, height / qty)
+        setCalculatedTotalDims({
+            width: width || 0,
+            length: length || 0,
+            height: parseFloat(((height || 0) / (qty || 1)).toFixed(2)),
+            unit: dimensionUnit,
+        });
     }
     setCalculatedVolumes({ unit: uVol, total: tVol });
 
-    // Calculate Weight
-    let calculatedWeight = 0; // This will trigger 'total_weight' update or 'unit_weight' update? let's update fields
+    // Auto-sync unit_weight ↔ total_weight based on quantity
+    const unitWeight = form.getFieldValue('unit_weight');
+    const totalWeight = form.getFieldValue('total_weight');
 
+    // Calculate Weight from specific_weight × volume
     if (specificWeight && specificWeight > 0 && uVol > 0) {
       let specificWeightKgM3 = specificWeight;
       
@@ -378,8 +398,14 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       form.setFieldsValue({ 
           total_weight: parseFloat(totalWeightKg.toFixed(3)), 
           unit_weight: parseFloat(unitWeightKg.toFixed(3)),
-          weight_unit: 'kg' // Common unit
+          weight_unit: 'kg'
       });
+    } else if (unitWeight && unitWeight > 0 && !specificWeight) {
+      // No specific weight but unit_weight is set — sync total_weight from qty
+      form.setFieldsValue({ total_weight: parseFloat((unitWeight * qty).toFixed(3)) });
+    } else if (totalWeight && totalWeight > 0 && !specificWeight && !unitWeight) {
+      // Only total_weight set — compute unit_weight
+      form.setFieldsValue({ unit_weight: parseFloat((totalWeight / (qty || 1)).toFixed(3)) });
     }
   };
 
@@ -873,6 +899,10 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const costColumns = [
     { title: 'Megnevezés', key: 'name', width: 250, render: (_: any, r: CostItem) => {
         if (r.type === 'other') return <Input value={r.name} onChange={(e) => updateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />;
+        // If the item has a name but no ref_id (e.g. from print editor), show name as text with tooltip
+        if (r.name && !r.ref_id) {
+            return <Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{r.name}</span></Tooltip>;
+        }
         const isMat = r.type === 'material';
         const list = isMat ? materials : services;
         return (
@@ -1048,6 +1078,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                       if ('quantity' in changed) {
                           // Force re-render/re-calc
                           setCostItems([...costItems]); // Trigger effect deps
+                          setTimeout(calculateWeightFromDimensions, 0);
                       }
                   }}>
                      {editingProduct && editingProduct._from_calculator && (
@@ -1184,13 +1215,9 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                      </Row>
                      
                      <div style={{ marginBottom: 16, padding: '8px 0', borderTop: '1px solid #eee' }}>
-                         <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 8 }}>
+                         <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
                             <Checkbox checked={dimensionsPerUnit} onChange={(e) => { 
                                 setDimensionsPerUnit(e.target.checked); 
-                                // Recalculate immediately after state update would require effect or forcing helper to read new value.
-                                // Simplest is to pass new value to helper, but helper reads state? No, helper reads form.
-                                // I updated helper to read state, so need to wait render. Using setTimeout or creating a wrapper.
-                                // Better: Pass value to helper.
                                 setTimeout(calculateWeightFromDimensions, 0); 
                             }}>
                                 Méretek egy egységre vonatkoznak
@@ -1198,6 +1225,15 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                             <span>Egység térfogat: <b>{calculatedVolumes.unit.toFixed(6)} m³</b></span>
                             <span>Összes térfogat: <b>{calculatedVolumes.total.toFixed(6)} m³</b></span>
                          </div>
+                         {calculatedTotalDims && (
+                           <div style={{ display: 'flex', gap: 24, alignItems: 'center', fontSize: 13, color: '#1890ff' }}>
+                             {dimensionsPerUnit ? (
+                               <span>Össz. méret ({quantity} db): <b>{calculatedTotalDims.width} × {calculatedTotalDims.length} × {calculatedTotalDims.height} {calculatedTotalDims.unit}</b></span>
+                             ) : (
+                               <span>Egység méret (1/{quantity} db): <b>{calculatedTotalDims.width} × {calculatedTotalDims.length} × {calculatedTotalDims.height} {calculatedTotalDims.unit}</b></span>
+                             )}
+                           </div>
+                         )}
                      </div>
 
                      <Row gutter={16}>

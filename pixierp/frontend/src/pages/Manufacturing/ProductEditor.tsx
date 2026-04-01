@@ -6,7 +6,7 @@ import {
   Switch, Empty, Typography, Checkbox, Collapse,
 } from 'antd';
 import {
-  PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined,
+  PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
   CalculatorOutlined, TagsOutlined, AppstoreOutlined, SyncOutlined, PrinterOutlined,
   LockOutlined, ArrowUpOutlined, ArrowDownOutlined,
 } from '@ant-design/icons';
@@ -77,6 +77,7 @@ interface ProductTemplate {
   print_service_options_details: { id: number; name: string; code: string; setup_cost_selling: number; unit_cost_selling: number; max_width_mm: number | null; max_height_mm: number | null }[];
   print_service_options_order: number[];
   fix_cost_first_side_only: boolean;
+  multi_sheet_enabled: boolean;
   custom_size_enabled: boolean;
   custom_size_unit: string;
   custom_size_width_min: number | null;
@@ -322,6 +323,7 @@ const ProductEditor: React.FC = () => {
       default_service_markup_percentage: Number(p.default_service_markup_percentage ?? 35),
       custom_size_enabled: p.custom_size_enabled ?? false,
       fix_cost_first_side_only: p.fix_cost_first_side_only ?? false,
+      multi_sheet_enabled: p.multi_sheet_enabled ?? false,
       custom_size_unit: cu,
       custom_size_width_min:  fromMm(p.custom_size_width_min  != null ? Number(p.custom_size_width_min)  : null, cu),
       custom_size_width_max:  fromMm(p.custom_size_width_max  != null ? Number(p.custom_size_width_max)  : null, cu),
@@ -387,6 +389,8 @@ const ProductEditor: React.FC = () => {
       folding_count: 0,
       folding_specs: [],
       material_id: null,
+      multi_sheet_enabled: p.multi_sheet_enabled ?? false,
+      sheet_count: 1,
     };
     try {
       const existing = localStorage.getItem('pixierp_editor_state');
@@ -420,6 +424,7 @@ const ProductEditor: React.FC = () => {
       print_service_options: selectedPrintServiceOptions,
       print_service_options_order: selectedPrintServiceOptions,
       fix_cost_first_side_only: values.fix_cost_first_side_only ?? false,
+      multi_sheet_enabled: values.multi_sheet_enabled ?? false,
       default_material_markup_percentage: values.default_material_markup_percentage ?? 30,
       default_service_markup_percentage: values.default_service_markup_percentage ?? 35,
       allowed_materials: selectedMaterials,
@@ -470,6 +475,17 @@ const ProductEditor: React.FC = () => {
     } finally {
       setSaving(false);
     }
+  };
+
+  // ── Duplicate ────────────────────────────────────────────────────────────────
+
+  const handleDuplicate = (p: ProductTemplate) => {
+    openEdit(p);
+    // Reset to "new" mode: clear editing, change name
+    setTimeout(() => {
+      setEditing(null);
+      form.setFieldsValue({ name: `${p.name} (másolat)`, code: undefined });
+    }, 0);
   };
 
   // ── Delete ───────────────────────────────────────────────────────────────────
@@ -614,11 +630,14 @@ const ProductEditor: React.FC = () => {
     {
       title: 'Műveletek',
       key: 'actions',
-      width: 120,
+      width: 160,
       render: (_: any, rec: ProductTemplate) => (
         <Space>
           <Tooltip title="Szerkesztés">
             <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(rec)} />
+          </Tooltip>
+          <Tooltip title="Másolás">
+            <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(rec)} />
           </Tooltip>
           <Popconfirm title="Biztosan törlöd?" onConfirm={() => handleDelete(rec.id)} okText="Törlés" cancelText="Mégse">
             <Tooltip title="Törlés">
@@ -1010,6 +1029,9 @@ const ProductEditor: React.FC = () => {
                                 </Form.Item>
                                 <Form.Item name="fix_cost_first_side_only" valuePropName="checked">
                                   <Checkbox>2 oldalas nyomtatásnál a fix költségeket csak az 1. oldalra számolja</Checkbox>
+                                </Form.Item>
+                                <Form.Item name="multi_sheet_enabled" valuePropName="checked">
+                                  <Checkbox>Ív hozzáadása — a felhasználó több ívet (oldalt) adhat a megrendeléshez</Checkbox>
                                 </Form.Item>
                               </>
                             )}
@@ -1405,6 +1427,9 @@ const ProductEditor: React.FC = () => {
           <Space>
             <Button icon={<PrinterOutlined />} onClick={() => { if (detailProduct) openInPrintEditor(detailProduct); }}>
               Print Editor
+            </Button>
+            <Button icon={<CopyOutlined />} onClick={() => { setDetailOpen(false); if (detailProduct) handleDuplicate(detailProduct); }}>
+              Másolás
             </Button>
             <Button icon={<EditOutlined />} onClick={() => { setDetailOpen(false); if (detailProduct) openEdit(detailProduct); }}>
               Szerkesztés

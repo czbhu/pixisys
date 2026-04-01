@@ -1279,6 +1279,11 @@ class ProductTemplate(models.Model):
         verbose_name="Fix költségek csak az 1. oldalra",
         help_text="Ha igaz, 2 oldalas nyomtatásnál a fix költségeket csak az 1. oldalra számolja.",
     )
+    multi_sheet_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Több ív engedélyezése",
+        help_text="Ha igaz, a felhasználó több ívet (oldalt) adhat a megrendeléshez.",
+    )
 
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")

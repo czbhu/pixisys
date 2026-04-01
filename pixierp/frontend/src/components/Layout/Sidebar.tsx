@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useRef } from 'react';
-import { Layout, Menu, Badge, message } from 'antd';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
+import { Layout, Menu, Badge, message, Select } from 'antd';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   DashboardOutlined,
@@ -15,6 +15,7 @@ import {
   FileTextOutlined,
   GlobalOutlined,
   PrinterOutlined,
+  SwapOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -35,10 +36,45 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   const navigate = useNavigate();
   const location = useLocation();
   const siderRef = useRef<HTMLDivElement>(null);
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
   
   const collapsed = propCollapsed !== undefined ? propCollapsed : internalCollapsed;
   const setCollapsed = onCollapse || setInternalCollapsed;
+
+  // Dev mode user switcher state
+  const isDevMode = process.env.REACT_APP_DEV_MODE === 'true';
+  const [devUsers, setDevUsers] = useState<any[]>([]);
+  const [devSwitching, setDevSwitching] = useState(false);
+  const [originalUserId, setOriginalUserId] = useState<number | null>(null);
+
+  useEffect(() => {
+    if (isDevMode && user && devUsers.length === 0) {
+      api.get('/users/').then(res => {
+        const list = Array.isArray(res.data) ? res.data : res.data?.results || [];
+        setDevUsers(list);
+      }).catch(() => {});
+    }
+  }, [isDevMode, user, devUsers.length]);
+
+  const handleDevSwitchUser = useCallback(async (userId: number) => {
+    if (!user) return;
+    if (!originalUserId) {
+      setOriginalUserId(user.id);
+    }
+    setDevSwitching(true);
+    try {
+      const res = await api.post('/auth/dev-switch-user/', { user_id: userId });
+      const { user: newUser, tokens } = res.data;
+      localStorage.setItem('access_token', tokens.access);
+      localStorage.setItem('refresh_token', tokens.refresh);
+      setUser(newUser);
+      message.success(`Átváltva: ${newUser.username}`);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Nem sikerült a felhasználó váltás');
+    } finally {
+      setDevSwitching(false);
+    }
+  }, [user, originalUserId, setUser]);
 
   // Calculate selected menu key based on current path
   const getSelectedKey = () => {
@@ -850,6 +886,25 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           transition: 'opacity 0.2s',
         }}>
           DEV MODE
+        </div>
+      )}
+      {isDevMode && !collapsed && devUsers.length > 0 && (
+        <div style={{ padding: '0 8px 8px', textAlign: 'center' }}>
+          <Select
+            size="small"
+            style={{ width: '100%' }}
+            value={user.id}
+            loading={devSwitching}
+            onChange={handleDevSwitchUser}
+            suffixIcon={<SwapOutlined style={{ color: '#faad14' }} />}
+            popupMatchSelectWidth={false}
+            options={devUsers.map((u: any) => ({
+              value: u.id,
+              label: `${u.username}${u.id === originalUserId ? ' ★' : ''}`,
+            }))}
+            optionFilterProp="label"
+            showSearch
+          />
         </div>
       )}
       <div style={{ paddingBottom: '80px' }}>

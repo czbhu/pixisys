@@ -30,6 +30,7 @@ import SiteManagement from './pages/SiteManagement/SiteManagement';
 import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview';
 import POSSales from './pages/POS/Sales';
 import PrintEditorPage from './pages/PrintEditor/PrintEditorPage';
+import PrintPreviewPage from './pages/PrintEditor/PrintPreviewPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
@@ -206,6 +207,12 @@ function AppContent() {
   const isPrintEditor = location.pathname.startsWith('/print-editor');
   if (isPrintEditor) {
     return <PrintEditorPage />;
+  }
+
+  // Print Preview fullscreen mode - no sidebar
+  const isPrintPreview = location.pathname.startsWith('/print-preview');
+  if (isPrintPreview) {
+    return <PrintPreviewPage />;
   }
 
   return (

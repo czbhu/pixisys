@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react';
 import {
-  Button, Space, Tooltip, Select, InputNumber, Popover, Divider,
+  Button, Space, Tooltip, Select, InputNumber, Popover, Divider, Popconfirm,
   Upload, message, Slider, Typography, Switch, Modal, Input, Segmented, Badge,
 } from 'antd';
 import {
@@ -12,7 +12,7 @@ import {
   RightOutlined, LoadingOutlined, ZoomInOutlined, ZoomOutOutlined,
   FullscreenOutlined, LockOutlined, CompressOutlined, ExpandOutlined, EyeOutlined, FilePdfOutlined,
   CommentOutlined, EditOutlined, HighlightOutlined, CheckOutlined, CloseOutlined,
-  ArrowRightOutlined,
+  ArrowRightOutlined, PlusOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import CanvasRuler from './CanvasRuler';
@@ -143,8 +143,8 @@ interface Props {
   leftOffset?: number;
   locked?: boolean;
   onParamsChange?: (p: PrintParams) => void;
-  initialDesign?: { d1: any; d2: any } | null;
-  onDesignChange?: (d1: any, d2: any) => void;
+  initialDesign?: { d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null;
+  onDesignChange?: (d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => void;
 }
 
 type Side = '1' | '2';
@@ -176,8 +176,77 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const restoredSidesRef = useRef<Set<Side>>(new Set());
   const sidesFullyRestoredRef = useRef<Set<Side>>(new Set());  // tracks async enliven completion
   const savedCanvasDataRef = useRef<{ d1: any[] | null; d2: any[] | null }>({ d1: null, d2: null });
+  const suppressNotifyRef = useRef(0); // counter: >0 means suppress notifyDesignChange during sheet load
   const onDesignChangeRef = useRef(onDesignChange);
   useEffect(() => { onDesignChangeRef.current = onDesignChange; }, [onDesignChange]);
+
+  // ── Multi-sheet support ──────────────────────────────────────────────────
+  const sheetCount = params.sheet_count ?? 1;
+  const sheetCountRef = useRef(sheetCount);
+  useEffect(() => { sheetCountRef.current = sheetCount; }, [sheetCount]);
+  const [activeSheet, setActiveSheet] = useState(0);
+  const activeSheetRef = useRef(0); // always-current sheet index (sync, no stale closure)
+  // Store canvas JSON per sheet: { [sheetIdx]: { d1: json, d2: json } }
+  // Initialize from saved sheets data (survives page refresh)
+  const sheetDesignsRef = useRef<Record<number, { d1: any; d2: any }>>((() => {
+    const sheets = initialDesign?.sheets;
+    if (!sheets || sheets.length === 0) return {};
+    const map: Record<number, { d1: any; d2: any }> = {};
+    sheets.forEach((s, i) => {
+      // Sheet 0 canvas content is also loaded via initialDesign.d1/d2 in initCanvas,
+      // but we still store it here so notifyDesignChange can access it when active sheet != 0
+      if (s.d1 || s.d2) map[i] = { d1: s.d1 ?? null, d2: s.d2 ?? null };
+    });
+    return map;
+  })());
+
+  const saveCurrentSheetDesign = useCallback(() => {
+    const fc1 = fabricRef1.current;
+    const fc2 = fabricRef2.current;
+    if (!fc1) return;
+    const getObjsJson = (fc: fabric.Canvas) => {
+      const objs = fc.getObjects().filter((o: any) => !o.__guideHelper).map(o => o.toObject(['id', 'name']));
+      return objs.length > 0 ? { objects: objs } : null;
+    };
+    sheetDesignsRef.current[activeSheetRef.current] = {
+      d1: getObjsJson(fc1),
+      d2: fc2 ? getObjsJson(fc2) : null,
+    };
+  }, []);
+
+  const loadSheetDesign = useCallback((sheetIdx: number) => {
+    const data = sheetDesignsRef.current[sheetIdx];
+    const fc1 = fabricRef1.current;
+    const fc2 = fabricRef2.current;
+    if (!fc1) return;
+
+    const loadObjects = (fc: fabric.Canvas, json: any) => {
+      // Remove only user objects (keep guides, background, etc.)
+      suppressNotifyRef.current++;
+      fc.getObjects().filter((o: any) => !o.__guideHelper).forEach(o => fc.remove(o));
+      if (!json) { suppressNotifyRef.current--; fc.renderAll(); return; }
+      // Support both full JSON { objects: [...], ... } and objects-only { objects: [...] }
+      const objData = (json.objects ?? []).filter((o: any) => !o.__guideHelper);
+      if (objData.length === 0) { suppressNotifyRef.current--; fc.renderAll(); return; }
+      fabric.util.enlivenObjects(objData, (enlivened: fabric.Object[]) => {
+        enlivened.forEach((obj: fabric.Object) => fc.add(obj));
+        suppressNotifyRef.current--;
+        fc.renderAll();
+      }, 'fabric' as any);
+    };
+
+    loadObjects(fc1, data?.d1);
+    if (fc2) loadObjects(fc2, data?.d2);
+  }, []);
+
+  const handleSheetChange = useCallback((newSheet: number) => {
+    if (newSheet === activeSheetRef.current) return;
+    saveCurrentSheetDesign();
+    activeSheetRef.current = newSheet;
+    setActiveSheet(newSheet);
+    loadSheetDesign(newSheet);
+    setActiveSide('1');
+  }, [saveCurrentSheetDesign, loadSheetDesign]);
 
   // Refs for keyboard shortcuts — always point to the latest undo/redo/delete functions
   const undoRef = useRef<() => void>(() => {});
@@ -187,14 +256,6 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   // Refs for auto-nyomatlan: remember the previous (non-none) mode so we can restore on content add
   const prevSide1ModeRef = useRef<string>(params.side1_mode !== 'none' ? params.side1_mode : 'color');
   const prevSide2ModeRef = useRef<string>(params.side2_mode !== 'none' ? params.side2_mode : 'color');
-  const prevObj1CountRef = useRef<number>(-1);  // -1 = not yet initialized
-  const prevObj2CountRef = useRef<number>(-1);
-
-  // Track previous params.side_mode to detect user-initiated 'none' selection from the panel
-  const prevParamMode1Ref = useRef<string>(params.side1_mode);
-  const prevParamMode2Ref = useRef<string>(params.side2_mode);
-  // Flag: true while the auto-nyomatlan effect (object count change) is updating mode — skip confirm in that case
-  const autoNyomatlanRef = useRef(false);
 
   // On mount: check system fonts immediately, then pre-load + test all Google Fonts in background
   useEffect(() => {
@@ -397,6 +458,19 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
         return json;
       };
+      // Save current sheet first
+      if (sheetCount > 1) {
+        saveCurrentSheetDesign();
+        const sheets: Array<{ d1: any; d2: any }> = [];
+        for (let i = 0; i < sheetCount; i++) {
+          if (i === activeSheet) {
+            sheets.push({ d1: getCleanJson(fc1), d2: fabricRef2.current ? getCleanJson(fabricRef2.current) : null });
+          } else {
+            sheets.push(sheetDesignsRef.current[i] ?? { d1: null, d2: null });
+          }
+        }
+        return { d1: getCleanJson(fc1), d2: fabricRef2.current ? getCleanJson(fabricRef2.current) : null, sheets };
+      }
       return {
         d1: getCleanJson(fc1),
         d2: fabricRef2.current ? getCleanJson(fabricRef2.current) : null,
@@ -704,6 +778,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
 
   const notifyDesignChange = () => {
     if (!onDesignChangeRef.current) return;
+    if (suppressNotifyRef.current > 0) return;
     const getJson = (fc: fabric.Canvas | null, side: Side) => {
       if (!fc) return null;
       // If this side's initial restore hasn't completed yet, preserve the loaded initialDesign
@@ -716,7 +791,28 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
       return json;
     };
-    onDesignChangeRef.current(getJson(fabricRef1.current, '1'), getJson(fabricRef2.current, '2'));
+    const d1Json = getJson(fabricRef1.current, '1');
+    const d2Json = getJson(fabricRef2.current, '2');
+    // Build sheets array for multi-sheet persistence
+    const sc = sheetCountRef.current;
+    if (sc > 1) {
+      saveCurrentSheetDesign();
+      const sheets: Array<{ d1: any; d2: any }> = [];
+      for (let i = 0; i < sc; i++) {
+        if (i === activeSheetRef.current) {
+          sheets.push({ d1: d1Json, d2: d2Json });
+        } else {
+          sheets.push(sheetDesignsRef.current[i] ?? { d1: null, d2: null });
+        }
+      }
+      // Top-level d1/d2 must always be sheet 0's content (initCanvas restores from it)
+      const sheet0 = activeSheetRef.current === 0
+        ? { d1: d1Json, d2: d2Json }
+        : (sheetDesignsRef.current[0] ?? { d1: null, d2: null });
+      onDesignChangeRef.current(sheet0.d1, sheet0.d2, sheets);
+    } else {
+      onDesignChangeRef.current(d1Json, d2Json);
+    }
   };
 
   // Canvas inicializálás
@@ -811,9 +907,11 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       if (side === '1') savedCanvasDataRef.current.d1 = null;
       else savedCanvasDataRef.current.d2 = null;
       restoredSidesRef.current.add(side);
+      suppressNotifyRef.current++;
       fabric.util.enlivenObjects(savedFromRef, (enlivened: fabric.Object[]) => {
-        if (initGenRef.current !== myGen) return; // canvas already remounted — discard
+        if (initGenRef.current !== myGen) { suppressNotifyRef.current--; return; }
         enlivened.forEach((obj: fabric.Object) => fc.add(obj));
+        suppressNotifyRef.current--;
         fc.renderAll();
         updateObjects(side);
         sidesFullyRestoredRef.current.add(side);
@@ -828,9 +926,11 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const designData = side === '1' ? initialDesign?.d1 : initialDesign?.d2;
       const savedObjs = (designData?.objects ?? []).filter((o: any) => !o.__guideHelper);
       if (savedObjs.length > 0) {
+        suppressNotifyRef.current++;
         fabric.util.enlivenObjects(savedObjs, (enlivened: fabric.Object[]) => {
-          if (initGenRef.current !== myGen) return; // canvas already remounted — discard
+          if (initGenRef.current !== myGen) { suppressNotifyRef.current--; return; }
           enlivened.forEach((obj: fabric.Object) => fc.add(obj));
+          suppressNotifyRef.current--;
           fc.renderAll();
           updateObjects(side);
           // Mark fully restored BEFORE saveHistory so that any notifyDesignChange triggered
@@ -874,7 +974,34 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         if (objs.length === 0) return null;
         return objs.map(o => o.toObject(['id', 'name']));
       };
+      // Save active sheet objects from live canvases
       savedCanvasDataRef.current = { d1: extractObjs(fabricRef1.current), d2: extractObjs(fabricRef2.current) };
+
+      // Also persist active sheet back into sheetDesignsRef (objects-only)
+      // and convert ALL sheets to objects-only so they survive dimension changes
+      const extractObjsFromJson = (json: any) => {
+        if (!json) return null;
+        const objs = (json.objects ?? []).filter((o: any) => !o.__guideHelper);
+        return objs.length > 0 ? objs : null;
+      };
+      // Save active sheet from live canvas into sheetDesignsRef
+      sheetDesignsRef.current[activeSheet] = {
+        d1: savedCanvasDataRef.current.d1 ? { objects: savedCanvasDataRef.current.d1 } : null,
+        d2: savedCanvasDataRef.current.d2 ? { objects: savedCanvasDataRef.current.d2 } : null,
+      };
+      // Convert non-active sheets from full JSON to objects-only
+      for (const key of Object.keys(sheetDesignsRef.current)) {
+        const idx = Number(key);
+        if (idx === activeSheet) continue;
+        const entry = sheetDesignsRef.current[idx];
+        if (entry) {
+          sheetDesignsRef.current[idx] = {
+            d1: extractObjsFromJson(entry.d1) ? { objects: extractObjsFromJson(entry.d1) } : null,
+            d2: extractObjsFromJson(entry.d2) ? { objects: extractObjsFromJson(entry.d2) } : null,
+          };
+        }
+      }
+
       // Clear restore guards so the next initCanvas always does a full fresh restore
       restoredSidesRef.current = new Set();
       sidesFullyRestoredRef.current = new Set();
@@ -1548,17 +1675,73 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       return url;
     };
 
-    const rawData1 = exportFc(fc1);
-    const rawData2 = (params.sides === '2' && fc2) ? exportFc(fc2) : '';
-
-    // Apply grayscale conversion for BW sides then open the 3D window
+    // ── Collect all sheets ──
     const buildPreview = async () => {
-      const data1 = params.side1_mode === 'bw' ? await toGrayscaleDataUrl(rawData1) : rawData1;
-      const data2 = params.side2_mode === 'bw' && rawData2 ? await toGrayscaleDataUrl(rawData2) : rawData2;
+      // Save current sheet first
+      if (sheetCount > 1) saveCurrentSheetDesign();
+
+      const sheetsData: Array<{ d1: string; d2: string }> = [];
+
+      for (let si = 0; si < sheetCount; si++) {
+        if (si === activeSheet) {
+          // Current sheet — export directly from live canvases
+          // Nyomatlan sides → blank (empty string triggers cream fallback in 3D)
+          const rawD1 = params.side1_mode === 'none' ? '' : exportFc(fc1);
+          const rawD2 = params.side2_mode === 'none' ? '' : ((params.sides === '2' && fc2) ? exportFc(fc2) : '');
+          const d1 = params.side1_mode === 'bw' ? await toGrayscaleDataUrl(rawD1) : rawD1;
+          const d2 = params.side2_mode === 'bw' && rawD2 ? await toGrayscaleDataUrl(rawD2) : rawD2;
+          sheetsData.push({ d1, d2 });
+        } else {
+          // Other sheets — load from sheetDesignsRef, render to temp canvases
+          const saved = sheetDesignsRef.current[si];
+          if (!saved?.d1) {
+            sheetsData.push({ d1: '', d2: '' });
+            continue;
+          }
+          // Render saved design to temporary fabric canvas, export
+          const tmpExport = async (json: any): Promise<string> => {
+            if (!json) return '';
+            const objData = json.objects ?? [];
+            if (objData.length === 0) return '';
+            return new Promise<string>((resolve) => {
+              const tmpCanvas = document.createElement('canvas');
+              tmpCanvas.width = canvasW;
+              tmpCanvas.height = canvasH;
+              const tmpFc = new fabric.Canvas(tmpCanvas, { width: canvasW, height: canvasH, backgroundColor: '#ffffff' });
+              fabric.util.enlivenObjects(objData, (enlivened: fabric.Object[]) => {
+                enlivened.forEach((obj: fabric.Object) => tmpFc.add(obj));
+                tmpFc.renderAll();
+                const trimW = Math.max(1, canvasW - trimInsetPx * 2);
+                const trimH = Math.max(1, canvasH - trimInsetPx * 2);
+                (tmpFc as any).clipPath = new fabric.Rect({
+                  left: trimInsetPx, top: trimInsetPx, width: trimW, height: trimH,
+                  absolutePositioned: true, selectable: false, evented: false,
+                });
+                tmpFc.renderAll();
+                const m = Math.min(4, Math.ceil(1200 / Math.max(canvasW, canvasH)));
+                const url = tmpFc.toDataURL({ format: 'png', multiplier: m, left: trimInsetPx, top: trimInsetPx, width: trimW, height: trimH });
+                tmpFc.dispose();
+                resolve(url);
+              }, 'fabric' as any);
+            });
+          };
+          // Nyomatlan sides → blank
+          let d1 = params.side1_mode === 'none' ? '' : await tmpExport(saved.d1);
+          let d2 = params.side2_mode === 'none' ? '' : await tmpExport(saved.d2);
+          if (params.side1_mode === 'bw' && d1) d1 = await toGrayscaleDataUrl(d1);
+          if (params.side2_mode === 'bw' && d2) d2 = await toGrayscaleDataUrl(d2);
+          sheetsData.push({ d1, d2 });
+        }
+      }
+
       const W = params.width_mm;
       const H = params.height_mm;
       const productName = params.product_name.replace(/`/g, "'");
       const sidesLabel = params.sides === '2' ? '2 oldalas' : '1 oldalas';
+      const totalSheets = sheetsData.length;
+
+      // Encode sheets data as JSON-safe array
+      const sheetsJson = JSON.stringify(sheetsData.map(s => ({ d1: s.d1, d2: s.d2 })));
 
     const html = `<!DOCTYPE html>
 <html lang="hu">
@@ -1573,16 +1756,23 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
 body{background:#111827;overflow:hidden;font-family:system-ui,sans-serif}
 #hud{position:fixed;top:14px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.85);font-size:13px;background:rgba(255,255,255,.08);backdrop-filter:blur(10px);padding:7px 18px;border-radius:20px;pointer-events:none;border:1px solid rgba(255,255,255,.14);white-space:nowrap}
 #hint{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);color:rgba(255,255,255,.35);font-size:11px;pointer-events:none}
+#nav{position:fixed;bottom:50px;left:50%;transform:translateX(-50%);display:flex;gap:8px;align-items:center;z-index:10}
+#nav button{background:rgba(255,255,255,.12);color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:8px;padding:6px 16px;cursor:pointer;font-size:13px;font-family:system-ui,sans-serif;backdrop-filter:blur(10px);transition:background .15s}
+#nav button:hover{background:rgba(255,255,255,.22)}
+#nav button:disabled{opacity:.3;cursor:default}
+#nav span{color:rgba(255,255,255,.85);font-size:13px}
 </style>
 </head><body>
-<div id="hud">${productName} &nbsp;·&nbsp; ${W}&times;${H}&thinsp;mm &nbsp;·&nbsp; ${sidesLabel}</div>
-<div id="hint">Drag: forgat &nbsp;|&nbsp; Görgő: zoom &nbsp;|&nbsp; Jobb klikk: mozgat</div>
+<div id="hud">${productName} &nbsp;·&nbsp; ${W}&times;${H}&thinsp;mm &nbsp;·&nbsp; ${sidesLabel}${totalSheets > 1 ? ' &nbsp;·&nbsp; <span id="sheetLabel">' + totalSheets + ' ív</span>' : ''}</div>
+${totalSheets > 1 ? '<div id="nav"><button id="prevBtn">◀ Előző ív</button><span id="navLabel">1 / ' + totalSheets + '</span><button id="nextBtn">Következő ív ▶</button></div>' : ''}
+<div id="hint">Drag: forgat &nbsp;|&nbsp; Görgő: zoom &nbsp;|&nbsp; Jobb klikk: mozgat${totalSheets > 1 ? ' &nbsp;|&nbsp; ← →: lapozás' : ''}</div>
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-const D1=\`${data1}\`;
-const D2=\`${data2}\`;
+const SHEETS=${sheetsJson};
+const TOTAL=${totalSheets};
 const W=${W},H=${H};
+let currentSheet=0;
 const renderer=new THREE.WebGLRenderer({antialias:true});
 renderer.setSize(innerWidth,innerHeight);
 renderer.setPixelRatio(devicePixelRatio);
@@ -1597,7 +1787,7 @@ const w3=W/10,h3=H/10;
 const halfDiag=Math.sqrt(w3*w3+h3*h3)/2;
 const dist=halfDiag/Math.tan(FOV/2*Math.PI/180)*1.25;
 cam.position.set(0,0,dist);
-function mkTex(data,flip){
+function mkTex(data){
   return new Promise(res=>{
     if(!data){
       const c=document.createElement('canvas');c.width=c.height=4;
@@ -1613,23 +1803,45 @@ function mkTex(data,flip){
       t.magFilter=THREE.LinearFilter;
       t.colorSpace=THREE.SRGBColorSpace;
       t.anisotropy=renderer.capabilities.getMaxAnisotropy();
-      if(flip){t.wrapS=THREE.RepeatWrapping;t.repeat.set(-1,1);t.offset.set(1,0);}
       res(t);
     };
     img.src=data;
   });
 }
-Promise.all([mkTex(D1,false),mkTex(D2,false)]).then(([t1,t2])=>{
-  const d=.018;
-  const edge=new THREE.MeshBasicMaterial({color:0xf2ede4});
-  const mats=[
-    edge,edge,edge,edge,
-    new THREE.MeshBasicMaterial({map:t1}),
-    new THREE.MeshBasicMaterial({map:t2}),
-  ];
-  const card=new THREE.Mesh(new THREE.BoxGeometry(w3,h3,d),mats);
+const d=.018;
+const edge=new THREE.MeshBasicMaterial({color:0xf2ede4});
+const geo=new THREE.BoxGeometry(w3,h3,d);
+let card;
+async function showSheet(idx){
+  if(card){scene.remove(card);card.material.forEach(m=>{if(m.map)m.map.dispose();m.dispose();});}
+  const s=SHEETS[idx];
+  const[t1,t2]=await Promise.all([mkTex(s.d1),mkTex(s.d2)]);
+  const mats=[edge.clone(),edge.clone(),edge.clone(),edge.clone(),new THREE.MeshBasicMaterial({map:t1}),new THREE.MeshBasicMaterial({map:t2})];
+  card=new THREE.Mesh(geo,mats);
   card.rotation.y=0.2;
   scene.add(card);
+  if(TOTAL>1){
+    document.getElementById('navLabel').textContent=(idx+1)+' / '+TOTAL;
+    document.getElementById('prevBtn').disabled=idx===0;
+    document.getElementById('nextBtn').disabled=idx===TOTAL-1;
+  }
+}
+function goSheet(delta){
+  const next=currentSheet+delta;
+  if(next<0||next>=TOTAL)return;
+  currentSheet=next;
+  showSheet(currentSheet);
+}
+if(TOTAL>1){
+  document.getElementById('prevBtn').addEventListener('click',()=>goSheet(-1));
+  document.getElementById('nextBtn').addEventListener('click',()=>goSheet(1));
+}
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'){window.close();return;}
+  if(e.key==='ArrowLeft')goSheet(-1);
+  if(e.key==='ArrowRight')goSheet(1);
+});
+showSheet(0).then(()=>{
   const ctrl=new OrbitControls(cam,renderer.domElement);
   ctrl.enableDamping=true;ctrl.dampingFactor=.06;
   ctrl.autoRotate=true;ctrl.autoRotateSpeed=1.0;
@@ -1693,102 +1905,10 @@ window.addEventListener('resize',()=>{
   const histIdx = activeSide === '1' ? histIdx1 : histIdx2;
   const histLen = activeSide === '1' ? history1.length : history2.length;
 
-  // ── Auto-nyomatlan: when a side becomes empty → 'none', when it gets content → restore previous mode ──
-  useEffect(() => {
-    if (!onParamsChange) return;
-    const c1 = objects1.length;
-    const c2 = objects2.length;
-    const p1 = prevObj1CountRef.current;
-    const p2 = prevObj2CountRef.current;
-    // On first render (p === -1) just seed refs, don't change params
-    if (p1 === -1) { prevObj1CountRef.current = c1; prevObj2CountRef.current = c2; return; }
-    let newM1 = params.side1_mode;
-    let newM2 = params.side2_mode;
-    // Side 1: had objects → now empty
-    if (p1 > 0 && c1 === 0) {
-      if (params.side1_mode !== 'none') prevSide1ModeRef.current = params.side1_mode;
-      newM1 = 'none';
-    }
-    // Side 1: was empty → now has objects
-    if (p1 === 0 && c1 > 0) {
-      newM1 = prevSide1ModeRef.current || 'color';
-    }
-    // Side 2: had objects → now empty
-    if (p2 > 0 && c2 === 0) {
-      if (params.side2_mode !== 'none') prevSide2ModeRef.current = params.side2_mode;
-      newM2 = 'none';
-    }
-    // Side 2: was empty → now has objects
-    if (p2 === 0 && c2 > 0) {
-      newM2 = prevSide2ModeRef.current || 'color';
-    }
-    prevObj1CountRef.current = c1;
-    prevObj2CountRef.current = c2;
-    if (newM1 !== params.side1_mode || newM2 !== params.side2_mode) {
-      autoNyomatlanRef.current = true;
-      onParamsChange({ ...params, side1_mode: newM1, side2_mode: newM2 });
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [objects1.length, objects2.length]);
-
   // Keep prevMode refs in sync when user explicitly changes mode (via PrintParamsPanel service selection)
   useEffect(() => {
     if (params.side1_mode !== 'none') prevSide1ModeRef.current = params.side1_mode;
     if (params.side2_mode !== 'none') prevSide2ModeRef.current = params.side2_mode;
-  }, [params.side1_mode, params.side2_mode]);
-
-  // ── Confirm dialog when user manually selects "Nyomatlan" while the side has objects ──
-  useEffect(() => {
-    // If the change came from the auto-nyomatlan effect above (object count change), skip
-    if (autoNyomatlanRef.current) {
-      autoNyomatlanRef.current = false;
-      prevParamMode1Ref.current = params.side1_mode;
-      prevParamMode2Ref.current = params.side2_mode;
-      return;
-    }
-    const clearSide = (side: '1' | '2') => {
-      const fc = side === '1' ? fabricRef1.current : fabricRef2.current;
-      if (!fc) return;
-      const objs = fc.getObjects().filter((o: any) => !o.__guideHelper);
-      objs.forEach(o => fc.remove(o));
-      fc.discardActiveObject();
-      fc.renderAll();
-      updateObjects(side);
-      saveHistory(side);
-    };
-    const revert = (side: '1' | '2', prevMode: string) => {
-      if (!onParamsChange) return;
-      const key = side === '1' ? 'side1_mode' : 'side2_mode';
-      onParamsChange({ ...params, [key]: prevMode });
-    };
-
-    // Side 1: user changed to 'none' while having objects
-    if (params.side1_mode === 'none' && prevParamMode1Ref.current !== 'none' && objects1.length > 0) {
-      const prev = prevParamMode1Ref.current;
-      Modal.confirm({
-        title: 'Nyomatlan oldal',
-        content: 'Az oldal jelenleg nem üres. Töröljem az összes elemet az oldalról?',
-        okText: 'Igen, törlés',
-        cancelText: 'Mégse',
-        onOk: () => clearSide('1'),
-        onCancel: () => revert('1', prev),
-      });
-    }
-    // Side 2: user changed to 'none' while having objects
-    if (params.side2_mode === 'none' && prevParamMode2Ref.current !== 'none' && objects2.length > 0) {
-      const prev = prevParamMode2Ref.current;
-      Modal.confirm({
-        title: 'Nyomatlan oldal',
-        content: 'Az oldal jelenleg nem üres. Töröljem az összes elemet az oldalról?',
-        okText: 'Igen, törlés',
-        cancelText: 'Mégse',
-        onOk: () => clearSide('2'),
-        onCancel: () => revert('2', prev),
-      });
-    }
-    prevParamMode1Ref.current = params.side1_mode;
-    prevParamMode2Ref.current = params.side2_mode;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [params.side1_mode, params.side2_mode]);
 
   // Guide + FoldLine overlay — rendered via a stable ref (never remounts → no flicker on mouse/object move)
@@ -2524,6 +2644,49 @@ window.addEventListener('resize',()=>{
               </span>
             </div>
           )}
+          {/* Sheet tabs for multi-sheet */}
+          {sheetCount > 1 && (
+            <div style={{ marginBottom: 8, display: 'flex', gap: 4, flexWrap: 'wrap', alignItems: 'center' }}>
+              {Array.from({ length: sheetCount }, (_, i) => (
+                <Button
+                  key={i}
+                  size="small"
+                  type={activeSheet === i ? 'primary' : 'default'}
+                  onClick={() => handleSheetChange(i)}
+                >
+                  {i + 1}. lap
+                </Button>
+              ))}
+              {onParamsChange && (
+                <>
+                  <Tooltip title="Lap hozzáadása">
+                    <Button size="small" icon={<PlusOutlined />} onClick={() => {
+                      saveCurrentSheetDesign();
+                      onParamsChange({ ...params, sheet_count: sheetCount + 1 });
+                    }} />
+                  </Tooltip>
+                  {sheetCount > 1 && (
+                    <Tooltip title="Utolsó lap törlése">
+                      <Popconfirm title={`Biztosan törlöd a(z) ${sheetCount}. lapot?`} okText="Törlés" cancelText="Mégse" onConfirm={() => {
+                        const delIdx = sheetCount - 1;
+                        // Remove design data
+                        delete sheetDesignsRef.current[delIdx];
+                        // Switch if currently on deleted sheet
+                        if (activeSheet >= delIdx) {
+                          const newActive = Math.max(0, delIdx - 1);
+                          setActiveSheet(newActive);
+                          loadSheetDesign(newActive);
+                        }
+                        onParamsChange({ ...params, sheet_count: sheetCount - 1 });
+                      }}>
+                        <Button size="small" danger icon={<DeleteOutlined />} />
+                      </Popconfirm>
+                    </Tooltip>
+                  )}
+                </>
+              )}
+            </div>
+          )}
           {params.sides === '2' && (
             <div style={{ marginBottom: 8 }}>
               <Space.Compact>
@@ -2689,7 +2852,7 @@ window.addEventListener('resize',()=>{
                 {activeSideUnprinted && (
                   <div style={{
                     position: 'absolute', inset: 0, zIndex: 25,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
                     background: 'rgba(245,245,245,0.45)',
                     userSelect: 'none',
                     pointerEvents: 'none',
@@ -2704,6 +2867,28 @@ window.addEventListener('resize',()=>{
                       fontFamily: 'sans-serif',
                       display: 'block',
                     }}>NYOMATLAN</span>
+                    {hasActiveObjects && (
+                      <div style={{
+                        marginTop: 16,
+                        background: 'rgba(255,165,0,0.9)', color: '#fff',
+                        padding: '6px 16px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+                        transform: 'rotate(0deg)',
+                      }}>
+                        {currentObjects.length} objektum van az oldalon — váltsd vissza a nyomtatást a megőrzéshez
+                      </div>
+                    )}
+                  </div>
+                )}
+                {/* Empty side warning — when side has print mode set but no objects */}
+                {!activeSideUnprinted && !hasActiveObjects && (
+                  <div style={{
+                    position: 'absolute', bottom: 12, left: '50%', transform: 'translateX(-50%)',
+                    zIndex: 26, pointerEvents: 'none',
+                    background: 'rgba(255,165,0,0.85)', color: '#fff',
+                    padding: '4px 14px', borderRadius: 6, fontSize: 12, fontWeight: 500,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    Nincs objektum ezen az oldalon — nyomatlan marad
                   </div>
                 )}
                 {/* ── Comment annotations overlay ── */}

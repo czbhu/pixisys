@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Typography, message, Button, Select, Form, Modal, Result, Segmented, Tooltip, Tag } from 'antd';
-import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, EditOutlined, CommentOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Select, Form, Modal, Result, Segmented, Tooltip, Tag, Space, Row, Col } from 'antd';
+import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, EditOutlined, CommentOutlined, LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined, FileTextOutlined } from '@ant-design/icons';
+import { crmService } from '../../services/crmService';
+import { manufacturingService } from '../../services/manufacturingService';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
@@ -31,6 +33,8 @@ const DEFAULT_PARAMS: PrintParams = {
   folding_count: 0,
   folding_specs: [],
   material_id: null,
+  multi_sheet_enabled: false,
+  sheet_count: 1,
 };
 
 const STORAGE_KEY = 'pixierp_editor_state';
@@ -53,12 +57,12 @@ const PrintEditorPage: React.FC = () => {
     return DEFAULT_PARAMS;
   });
 
-  const initialDesignRef = useRef<{ d1: any; d2: any } | null>((() => {
+  const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
       if (s) {
-        const { d1, d2 } = JSON.parse(s);
-        return (d1 || d2) ? { d1: d1 ?? null, d2: d2 ?? null } : null;
+        const { d1, d2, sheets } = JSON.parse(s);
+        return (d1 || d2 || sheets) ? { d1: d1 ?? null, d2: d2 ?? null, sheets: sheets ?? undefined } : null;
       }
     } catch {}
     return null;
@@ -75,18 +79,19 @@ const PrintEditorPage: React.FC = () => {
     } catch {}
   }, [params]);
 
-  const handleDesignChange = useCallback((d1: any, d2: any) => {
-    initialDesignRef.current = { d1, d2 };
+  const handleDesignChange = useCallback((d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => {
+    initialDesignRef.current = { d1, d2, sheets };
     try {
       const s = localStorage.getItem(STORAGE_KEY);
       const existing = s ? JSON.parse(s) : {};
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params: paramsRef.current, d1, d2 }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params: paramsRef.current, d1, d2, sheets: sheets ?? null }));
     } catch {}
   }, []);
   const [orderId, setOrderId] = useState<number | null>(null);
   const [itemId, setItemId] = useState<number | null>(null);
   const [priceBreakdown, setPriceBreakdown] = useState<PriceBreakdown | null>(null);
   const [saving, setSaving] = useState(false);
+  const [rfqSaving, setRfqSaving] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
 
   // Lock state
@@ -127,30 +132,54 @@ const PrintEditorPage: React.FC = () => {
   // Admin: ügyfél/kapcsolattartó választó
   const [companies, setCompanies] = useState<Company[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
-  const [selectedCompany, setSelectedCompany] = useState<number | null>(null);
-  const [selectedContact, setSelectedContact] = useState<number | null>(null);
-  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [selectedCompany, setSelectedCompany] = useState<number | null>(() => {
+    try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).selectedCompany; return v ?? null; } } catch {} return null;
+  });
+  const [selectedContact, setSelectedContact] = useState<number | null>(() => {
+    try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).selectedContact; return v ?? null; } } catch {} return null;
+  });
+  const [clientBarOpen, setClientBarOpen] = useState(() => {
+    try { const s = localStorage.getItem(STORAGE_KEY); if (s) return !!JSON.parse(s).clientBarOpen; } catch {} return false;
+  });
 
   useEffect(() => {
-    if (isAdmin) {
-      api.get('/crm/companies/?page_size=500').then(r => {
-        const data = r.data?.results ?? r.data;
-        setCompanies(Array.isArray(data) ? data : []);
-      }).catch(() => {});
-    }
-  }, [isAdmin]);
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const existing = s ? JSON.parse(s) : {};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, selectedCompany, selectedContact, clientBarOpen }));
+    } catch {}
+  }, [selectedCompany, selectedContact, clientBarOpen]);
+
+  const refreshCompanies = async () => {
+    try {
+      const list = await crmService.getCompanies({ is_customer: true, compact: true });
+      const loaded = ((list as any).results ?? list) || [];
+      setCompanies(Array.isArray(loaded) ? loaded : []);
+    } catch {}
+  };
+
+  const refreshContacts = async (companyId?: number | null) => {
+    const cid = companyId ?? selectedCompany;
+    if (!cid) { setContacts([]); setSelectedContact(null); return; }
+    try {
+      if (cid === -1) {
+        const list = await crmService.getPrivateContacts();
+        setContacts(((list as any).results ?? list) || []);
+      } else {
+        const list = await crmService.getContactsByCompany(cid);
+        setContacts(((list as any).results ?? list) || []);
+      }
+    } catch {}
+  };
 
   useEffect(() => {
     if (isAdmin && selectedCompany) {
-      api.get(`/crm/contacts/?company=${selectedCompany}&page_size=500`).then(r => {
-        const data = r.data?.results ?? r.data;
-        setContacts(Array.isArray(data) ? data : []);
-      }).catch(() => {});
+      refreshCompanies();
+      refreshContacts(selectedCompany);
     } else {
       setContacts([]);
-      setSelectedContact(null);
     }
-  }, [isAdmin, selectedCompany]);
+  }, [isAdmin, selectedCompany]); // eslint-disable-line
 
   // Bejelentkezés szükséges
   if (!user) {
@@ -169,6 +198,142 @@ const PrintEditorPage: React.FC = () => {
       </div>
     );
   }
+
+  const handleRFQ = async () => {
+    setRfqSaving(true);
+    try {
+      const sheetCount = params.sheet_count ?? 1;
+      const sidesText = params.sides === '2' ? 'kétoldalas' : 'egyoldalas';
+      const description = `Íves nyomtatás: ${params.product_name || 'Termék'}\n` +
+        `Méret: ${params.width_mm} × ${params.height_mm} mm, ${sidesText}\n` +
+        `Mennyiség: ${params.quantity} db` +
+        (sheetCount > 1 ? `, ${sheetCount} lap` : '') + '\n' +
+        (params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}\n` : '');
+
+      // Build cost_items from price breakdown
+      const costItems: any[] = [];
+      const bd = priceBreakdown as any;
+      const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
+      const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
+      if (bd) {
+        // Material items
+        if (bd.material_items) {
+          for (const mi of bd.material_items) {
+            const qty = r4(mi.units) || 1;
+            const sellingPerUnit = r4(mi.price_per);
+            const total = r4(mi.total);
+            const costPerUnit = r4(mi.cost_price_per ?? sellingPerUnit);
+            costItems.push({
+              type: 'material', name: mi.name,
+              quantity: qty, unit: 'ív',
+              cost_price: costPerUnit,
+              unit_price: sellingPerUnit,
+              selling_unit_price: sellingPerUnit,
+              selling_price: total,
+              markup_percent: r4(mi.markup_percentage ?? 0),
+              is_internal: mi.is_internal ?? false,
+              supplier: supId(mi.supplier_id),
+            });
+          }
+        }
+        // Print service items (side 1 & 2)
+        for (const key of ['print_service_items_1', 'print_service_items_2'] as const) {
+          if (bd[key]) {
+            for (const pi of bd[key]) {
+              const qty = r4(pi.units) || 1;
+              const total = r4(pi.total);
+              const sellingPerUnit = qty > 0 ? r4(total / qty) : total;
+              const costPerUnit = r4(pi.cost_price_per ?? sellingPerUnit);
+              costItems.push({
+                type: 'service', name: pi.name,
+                quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív',
+                cost_price: costPerUnit,
+                unit_price: sellingPerUnit,
+                selling_unit_price: sellingPerUnit,
+                selling_price: total,
+                markup_percent: r4(pi.markup_percentage ?? 0),
+                is_internal: pi.is_internal ?? false,
+                department: pi.department_id ?? null,
+                supplier: supId(pi.supplier_id),
+              });
+            }
+          }
+        }
+        // Service breakdown items
+        if (bd.service_breakdown) {
+          for (const sb of bd.service_breakdown) {
+            if (sb.items) {
+              for (const si of sb.items) {
+                const qty = r4(si.units) || 1;
+                const total = r4(si.total);
+                const sellingPerUnit = qty > 0 ? r4(total / qty) : total;
+                const costPerUnit = r4(si.cost_price_per ?? sellingPerUnit);
+                costItems.push({
+                  type: 'service', name: `${sb.name}: ${si.name}`,
+                  quantity: qty, unit: si.type === 'fixed' ? 'db' : 'db',
+                  cost_price: costPerUnit,
+                  unit_price: sellingPerUnit,
+                  selling_unit_price: sellingPerUnit,
+                  selling_price: total,
+                  markup_percent: r4(si.markup_percentage ?? 0),
+                  is_internal: si.is_internal ?? false,
+                  department: si.department_id ?? null,
+                  supplier: supId(si.supplier_id),
+                });
+              }
+            } else if (sb.total > 0) {
+              costItems.push({
+                type: 'service', name: sb.name,
+                quantity: 1, unit: 'db',
+                cost_price: r4(sb.total),
+                unit_price: r4(sb.total),
+                selling_unit_price: r4(sb.total),
+                selling_price: r4(sb.total),
+                markup_percent: 0,
+                is_internal: false,
+                supplier: null,
+              });
+            }
+          }
+        }
+      }
+
+      // Compute net_unit_price from cost items' selling totals (not from priceBreakdown.total
+      // which includes an additional overall margin on top of per-item markups)
+      const costItemsSellingTotal = costItems.reduce((sum: number, ci: any) => sum + (Number(ci.selling_price) || 0), 0);
+      const unitPrice = params.quantity > 0 ? costItemsSellingTotal / params.quantity : 0;
+
+      const payload: any = {
+        name: params.product_name || `Íves nyomtatás ${params.width_mm}×${params.height_mm}mm`,
+        description,
+        quantity: params.quantity,
+        quantity_unit: 'db',
+        net_unit_price: Math.round(unitPrice * 100) / 100,
+        status: 'quote_request_open',
+        date: new Date().toISOString().split('T')[0],
+        deadline: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
+        contact: selectedContact && typeof selectedContact === 'number' ? selectedContact : undefined,
+        cost_items: costItems,
+      };
+
+      console.log('[handleRFQ] payload:', JSON.stringify(payload, null, 2));
+      const created = await manufacturingService.createProduct(payload);
+      message.success('Ajánlat készítése...');
+      const rfqParams = new URLSearchParams({
+        create: 'true',
+        add_item_id: String(created.id),
+        add_item_type: 'manufacturing',
+      });
+      if (selectedCompany) rfqParams.set('company', String(selectedCompany));
+      if (selectedContact) rfqParams.set('contact', String(selectedContact));
+      window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+    } catch (e: any) {
+      console.error('[handleRFQ] error response:', e?.response?.data);
+      message.error(e?.response?.data?.error || JSON.stringify(e?.response?.data) || 'Hiba az ajánlat létrehozásakor');
+    } finally {
+      setRfqSaving(false);
+    }
+  };
 
   const handleOrder = async () => {
     const design = canvasRef.current?.getDesignJson();
@@ -192,6 +357,8 @@ const PrintEditorPage: React.FC = () => {
         price_breakdown: priceBreakdown ?? null,
         design_json_side1: design.d1,
         design_json_side2: design.d2,
+        sheet_count: params.sheet_count ?? 1,
+        sheets: (design as any).sheets ?? null,
       };
       const orderPayload = {
         status: 'draft',
@@ -245,15 +412,6 @@ const PrintEditorPage: React.FC = () => {
         <Title level={5} style={{ margin: 0 }}>Íves nyomtatás</Title>
         <Text type="secondary" style={{ fontSize: 12 }}>Névjegykártya · Szórólap · Poszter</Text>
         <div style={{ flex: 1 }} />
-        <Segmented
-          size="small"
-          value={viewMode}
-          onChange={v => setViewMode(v as 'editor' | 'preview')}
-          options={[
-            { value: 'editor', label: <Tooltip title="Szerkesztő — kalkuláció + canvas"><EditOutlined /> Szerkesztő</Tooltip> },
-            { value: 'preview', label: <Tooltip title="Preview & kommentelés"><CommentOutlined /> Preview & komment</Tooltip> },
-          ]}
-        />
         {/* Lock controls — admin sees toggles, user sees badge if locked */}
         {isAdmin && orderId && itemId ? (
           <>
@@ -287,11 +445,95 @@ const PrintEditorPage: React.FC = () => {
           </>
         ) : null}
         {isAdmin && (
-          <Button size="small" icon={<UserOutlined />} onClick={() => setClientModalOpen(true)}>
-            {selectedCompanyObj ? selectedCompanyObj.name : 'Ügyfél kiválasztása'}
+          <Button size="small" icon={<UserOutlined />}
+            type={clientBarOpen ? 'primary' : 'default'}
+            onClick={() => setClientBarOpen(o => !o)}
+          >
+            {selectedCompanyObj ? selectedCompanyObj.name : 'Ügyfél'}
           </Button>
         )}
       </div>
+      {/* Admin: Ügyfél/kapcsolattartó inline bar (RFQ stílus) */}
+      {isAdmin && clientBarOpen && (
+        <div style={{
+          flexShrink: 0, background: '#f6ffed', borderBottom: '1px solid #b7eb8f',
+          padding: '8px 16px',
+        }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 4, textTransform: 'uppercase', letterSpacing: 0.5 }}>Ügyfél</div>
+          <Row gutter={12} align="middle">
+            <Col xs={24} md={8}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Cég</div>
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  showSearch allowClear
+                  optionFilterProp="label"
+                  placeholder="Válassz céget vagy magánszemélyt"
+                  style={{ width: 'calc(100% - 32px)' }}
+                  size="small"
+                  value={selectedCompany ?? undefined}
+                  onFocus={refreshCompanies}
+                  onChange={v => { setSelectedCompany(v ?? null); setSelectedContact(null); }}
+                >
+                  {companies.map(c => (
+                    <Option key={c.id} value={c.id} label={c.name}>{c.name}</Option>
+                  ))}
+                </Select>
+                <Tooltip title="Új cég hozzáadása">
+                  <Button size="small" icon={<PlusCircleOutlined />}
+                    onClick={() => window.open('/crm/companies?action=create', '_blank')}
+                  />
+                </Tooltip>
+              </Space.Compact>
+            </Col>
+            <Col xs={24} md={16}>
+              <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Kapcsolattartók</div>
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  showSearch allowClear
+                  optionFilterProp="label"
+                  placeholder="Válassz kapcsolattartókat"
+                  style={{ width: 'calc(100% - 90px)' }}
+                  size="small"
+                  value={selectedContact ?? undefined}
+                  disabled={!selectedCompany}
+                  onFocus={() => refreshContacts()}
+                  onChange={v => setSelectedContact(v ?? null)}
+                >
+                  {contacts.map((c: any) => (
+                    <Option key={c.id} value={c.id} label={c.full_name || `${c.last_name} ${c.first_name}`}>
+                      {c.full_name || `${c.last_name} ${c.first_name}`}
+                    </Option>
+                  ))}
+                </Select>
+                <Tooltip title="Új kapcsolattartó hozzáadása">
+                  <Button size="small" icon={<PlusCircleOutlined />}
+                    onClick={() => {
+                      let url = '/crm/contacts?action=create';
+                      if (selectedCompany && selectedCompany > 0) {
+                        url += `&company=${selectedCompany}`;
+                        const co = companies.find(c => c.id === selectedCompany);
+                        if (co?.name) url += `&company_name=${encodeURIComponent(co.name)}`;
+                      }
+                      window.open(url, '_blank');
+                    }}
+                  />
+                </Tooltip>
+                <Tooltip title="Kapcsolattartók frissítése">
+                  <Button size="small" icon={<ReloadOutlined />}
+                    onClick={async () => {
+                      if (!selectedCompany) { message.warning('Először válassz céget'); return; }
+                      await refreshContacts();
+                      message.success('Kapcsolattartók frissítve');
+                    }}
+                  >
+                    Frissítés
+                  </Button>
+                </Tooltip>
+              </Space.Compact>
+            </Col>
+          </Row>
+        </div>
+      )}
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
@@ -336,13 +578,27 @@ const PrintEditorPage: React.FC = () => {
                   />
                 </div>
                 <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
-                  <Button
-                    type="primary" block size="large"
-                    icon={<ShoppingOutlined />}
-                    loading={saving} onClick={handleOrder}
-                  >
-                    Megrendelés leadása
-                  </Button>
+                  <Row gutter={8}>
+                    <Col span={12}>
+                      <Button
+                        type="primary" block size="large"
+                        icon={<ShoppingOutlined />}
+                        loading={saving} onClick={handleOrder}
+                      >
+                        Megrendelés
+                      </Button>
+                    </Col>
+                    <Col span={12}>
+                      <Button
+                        block size="large"
+                        icon={<FileTextOutlined />}
+                        loading={rfqSaving} onClick={handleRFQ}
+                        style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
+                      >
+                        Ajánlat
+                      </Button>
+                    </Col>
+                  </Row>
                 </div>
               </>
             ) : (
@@ -452,43 +708,7 @@ const PrintEditorPage: React.FC = () => {
         />
       </Modal>
 
-      {/* Admin: Ügyfél választó modal */}
-      <Modal
-        open={clientModalOpen}
-        title="Ügyfél és kapcsolattartó kiválasztása"
-        onCancel={() => setClientModalOpen(false)}
-        onOk={() => setClientModalOpen(false)}
-        okText="OK"
-        cancelText="Mégse"
-      >
-        <Form layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item label="Cég">
-            <Select
-              allowClear showSearch placeholder="Cég keresése..."
-              optionFilterProp="children"
-              value={selectedCompany ?? undefined}
-              onChange={v => setSelectedCompany(v ?? null)}
-              style={{ width: '100%' }}
-            >
-              {companies.map(c => <Option key={c.id} value={c.id}>{c.name}</Option>)}
-            </Select>
-          </Form.Item>
-          <Form.Item label="Kapcsolattartó">
-            <Select
-              allowClear showSearch placeholder="Kapcsolattartó..."
-              optionFilterProp="children"
-              value={selectedContact ?? undefined}
-              onChange={v => setSelectedContact(v ?? null)}
-              disabled={!selectedCompany}
-              style={{ width: '100%' }}
-            >
-              {contacts.map(c => (
-                <Option key={c.id} value={c.id}>{c.last_name} {c.first_name}</Option>
-              ))}
-            </Select>
-          </Form.Item>
-        </Form>
-      </Modal>
+
     </div>
   );
 };

@@ -14,6 +14,7 @@ import {
     InboxOutlined,
     WarningOutlined,
 } from '@ant-design/icons';
+import { useSearchParams } from 'react-router-dom';
 import { warehouseService } from '../../services/warehouseService';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
@@ -33,12 +34,25 @@ interface InventoryItem {
 }
 
 const Inventory: React.FC = () => {
+    const [searchParams] = useSearchParams();
+    const initialWarehouse = searchParams.get('warehouse') ? Number(searchParams.get('warehouse')) : null;
+    const initialShelf = searchParams.get('shelf') ? Number(searchParams.get('shelf')) : null;
+
     const [loading, setLoading] = useState(true);
     const [inventory, setInventory] = useState<InventoryItem[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
-    const [warehouseFilter, setWarehouseFilter] = useState<number | null>(null);
+    const [warehouseFilter, setWarehouseFilter] = useState<number | null>(initialWarehouse);
+    const [shelfFilter] = useState<number | null>(initialShelf);
     const [lowStockFilter, setLowStockFilter] = useState(false);
     const [warehouses, setWarehouses] = useState<any[]>([]);
+
+    useEffect(() => {
+        const handleEsc = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') window.close();
+        };
+        window.addEventListener('keydown', handleEsc);
+        return () => window.removeEventListener('keydown', handleEsc);
+    }, []);
 
     useEffect(() => {
         loadInventory();
@@ -50,6 +64,7 @@ const Inventory: React.FC = () => {
             setLoading(true);
             const params: any = {};
             if (warehouseFilter) params.warehouse = warehouseFilter;
+            if (shelfFilter) params.shelf = shelfFilter;
             if (lowStockFilter) params.low_stock = 'true';
             
             const response = await warehouseService.getInventory(params);
@@ -72,7 +87,7 @@ const Inventory: React.FC = () => {
 
     useEffect(() => {
         loadInventory();
-    }, [warehouseFilter, lowStockFilter]);
+    }, [warehouseFilter, shelfFilter, lowStockFilter]);
 
     const columns = [
         {

@@ -287,6 +287,36 @@ def profile_view(request):
     """Get user profile"""
     return Response(UserSerializer(request.user).data)
 
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def dev_switch_user_view(request):
+    """
+    Dev-only: any authenticated user can switch to another user for testing.
+    Only available when DEBUG=True.
+    """
+    from django.conf import settings as django_settings
+    if not django_settings.DEBUG:
+        return Response({'error': 'Csak fejlesztői módban elérhető.'}, status=status.HTTP_403_FORBIDDEN)
+
+    target_user_id = request.data.get('user_id')
+    if not target_user_id:
+        return Response({'error': 'user_id szükséges.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    User = get_user_model()
+    try:
+        target_user = User.objects.get(id=target_user_id)
+    except User.DoesNotExist:
+        return Response({'error': 'A felhasználó nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+    refresh = RefreshToken.for_user(target_user)
+    return Response({
+        'user': UserSerializer(target_user).data,
+        'tokens': {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        }
+    })
+
 @api_view(['PUT'])
 @permission_classes([IsAuthenticated])
 def update_profile_view(request):

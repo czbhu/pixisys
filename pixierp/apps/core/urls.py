@@ -37,6 +37,7 @@ urlpatterns = [
     path('auth/logout/', views.logout_view, name='logout'),
     path('auth/profile/', views.profile_view, name='profile'),
     path('auth/profile/update/', views.update_profile_view, name='update_profile'),
+    path('auth/dev-switch-user/', views.dev_switch_user_view, name='dev_switch_user'),
     path('auth/token/refresh/', views.refresh_token_view, name='refresh_token'),
     path('auth/password-reset/', views.password_reset_request_view, name='password_reset_request'),
     path('auth/password-reset/confirm/', views.password_reset_confirm_view, name='password_reset_confirm'),

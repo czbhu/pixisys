@@ -221,13 +221,14 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             width_mm       = float(d.get('width_mm', 85))
             height_mm      = float(d.get('height_mm', 54))
             quantity       = max(1, int(d.get('quantity', 100)))
+            sheet_count    = max(1, int(d.get('sheet_count', 1)))  # lapok száma (multi-page product)
             print_sides    = max(0, min(2, int(d.get('print_sides', 1))))
             print_service_id_1 = d.get('print_service_id_1') or d.get('print_service_id')
             print_service_id_2 = d.get('print_service_id_2') if print_sides == 2 else None
             sheet_w_mm     = float(d.get('sheet_w_mm', 330))
             sheet_h_mm     = float(d.get('sheet_h_mm', 487))
             bleed_mm       = float(d.get('bleed_mm', 3))
-            margin_pct     = Decimal(str(d.get('margin_pct', 35)))
+            margin_pct     = Decimal(str(d.get('margin_pct', 0)))
             extra_svc_ids  = d.get('selected_service_ids') or []
             material_id    = d.get('material_id')
             force_rotate   = d.get('force_rotate')   # None=auto, True=force rotated, False=force normal
@@ -316,14 +317,17 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             else:
                 fit_w, fit_h = fit_w_normal, fit_h_normal
             items_per_sheet = fit_w * fit_h
-            sheets_needed   = _math.ceil(quantity / items_per_sheet)
+            # Ha több lapból áll a termék, az összes lapot ki kell nyomtatni:
+            # pl. 100 db × 2 lap = 200 nyomtatandó elem
+            total_pieces    = quantity * sheet_count
+            sheets_needed   = _math.ceil(total_pieces / items_per_sheet)
             if print_sides == 2 and sheets_needed % 2 != 0:
                 sheets_needed += 1
             clicks_total = sheets_needed * print_sides
 
             # ── Production layout: full sheets vs partial sheet ───────────────
             total_slots = sheets_needed * items_per_sheet
-            remaining_on_last = quantity % items_per_sheet  # 0 means full
+            remaining_on_last = total_pieces % items_per_sheet  # 0 means full
             if remaining_on_last == 0:
                 full_sheets = sheets_needed
                 partial_sheet_items = 0
@@ -331,7 +335,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 full_sheets = sheets_needed - 1
                 partial_sheet_items = remaining_on_last
             partial_coverage_pct = round(partial_sheet_items / items_per_sheet * 100, 1) if partial_sheet_items > 0 else 0
-            waste_items = total_slots - quantity  # unused slots
+            waste_items = total_slots - total_pieces  # unused slots
 
             # ── Cutting info ──────────────────────────────────────────────────
             if needs_cutting and mat_w_mm and mat_h_mm:
@@ -381,7 +385,16 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 if cost_items:
                     for ci in cost_items:
                         price = Decimal(str(ci.selling_price or 0))
+                        cost_unit = Decimal(str(ci.unit_price or 0))
                         ctype = ci.calculation_type
+                        sup = {
+                            'supplier_id': ci.supplier_id,
+                            'supplier_name': ci.supplier.name if ci.supplier_id else None,
+                            'is_internal': ci.is_internal,
+                            'cost_price_per': float(cost_unit),
+                            'markup_percentage': float(ci.markup_percentage or 0),
+                            'department_id': svc.internal_production_department_id if ci.is_internal else None,
+                        }
                         if ctype == 'fixed':
                             amt = price
                             items.append({
@@ -390,6 +403,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                                 'price_per': float(price),
                                 'units': 1,
                                 'total': float(amt.quantize(Decimal('0.01'))),
+                                **sup,
                             })
                         elif ctype == 'click':
                             # always per sheet
@@ -400,6 +414,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                                 'price_per': float(price),
                                 'units': sheet_count,
                                 'total': float(amt.quantize(Decimal('0.01'))),
+                                **sup,
                             })
                         elif ctype == 'unit':
                             if is_sheet_based:
@@ -422,6 +437,7 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                                 'price_per': float(price),
                                 'units': units,
                                 'total': float(amt.quantize(Decimal('0.01'))),
+                                **sup,
                             })
                         total += amt
                 else:
@@ -516,12 +532,21 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         sheet_area_m2 = (sheet_w_mm / 1000) * (sheet_h_mm / 1000)
                         price_per_sheet = Decimal(str(config.paper_cost_per_m2)) * Decimal(str(sheet_area_m2))
                     material_cost = (price_per_sheet * Decimal(str(sheets_needed))).quantize(Decimal('0.01'))
+                    mat_sup_id = mat.default_supplier_id if hasattr(mat, 'default_supplier_id') else None
+                    mat_sup_name = mat.default_supplier.name if mat_sup_id and mat.default_supplier else None
+                    mat_cost_per = Decimal(str(mat.unit_cost_price or 0))
+                    mat_markup = float(mat.markup_percentage or 0)
                     material_items = [{
                         'name': mat.name,
                         'type': 'click',
                         'price_per': float(price_per_sheet.quantize(Decimal('0.01'))),
                         'units': sheets_needed,
                         'total': float(material_cost),
+                        'supplier_id': mat_sup_id,
+                        'supplier_name': mat_sup_name,
+                        'cost_price_per': float(mat_cost_per.quantize(Decimal('0.01'))),
+                        'markup_percentage': mat_markup,
+                        'is_internal': False,
                     }]
 
                     # ── Size comparison ────────────────────────────────────
@@ -726,6 +751,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                 'total':              float(total),
                 'unit_price':         float(unit_price),
                 'quantity':           quantity,
+                'sheet_count':        sheet_count,
+                'total_pieces':       total_pieces,
             })
         except Exception as e:
             return Response({'error': str(e)}, status=400)
@@ -1026,6 +1053,9 @@ class PdfAnalyzeView(APIView):
                 # Collect page-level spot color info by scanning xref objects
                 spot_cs_names = set()
                 spot_color_names = {}  # cs_resource_name -> actual spot color name
+                _dbg_file = open("/home/ceze/pixisys/pixierp/logs/xobj_debug.log", "a")
+                _dbg_file.write(f"\n=== NEW PDF SCAN page {page.number} ===\n")
+                _dbg_file.flush()
 
                 def _pdf_name_decode(name):
                     """Decode PDF hex-encoded name: #20 -> space, etc."""
@@ -1055,6 +1085,8 @@ class PdfAnalyzeView(APIView):
                     """Check if a colorspace xref is Separation/DeviceN/Pantone/ICCBased."""
                     try:
                         cs_obj = doc.xref_object(cs_xref)
+                        _dbg_file.write(f"_scan_cs_entry({cs_res_name}, xref={cs_xref}): obj={cs_obj[:300] if cs_obj else 'None'}\n")
+                        _dbg_file.flush()
                         if not cs_obj:
                             return
                         if "/Separation" in cs_obj or "/DeviceN" in cs_obj:
@@ -1165,8 +1197,8 @@ class PdfAnalyzeView(APIView):
                                 pass
                 except Exception:
                     pass
-
-                # Images
+                _dbg_file.write(f"AFTER CS SCAN: spot_cs_names={spot_cs_names}, spot_color_names={spot_color_names}, cs_resolved={cs_resolved}\n")
+                _dbg_file.flush()
                 try:
                     for img in page.get_images(full=True):
                         xref = img[0]
@@ -1262,370 +1294,530 @@ class PdfAnalyzeView(APIView):
                     text_dict = page.get_text("dict", flags=0)
                     for block in text_dict.get("blocks", []):
                         if block.get("type") == 0:  # text block
-                            bbox = block.get("bbox", [0, 0, 0, 0])
-                            # Detect font color from first span
-                            font_color = None
-                            font_name = ""
-                            font_size = 0
-                            text_content = ""
+                            # Emit per-line elements so different-color lines are separate
                             for line in block.get("lines", []):
+                                lbbox = line.get("bbox", [0, 0, 0, 0])
+                                font_color = None
+                                font_name = ""
+                                font_size = 0
+                                text_content = ""
                                 for span in line.get("spans", []):
                                     if not font_name:
                                         font_name = span.get("font", "")
                                         font_size = round(span.get("size", 0), 1)
                                         raw_color = span.get("color", 0)
-                                        # color is an integer in PyMuPDF
                                         if isinstance(raw_color, int):
                                             r = (raw_color >> 16) & 0xFF
                                             g = (raw_color >> 8) & 0xFF
                                             b = raw_color & 0xFF
                                             font_color = f"#{r:02x}{g:02x}{b:02x}"
                                     text_content += span.get("text", "")
-                            bw = bbox[2] - bbox[0]
-                            bh = bbox[3] - bbox[1]
-                            if bw > 0 and bh > 0 and text_content.strip():
-                                elements.append({
-                                    'type': 'text',
-                                    'x': round(bbox[0] / mb_w, 4),
-                                    'y': round(bbox[1] / mb_h, 4),
-                                    'w': round(bw / mb_w, 4),
-                                    'h': round(bh / mb_h, 4),
-                                    'font': font_name,
-                                    'font_size': font_size,
-                                    'color': font_color,
-                                    'text': text_content[:100],
-                                })
+                                bw = lbbox[2] - lbbox[0]
+                                bh = lbbox[3] - lbbox[1]
+                                if bw > 0 and bh > 0 and text_content.strip():
+                                    elements.append({
+                                        'type': 'text',
+                                        'x': round(lbbox[0] / mb_w, 4),
+                                        'y': round(lbbox[1] / mb_h, 4),
+                                        'w': round(bw / mb_w, 4),
+                                        'h': round(bh / mb_h, 4),
+                                        'font': font_name,
+                                        'font_size': font_size,
+                                        'color': font_color,
+                                        'text': text_content[:100],
+                                    })
                 except Exception:
                     pass
 
                 # Vector drawings
                 try:
                     drawings = page.get_drawings()
-                    if drawings:
-                        # Parse content stream to build per-rect colorspace map
-                        # (get_drawings() converts ALL colors to RGB, losing original CS)
-                        rect_cs_map = {}  # "x0,y0,x1,y1" -> (cs, is_spot, spot_name)
-                        page_height = mb_h
-                        used_cs_in_stream = set()  # collect all CS used in this page's stream
-
-                        def _ctm_concat(m, c):
-                            """Multiply affine matrices m × c. Each is (a,b,c,d,e,f)."""
-                            a1,b1,c1,d1,e1,f1 = m
-                            a2,b2,c2,d2,e2,f2 = c
-                            return (
-                                a1*a2+b1*c2, a1*b2+b1*d2,
-                                c1*a2+d1*c2, c1*b2+d1*d2,
-                                e1*a2+f1*c2+e2, e1*b2+f1*d2+f2,
-                            )
-
-                        def _ctm_apply(x, y, ct):
-                            """Transform point (x,y) by CTM ct=(a,b,c,d,e,f)."""
-                            a,b,c,d,e,f = ct
-                            return (a*x+c*y+e, b*x+d*y+f)
-
-                        try:
-                            for c_xref in page.get_contents():
-                                stream = doc.xref_stream(c_xref)
-                                if not stream:
-                                    continue
-                                stream_text = stream.decode("latin-1", errors="replace")
-                                tokens = stream_text.split()
-                                cur_fill_cs = None
-                                cur_stroke_cs = None
-                                cur_fill_spot = False
-                                cur_stroke_spot = False
-                                cur_fill_spot_name = None
-                                cur_stroke_spot_name = None
-                                path_rects = []
-                                path_points = []  # track m/l/c path points for bbox
-                                gs_stack = []  # graphics state stack for q/Q
-                                ctm = (1, 0, 0, 1, 0, 0)  # current transformation matrix (identity)
-                                i = 0
-                                while i < len(tokens):
-                                    tok = tokens[i]
-                                    # Graphics state save/restore
-                                    if tok == 'q':
-                                        gs_stack.append((cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm))
-                                    elif tok == 'Q':
-                                        if gs_stack:
-                                            cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm = gs_stack.pop()
-                                        path_rects = []
-                                        path_points = []
-                                    # Coordinate transform
-                                    elif tok == 'cm' and i >= 6:
-                                        try:
-                                            cm_a = float(tokens[i-6])
-                                            cm_b = float(tokens[i-5])
-                                            cm_c = float(tokens[i-4])
-                                            cm_d = float(tokens[i-3])
-                                            cm_e = float(tokens[i-2])
-                                            cm_f = float(tokens[i-1])
-                                            ctm = _ctm_concat((cm_a, cm_b, cm_c, cm_d, cm_e, cm_f), ctm)
-                                        except (ValueError, IndexError):
-                                            pass
-                                    # Fill color operators
-                                    elif tok == 'k' and i >= 4:
-                                        cur_fill_cs = "CMYK"
-                                        cur_fill_spot = False
-                                        cur_fill_spot_name = None
-                                        used_cs_in_stream.add("CMYK")
-                                    elif tok == 'rg' and i >= 3:
-                                        cur_fill_cs = "RGB"
-                                        cur_fill_spot = False
-                                        cur_fill_spot_name = None
-                                        used_cs_in_stream.add("RGB")
-                                    elif tok == 'g' and i >= 1:
-                                        cur_fill_cs = "Gray"
-                                        cur_fill_spot = False
-                                        cur_fill_spot_name = None
-                                        used_cs_in_stream.add("Gray")
-                                    # Stroke color operators
-                                    elif tok == 'K' and i >= 4:
-                                        cur_stroke_cs = "CMYK"
-                                        cur_stroke_spot = False
-                                        used_cs_in_stream.add("CMYK")
-                                    elif tok == 'RG' and i >= 3:
-                                        cur_stroke_cs = "RGB"
-                                        cur_stroke_spot = False
-                                        used_cs_in_stream.add("RGB")
-                                    elif tok == 'G' and i >= 1:
-                                        cur_stroke_cs = "Gray"
-                                        cur_stroke_spot = False
-                                        used_cs_in_stream.add("Gray")
-                                    # Named colorspace (fill)
-                                    elif tok == 'cs' and i >= 1 and tokens[i-1].startswith('/'):
-                                        cs_name = tokens[i-1][1:]
-                                        if cs_name in spot_cs_names:
-                                            cur_fill_cs = "Spot"
-                                            cur_fill_spot = True
-                                            cur_fill_spot_name = spot_color_names.get(cs_name)
-                                            used_cs_in_stream.add("Spot")
-                                        elif cs_name in ('DeviceCMYK',):
-                                            cur_fill_cs = "CMYK"
-                                            cur_fill_spot = False
-                                            cur_fill_spot_name = None
-                                            used_cs_in_stream.add("CMYK")
-                                        elif cs_name in ('DeviceRGB',):
-                                            cur_fill_cs = "RGB"
-                                            cur_fill_spot = False
-                                            cur_fill_spot_name = None
-                                            used_cs_in_stream.add("RGB")
-                                        elif cs_name in ('DeviceGray',):
-                                            cur_fill_cs = "Gray"
-                                            cur_fill_spot = False
-                                            cur_fill_spot_name = None
-                                            used_cs_in_stream.add("Gray")
-                                        elif cs_name in cs_resolved:
-                                            resolved = cs_resolved[cs_name]
-                                            cur_fill_cs = resolved
-                                            cur_fill_spot = resolved == "Spot"
-                                            cur_fill_spot_name = spot_color_names.get(cs_name) if cur_fill_spot else None
-                                            used_cs_in_stream.add(resolved)
-                                        else:
-                                            cur_fill_spot = False
-                                            cur_fill_spot_name = None
-                                    # Named colorspace (stroke)
-                                    elif tok == 'CS' and i >= 1 and tokens[i-1].startswith('/'):
-                                        cs_name = tokens[i-1][1:]
-                                        if cs_name in spot_cs_names:
-                                            cur_stroke_cs = "Spot"
-                                            cur_stroke_spot = True
-                                            cur_stroke_spot_name = spot_color_names.get(cs_name)
-                                            used_cs_in_stream.add("Spot")
-                                        elif cs_name in ('DeviceCMYK',):
-                                            cur_stroke_cs = "CMYK"
-                                            cur_stroke_spot = False
-                                            cur_stroke_spot_name = None
-                                            used_cs_in_stream.add("CMYK")
-                                        elif cs_name in ('DeviceRGB',):
-                                            cur_stroke_cs = "RGB"
-                                            cur_stroke_spot = False
-                                            cur_stroke_spot_name = None
-                                            used_cs_in_stream.add("RGB")
-                                        elif cs_name in ('DeviceGray',):
-                                            cur_stroke_cs = "Gray"
-                                            cur_stroke_spot = False
-                                            cur_stroke_spot_name = None
-                                            used_cs_in_stream.add("Gray")
-                                        elif cs_name in cs_resolved:
-                                            resolved = cs_resolved[cs_name]
-                                            cur_stroke_cs = resolved
-                                            cur_stroke_spot = resolved == "Spot"
-                                            cur_stroke_spot_name = spot_color_names.get(cs_name) if cur_stroke_spot else None
-                                            used_cs_in_stream.add(resolved)
-                                        else:
-                                            cur_stroke_spot = False
-                                            cur_stroke_spot_name = None
-                                    # scn/SCN - check if setting spot values
-                                    elif tok == 'scn':
-                                        pass  # color values set in current fill CS
-                                    elif tok == 'SCN':
-                                        pass  # color values set in current stroke CS
-                                    # Path construction: m, l, c (non-rect paths)
-                                    elif tok == 'm' and i >= 2:
-                                        try:
-                                            px = float(tokens[i-2])
-                                            py = float(tokens[i-1])
-                                            path_points = [_ctm_apply(px, py, ctm)]
-                                        except (ValueError, IndexError):
-                                            pass
-                                    elif tok == 'l' and i >= 2:
-                                        try:
-                                            px = float(tokens[i-2])
-                                            py = float(tokens[i-1])
-                                            path_points.append(_ctm_apply(px, py, ctm))
-                                        except (ValueError, IndexError):
-                                            pass
-                                    elif tok == 'c' and i >= 6:
-                                        try:
-                                            for ci in range(3):
-                                                px = float(tokens[i-6+ci*2])
-                                                py = float(tokens[i-5+ci*2])
-                                                path_points.append(_ctm_apply(px, py, ctm))
-                                        except (ValueError, IndexError):
-                                            pass
-                                    # Rectangle path: x y w h re
-                                    elif tok == 're' and i >= 4:
-                                        try:
-                                            rx = float(tokens[i-4])
-                                            ry = float(tokens[i-3])
-                                            rw = float(tokens[i-2])
-                                            rh = float(tokens[i-1])
-                                            # Transform all 4 corners through CTM
-                                            corners = [
-                                                _ctm_apply(rx, ry, ctm),
-                                                _ctm_apply(rx+rw, ry, ctm),
-                                                _ctm_apply(rx+rw, ry+rh, ctm),
-                                                _ctm_apply(rx, ry+rh, ctm),
-                                            ]
-                                            cxs = [c[0] for c in corners]
-                                            cys = [c[1] for c in corners]
-                                            # Bounding box in PDF (bottom-up) coords
-                                            bx0 = min(cxs)
-                                            by0 = min(cys)
-                                            bx1 = max(cxs)
-                                            by1 = max(cys)
-                                            # Convert to top-down Y for matching get_drawings()
-                                            td_x0 = bx0
-                                            td_y0 = page_height - by1
-                                            td_x1 = bx1
-                                            td_y1 = page_height - by0
-                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
-                                        except (ValueError, IndexError):
-                                            pass
-                                    # Paint operators (fill)
-                                    elif tok in ('f', 'F', 'f*', 'B', 'B*', 'b', 'b*'):
-                                        # Also compute bbox from path_points (non-rect paths)
-                                        if path_points and not path_rects:
-                                            xs = [p[0] for p in path_points]
-                                            ys = [p[1] for p in path_points]
-                                            bx0 = min(xs)
-                                            by0 = min(ys)
-                                            bx1 = max(xs)
-                                            by1 = max(ys)
-                                            bh = by1 - by0
-                                            td_x0 = bx0
-                                            td_y0 = page_height - by1
-                                            td_x1 = bx1
-                                            td_y1 = page_height - by0
-                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
-                                        for pr in path_rects:
-                                            key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
-                                            rect_cs_map[key] = (cur_fill_cs or "Ismeretlen", cur_fill_spot, cur_fill_spot_name)
-                                        path_rects = []
-                                        path_points = []
-                                    elif tok in ('S', 's'):
-                                        if path_points and not path_rects:
-                                            xs = [p[0] for p in path_points]
-                                            ys = [p[1] for p in path_points]
-                                            bx0 = min(xs)
-                                            by0 = min(ys)
-                                            bx1 = max(xs)
-                                            by1 = max(ys)
-                                            td_x0 = bx0
-                                            td_y0 = page_height - by1
-                                            td_x1 = bx1
-                                            td_y1 = page_height - by0
-                                            path_rects.append((td_x0, td_y0, td_x1, td_y1))
-                                        for pr in path_rects:
-                                            key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
-                                            rect_cs_map[key] = (cur_stroke_cs or "Ismeretlen", cur_stroke_spot, cur_stroke_spot_name)
-                                        path_rects = []
-                                        path_points = []
-                                    elif tok == 'n':
-                                        path_rects = []
-                                        path_points = []
-                                    i += 1
-                        except Exception:
-                            pass
-
-                        # Enrich page-level color_spaces from content stream detections
-                        color_spaces.update(used_cs_in_stream)
-                        # Also check for PANTONE names in spot colors used
-                        for sn in spot_color_names.values():
-                            if 'pantone' in sn.lower():
-                                color_spaces.add("PANTONE")
-
-                        all_rects = []
-                        for d in drawings:
-                            r = d.get("rect")
-                            if r and r.width > 0 and r.height > 0:
-                                # Look up the actual colorspace from content stream
-                                key = f"{r.x0:.1f},{r.y0:.1f},{r.x1:.1f},{r.y1:.1f}"
-                                cs_info = rect_cs_map.get(key)
-                                if cs_info:
-                                    vec_cs, vec_spot, vec_spot_name = cs_info
-                                else:
-                                    # Fallback: try rounding to integers
-                                    key2 = f"{r.x0:.0f},{r.y0:.0f},{r.x1:.0f},{r.y1:.0f}"
-                                    cs_info2 = rect_cs_map.get(key2)
-                                    if cs_info2:
-                                        vec_cs, vec_spot, vec_spot_name = cs_info2
-                                    else:
-                                        vec_cs = "Ismeretlen"
-                                        vec_spot = False
-                                        vec_spot_name = None
-                                all_rects.append({
-                                    'rect': r,
-                                    'cs': vec_cs,
-                                    'spot': vec_spot,
-                                    'spot_name': vec_spot_name,
-                                })
-                        # Merge overlapping vector rects into groups
-                        merged = []
-                        for vr in all_rects:
-                            r = vr['rect']
-                            found = False
-                            for m in merged:
-                                if r.intersects(m['rect']):
-                                    m['rect'] = m['rect'] | r  # union
-                                    if vr['cs'] != "Ismeretlen":
-                                        m['cs'] = vr['cs']
-                                    if vr.get('spot'):
-                                        m['spot'] = True
-                                    if vr.get('spot_name'):
-                                        m['spot_name'] = vr['spot_name']
-                                    found = True
-                                    break
-                            if not found:
-                                merged.append({'rect': fitz.Rect(r), 'cs': vr['cs'], 'spot': vr.get('spot', False), 'spot_name': vr.get('spot_name')})
-                        for m in merged:
-                            r = m['rect']
-                            vel = {
-                                'type': 'vector',
-                                'x': round(r.x0 / mb_w, 4),
-                                'y': round(r.y0 / mb_h, 4),
-                                'w': round(r.width / mb_w, 4),
-                                'h': round(r.height / mb_h, 4),
-                                'colorspace': m['cs'],
-                            }
-                            if m.get('spot'):
-                                vel['spot'] = True
-                                if m.get('spot_name'):
-                                    vel['spot_name'] = m['spot_name']
-                            elements.append(vel)
                 except Exception:
-                    pass
+                    drawings = []
+
+                # Parse content stream to build per-rect/text colorspace maps
+                # (get_drawings() converts ALL colors to RGB, losing original CS)
+                rect_cs_map = {}  # "x0,y0,x1,y1" -> (cs, is_spot, spot_name)
+                text_cs_regions = []  # list of (y_top_down, cs, is_spot, spot_name) for ALL text renders
+                page_height = mb_h
+                used_cs_in_stream = set()  # collect all CS used in this page's stream
+
+                def _ctm_concat(m, c):
+                    """Multiply affine matrices m × c. Each is (a,b,c,d,e,f)."""
+                    a1,b1,c1,d1,e1,f1 = m
+                    a2,b2,c2,d2,e2,f2 = c
+                    return (
+                        a1*a2+b1*c2, a1*b2+b1*d2,
+                        c1*a2+d1*c2, c1*b2+d1*d2,
+                        e1*a2+f1*c2+e2, e1*b2+f1*d2+f2,
+                    )
+
+                def _ctm_apply(x, y, ct):
+                    """Transform point (x,y) by CTM ct=(a,b,c,d,e,f)."""
+                    a,b,c,d,e,f = ct
+                    return (a*x+c*y+e, b*x+d*y+f)
+
+                # Collect Form XObjects from page resources for recursive parsing
+                form_xobjects = {}  # name -> (stream_bytes, matrix_tuple)
+                import logging as _lg
+                _dbg = _lg.getLogger("printshop.xobj_debug")
+                def _dbgw(msg):
+                    _dbg_file.write(msg + "\n")
+                    _dbg_file.flush()
+                try:
+                    _page_obj = doc.xref_object(page.xref)
+                    _dbgw(f"PAGE XREF OBJ (first 500): %s".replace("%s","{0}").replace("%d","{1}") if False else f"PAGE XREF OBJ (first 500): %s" % (_page_obj[:500],) if "%" in "PAGE XREF OBJ (first 500): %s" else f"PAGE XREF OBJ (first 500): %s {_page_obj[:500]}")
+                    _res_match = re.search(r'/Resources\s+(\d+)\s+0\s+R', _page_obj)
+                    if _res_match:
+                        _res_text = doc.xref_object(int(_res_match.group(1)))
+                        _dbgw(f"RESOURCES (indirect %s, first 500): %s".replace("%s","{0}").replace("%d","{1}") if False else f"RESOURCES (indirect %s, first 500): %s" % (_res_match.group(1), _res_text[:500] if _res_text else "None",) if "%" in "RESOURCES (indirect %s, first 500): %s" else f"RESOURCES (indirect %s, first 500): %s {_res_match.group(1), _res_text[:500] if _res_text else "None"}")
+                    else:
+                        _res_text = _page_obj
+                        _dbgw("RESOURCES (inline from page obj)")
+                    if _res_text:
+                        _xobj_block = re.search(r'/XObject\s*<<([^>]*)>>', _res_text)
+                        _xobj_text = None
+                        if _xobj_block:
+                            _xobj_text = _xobj_block.group(1)
+                            _dbgw(f"XOBJECT BLOCK (inline <<>>): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJECT BLOCK (inline <<>>): %s" % (_xobj_text[:300],) if "%" in "XOBJECT BLOCK (inline <<>>): %s" else f"XOBJECT BLOCK (inline <<>>): %s {_xobj_text[:300]}")
+                        else:
+                            _xobj_ref = re.search(r'/XObject\s+(\d+)\s+0\s+R', _res_text)
+                            if _xobj_ref:
+                                _xd = doc.xref_object(int(_xobj_ref.group(1)))
+                                _dbgw(f"XOBJECT DICT (indirect %s): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJECT DICT (indirect %s): %s" % (_xobj_ref.group(1), _xd[:300] if _xd else "None",) if "%" in "XOBJECT DICT (indirect %s): %s" else f"XOBJECT DICT (indirect %s): %s {_xobj_ref.group(1), _xd[:300] if _xd else "None"}")
+                                if _xd:
+                                    _inner = re.search(r'<<(.*)>>', _xd, re.DOTALL)
+                                    _xobj_text = _inner.group(1) if _inner else _xd
+                            else:
+                                _dbgw("NO /XObject found in resources text")
+                        if _xobj_text:
+                            _dbgw(f"XOBJ_TEXT to scan: %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJ_TEXT to scan: %s" % (_xobj_text[:300],) if "%" in "XOBJ_TEXT to scan: %s" else f"XOBJ_TEXT to scan: %s {_xobj_text[:300]}")
+                            for _xm in re.finditer(r'/(\S+)\s+(\d+)\s+0\s+R', _xobj_text):
+                                _xo_name = _xm.group(1)
+                                _xo_xref = int(_xm.group(2))
+                                _dbgw(f"Found XObject ref: /%s -> xref %d".replace("%s","{0}").replace("%d","{1}") if False else f"Found XObject ref: /%s -> xref %d" % (_xo_name, _xo_xref,) if "%" in "Found XObject ref: /%s -> xref %d" else f"Found XObject ref: /%s -> xref %d {_xo_name, _xo_xref}")
+                                try:
+                                    _xo_obj = doc.xref_object(_xo_xref)
+                                    _dbgw(f"XObj %s obj (first 200): %s".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s obj (first 200): %s" % (_xo_name, _xo_obj[:200] if _xo_obj else "None",) if "%" in "XObj %s obj (first 200): %s" else f"XObj %s obj (first 200): %s {_xo_name, _xo_obj[:200] if _xo_obj else "None"}")
+                                    if _xo_obj and '/Subtype /Form' in _xo_obj:
+                                        _xo_stream = doc.xref_stream(_xo_xref)
+                                        _dbgw(f"XObj %s is Form, stream len=%d".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s is Form, stream len=%d" % (_xo_name, len(_xo_stream) if _xo_stream else 0,) if "%" in "XObj %s is Form, stream len=%d" else f"XObj %s is Form, stream len=%d {_xo_name, len(_xo_stream) if _xo_stream else 0}")
+                                        if _xo_stream:
+                                            _xo_matrix = (1, 0, 0, 1, 0, 0)
+                                            _mm = re.search(r'/Matrix\s*\[\s*([\d.\-\s]+)\]', _xo_obj)
+                                            if _mm:
+                                                _vals = _mm.group(1).split()
+                                                if len(_vals) == 6:
+                                                    _xo_matrix = tuple(float(v) for v in _vals)
+                                            form_xobjects[_xo_name] = (_xo_stream, _xo_matrix)
+                                            # Scan XObject resources for additional spot CS
+                                            _xo_res_block = re.search(r'/Resources\s*<<', _xo_obj)
+                                            if _xo_res_block:
+                                                _xo_cs_block = re.search(r'/ColorSpace\s*<<([^>]*)>>', _xo_obj[_xo_res_block.start():])
+                                                if _xo_cs_block:
+                                                    _dbgw(f"XObj %s has CS block: %s".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s has CS block: %s" % (_xo_name, _xo_cs_block.group(1)[:200],) if "%" in "XObj %s has CS block: %s" else f"XObj %s has CS block: %s {_xo_name, _xo_cs_block.group(1)[:200]}")
+                                                    for _cs_e in re.finditer(r'/(\S+)\s+(\d+)\s+0\s+R', _xo_cs_block.group(1)):
+                                                        _scan_cs_entry(_cs_e.group(1), int(_cs_e.group(2)))
+                                    else:
+                                        _dbgw(f"XObj %s NOT Form (no /Subtype /Form)".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s NOT Form (no /Subtype /Form)" % (_xo_name,) if "%" in "XObj %s NOT Form (no /Subtype /Form)" else f"XObj %s NOT Form (no /Subtype /Form) {_xo_name}")
+                                except Exception as _xe:
+                                    _dbgw(f"XObj %s exception: %s".replace("%s","{0}").replace("%d","{1}") if False else f"XObj %s exception: %s" % (_xo_name, _xe,) if "%" in "XObj %s exception: %s" else f"XObj %s exception: %s {_xo_name, _xe}")
+                        else:
+                            _dbgw("xobj_text is None/empty")
+                    else:
+                        _dbgw("res_text is None")
+                except Exception as _ex:
+                    _dbgw(f"Form XObject collection EXCEPTION: %s".replace("%s","{0}").replace("%d","{1}") if False else f"Form XObject collection EXCEPTION: %s" % (_ex,) if "%" in "Form XObject collection EXCEPTION: %s" else f"Form XObject collection EXCEPTION: %s {_ex}")
+                _dbgw(f"FORM_XOBJECTS collected: %s".replace("%s","{0}").replace("%d","{1}") if False else f"FORM_XOBJECTS collected: %s" % (list(form_xobjects.keys()),) if "%" in "FORM_XOBJECTS collected: %s" else f"FORM_XOBJECTS collected: %s {list(form_xobjects.keys())}")
+
+                do_calls = []  # (xo_name, ctm_at_call)
+
+                def _parse_stream(stream_text, initial_ctm):
+                    """Parse a PDF content stream, updating rect_cs_map, text_cs_regions, used_cs_in_stream."""
+                    tokens = stream_text.split()
+                    cur_fill_cs = None
+                    cur_stroke_cs = None
+                    cur_fill_spot = False
+                    cur_stroke_spot = False
+                    cur_fill_spot_name = None
+                    cur_stroke_spot_name = None
+                    path_rects = []
+                    path_points = []
+                    gs_stack = []
+                    ctm = initial_ctm
+                    text_tm = None
+                    i = 0
+                    while i < len(tokens):
+                        tok = tokens[i]
+                        if tok == 'q':
+                            gs_stack.append((cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm))
+                        elif tok == 'Q':
+                            if gs_stack:
+                                cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm = gs_stack.pop()
+                            path_rects = []
+                            path_points = []
+                        elif tok == 'cm' and i >= 6:
+                            try:
+                                cm_a = float(tokens[i-6])
+                                cm_b = float(tokens[i-5])
+                                cm_c = float(tokens[i-4])
+                                cm_d = float(tokens[i-3])
+                                cm_e = float(tokens[i-2])
+                                cm_f = float(tokens[i-1])
+                                ctm = _ctm_concat((cm_a, cm_b, cm_c, cm_d, cm_e, cm_f), ctm)
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 'k' and i >= 4:
+                            cur_fill_cs = "CMYK"
+                            cur_fill_spot = False
+                            cur_fill_spot_name = None
+                            used_cs_in_stream.add("CMYK")
+                        elif tok == 'rg' and i >= 3:
+                            cur_fill_cs = "RGB"
+                            cur_fill_spot = False
+                            cur_fill_spot_name = None
+                            used_cs_in_stream.add("RGB")
+                        elif tok == 'g' and i >= 1:
+                            cur_fill_cs = "Gray"
+                            cur_fill_spot = False
+                            cur_fill_spot_name = None
+                            used_cs_in_stream.add("Gray")
+                        elif tok == 'K' and i >= 4:
+                            cur_stroke_cs = "CMYK"
+                            cur_stroke_spot = False
+                            used_cs_in_stream.add("CMYK")
+                        elif tok == 'RG' and i >= 3:
+                            cur_stroke_cs = "RGB"
+                            cur_stroke_spot = False
+                            used_cs_in_stream.add("RGB")
+                        elif tok == 'G' and i >= 1:
+                            cur_stroke_cs = "Gray"
+                            cur_stroke_spot = False
+                            used_cs_in_stream.add("Gray")
+                        elif tok == 'cs' and i >= 1 and tokens[i-1].startswith('/'):
+                            cs_name = tokens[i-1][1:]
+                            _dbg_file.write(f"CS operator: /{cs_name} cs -> in spot_cs_names={cs_name in spot_cs_names}, in cs_resolved={cs_resolved.get(cs_name, 'NOT_FOUND')}\n")
+                            _dbg_file.flush()
+                            if cs_name in spot_cs_names:
+                                cur_fill_cs = "Spot"
+                                cur_fill_spot = True
+                                cur_fill_spot_name = spot_color_names.get(cs_name)
+                                used_cs_in_stream.add("Spot")
+                            elif cs_name in ('DeviceCMYK',):
+                                cur_fill_cs = "CMYK"
+                                cur_fill_spot = False
+                                cur_fill_spot_name = None
+                                used_cs_in_stream.add("CMYK")
+                            elif cs_name in ('DeviceRGB',):
+                                cur_fill_cs = "RGB"
+                                cur_fill_spot = False
+                                cur_fill_spot_name = None
+                                used_cs_in_stream.add("RGB")
+                            elif cs_name in ('DeviceGray',):
+                                cur_fill_cs = "Gray"
+                                cur_fill_spot = False
+                                cur_fill_spot_name = None
+                                used_cs_in_stream.add("Gray")
+                            elif cs_name in cs_resolved:
+                                resolved = cs_resolved[cs_name]
+                                cur_fill_cs = resolved
+                                cur_fill_spot = resolved == "Spot"
+                                cur_fill_spot_name = spot_color_names.get(cs_name) if cur_fill_spot else None
+                                used_cs_in_stream.add(resolved)
+                            else:
+                                cur_fill_spot = False
+                                cur_fill_spot_name = None
+                        elif tok == 'CS' and i >= 1 and tokens[i-1].startswith('/'):
+                            cs_name = tokens[i-1][1:]
+                            if cs_name in spot_cs_names:
+                                cur_stroke_cs = "Spot"
+                                cur_stroke_spot = True
+                                cur_stroke_spot_name = spot_color_names.get(cs_name)
+                                used_cs_in_stream.add("Spot")
+                            elif cs_name in ('DeviceCMYK',):
+                                cur_stroke_cs = "CMYK"
+                                cur_stroke_spot = False
+                                cur_stroke_spot_name = None
+                                used_cs_in_stream.add("CMYK")
+                            elif cs_name in ('DeviceRGB',):
+                                cur_stroke_cs = "RGB"
+                                cur_stroke_spot = False
+                                cur_stroke_spot_name = None
+                                used_cs_in_stream.add("RGB")
+                            elif cs_name in ('DeviceGray',):
+                                cur_stroke_cs = "Gray"
+                                cur_stroke_spot = False
+                                cur_stroke_spot_name = None
+                                used_cs_in_stream.add("Gray")
+                            elif cs_name in cs_resolved:
+                                resolved = cs_resolved[cs_name]
+                                cur_stroke_cs = resolved
+                                cur_stroke_spot = resolved == "Spot"
+                                cur_stroke_spot_name = spot_color_names.get(cs_name) if cur_stroke_spot else None
+                                used_cs_in_stream.add(resolved)
+                            else:
+                                cur_stroke_spot = False
+                                cur_stroke_spot_name = None
+                        elif tok == 'scn':
+                            pass
+                        elif tok == 'SCN':
+                            pass
+                        elif tok == 'BT':
+                            text_tm = (1, 0, 0, 1, 0, 0)
+                        elif tok == 'ET':
+                            text_tm = None
+                        elif tok == 'Tm' and i >= 6:
+                            try:
+                                text_tm = (float(tokens[i-6]), float(tokens[i-5]),
+                                           float(tokens[i-4]), float(tokens[i-3]),
+                                           float(tokens[i-2]), float(tokens[i-1]))
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 'Td' and i >= 2:
+                            try:
+                                tx = float(tokens[i-2])
+                                ty = float(tokens[i-1])
+                                if text_tm:
+                                    a, b, c, d = text_tm[0], text_tm[1], text_tm[2], text_tm[3]
+                                    text_tm = (a, b, c, d,
+                                               tx * a + ty * c + text_tm[4],
+                                               tx * b + ty * d + text_tm[5])
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 'TD' and i >= 2:
+                            try:
+                                tx = float(tokens[i-2])
+                                ty = float(tokens[i-1])
+                                if text_tm:
+                                    a, b, c, d = text_tm[0], text_tm[1], text_tm[2], text_tm[3]
+                                    text_tm = (a, b, c, d,
+                                               tx * a + ty * c + text_tm[4],
+                                               tx * b + ty * d + text_tm[5])
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok in ('Tj', 'TJ', "'", '"') or tok.endswith(']TJ') or tok.endswith(']Tj') or tok.endswith(')Tj') or tok.endswith(')TJ'):
+                            if text_tm and cur_fill_cs:
+                                tx, ty = _ctm_apply(text_tm[4], text_tm[5], ctm)
+                                td_y = page_height - ty
+                                text_cs_regions.append((td_y, cur_fill_cs, cur_fill_spot, cur_fill_spot_name))
+                        # Do operator — record XObject call for recursive parsing
+                        elif tok == 'Do' and i >= 1 and tokens[i-1].startswith('/'):
+                            xo_name = tokens[i-1][1:]
+                            if xo_name in form_xobjects:
+                                do_calls.append((xo_name, ctm))
+                        elif tok == 'm' and i >= 2:
+                            try:
+                                px = float(tokens[i-2])
+                                py = float(tokens[i-1])
+                                path_points = [_ctm_apply(px, py, ctm)]
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 'l' and i >= 2:
+                            try:
+                                px = float(tokens[i-2])
+                                py = float(tokens[i-1])
+                                path_points.append(_ctm_apply(px, py, ctm))
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 'c' and i >= 6:
+                            try:
+                                for ci in range(3):
+                                    px = float(tokens[i-6+ci*2])
+                                    py = float(tokens[i-5+ci*2])
+                                    path_points.append(_ctm_apply(px, py, ctm))
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok == 're' and i >= 4:
+                            try:
+                                rx = float(tokens[i-4])
+                                ry = float(tokens[i-3])
+                                rw = float(tokens[i-2])
+                                rh = float(tokens[i-1])
+                                corners = [
+                                    _ctm_apply(rx, ry, ctm),
+                                    _ctm_apply(rx+rw, ry, ctm),
+                                    _ctm_apply(rx+rw, ry+rh, ctm),
+                                    _ctm_apply(rx, ry+rh, ctm),
+                                ]
+                                cxs = [c[0] for c in corners]
+                                cys = [c[1] for c in corners]
+                                bx0 = min(cxs)
+                                by0 = min(cys)
+                                bx1 = max(cxs)
+                                by1 = max(cys)
+                                td_x0 = bx0
+                                td_y0 = page_height - by1
+                                td_x1 = bx1
+                                td_y1 = page_height - by0
+                                path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                            except (ValueError, IndexError):
+                                pass
+                        elif tok in ('f', 'F', 'f*', 'B', 'B*', 'b', 'b*'):
+                            if path_points and not path_rects:
+                                xs = [p[0] for p in path_points]
+                                ys = [p[1] for p in path_points]
+                                bx0 = min(xs)
+                                by0 = min(ys)
+                                bx1 = max(xs)
+                                by1 = max(ys)
+                                td_x0 = bx0
+                                td_y0 = page_height - by1
+                                td_x1 = bx1
+                                td_y1 = page_height - by0
+                                path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                            for pr in path_rects:
+                                key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
+                                rect_cs_map[key] = (cur_fill_cs or "Ismeretlen", cur_fill_spot, cur_fill_spot_name)
+                            path_rects = []
+                            path_points = []
+                        elif tok in ('S', 's'):
+                            if path_points and not path_rects:
+                                xs = [p[0] for p in path_points]
+                                ys = [p[1] for p in path_points]
+                                bx0 = min(xs)
+                                by0 = min(ys)
+                                bx1 = max(xs)
+                                by1 = max(ys)
+                                td_x0 = bx0
+                                td_y0 = page_height - by1
+                                td_x1 = bx1
+                                td_y1 = page_height - by0
+                                path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                            for pr in path_rects:
+                                key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
+                                rect_cs_map[key] = (cur_stroke_cs or "Ismeretlen", cur_stroke_spot, cur_stroke_spot_name)
+                            path_rects = []
+                            path_points = []
+                        elif tok == 'n':
+                            path_rects = []
+                            path_points = []
+                        i += 1
+
+                # Parse page content streams
+                try:
+                    for c_xref in page.get_contents():
+                        stream = doc.xref_stream(c_xref)
+                        if not stream:
+                            continue
+                        _stream_text = stream.decode("latin-1", errors="replace")
+                        _dbgw(f"PAGE STREAM xref=%d len=%d first200: %s".replace("%s","{0}").replace("%d","{1}") if False else f"PAGE STREAM xref=%d len=%d first200: %s" % (c_xref, len(_stream_text), _stream_text[:200],) if "%" in "PAGE STREAM xref=%d len=%d first200: %s" else f"PAGE STREAM xref=%d len=%d first200: %s {c_xref, len(_stream_text), _stream_text[:200]}")
+                        _parse_stream(_stream_text, (1, 0, 0, 1, 0, 0))
+                except Exception as _pex:
+                    _dbgw(f"PAGE STREAM EXCEPTION: %s".replace("%s","{0}").replace("%d","{1}") if False else f"PAGE STREAM EXCEPTION: %s" % (_pex,) if "%" in "PAGE STREAM EXCEPTION: %s" else f"PAGE STREAM EXCEPTION: %s {_pex}")
+
+                _dbgw(f"AFTER PAGE STREAMS: do_calls=%d, rect_cs_map=%d entries, text_cs_regions=%d".replace("%s","{0}").replace("%d","{1}") if False else f"AFTER PAGE STREAMS: do_calls=%d, rect_cs_map=%d entries, text_cs_regions=%d" % (len(do_calls), len(rect_cs_map), len(text_cs_regions),) if "%" in "AFTER PAGE STREAMS: do_calls=%d, rect_cs_map=%d entries, text_cs_regions=%d" else f"AFTER PAGE STREAMS: do_calls=%d, rect_cs_map=%d entries, text_cs_regions=%d {len(do_calls), len(rect_cs_map), len(text_cs_regions)}")
+                for _dc_name, _dc_ctm in do_calls:
+                    _dbgw(f"  DO CALL: %s ctm=%s".replace("%s","{0}").replace("%d","{1}") if False else f"  DO CALL: %s ctm=%s" % (_dc_name, _dc_ctm,) if "%" in "  DO CALL: %s ctm=%s" else f"  DO CALL: %s ctm=%s {_dc_name, _dc_ctm}")
+
+                # Parse Form XObject streams (Illustrator renders spot content via XObjects)
+                for _xo_name, _call_ctm in do_calls:
+                    if _xo_name in form_xobjects:
+                        try:
+                            _xo_bytes, _xo_matrix = form_xobjects[_xo_name]
+                            _composed_ctm = _ctm_concat(_xo_matrix, _call_ctm)
+                            _xo_text = _xo_bytes.decode("latin-1", errors="replace")
+                            _dbgw(f"PARSING XOBJ %s: stream_len=%d first200: %s".replace("%s","{0}").replace("%d","{1}") if False else f"PARSING XOBJ %s: stream_len=%d first200: %s" % (_xo_name, len(_xo_text), _xo_text[:200],) if "%" in "PARSING XOBJ %s: stream_len=%d first200: %s" else f"PARSING XOBJ %s: stream_len=%d first200: %s {_xo_name, len(_xo_text), _xo_text[:200]}")
+                            _parse_stream(_xo_text, _composed_ctm)
+                        except Exception as _xex:
+                            _dbgw(f"XOBJ %s parse EXCEPTION: %s".replace("%s","{0}").replace("%d","{1}") if False else f"XOBJ %s parse EXCEPTION: %s" % (_xo_name, _xex,) if "%" in "XOBJ %s parse EXCEPTION: %s" else f"XOBJ %s parse EXCEPTION: %s {_xo_name, _xex}")
+
+                _dbgw(f"FINAL: rect_cs_map=%d entries, text_cs_regions=%d".replace("%s","{0}").replace("%d","{1}") if False else f"FINAL: rect_cs_map=%d entries, text_cs_regions=%d" % (len(rect_cs_map), len(text_cs_regions),) if "%" in "FINAL: rect_cs_map=%d entries, text_cs_regions=%d" else f"FINAL: rect_cs_map=%d entries, text_cs_regions=%d {len(rect_cs_map), len(text_cs_regions)}")
+                for _rk, _rv in list(rect_cs_map.items())[:20]:
+                    _dbgw(f"  rect_cs_map[%s] = %s".replace("%s","{0}").replace("%d","{1}") if False else f"  rect_cs_map[%s] = %s" % (_rk, _rv,) if "%" in "  rect_cs_map[%s] = %s" else f"  rect_cs_map[%s] = %s {_rk, _rv}")
+                for _tsr in text_cs_regions[:10]:
+                    _dbgw(f"  text_spot_region: %s".replace("%s","{0}").replace("%d","{1}") if False else f"  text_spot_region: %s" % (_tsr,) if "%" in "  text_spot_region: %s" else f"  text_spot_region: %s {_tsr}")
+
+                # Enrich page-level color_spaces from content stream detections
+                color_spaces.update(used_cs_in_stream)
+                # Also check for PANTONE names in spot colors used
+                for sn in spot_color_names.values():
+                    if 'pantone' in sn.lower():
+                        color_spaces.add("PANTONE")
+
+                # Enrich text elements with colorspace info from content stream
+                if text_cs_regions:
+                    _dbg_file.write(f"TEXT CS ENRICHMENT: {len(text_cs_regions)} regions, {len([e for e in elements if e.get('type')=='text'])} text elements\n")
+                    for tcr in text_cs_regions:
+                        _dbg_file.write(f"  text_cs_region: y={tcr[0]:.1f} cs={tcr[1]} spot={tcr[2]} name={tcr[3]}\n")
+                    for el in elements:
+                        if el.get('type') == 'text' and not el.get('colorspace'):
+                            el_y0 = el['y'] * mb_h
+                            el_y1 = el_y0 + el['h'] * mb_h
+                            _dbg_file.write(f"  TEXT EL '{el.get('text','')}' y0={el_y0:.1f} y1={el_y1:.1f}\n")
+                            matched = False
+                            for (tsr_y, tsr_cs, tsr_spot, tsr_spot_name) in text_cs_regions:
+                                if el_y0 - 5 <= tsr_y <= el_y1 + 5:
+                                    el['colorspace'] = tsr_cs or 'Ismeretlen'
+                                    _dbg_file.write(f"    MATCHED: tsr_y={tsr_y:.1f} -> cs={tsr_cs}\n")
+                                    if tsr_spot:
+                                        el['spot'] = True
+                                        if tsr_spot_name:
+                                            el['spot_name'] = tsr_spot_name
+                                    matched = True
+                                    break
+                            if not matched:
+                                _dbg_file.write(f"    NO MATCH\n")
+                    _dbg_file.flush()
+
+                if drawings:
+                    all_rects = []
+                    for d in drawings:
+                        r = d.get("rect")
+                        if r and r.width > 0 and r.height > 0:
+                            # Look up the actual colorspace from content stream
+                            key = f"{r.x0:.1f},{r.y0:.1f},{r.x1:.1f},{r.y1:.1f}"
+                            cs_info = rect_cs_map.get(key)
+                            if cs_info:
+                                vec_cs, vec_spot, vec_spot_name = cs_info
+                            else:
+                                # Fallback: try rounding to integers
+                                key2 = f"{r.x0:.0f},{r.y0:.0f},{r.x1:.0f},{r.y1:.0f}"
+                                cs_info2 = rect_cs_map.get(key2)
+                                if cs_info2:
+                                    vec_cs, vec_spot, vec_spot_name = cs_info2
+                                else:
+                                    vec_cs = "Ismeretlen"
+                                    vec_spot = False
+                                    vec_spot_name = None
+                            all_rects.append({
+                                'rect': r,
+                                'cs': vec_cs,
+                                'spot': vec_spot,
+                                'spot_name': vec_spot_name,
+                            })
+                    # Merge overlapping vector rects into groups
+                    merged = []
+                    for vr in all_rects:
+                        r = vr['rect']
+                        found = False
+                        for m in merged:
+                            if r.intersects(m['rect']):
+                                m['rect'] = m['rect'] | r  # union
+                                if vr['cs'] != "Ismeretlen":
+                                    m['cs'] = vr['cs']
+                                if vr.get('spot'):
+                                    m['spot'] = True
+                                if vr.get('spot_name'):
+                                    m['spot_name'] = vr['spot_name']
+                                found = True
+                                break
+                        if not found:
+                            merged.append({'rect': fitz.Rect(r), 'cs': vr['cs'], 'spot': vr.get('spot', False), 'spot_name': vr.get('spot_name')})
+                    for m in merged:
+                        r = m['rect']
+                        vel = {
+                            'type': 'vector',
+                            'x': round(r.x0 / mb_w, 4),
+                            'y': round(r.y0 / mb_h, 4),
+                            'w': round(r.width / mb_w, 4),
+                            'h': round(r.height / mb_h, 4),
+                            'colorspace': m['cs'],
+                        }
+                        if m.get('spot'):
+                            vel['spot'] = True
+                            if m.get('spot_name'):
+                                vel['spot_name'] = m['spot_name']
+                        elements.append(vel)
 
                 page_info = {
                     'page': page_num + 1,

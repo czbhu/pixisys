@@ -38,6 +38,7 @@ const RFQs: React.FC = () => {
   const [nextNumber, setNextNumber] = useState<string>('');
   const [currentUserName, setCurrentUserName] = useState<string>('');
   const [form] = Form.useForm();
+  const [pendingFormValues, setPendingFormValues] = useState<Record<string, any> | null>(null);
   const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
@@ -867,8 +868,48 @@ const RFQs: React.FC = () => {
             console.error('Failed to load item from URL', e);
         }
     }
+
+    // Pre-fill company & contact from URL params
+    const urlCompany = searchParams.get('company');
+    const urlContact = searchParams.get('contact');
+    let pendingCompanyId: any = null;
+    let pendingContactId: any = null;
+    if (urlCompany) {
+      const companyId: any = isNaN(Number(urlCompany)) ? urlCompany : Number(urlCompany);
+      pendingCompanyId = companyId;
+      // Eagerly load companies so the select has options and shows the name
+      try {
+        const list = await crmService.getCompanies({ is_customer: true, compact: true });
+        const all: any[] = ((list as any).results ?? list) || [];
+        // Ensure the selected company is in the list
+        if (!all.find((c: any) => String(c.id) === String(companyId))) {
+          try {
+            const co = await crmService.getCompany(companyId);
+            all.unshift(co);
+          } catch {}
+        }
+        setCompanies(all);
+      } catch {}
+      // Load contacts for this company
+      try {
+        const contactList = await crmService.getContactsByCompany(companyId);
+        const resolved = ((contactList as any).results ?? contactList) || [];
+        setContacts(resolved);
+        if (urlContact) {
+          pendingContactId = isNaN(Number(urlContact)) ? urlContact : Number(urlContact);
+        }
+      } catch {}
+    }
     
     setCreateOpen(true);
+
+    // Defer form.setFieldsValue until after the modal renders (via useEffect)
+    if (pendingCompanyId || pendingContactId) {
+      const vals: Record<string, any> = {};
+      if (pendingCompanyId) vals.company_id = pendingCompanyId;
+      if (pendingContactId) vals.contact_ids = [pendingContactId];
+      setPendingFormValues(vals);
+    }
   };
 
   useEffect(() => {
@@ -886,7 +927,14 @@ const RFQs: React.FC = () => {
       setInitialFormSnapshot(getFormSnapshot());
     }, 0);
     return () => clearTimeout(timer);
-  }, [createOpen]);
+  }, [createOpen]); // eslint-disable-line
+
+  useEffect(() => {
+    if (pendingFormValues) {
+      form.setFieldsValue(pendingFormValues);
+      setPendingFormValues(null);
+    }
+  }, [pendingFormValues]); // eslint-disable-line
 
 
   const handleCancel = () => {
@@ -1277,6 +1325,7 @@ const RFQs: React.FC = () => {
         okText="Létrehozás"
         cancelText="Mégse"
         width={1100}
+        forceRender
       >
         <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
           {/* ── Alap adatok ─────────────────────────────────────────────── */}
@@ -1312,10 +1361,10 @@ const RFQs: React.FC = () => {
             <Col xs={24} md={8}>
               <Form.Item 
                 label="Cég" 
-                name="company_id"
                 style={{ marginBottom: 6 }}
               > 
                 <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name="company_id" noStyle>
                   <Select 
                     showSearch 
                     optionFilterProp="label" 
@@ -1392,6 +1441,7 @@ const RFQs: React.FC = () => {
                       <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
                     ))}
                   </Select>
+                  </Form.Item>
                   <Tooltip title="Új cég hozzáadása">
                     <Button 
                       icon={<PlusCircleOutlined />}
@@ -1404,8 +1454,9 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={16}>
-              <Form.Item label="Kapcsolattartók" name="contact_ids" style={{ marginBottom: 6 }}>
+              <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
                 <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name="contact_ids" noStyle>
                   <Select 
                     mode="multiple" 
                     allowClear 
@@ -1433,6 +1484,7 @@ const RFQs: React.FC = () => {
                       <Select.Option key={p.id} value={p.id} label={p.full_name || p.name}>{p.full_name || p.name}</Select.Option>
                     ))}
                   </Select>
+                  </Form.Item>
                   <Tooltip title="Új kapcsolattartó hozzáadása">
                     <Button 
                       icon={<PlusCircleOutlined />}

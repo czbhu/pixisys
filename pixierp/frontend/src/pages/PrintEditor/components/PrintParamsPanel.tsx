@@ -136,14 +136,18 @@ interface ClickPriceBreakdown {
   total: number;
   unit_price: number;
   quantity: number;
+  sheet_count: number;
+  total_pieces: number;
 }
 
-interface CostItem {
+export interface CostItem {
   name: string;
   type: 'fixed' | 'click' | 'unit';
   price_per: number;
   units: number;
   total: number;
+  supplier_id?: number | null;
+  supplier_name?: string | null;
 }
 
 interface Props {
@@ -218,9 +222,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
   const [clickPricing, setClickPricing] = useState<ClickPriceBreakdown | null>(null);
   const [selectedPrintSvcId1, setSelectedPrintSvcId1] = useState<number | null>(_cs.svcId1 ?? null);
   const [selectedPrintSvcId2, setSelectedPrintSvcId2] = useState<number | null>(_cs.svcId2 ?? null);
-  // Refs to remember previous service selection before auto-nyomatlan switched it to 0
-  const prevSvcId1Ref = useRef<number | null>(_cs.svcId1 ?? null);
-  const prevSvcId2Ref = useRef<number | null>(_cs.svcId2 ?? null);
+
   const [clickSheetW, setClickSheetW] = useState<number>(_cs.sheetW ?? 330);
   const [clickSheetH, setClickSheetH] = useState<number>(_cs.sheetH ?? 487);
   const [clickBleed, setClickBleed] = useState<number>(_cs.bleed ?? 3);
@@ -347,6 +349,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           width_mm:             params.width_mm,
           height_mm:            params.height_mm,
           quantity:             params.quantity,
+          sheet_count:          params.sheet_count ?? 1,
           print_sides:          clickSides,
           print_service_id_1:   svcId1,
           print_service_id_2:   clickSides === 2 ? svcId2 : null,
@@ -362,14 +365,14 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           cutting_mode:         cuttingMode,
         });
         setClickPricing(res.data);
-        onPriceChange?.(null);
+        onPriceChange?.(res.data);
       } catch {
         setClickPricing(null);
       } finally {
         setCalcLoading(false);
       }
     }, 400);
-  }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.material_id,
+  }, [products, selectedProductId, params.width_mm, params.height_mm, params.quantity, params.sheet_count, params.material_id,
       clickSides, selectedPrintSvcId1, selectedPrintSvcId2, clickSheetW, clickSheetH, clickBleed, clickForceRotate, cuttingMode, flatSelectedIds, flatFinishingIds]); // eslint-disable-line
 
   useEffect(() => {
@@ -520,31 +523,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
     }
   }, [isClickSheet, selectedPrintSvcId1, selectedPrintSvcId2, clickSides, clickSvcOptions]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Reverse sync: when canvas editor sets mode to 'none' (empty side) → save svcId & switch to Nyomatlan (0)
-  //    When mode restored from 'none' (objects added back) → restore previous svcId
-  useEffect(() => {
-    if (!isClickSheet) return;
-    // Side 1
-    if (params.side1_mode === 'none' && selectedPrintSvcId1 !== 0 && selectedPrintSvcId1 !== null) {
-      prevSvcId1Ref.current = selectedPrintSvcId1;
-      setSelectedPrintSvcId1(0);
-    } else if (params.side1_mode !== 'none' && selectedPrintSvcId1 === 0 && prevSvcId1Ref.current != null && prevSvcId1Ref.current !== 0) {
-      setSelectedPrintSvcId1(prevSvcId1Ref.current);
-    }
-    // Side 2
-    if (params.side2_mode === 'none' && selectedPrintSvcId2 !== 0 && selectedPrintSvcId2 !== null) {
-      prevSvcId2Ref.current = selectedPrintSvcId2;
-      setSelectedPrintSvcId2(0);
-    } else if (params.side2_mode !== 'none' && selectedPrintSvcId2 === 0 && prevSvcId2Ref.current != null && prevSvcId2Ref.current !== 0) {
-      setSelectedPrintSvcId2(prevSvcId2Ref.current);
-    }
-  }, [isClickSheet, params.side1_mode, params.side2_mode, selectedPrintSvcId1, selectedPrintSvcId2]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Keep prevSvcId refs in sync when user explicitly changes service selection (not auto-nyomatlan)
-  useEffect(() => {
-    if (selectedPrintSvcId1 != null && selectedPrintSvcId1 !== 0) prevSvcId1Ref.current = selectedPrintSvcId1;
-    if (selectedPrintSvcId2 != null && selectedPrintSvcId2 !== 0) prevSvcId2Ref.current = selectedPrintSvcId2;
-  }, [selectedPrintSvcId1, selectedPrintSvcId2]);
+  // (Reverse sync removed — forward sync svcId→mode is the single source of truth for click-sheet products)
 
   // Estimate per-db cost for a service option using cost_summary from backend
   const estimateSvcCostPerDb = useCallback((svc: ServiceDetail | undefined): number | null => {
@@ -710,6 +689,17 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
               </Radio.Group>
 
               <SectionLabel label="Nyomtatás" />
+              <div style={{ marginBottom: 6 }}>
+                <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Lapok száma</Text>
+                <InputNumber
+                  size="small"
+                  min={1}
+                  max={50}
+                  value={params.sheet_count ?? 1}
+                  onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
+                  style={{ width: '100%' }}
+                />
+              </div>
               <div style={{ marginBottom: 4 }}>
                 <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Cím oldal</Text>
                 <Select
@@ -844,56 +834,18 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           )}
 
           <SectionLabel label="Mennyiség" />
-          {(() => {
-            const unit  = params.quantity_unit  ?? 'db';
-            const input = params.quantity_input ?? params.quantity;
-            const computed = toDb(input, unit, params.sides);
-            const showHint = unit !== 'db' && computed !== input;
-            return (
-              <>
-                <div style={{ display: 'flex', gap: 4, marginBottom: showHint ? 3 : 0 }}>
-                  <InputNumber
-                    size="small"
-                    min={1}
-                    max={100000}
-                    style={{ flex: 1 }}
-                    value={input}
-                    onChange={v => {
-                      if (!v) return;
-                      update({ quantity_input: v, quantity_unit: unit });
-                    }}
-                  />
-                  <Select
-                    size="small"
-                    value={unit}
-                    style={{ width: 72 }}
-                    onChange={(u: 'db' | 'oldal' | 'ív') =>
-                      update({ quantity_unit: u, quantity_input: input })
-                    }
-                  >
-                    <Option value="db">db</Option>
-                    <Option value="oldal">oldal</Option>
-                    <Option value="ív">ív</Option>
-                  </Select>
-                </div>
-                {showHint && (
-                  <Text style={{ fontSize: 10, color: '#888' }}>
-                    = <strong>{computed}</strong> db
-                    {unit === 'oldal' && params.sides === '2' && (
-                      <Tooltip title="2 oldalas nyomtatásnál páros ívszámra kerekítve">
-                        {' '}<InfoCircleOutlined style={{ color: '#1890ff' }} />
-                      </Tooltip>
-                    )}
-                    {unit === 'ív' && params.sides === '2' && computed !== input && (
-                      <Tooltip title="2 oldalas nyomtatásnál páros számra kerekítve">
-                        {' '}<InfoCircleOutlined style={{ color: '#1890ff' }} />
-                      </Tooltip>
-                    )}
-                  </Text>
-                )}
-              </>
-            );
-          })()}
+          <InputNumber
+            size="small"
+            min={1}
+            max={100000}
+            style={{ width: '100%' }}
+            value={params.quantity_input ?? params.quantity}
+            addonAfter="db"
+            onChange={v => {
+              if (!v) return;
+              update({ quantity_input: v, quantity_unit: 'db' });
+            }}
+          />
 
       {/* ── Extrák (termék sablon alapján) ─────────────────────────────── */}
       {selectedProduct && ((selectedProduct.service_groups_1 ?? []).some(g => g.length > 0) ||
@@ -1026,7 +978,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
                     <Title level={5} style={{ margin: '2px 0 0' }}>{fmt(activeClickPricing.total)}</Title>
                   </>
                 )}
-                <Text style={{ fontSize: 10, color: '#aaa' }}>{activeClickPricing.quantity} db · {activeClickPricing.sheets_needed} ív · {activeClickPricing.clicks_total} klikk</Text>
+                <Text style={{ fontSize: 10, color: '#aaa' }}>{activeClickPricing.quantity} db{(activeClickPricing.sheet_count ?? 1) > 1 ? ` × ${activeClickPricing.sheet_count} lap = ${activeClickPricing.total_pieces} nyomat` : ''} · {activeClickPricing.sheets_needed} ív · {activeClickPricing.clicks_total} klikk</Text>
               </>
             );
           })() : selectedPrintSvcId1 ? (
@@ -1182,7 +1134,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
                       </>
                     );
                   })()}
-                  <div>Fedezet: <strong>{activeClickPricing.margin_pct}%</strong></div>
                   <Divider style={{ margin: '4px 0' }} />
                   <div style={{ fontWeight: 600 }}>Összesen: {fmt(activeClickPricing.total)}</div>
                   <div>Egységár: {activeClickPricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
@@ -1232,7 +1183,6 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
                       <div>Extrák: <strong>{fmt(activePricing.service_cost ?? 0)}</strong></div>
                     </>
                   )}
-                  <div>Fedezet: <strong>{activePricing.margin_pct}%</strong></div>
                   <Divider style={{ margin: '4px 0' }} />
                   <div style={{ fontWeight: 600 }}>Összesen: {fmt(activePricing.total)}</div>
                   <div>Egységár: {activePricing.unit_price?.toLocaleString('hu-HU', { minimumFractionDigits: 2 })} Ft/db</div>
@@ -1304,7 +1254,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           const bestFit = itemsW * itemsH;
           const cols = bestFit > 0 ? itemsW : 0;
           const rows = bestFit > 0 ? itemsH : 0;
-          const sheetsNeeded = bestFit > 0 ? Math.ceil(params.quantity / bestFit) : 0;
+          const totalPieces = params.quantity * (params.sheet_count ?? 1);
+          const sheetsNeeded = bestFit > 0 ? Math.ceil(totalPieces / bestFit) : 0;
           const clicks = sheetsNeeded * clickSides;
           return (
             <div>
@@ -1398,7 +1349,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
                     </Col>
                     <Col span={8} style={{ textAlign: 'center', background: '#e6f4ff', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#1677ff' }}>{sheetsNeeded}</div>
-                      <div style={{ fontSize: 11, color: '#666' }}>ív ({params.quantity} db)</div>
+                      <div style={{ fontSize: 11, color: '#666' }}>ív ({totalPieces} nyomat)</div>
                     </Col>
                     <Col span={8} style={{ textAlign: 'center', background: '#fff7e6', borderRadius: 8, padding: '12px 8px' }}>
                       <div style={{ fontSize: 28, fontWeight: 700, color: '#fa8c16' }}>{clicks}</div>
@@ -1411,11 +1362,11 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
 
                   {/* ── Produkciós ívek vizualizáció ─────────────────── */}
                   {(() => {
-                    const remainingOnLast = params.quantity % bestFit;
+                    const remainingOnLast = totalPieces % bestFit;
                     const fullSheets = remainingOnLast === 0 ? sheetsNeeded : sheetsNeeded - 1;
                     const partialItems = remainingOnLast;
                     const partialPct = partialItems > 0 ? Math.round(partialItems / bestFit * 100) : 0;
-                    const wasteItems = sheetsNeeded * bestFit - params.quantity;
+                    const wasteItems = sheetsNeeded * bestFit - totalPieces;
 
                     const cellW = rotated ? ph : pw;
                     const cellH = rotated ? pw : ph;

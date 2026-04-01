@@ -670,7 +670,12 @@ const Warehouses: React.FC = () => {
                                             <Button
                                                 type="link"
                                                 icon={<DatabaseOutlined />}
-                                                onClick={() => loadInventory({ warehouse: selectedWarehouse?.id, shelf: record.id }, `Készlet: ${selectedWarehouse?.name} - ${record.name}`)}
+                                                onClick={() => {
+                                                    const params = new URLSearchParams();
+                                                    if (selectedWarehouse?.id) params.set('warehouse', String(selectedWarehouse.id));
+                                                    params.set('shelf', String(record.id));
+                                                    window.open(`/warehouse/inventory?${params.toString()}`, '_blank');
+                                                }}
                                                 title="Készlet"
                                             >
                                                 Készlet

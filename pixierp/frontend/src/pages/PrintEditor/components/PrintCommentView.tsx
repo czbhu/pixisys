@@ -212,6 +212,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   // Color detection
   const [cursorColor, setCursorColor] = useState<{ r: number; g: number; b: number } | null>(null);
   const [cursorSpotName, setCursorSpotName] = useState<string | null>(null);
+  const [cursorElementCS, setCursorElementCS] = useState<string | null>(null);
   const [pageColorSpaces, setPageColorSpaces] = useState<Set<string>[]>([]);
   const pageCanvasRefs = useRef<HTMLCanvasElement[]>([]);
 
@@ -400,7 +401,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
           }
         }
         elemsPerPage.push(elems);
-        if (elems.length > 0) console.log(`Page ${i}: ${elems.length} elements detected`);
+        if (elems.length > 0) console.log(`Page ${i}: ${elems.length} elements detected`, elems.map(e => ({ type: e.type, text: e.text, cs: e.colorspace })));
 
         infos.push({ widthPt: pageW, heightPt: pageH, trimBox });
         setLoadingProgress(20 + Math.round((i / totalPages) * 75));
@@ -648,20 +649,35 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       }
     }
 
-    // Check if cursor is over a spot-color element
+    // Check if cursor is over a spot-color element and track element colorspace
     if (pos) {
       const els = pageElements[pageNum - 1];
       let foundSpot: string | null = null;
+      let foundCS: string | null = null;
       if (els) {
-        for (let i = els.length - 1; i >= 0; i--) {
-          const el = els[i];
-          if (el.spot && el.spot_name && pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h) {
-            foundSpot = el.spot_name;
-            break;
+        // Collect all elements under cursor, pick best match (same priority as click)
+        const hits: PdfElement[] = [];
+        for (const el of els) {
+          if (pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h) {
+            hits.push(el);
           }
+        }
+        // Sort: image > text > vector, then smallest area
+        const typePriority: Record<string, number> = { image: 0, text: 1, vector: 2 };
+        hits.sort((a, b) => {
+          const pa = typePriority[a.type] ?? 9;
+          const pb = typePriority[b.type] ?? 9;
+          if (pa !== pb) return pa - pb;
+          return (a.w * a.h) - (b.w * b.h);
+        });
+        for (const el of hits) {
+          if (!foundCS && el.colorspace) foundCS = el.colorspace;
+          if (!foundSpot && el.spot && el.spot_name) foundSpot = el.spot_name;
+          if (foundCS || foundSpot) break;
         }
       }
       setCursorSpotName(foundSpot);
+      setCursorElementCS(foundCS);
     }
 
     if (activeTool === 'pointer') return;
@@ -769,7 +785,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     setNewComment('');
   };
 
-  const handleMouseLeave = () => { setCursorPos(null); setCursorColor(null); setCursorSpotName(null); };
+  const handleMouseLeave = () => { setCursorPos(null); setCursorColor(null); setCursorSpotName(null); setCursorElementCS(null); };
 
   // ── Save / delete / resolve ─────────────────────────────────────────────────
   const handleSaveComment = async () => {
@@ -1506,17 +1522,19 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                       background: `rgb(${cursorColor.r},${cursorColor.g},${cursorColor.b})`,
                       border: '1px solid #ccc', flexShrink: 0,
                     }} />
-                    {hasCMYK ? (() => {
+                    {(() => {
                       if (cursorSpotName) {
                         return <span style={{ color: '#722ed1', fontWeight: 600 }}>{cursorSpotName}</span>;
                       }
-                      const cmyk = rgbToCmyk(cursorColor.r, cursorColor.g, cursorColor.b);
-                      return <span>C:{cmyk.c} M:{cmyk.m} Y:{cmyk.y} K:{cmyk.k}</span>;
-                    })() : (
-                      cursorSpotName
-                        ? <span style={{ color: '#722ed1', fontWeight: 600 }}>{cursorSpotName}</span>
-                        : <span>R:{cursorColor.r} G:{cursorColor.g} B:{cursorColor.b}</span>
-                    )}
+                      // Use element-level CS if available, otherwise fall back to page-level
+                      // Gray is K-only in CMYK, so only RGB elements get RGB display
+                      const showCMYK = cursorElementCS ? cursorElementCS !== 'RGB' : hasCMYK;
+                      if (showCMYK) {
+                        const cmyk = rgbToCmyk(cursorColor.r, cursorColor.g, cursorColor.b);
+                        return <span>C:{cmyk.c} M:{cmyk.m} Y:{cmyk.y} K:{cmyk.k}</span>;
+                      }
+                      return <span>R:{cursorColor.r} G:{cursorColor.g} B:{cursorColor.b}</span>;
+                    })()}
                   </>
                 )}
               </span>
