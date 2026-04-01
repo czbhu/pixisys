@@ -18,6 +18,16 @@ from .serializers import (
 )
 
 
+def _get_raw_pdf_box(doc, page_xref, box_name):
+    value = doc.xref_get_key(page_xref, box_name)
+    if not value:
+        return None
+    numbers = re.findall(r'[-+]?\d*\.?\d+', value)
+    if len(numbers) != 4:
+        return None
+    return tuple(map(float, numbers))
+
+
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
@@ -967,6 +977,8 @@ class PdfAnalyzeView(APIView):
             for page_num in range(doc.page_count):
                 page = doc[page_num]
                 mb = page.mediabox  # Rect(x0, y0, x1, y1)
+                raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
+                raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
 
                 mediabox_mm = {
                     'width': round(mb.width * self.PT_TO_MM, 1),
@@ -978,21 +990,28 @@ class PdfAnalyzeView(APIView):
                 trimbox_pt = None
                 try:
                     tb = page.trimbox
-                    if tb and (tb.width > 0 and tb.height > 0):
+                    if tb and raw_crop and (tb.width > 0 and tb.height > 0):
+                        crop_x0, crop_y0, crop_x1, crop_y1 = raw_crop
+                        trim_x0 = float(tb.x0)
+                        trim_y0 = float(tb.y0)
+                        trim_x1 = float(tb.x1)
+                        trim_y1 = float(tb.y1)
+                        trim_w = trim_x1 - trim_x0
+                        trim_h = trim_y1 - trim_y0
                         # Only report TrimBox if it differs from MediaBox
                         if (abs(tb.width - mb.width) > 0.5 or abs(tb.height - mb.height) > 0.5
                                 or abs(tb.x0 - mb.x0) > 0.5 or abs(tb.y0 - mb.y0) > 0.5):
                             trimbox_mm = {
-                                'x': round((tb.x0 - mb.x0) * self.PT_TO_MM, 1),
-                                'y': round((tb.y0 - mb.y0) * self.PT_TO_MM, 1),
-                                'width': round(tb.width * self.PT_TO_MM, 1),
-                                'height': round(tb.height * self.PT_TO_MM, 1),
+                                'x': round((trim_x0 - crop_x0) * self.PT_TO_MM, 1),
+                                'y': round((crop_y1 - trim_y1) * self.PT_TO_MM, 1),
+                                'width': round(trim_w * self.PT_TO_MM, 1),
+                                'height': round(trim_h * self.PT_TO_MM, 1),
                             }
                             trimbox_pt = {
-                                'x': round(tb.x0 - mb.x0, 2),
-                                'y': round(tb.y0 - mb.y0, 2),
-                                'w': round(tb.width, 2),
-                                'h': round(tb.height, 2),
+                                'x': round(trim_x0 - crop_x0, 2),
+                                'y': round(crop_y1 - trim_y1, 2),
+                                'w': round(trim_w, 2),
+                                'h': round(trim_h, 2),
                             }
                 except Exception:
                     pass
@@ -1983,23 +2002,17 @@ class PdfCropView(APIView):
                 # Only crop the specified page (1-indexed), or all if 0
                 if crop_page > 0 and page.number != (crop_page - 1):
                     continue
-                mb = page.mediabox  # fitz coords (top-down, y0=0 at top, normalized)
-                page_h = mb.height  # fitz page height in pt
-                page_w = mb.width   # fitz page width in pt
+                raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
+                raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
+                if not raw_crop or not raw_media:
+                    continue
 
-                # Read raw PDF MediaBox from xref (bottom-up PDF user space)
-                # We need this because xref_set_key writes raw PDF coords,
-                # and fitz normalizes mb to (0,0) even if raw y0 != 0.
-                import re as _re
-                raw_mb_str = doc.xref_get_key(page.xref, "MediaBox")
-                raw_nums = _re.findall(r'[-+]?\d*\.?\d+', raw_mb_str)
-                if len(raw_nums) == 4:
-                    raw_x0, raw_y0, raw_x1, raw_y1 = map(float, raw_nums)
-                else:
-                    raw_x0, raw_y0 = 0.0, 0.0
-                    raw_x1, raw_y1 = mb.x1, mb.y1
+                crop_x0, crop_y0, crop_x1, crop_y1 = raw_crop
+                page_w = crop_x1 - crop_x0
+                page_h = crop_y1 - crop_y0
 
-                # Clamp crop values (frontend sends fitz/top-down coords in pt)
+                # Clamp crop values relative to the currently visible page area
+                # (which matches CropBox / pdf.js page viewport), not MediaBox.
                 cx_c = max(0, min(cx, page_w))
                 cy_c = max(0, min(cy, page_h))
                 cw_c = max(0, min(cw, page_w - cx_c))
@@ -2007,19 +2020,19 @@ class PdfCropView(APIView):
                 if cw_c <= 0 or ch_c <= 0:
                     continue
 
-                # Convert from fitz coords (top-down, fitz y=0 = raw PDF y=raw_y1)
-                # to raw PDF user space coords (bottom-up).
-                # fitz y → raw PDF y:  pdf_y = raw_y1 - fitz_y
-                new_x0 = raw_x0 + cx_c
-                new_x1 = raw_x0 + cx_c + cw_c
-                new_y1 = raw_y1 - cy_c           # top of crop area in raw PDF Y
-                new_y0 = raw_y1 - (cy_c + ch_c)  # bottom of crop area in raw PDF Y
+                # Convert top-down coordinates from the visible CropBox space
+                # into raw PDF bottom-up coordinates.
+                new_x0 = crop_x0 + cx_c
+                new_x1 = crop_x0 + cx_c + cw_c
+                new_y1 = crop_y1 - cy_c
+                new_y0 = crop_y1 - (cy_c + ch_c)
 
                 # Clamp to raw PDF bounds
-                new_x0 = max(raw_x0, min(raw_x1, new_x0))
-                new_x1 = max(raw_x0, min(raw_x1, new_x1))
-                new_y0 = max(raw_y0, min(raw_y1, new_y0))
-                new_y1 = max(raw_y0, min(raw_y1, new_y1))
+                media_x0, media_y0, media_x1, media_y1 = raw_media
+                new_x0 = max(media_x0, min(media_x1, new_x0))
+                new_x1 = max(media_x0, min(media_x1, new_x1))
+                new_y0 = max(media_y0, min(media_y1, new_y0))
+                new_y1 = max(media_y0, min(media_y1, new_y1))
 
                 if new_x1 <= new_x0 or new_y1 <= new_y0:
                     continue
