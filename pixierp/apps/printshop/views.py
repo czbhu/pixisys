@@ -1000,27 +1000,26 @@ class PdfAnalyzeView(APIView):
                 trimbox_mm = None
                 trimbox_pt = None
                 try:
-                    tb = page.trimbox
-                    if tb and raw_crop and (tb.width > 0 and tb.height > 0):
+                    raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox')
+                    if raw_trim and raw_crop:
                         crop_x0, crop_y0, crop_x1, crop_y1 = raw_crop
-                        trim_x0 = float(tb.x0)
-                        trim_y0 = float(tb.y0)
-                        trim_x1 = float(tb.x1)
-                        trim_y1 = float(tb.y1)
+                        trim_x0, trim_y0, trim_x1, trim_y1 = raw_trim
                         trim_w = trim_x1 - trim_x0
                         trim_h = trim_y1 - trim_y0
-                        # Only report TrimBox if it differs from MediaBox
-                        if (abs(tb.width - mb.width) > 0.5 or abs(tb.height - mb.height) > 0.5
-                                or abs(tb.x0 - mb.x0) > 0.5 or abs(tb.y0 - mb.y0) > 0.5):
+                        crop_w = crop_x1 - crop_x0
+                        crop_h = crop_y1 - crop_y0
+                        # Only report TrimBox if it differs from the visible page box (CropBox)
+                        if (abs(trim_w - crop_w) > 0.5 or abs(trim_h - crop_h) > 0.5
+                                or abs(trim_x0 - crop_x0) > 0.5 or abs(trim_y0 - crop_y0) > 0.5):
                             trimbox_mm = {
                                 'x': round((trim_x0 - crop_x0) * self.PT_TO_MM, 1),
-                                'y': round((trim_y0 - crop_y0) * self.PT_TO_MM, 1),
+                                'y': round((crop_y1 - trim_y1) * self.PT_TO_MM, 1),
                                 'width': round(trim_w * self.PT_TO_MM, 1),
                                 'height': round(trim_h * self.PT_TO_MM, 1),
                             }
                             trimbox_pt = {
                                 'x': round(trim_x0 - crop_x0, 2),
-                                'y': round(trim_y0 - crop_y0, 2),
+                                'y': round(crop_y1 - trim_y1, 2),
                                 'w': round(trim_w, 2),
                                 'h': round(trim_h, 2),
                             }
