@@ -83,6 +83,14 @@ interface Props {
   locked?: boolean;
   authorName: string;
   params?: PrintParams;
+  shareToken?: string;
+  canEdit?: boolean;
+  canComment?: boolean;
+  canExport?: boolean;
+  initialPdfUrl?: string | null;
+  hideUpload?: boolean;
+  onPdfFileChange?: (file: File | null) => void;
+  onAnnotationsChange?: (annotations: CommentAnnotation[]) => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -169,7 +177,44 @@ const ensurePdfWorkerSrc = async (pdfjs: any): Promise<void> => {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = false, authorName, params }) => {
+const PrintCommentView: React.FC<Props> = ({
+  orderId,
+  itemId,
+  isAdmin,
+  locked = false,
+  authorName,
+  params,
+  shareToken,
+  canEdit,
+  canComment,
+  canExport,
+  initialPdfUrl,
+  hideUpload = false,
+  onPdfFileChange,
+  onAnnotationsChange,
+}) => {
+  const effectiveCanEdit = canEdit ?? isAdmin;
+  const effectiveCanComment = canComment ?? true;
+  const effectiveCanExport = canExport ?? true;
+  const canManagePdf = effectiveCanEdit;
+  const canManageComments = effectiveCanEdit;
+  const commentApiBase = shareToken
+    ? `/printshop/public-preview/${shareToken}/comments/`
+    : (itemId ? `printshop/order-items/${itemId}/comments/` : null);
+  const allowCommentPlacement = effectiveCanEdit || effectiveCanComment;
+  const visibleToolOptions = [
+    { value: 'pointer', label: <Tooltip title="Mutató"><SelectOutlined /></Tooltip> },
+    ...(allowCommentPlacement ? [
+      { value: 'area', label: 'Terület' },
+      { value: 'pin', label: 'Jelölő' },
+      { value: 'arrow', label: 'Nyíl' },
+    ] : []),
+    ...(effectiveCanEdit ? [
+      { value: 'measure', label: 'Mérő' },
+      { value: 'guideline', label: <Tooltip title="Segédvonal"><DragOutlined /></Tooltip> },
+      { value: 'crop', label: <Tooltip title="Croppolás"><ScissorOutlined /></Tooltip> },
+    ] : []),
+  ];
   // PDF state
   const [pdfPages, setPdfPages] = useState<string[]>([]);
   const [pageInfos, setPageInfos] = useState<PdfPageInfo[]>([]);
@@ -223,7 +268,6 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   // Guideline state
   const [guidelines, setGuidelines] = useState<Guideline[]>([]);
-  const [draggingGuide, setDraggingGuide] = useState<number | null>(null);
   let guideIdCounter = useRef(1);
 
   // Crop state
@@ -273,24 +317,60 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   // ── Load annotations ────────────────────────────────────────────────────────
   const loadAnnotations = useCallback(async () => {
-    if (!itemId) return;
+    if (!commentApiBase) return;
     setLoadingAnnotations(true);
     try {
-      const r = await api.get(`printshop/order-items/${itemId}/comments/`);
+      const r = await api.get(commentApiBase);
       setAnnotations(r.data ?? []);
     } catch {
       setAnnotations([]);
     } finally {
       setLoadingAnnotations(false);
     }
-  }, [itemId]);
+  }, [commentApiBase]);
 
   useEffect(() => { loadAnnotations(); }, [loadAnnotations]);
+
+  useEffect(() => {
+    onAnnotationsChange?.(annotations);
+  }, [annotations, onAnnotationsChange]);
+
+  useEffect(() => {
+    if (effectiveCanEdit) return;
+    if (activeTool === 'measure' || activeTool === 'guideline' || activeTool === 'crop') {
+      setActiveTool('pointer');
+    }
+  }, [activeTool, effectiveCanEdit]);
+
+  useEffect(() => {
+    if (allowCommentPlacement) return;
+    if (activeTool === 'area' || activeTool === 'pin' || activeTool === 'arrow') {
+      setActiveTool('pointer');
+      setPendingShape(null);
+      setNewComment('');
+      setDrawStart(null);
+      setDrawing(false);
+    }
+  }, [activeTool, allowCommentPlacement]);
 
   // ── Auto-load cached PDF on mount ───────────────────────────────────────────
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      if (initialPdfUrl) {
+        try {
+          const response = await fetch(initialPdfUrl);
+          if (!response.ok) throw new Error('PDF fetch failed');
+          const blob = await response.blob();
+          if (cancelled) return;
+          const file = new File([blob], 'shared-preview.pdf', { type: 'application/pdf' });
+          renderPdf(file, true);
+          return;
+        } catch {
+          if (!cancelled) message.error('A megosztott PDF nem tölthető be');
+        }
+      }
+      if (shareToken) return;
       const cached = await loadPdfFromIDB();
       if (cached && !cancelled) {
         const file = new File([cached.buffer], cached.name, { type: 'application/pdf' });
@@ -298,7 +378,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
       }
     })();
     return () => { cancelled = true; };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [initialPdfUrl, shareToken]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── PDF rendering ────────────────────────────────────────────────────────────
   const renderPdf = useCallback(async (file: File, skipCache?: boolean) => {
@@ -313,6 +393,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     setCurrentPage(1);
     setCropRect(null);
     pdfFileRef.current = file;
+    onPdfFileChange?.(file);
     try {
       const arrayBuffer = await file.arrayBuffer();
 
@@ -556,6 +637,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     setMeasureLines(snap.measureLines);
     setAnnotations(snap.annotations);
     pdfFileRef.current = snap.pdfFile;
+    onPdfFileChange?.(snap.pdfFile);
     pageCanvasRefs.current = snap.canvases;
     setTimeout(() => { skipHistoryRef.current = false; }, 0);
   }, []);
@@ -705,6 +787,10 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   const handleMouseDown = (e: React.MouseEvent, pageNum: number) => {
     if (!pdfPages.length) return;
+    const canStartComment = activeTool === 'area' || activeTool === 'pin' || activeTool === 'arrow';
+    const canStartEdit = activeTool === 'measure' || activeTool === 'guideline' || activeTool === 'crop';
+    if (canStartComment && !allowCommentPlacement) return;
+    if (canStartEdit && !effectiveCanEdit) return;
     e.preventDefault();
     const pos = getRelPos(e);
     if (!pos) return;
@@ -790,7 +876,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
   // ── Save / delete / resolve ─────────────────────────────────────────────────
   const handleSaveComment = async () => {
-    if (!pendingShape || !newComment.trim()) return;
+    if (!allowCommentPlacement || !pendingShape || !newComment.trim()) return;
     setSavingComment(true);
     const annotation: any = {
       x: pendingShape.x, y: pendingShape.y, w: pendingShape.w, h: pendingShape.h,
@@ -800,8 +886,8 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
     };
     if (pendingShape.type === 'arrow') { annotation.x2 = pendingShape.x2; annotation.y2 = pendingShape.y2; }
     try {
-      if (itemId) {
-        const r = await api.post(`printshop/order-items/${itemId}/comments/`, annotation);
+      if (commentApiBase) {
+        const r = await api.post(commentApiBase, annotation);
         pushHistory();
         setAnnotations(prev => [...prev, r.data]);
       } else {
@@ -815,8 +901,9 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   };
 
   const handleDeleteAnnotation = async (id: number) => {
+    if (!canManageComments) return;
     try {
-      if (itemId) await api.delete(`printshop/order-items/${itemId}/comments/${id}/`);
+      if (commentApiBase) await api.delete(`${commentApiBase}${id}/`);
       pushHistory();
       setAnnotations(prev => prev.filter(a => a.id !== id));
       if (selectedId === id) setSelectedId(null);
@@ -824,8 +911,9 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   };
 
   const handleResolve = async (id: number) => {
+    if (!canManageComments) return;
     try {
-      if (itemId) await api.patch(`printshop/order-items/${itemId}/comments/${id}/`, { resolved: true });
+      if (commentApiBase) await api.patch(`${commentApiBase}${id}/`, { resolved: true });
       pushHistory();
       setAnnotations(prev => prev.map(a => a.id === id ? { ...a, resolved: true } : a));
     } catch { message.error('Hiba'); }
@@ -1198,17 +1286,18 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                       label: 'Oldal törlése',
                       icon: <DeleteOutlined />,
                       danger: true,
-                      disabled: pdfPages.length <= 1,
+                      disabled: !canManagePdf || pdfPages.length <= 1,
                     },
                   ],
                   onClick: ({ key }) => {
-                    if (key === 'delete') handleDeletePage(idx);
+                    if (key === 'delete' && canManagePdf) handleDeletePage(idx);
                   },
                 }}
               >
               <div
-                draggable
+                draggable={canManagePdf}
                 onDragStart={e => {
+                  if (!canManagePdf) return;
                   dragPageIdx.current = idx;
                   e.dataTransfer.effectAllowed = 'move';
                   // Transparent drag image — we show our own indicator
@@ -1216,12 +1305,14 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                   e.dataTransfer.setDragImage(el, el.offsetWidth / 2, 20);
                 }}
                 onDragOver={e => {
+                  if (!canManagePdf) return;
                   e.preventDefault();
                   e.dataTransfer.dropEffect = 'move';
                   if (dragOverIdx !== idx) setDragOverIdx(idx);
                 }}
                 onDragLeave={() => { if (dragOverIdx === idx) setDragOverIdx(null); }}
                 onDrop={e => {
+                  if (!canManagePdf) return;
                   e.preventDefault();
                   setDragOverIdx(null);
                   if (dragPageIdx.current !== null && dragPageIdx.current !== idx) {
@@ -1232,7 +1323,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                 onDragEnd={() => { dragPageIdx.current = null; setDragOverIdx(null); }}
                 onClick={() => scrollToPage(idx + 1)}
                 style={{
-                  cursor: 'grab', borderRadius: 4, overflow: 'hidden', flexShrink: 0,
+                  cursor: canManagePdf ? 'grab' : 'pointer', borderRadius: 4, overflow: 'hidden', flexShrink: 0,
                   borderLeft: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
                   borderRight: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
                   borderBottom: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
@@ -1269,55 +1360,53 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
         {/* Toolbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
-          <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
-            <Button icon={<FilePdfOutlined />} size="small">PDF betöltése</Button>
-          </Upload>
+          {!hideUpload && canManagePdf && (
+            <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
+              <Button icon={<FilePdfOutlined />} size="small">PDF betöltése</Button>
+            </Upload>
+          )}
           {pdfPages.length > 0 && (
             <>
-              <Tooltip title="Visszavonás (Ctrl+Z)">
-                <Button size="small" icon={<UndoOutlined />} onClick={undo} disabled={historyLen === 0} />
-              </Tooltip>
-              <Tooltip title="Újra (Ctrl+Y)">
-                <Button size="small" icon={<RedoOutlined />} onClick={redo} disabled={redoLen === 0} />
-              </Tooltip>
-              <Tooltip title="Mindent töröl">
-                <Button size="small" danger icon={<ClearOutlined />} onClick={() => {
-                  Modal.confirm({
-                    title: 'Mindent töröl',
-                    content: 'Biztosan törölni szeretnéd az összes annotációt, segédvonalat, mérést és cropot?',
-                    okText: 'Törlés',
-                    cancelText: 'Mégse',
-                    okButtonProps: { danger: true },
-                    onOk: () => {
-                      pushHistory();
-                      setAnnotations([]);
-                      setGuidelines([]);
-                      setMeasureLines([]);
-                      setCropRect(null);
-                      setActiveMeasure(null);
-                      setMeasuring(false);
-                      setMeasuringStart(null);
-                      setSelectedElement(null);
-                      setActiveTool('pointer');
-                      message.success('Minden törölve');
-                    },
-                  });
-                }} />
-              </Tooltip>
-              <Divider type="vertical" />
+              {canManagePdf && (
+                <>
+                  <Tooltip title="Visszavonás (Ctrl+Z)">
+                    <Button size="small" icon={<UndoOutlined />} onClick={undo} disabled={historyLen === 0} />
+                  </Tooltip>
+                  <Tooltip title="Újra (Ctrl+Y)">
+                    <Button size="small" icon={<RedoOutlined />} onClick={redo} disabled={redoLen === 0} />
+                  </Tooltip>
+                  <Tooltip title="Mindent töröl">
+                    <Button size="small" danger icon={<ClearOutlined />} onClick={() => {
+                      Modal.confirm({
+                        title: 'Mindent töröl',
+                        content: 'Biztosan törölni szeretnéd az összes annotációt, segédvonalat, mérést és cropot?',
+                        okText: 'Törlés',
+                        cancelText: 'Mégse',
+                        okButtonProps: { danger: true },
+                        onOk: () => {
+                          pushHistory();
+                          setAnnotations([]);
+                          setGuidelines([]);
+                          setMeasureLines([]);
+                          setCropRect(null);
+                          setActiveMeasure(null);
+                          setMeasuring(false);
+                          setMeasuringStart(null);
+                          setSelectedElement(null);
+                          setActiveTool('pointer');
+                          message.success('Minden törölve');
+                        },
+                      });
+                    }} />
+                  </Tooltip>
+                  <Divider type="vertical" />
+                </>
+              )}
               <Segmented
                 size="small"
                 value={activeTool}
                 onChange={v => { setActiveTool(v as CommentToolType); setMeasureLines([]); setActiveMeasure(null); setMeasuring(false); setMeasuringStart(null); setSelectedElement(null); }}
-                options={[
-                  { value: 'pointer', label: <Tooltip title="Mutató"><SelectOutlined /></Tooltip> },
-                  { value: 'area', label: 'Terület' },
-                  { value: 'pin', label: 'Jelölő' },
-                  { value: 'arrow', label: 'Nyíl' },
-                  { value: 'measure', label: 'Mérő' },
-                  { value: 'guideline', label: <Tooltip title="Segédvonal"><DragOutlined /></Tooltip> },
-                  { value: 'crop', label: <Tooltip title="Croppolás"><ScissorOutlined /></Tooltip> },
-                ]}
+                options={visibleToolOptions}
               />
               <Divider type="vertical" />
               <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
@@ -1329,21 +1418,25 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                 </Tooltip>
                 <Tooltip title="Nagyítás"><Button size="small" icon={<ZoomInOutlined />} onClick={zoomIn} disabled={zoomLevel >= ZOOM_MAX} /></Tooltip>
               </div>
-              <Divider type="vertical" />
-              <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
-                if (fileList && fileList.length > 0 && file === fileList[fileList.length - 1]) {
-                  handleMerge(fileList as unknown as File[]);
-                }
-                return false;
-              }}>
-                <Tooltip title="PDF összefűzés"><Button icon={<MergeCellsOutlined />} size="small" loading={merging}>Összefűzés</Button></Tooltip>
-              </Upload>
-              <Tooltip title="Export (színterek megőrzésével)">
-                <Button icon={<ExportOutlined />} size="small" onClick={handleExport} loading={exporting}>Export</Button>
-              </Tooltip>
+              {(canManagePdf || effectiveCanExport) && <Divider type="vertical" />}
+              {canManagePdf && (
+                <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
+                  if (fileList && fileList.length > 0 && file === fileList[fileList.length - 1]) {
+                    handleMerge(fileList as unknown as File[]);
+                  }
+                  return false;
+                }}>
+                  <Tooltip title="PDF összefűzés"><Button icon={<MergeCellsOutlined />} size="small" loading={merging}>Összefűzés</Button></Tooltip>
+                </Upload>
+              )}
+              {effectiveCanExport && (
+                <Tooltip title="Export (színterek megőrzésével)">
+                  <Button icon={<ExportOutlined />} size="small" onClick={handleExport} loading={exporting}>Export</Button>
+                </Tooltip>
+              )}
             </>
           )}
-          {(measureLines.length > 0 || (activeMeasure && activeMeasureDist != null)) && (
+          {effectiveCanEdit && (measureLines.length > 0 || (activeMeasure && activeMeasureDist != null)) && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <ColumnWidthOutlined style={{ color: '#fa8c16' }} />
               {measureLines.map((ml, idx) => {
@@ -1368,7 +1461,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
         </div>
 
         {/* Guideline sub-toolbar */}
-        {activeTool === 'guideline' && pdfPages.length > 0 && (
+        {effectiveCanEdit && activeTool === 'guideline' && pdfPages.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6, flexShrink: 0, fontSize: 11, color: '#555' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
               <DragOutlined style={{ color: '#1890ff' }} />
@@ -1430,7 +1523,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
         )}
 
         {/* Crop sub-toolbar */}
-        {activeTool === 'crop' && pdfPages.length > 0 && (
+        {effectiveCanEdit && activeTool === 'crop' && pdfPages.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: 11, color: '#555', flexWrap: 'wrap' }}>
             <ScissorOutlined style={{ color: '#fa541c' }} />
             <span style={{ fontSize: 10, color: '#888' }}>X:</span>
@@ -1594,15 +1687,25 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               <Typography.Text type="secondary" style={{ fontSize: 12 }}>PDF betöltése… {loadingProgress}%</Typography.Text>
             </div>
           ) : pdfPages.length === 0 ? (
-            <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
+            !hideUpload && canManagePdf ? (
+              <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
+                <div style={{
+                  border: '2px dashed #d9d9d9', borderRadius: 8, padding: 48,
+                  cursor: 'pointer', color: '#999', textAlign: 'center', background: '#fff',
+                }}>
+                  <FilePdfOutlined style={{ fontSize: 48, marginBottom: 12 }} />
+                  <div>Húzz ide egy PDF fájlt, vagy kattints a betöltéshez</div>
+                </div>
+              </Upload>
+            ) : (
               <div style={{
                 border: '2px dashed #d9d9d9', borderRadius: 8, padding: 48,
-                cursor: 'pointer', color: '#999', textAlign: 'center', background: '#fff',
+                color: '#999', textAlign: 'center', background: '#fff',
               }}>
                 <FilePdfOutlined style={{ fontSize: 48, marginBottom: 12 }} />
-                <div>Húzz ide egy PDF fájlt, vagy kattints a betöltéshez</div>
+                <div>Nincs elérhető PDF preview ehhez a megosztáshoz</div>
               </div>
-            </Upload>
+            )
           ) : (
             pdfPages.map((pageSrc, pageIdx) => {
               const pageNum = pageIdx + 1;
@@ -1803,7 +1906,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                                 padding: 10, minWidth: 220, maxWidth: 280,
                                 border: `1.5px solid ${a.color}`,
                               }}>
-                                <CommentPopup a={a} isAdmin={isAdmin} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
+                                <CommentPopup a={a} canManageComments={canManageComments} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
                               </div>
                             )}
                           </div>
@@ -1865,7 +1968,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                                 border: `1.5px solid ${a.color}`,
                                 transform: 'translate(-50%, 8px)',
                               }}>
-                                <CommentPopup a={a} isAdmin={isAdmin} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
+                                <CommentPopup a={a} canManageComments={canManageComments} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
                               </div>
                             )}
                           </React.Fragment>
@@ -1900,7 +2003,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                               padding: 10, minWidth: 220, maxWidth: 280,
                               border: `1.5px solid ${a.color}`,
                             }}>
-                              <CommentPopup a={a} isAdmin={isAdmin} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
+                              <CommentPopup a={a} canManageComments={canManageComments} onResolve={handleResolve} onDelete={handleDeleteAnnotation} />
                             </div>
                           )}
                         </div>
@@ -2254,9 +2357,9 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
 
 // ── Popup content ─────────────────────────────────────────────────────────────
 const CommentPopup: React.FC<{
-  a: CommentAnnotation; isAdmin: boolean;
+  a: CommentAnnotation; canManageComments: boolean;
   onResolve: (id: number) => void; onDelete: (id: number) => void;
-}> = ({ a, isAdmin, onResolve, onDelete }) => (
+}> = ({ a, canManageComments, onResolve, onDelete }) => (
   <>
     <div style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'flex-start' }}>
       <Avatar size={22} style={{ background: a.color, flexShrink: 0 }}>{a.author.charAt(0).toUpperCase()}</Avatar>
@@ -2267,8 +2370,8 @@ const CommentPopup: React.FC<{
     </div>
     <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{a.text}</Text>
     <div style={{ display: 'flex', gap: 4, marginTop: 8, justifyContent: 'flex-end' }}>
-      {!a.resolved && <Tooltip title="Megoldva"><Button size="small" icon={<CheckOutlined />} onClick={() => onResolve(a.id)} /></Tooltip>}
-      {isAdmin && <Tooltip title="Törlés"><Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(a.id)} /></Tooltip>}
+      {canManageComments && !a.resolved && <Tooltip title="Megoldva"><Button size="small" icon={<CheckOutlined />} onClick={() => onResolve(a.id)} /></Tooltip>}
+      {canManageComments && <Tooltip title="Törlés"><Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(a.id)} /></Tooltip>}
     </div>
   </>
 );

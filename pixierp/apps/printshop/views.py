@@ -1,20 +1,28 @@
 from decimal import Decimal, ROUND_HALF_UP
 import os
 import re
+import secrets
 import subprocess
 import tempfile
+from django.conf import settings
+from django.http import FileResponse
+from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.views import APIView
 
-from .models import PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial
+from .models import (
+    PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
+    PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+)
 from .serializers import (
     PrintSizePresetSerializer, PrintPricingConfigSerializer,
     PrintOrderSerializer, PrintOrderListSerializer, PrintOrderItemSerializer,
-    PrintMaterialSerializer,
+    PrintMaterialSerializer, PrintOrderItemCommentSerializer,
+    SharedPrintPreviewSerializer, SharedPrintPreviewCommentSerializer,
 )
 
 
@@ -37,6 +45,66 @@ def _get_raw_pdf_box(doc, page_xref, box_name):
     if len(numbers) != 4:
         return None
     return tuple(map(float, numbers))
+
+
+def _get_frontend_base_url(request=None):
+    frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
+    if frontend_url:
+        return frontend_url.rstrip('/')
+    if request:
+        return f"{request.scheme}://{request.get_host()}"
+    return ''
+
+
+def _build_preview_share_url(item, request=None):
+    if not item.preview_share_token:
+        return None
+    frontend_url = _get_frontend_base_url(request)
+    if not frontend_url:
+        return None
+    return f"{frontend_url}/public/print-preview/{item.preview_share_token}"
+
+
+def _parse_bool(value, default=False):
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in ('1', 'true', 'yes', 'on')
+
+
+def _user_can_access_print_item(user, item):
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff:
+        return True
+    return item.order.created_by_id == user.id
+
+
+def _get_shared_preview_item(token):
+    return get_object_or_404(
+        PrintOrderItem.objects.select_related('order', 'order__company', 'order__contact'),
+        preview_share_token=token,
+    )
+
+
+def _get_standalone_shared_preview(token):
+    return SharedPrintPreview.objects.filter(token=token).first()
+
+
+def _get_public_preview_target(token):
+    shared_preview = _get_standalone_shared_preview(token)
+    if shared_preview:
+        return ('shared', shared_preview)
+    return ('item', _get_shared_preview_item(token))
+
+
+def _get_public_preview_author_name(target_type, target):
+    if target_type == 'shared':
+        if target.created_by:
+            return target.created_by.get_full_name() or target.created_by.username
+        return 'Ügyfél'
+    return target.order.contact.name if target.order.contact else (target.order.company.name if target.order.company else 'Ügyfél')
 
 
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
@@ -831,6 +899,43 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             'preview_locked': item.preview_locked,
         })
 
+    @action(detail=True, methods=['post'], url_path='preview-share',
+            parser_classes=[JSONParser])
+    def preview_share(self, request, pk=None):
+        """Publikus preview megosztási beállítások frissítése."""
+        if not request.user.is_staff:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+
+        order = self.get_object()
+        item_id = request.data.get('item_id')
+        try:
+            item = order.items.get(pk=item_id)
+        except PrintOrderItem.DoesNotExist:
+            return Response({'error': 'Tétel nem található'}, status=404)
+
+        enabled = _parse_bool(request.data.get('enabled', item.preview_share_enabled), item.preview_share_enabled)
+        item.preview_share_enabled = enabled
+        item.preview_share_editable = _parse_bool(request.data.get('editable', item.preview_share_editable), item.preview_share_editable)
+        item.preview_share_commentable = _parse_bool(request.data.get('commentable', item.preview_share_commentable), item.preview_share_commentable)
+        item.preview_share_exportable = _parse_bool(request.data.get('exportable', item.preview_share_exportable), item.preview_share_exportable)
+
+        if not item.preview_share_token:
+            item.preview_share_token = secrets.token_urlsafe(24)
+
+        item.save(update_fields=[
+            'preview_share_enabled', 'preview_share_token',
+            'preview_share_editable', 'preview_share_commentable', 'preview_share_exportable',
+        ])
+
+        return Response({
+            'enabled': item.preview_share_enabled,
+            'editable': item.preview_share_editable,
+            'commentable': item.preview_share_commentable,
+            'exportable': item.preview_share_exportable,
+            'url': _build_preview_share_url(item, request),
+            'token': item.preview_share_token,
+        })
+
     @action(detail=True, methods=['post'], url_path='generate-pdf',
             parser_classes=[JSONParser])
     def generate_pdf(self, request, pk=None):
@@ -848,6 +953,256 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
             return Response({'pdf_url': pdf_url})
         except Exception as e:
             return Response({'error': f'PDF generálási hiba: {str(e)}'}, status=500)
+
+
+class PrintOrderItemCommentsView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def get_item(self, request, item_id):
+        item = get_object_or_404(PrintOrderItem.objects.select_related('order'), pk=item_id)
+        if not _user_can_access_print_item(request.user, item):
+            return None
+        return item
+
+    def get(self, request, item_id):
+        item = self.get_item(request, item_id)
+        if item is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        comments = item.comments.all()
+        return Response(PrintOrderItemCommentSerializer(comments, many=True).data)
+
+    def post(self, request, item_id):
+        item = self.get_item(request, item_id)
+        if item is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        serializer = PrintOrderItemCommentSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        author_name = serializer.validated_data.get('author_name') or (request.user.get_full_name() or request.user.username)
+        comment = PrintOrderItemComment.objects.create(
+            item=item,
+            user=request.user,
+            author_name=author_name,
+            **{k: v for k, v in serializer.validated_data.items() if k != 'author_name'}
+        )
+        return Response(PrintOrderItemCommentSerializer(comment).data, status=201)
+
+
+class PrintOrderItemCommentDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def get_comment(self, request, item_id, comment_id):
+        comment = get_object_or_404(PrintOrderItemComment.objects.select_related('item__order'), pk=comment_id, item_id=item_id)
+        if not _user_can_access_print_item(request.user, comment.item):
+            return None
+        return comment
+
+    def patch(self, request, item_id, comment_id):
+        comment = self.get_comment(request, item_id, comment_id)
+        if comment is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        serializer = PrintOrderItemCommentSerializer(comment, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(comment, field, value)
+        comment.save()
+        return Response(PrintOrderItemCommentSerializer(comment).data)
+
+    def delete(self, request, item_id, comment_id):
+        comment = self.get_comment(request, item_id, comment_id)
+        if comment is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        comment.delete()
+        return Response(status=204)
+
+
+class SharedPrintPreviewCreateView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def post(self, request):
+        pdf = request.FILES.get('pdf')
+        if not pdf:
+            return Response({'error': 'PDF feltöltése kötelező'}, status=400)
+
+        preview = SharedPrintPreview.objects.create(
+            created_by=request.user,
+            title=request.data.get('title') or getattr(pdf, 'name', 'Preview PDF'),
+            pdf=pdf,
+            token=secrets.token_urlsafe(24),
+            editable=_parse_bool(request.data.get('editable'), False),
+            commentable=_parse_bool(request.data.get('commentable'), True),
+            exportable=_parse_bool(request.data.get('exportable'), False),
+            is_active=_parse_bool(request.data.get('enabled'), False),
+        )
+
+        raw_annotations = request.data.get('annotations')
+        if raw_annotations:
+            import json
+            try:
+                annotations = json.loads(raw_annotations)
+            except Exception:
+                annotations = []
+            for annotation in annotations:
+                serializer = SharedPrintPreviewCommentSerializer(data=annotation)
+                if serializer.is_valid():
+                    SharedPrintPreviewComment.objects.create(
+                        preview=preview,
+                        user=request.user,
+                        author_name=serializer.validated_data.get('author_name') or (request.user.get_full_name() or request.user.username),
+                        **{k: v for k, v in serializer.validated_data.items() if k != 'author_name'}
+                    )
+
+        return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data, status=201)
+
+
+class SharedPrintPreviewDetailView(APIView):
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def get_object(self, request, token):
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return None
+        return preview
+
+    def get(self, request, token):
+        preview = self.get_object(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data)
+
+    def patch(self, request, token):
+        preview = self.get_object(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+
+        if 'enabled' in request.data:
+            preview.is_active = _parse_bool(request.data.get('enabled'), preview.is_active)
+        if 'editable' in request.data:
+            preview.editable = _parse_bool(request.data.get('editable'), preview.editable)
+        if 'commentable' in request.data:
+            preview.commentable = _parse_bool(request.data.get('commentable'), preview.commentable)
+        if 'exportable' in request.data:
+            preview.exportable = _parse_bool(request.data.get('exportable'), preview.exportable)
+        preview.save(update_fields=['is_active', 'editable', 'commentable', 'exportable', 'updated_at'])
+        return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data)
+
+
+class PublicPrintPreviewView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and not target.pdf:
+            return Response({'error': 'Nincs megosztható PDF a previewhoz'}, status=404)
+        if target_type == 'item' and not target.generated_pdf:
+            return Response({'error': 'Nincs megosztható PDF a tételhez'}, status=404)
+        return Response({
+            'item_id': target.id,
+            'product_name': target.title if target_type == 'shared' else target.product_name,
+            'pdf_url': request.build_absolute_uri(f'/api/v1/printshop/public-preview/{token}/pdf/'),
+            'editable': target.editable if target_type == 'shared' else target.preview_share_editable,
+            'commentable': target.commentable if target_type == 'shared' else target.preview_share_commentable,
+            'exportable': target.exportable if target_type == 'shared' else target.preview_share_exportable,
+            'default_author_name': _get_public_preview_author_name(target_type, target),
+            'is_standalone': target_type == 'shared',
+        })
+
+
+class PublicPrintPreviewPdfView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        file_field = target.pdf if target_type == 'shared' else target.generated_pdf
+        if not file_field:
+            return Response({'error': 'Nincs megosztható PDF'}, status=404)
+        filename = os.path.basename(file_field.name) or 'preview.pdf'
+        response = FileResponse(file_field.open('rb'), content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+
+
+class PublicPrintPreviewCommentsView(APIView):
+    permission_classes = [AllowAny]
+    parser_classes = [JSONParser]
+
+    def get(self, request, token):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        comments = target.comments.all()
+        serializer_cls = SharedPrintPreviewCommentSerializer if target_type == 'shared' else PrintOrderItemCommentSerializer
+        return Response(serializer_cls(comments, many=True).data)
+
+    def post(self, request, token):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        commentable = target.commentable if target_type == 'shared' else target.preview_share_commentable
+        editable = target.editable if target_type == 'shared' else target.preview_share_editable
+        if not commentable and not editable:
+            return Response({'error': 'A kommentelés nincs engedélyezve'}, status=403)
+        serializer_cls = SharedPrintPreviewCommentSerializer if target_type == 'shared' else PrintOrderItemCommentSerializer
+        serializer = serializer_cls(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        author_name = serializer.validated_data.get('author_name') or _get_public_preview_author_name(target_type, target)
+        comment_model = SharedPrintPreviewComment if target_type == 'shared' else PrintOrderItemComment
+        relation_field = 'preview' if target_type == 'shared' else 'item'
+        comment = comment_model.objects.create(
+            **{relation_field: target},
+            author_name=author_name,
+            **{k: v for k, v in serializer.validated_data.items() if k != 'author_name'}
+        )
+        return Response(serializer_cls(comment).data, status=201)
+
+
+class PublicPrintPreviewCommentDetailView(APIView):
+    permission_classes = [AllowAny]
+    parser_classes = [JSONParser]
+
+    def patch(self, request, token, comment_id):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        editable = target.editable if target_type == 'shared' else target.preview_share_editable
+        if not editable:
+            return Response({'error': 'A szerkesztés nincs engedélyezve'}, status=403)
+        comment_model = SharedPrintPreviewComment if target_type == 'shared' else PrintOrderItemComment
+        filter_key = 'preview' if target_type == 'shared' else 'item'
+        serializer_cls = SharedPrintPreviewCommentSerializer if target_type == 'shared' else PrintOrderItemCommentSerializer
+        comment = get_object_or_404(comment_model, pk=comment_id, **{filter_key: target})
+        serializer = serializer_cls(comment, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        for field, value in serializer.validated_data.items():
+            setattr(comment, field, value)
+        comment.save()
+        return Response(serializer_cls(comment).data)
+
+    def delete(self, request, token, comment_id):
+        target_type, target = _get_public_preview_target(token)
+        is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
+        if not is_enabled:
+            return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        editable = target.editable if target_type == 'shared' else target.preview_share_editable
+        if not editable:
+            return Response({'error': 'A szerkesztés nincs engedélyezve'}, status=403)
+        comment_model = SharedPrintPreviewComment if target_type == 'shared' else PrintOrderItemComment
+        filter_key = 'preview' if target_type == 'shared' else 'item'
+        comment = get_object_or_404(comment_model, pk=comment_id, **{filter_key: target})
+        comment.delete()
+        return Response(status=204)
 
 
 class PdfToSvgView(APIView):
@@ -954,7 +1309,7 @@ class PdfAnalyzeView(APIView):
     POST multipart: pdf (file)
     Visszaad: { pages: [ { page, mediabox_mm, trimbox_mm, color_spaces } ] }
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [AllowAny]
     parser_classes = [MultiPartParser, FormParser]
 
     PT_TO_MM = 25.4 / 72

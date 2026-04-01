@@ -9,6 +9,14 @@ router.register(r'orders', views.PrintOrderViewSet, basename='print-order')
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('shared-preview/', views.SharedPrintPreviewCreateView.as_view(), name='shared-print-preview-create'),
+    path('shared-preview/<str:token>/', views.SharedPrintPreviewDetailView.as_view(), name='shared-print-preview-detail'),
+    path('order-items/<int:item_id>/comments/', views.PrintOrderItemCommentsView.as_view(), name='print-order-item-comments'),
+    path('order-items/<int:item_id>/comments/<int:comment_id>/', views.PrintOrderItemCommentDetailView.as_view(), name='print-order-item-comment-detail'),
+    path('public-preview/<str:token>/', views.PublicPrintPreviewView.as_view(), name='public-print-preview'),
+    path('public-preview/<str:token>/pdf/', views.PublicPrintPreviewPdfView.as_view(), name='public-print-preview-pdf'),
+    path('public-preview/<str:token>/comments/', views.PublicPrintPreviewCommentsView.as_view(), name='public-print-preview-comments'),
+    path('public-preview/<str:token>/comments/<int:comment_id>/', views.PublicPrintPreviewCommentDetailView.as_view(), name='public-print-preview-comment-detail'),
     path('pricing/', views.PrintPricingConfigViewSet.as_view({
         'get': 'list',
         'post': 'create',

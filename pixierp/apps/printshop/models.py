@@ -205,9 +205,113 @@ class PrintOrderItem(models.Model):
         related_name='locked_print_items', verbose_name='Zárolta')
     locked_at = models.DateTimeField(null=True, blank=True, verbose_name='Zárolás időpontja')
 
+    # Preview megosztás ügyfeleknek
+    preview_share_enabled = models.BooleanField(default=False, verbose_name='Preview megosztás engedélyezve')
+    preview_share_token = models.CharField(max_length=64, blank=True, null=True, unique=True, verbose_name='Preview megosztási token')
+    preview_share_editable = models.BooleanField(default=False, verbose_name='Ügyfél szerkesztheti a preview-t')
+    preview_share_commentable = models.BooleanField(default=True, verbose_name='Ügyfél kommentelheti a preview-t')
+    preview_share_exportable = models.BooleanField(default=False, verbose_name='Ügyfél exportálhatja a preview-t')
+
     class Meta:
         verbose_name = 'Nyomtatási tétel'
         verbose_name_plural = 'Nyomtatási tételek'
 
     def __str__(self):
         return f"{self.product_name} — {self.quantity} db ({self.width_mm}×{self.height_mm} mm)"
+
+
+class PrintOrderItemComment(models.Model):
+    COMMENT_TYPE_CHOICES = [
+        ('area', 'Terület'),
+        ('pin', 'Jelölő'),
+        ('arrow', 'Nyíl'),
+    ]
+
+    item = models.ForeignKey(
+        PrintOrderItem, related_name='comments',
+        on_delete=models.CASCADE, verbose_name='Nyomtatási tétel')
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='print_order_item_comments', verbose_name='Létrehozó user')
+    author_name = models.CharField(max_length=200, verbose_name='Szerző neve')
+    x = models.FloatField(verbose_name='X pozíció')
+    y = models.FloatField(verbose_name='Y pozíció')
+    w = models.FloatField(default=0, verbose_name='Szélesség')
+    h = models.FloatField(default=0, verbose_name='Magasság')
+    x2 = models.FloatField(null=True, blank=True, verbose_name='Nyíl X2')
+    y2 = models.FloatField(null=True, blank=True, verbose_name='Nyíl Y2')
+    type = models.CharField(max_length=20, choices=COMMENT_TYPE_CHOICES, default='area', verbose_name='Típus')
+    page = models.PositiveIntegerField(default=1, verbose_name='Oldal')
+    text = models.TextField(verbose_name='Komment szövege')
+    resolved = models.BooleanField(default=False, verbose_name='Megoldva')
+    color = models.CharField(max_length=20, default='#1890ff', verbose_name='Szín')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        verbose_name = 'Nyomtatási preview komment'
+        verbose_name_plural = 'Nyomtatási preview kommentek'
+
+    def __str__(self):
+        return f"Komment #{self.pk} - {self.item.product_name}"
+
+
+class SharedPrintPreview(models.Model):
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shared_print_previews', verbose_name='Létrehozó user')
+    title = models.CharField(max_length=200, blank=True, verbose_name='Preview neve')
+    pdf = models.FileField(upload_to='printshop/shared_preview/', verbose_name='Megosztott PDF')
+    token = models.CharField(max_length=64, unique=True, verbose_name='Megosztási token')
+    editable = models.BooleanField(default=False, verbose_name='Szerkeszthető')
+    commentable = models.BooleanField(default=True, verbose_name='Kommentelhető')
+    exportable = models.BooleanField(default=False, verbose_name='Exportálható')
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Megosztott preview'
+        verbose_name_plural = 'Megosztott previewk'
+
+    def __str__(self):
+        return self.title or f"Megosztott preview #{self.pk}"
+
+
+class SharedPrintPreviewComment(models.Model):
+    COMMENT_TYPE_CHOICES = [
+        ('area', 'Terület'),
+        ('pin', 'Jelölő'),
+        ('arrow', 'Nyíl'),
+    ]
+
+    preview = models.ForeignKey(
+        SharedPrintPreview, related_name='comments',
+        on_delete=models.CASCADE, verbose_name='Megosztott preview')
+    user = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shared_print_preview_comments', verbose_name='Létrehozó user')
+    author_name = models.CharField(max_length=200, verbose_name='Szerző neve')
+    x = models.FloatField(verbose_name='X pozíció')
+    y = models.FloatField(verbose_name='Y pozíció')
+    w = models.FloatField(default=0, verbose_name='Szélesség')
+    h = models.FloatField(default=0, verbose_name='Magasság')
+    x2 = models.FloatField(null=True, blank=True, verbose_name='Nyíl X2')
+    y2 = models.FloatField(null=True, blank=True, verbose_name='Nyíl Y2')
+    type = models.CharField(max_length=20, choices=COMMENT_TYPE_CHOICES, default='area', verbose_name='Típus')
+    page = models.PositiveIntegerField(default=1, verbose_name='Oldal')
+    text = models.TextField(verbose_name='Komment szövege')
+    resolved = models.BooleanField(default=False, verbose_name='Megoldva')
+    color = models.CharField(max_length=20, default='#1890ff', verbose_name='Szín')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['created_at']
+        verbose_name = 'Megosztott preview komment'
+        verbose_name_plural = 'Megosztott preview kommentek'
+
+    def __str__(self):
+        return f"Megosztott preview komment #{self.pk}"

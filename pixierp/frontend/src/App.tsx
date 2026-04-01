@@ -52,6 +52,7 @@ function AppContent() {
   const { user, loading } = useAuth();
   const location = useLocation();
   const isSitePreviewPage = /^\/site-management\/[^/]+$/.test(location.pathname);
+  const isPublicPrintPreview = location.pathname.startsWith('/public/print-preview/');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [mobileMenuVisible, setMobileMenuVisible] = useState(false);
@@ -174,6 +175,10 @@ function AppContent() {
     return <div>Loading...</div>;
   }
 
+  if (isPublicPrintPreview) {
+    return <PrintPreviewPage />;
+  }
+
   if (!user) {
     return (
       <Routes>
@@ -184,6 +189,7 @@ function AppContent() {
         <Route path="/public/delivery/:token" element={<PublicDelivery />} />
         <Route path="/public/delivery-note/:token" element={<PublicDeliveryNote />} />
         <Route path="/public/ticket/:token" element={<PublicTicket />} />
+        <Route path="/public/print-preview/:token" element={<PrintPreviewPage />} />
         <Route path="/site" element={<PublicSite />} />
         <Route path="/portal" element={<ClientPortal />} />
         <Route path="/kiosk" element={<KioskPage />} />

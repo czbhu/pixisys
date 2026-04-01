@@ -1,5 +1,9 @@
+from django.conf import settings
 from rest_framework import serializers
-from .models import PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial
+from .models import (
+    PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
+    PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+)
 
 
 class PrintMaterialSerializer(serializers.ModelSerializer):
@@ -29,6 +33,7 @@ class PrintPricingConfigSerializer(serializers.ModelSerializer):
 class PrintOrderItemSerializer(serializers.ModelSerializer):
     generated_pdf_url = serializers.SerializerMethodField()
     material_name = serializers.SerializerMethodField()
+    preview_share_url = serializers.SerializerMethodField()
 
     class Meta:
         model = PrintOrderItem
@@ -42,6 +47,8 @@ class PrintOrderItemSerializer(serializers.ModelSerializer):
             'generated_pdf', 'generated_pdf_url',
             'unit_price', 'total_price', 'price_breakdown',
             'editor_locked', 'preview_locked', 'locked_at', 'locked_by',
+            'preview_share_enabled', 'preview_share_editable', 'preview_share_commentable',
+            'preview_share_exportable', 'preview_share_url',
         ]
         read_only_fields = ['id', 'order', 'generated_pdf', 'generated_pdf_url',
                             'editor_locked', 'preview_locked', 'locked_at', 'locked_by']
@@ -57,6 +64,18 @@ class PrintOrderItemSerializer(serializers.ModelSerializer):
     def get_material_name(self, obj):
         return obj.material.name if obj.material else None
 
+    def get_preview_share_url(self, obj):
+        if not obj.preview_share_token:
+            return None
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
+        if not frontend_url:
+            request = self.context.get('request')
+            if request:
+                frontend_url = f"{request.scheme}://{request.get_host()}"
+            else:
+                return None
+        return f"{frontend_url}/public/print-preview/{obj.preview_share_token}"
+
 
 class PrintOrderItemWriteSerializer(serializers.ModelSerializer):
     class Meta:
@@ -70,6 +89,58 @@ class PrintOrderItemWriteSerializer(serializers.ModelSerializer):
             'unit_price', 'total_price', 'price_breakdown',
             'editor_locked', 'preview_locked',
         ]
+
+
+class PrintOrderItemCommentSerializer(serializers.ModelSerializer):
+    author = serializers.CharField(source='author_name')
+
+    class Meta:
+        model = PrintOrderItemComment
+        fields = [
+            'id', 'x', 'y', 'w', 'h', 'x2', 'y2',
+            'type', 'page', 'text', 'author', 'created_at', 'resolved', 'color',
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class SharedPrintPreviewSerializer(serializers.ModelSerializer):
+    url = serializers.SerializerMethodField()
+    pdf_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SharedPrintPreview
+        fields = [
+            'id', 'title', 'token', 'editable', 'commentable', 'exportable',
+            'is_active', 'url', 'pdf_url', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'token', 'url', 'pdf_url', 'created_at', 'updated_at']
+
+    def get_url(self, obj):
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
+        request = self.context.get('request')
+        if not frontend_url and request:
+            frontend_url = f"{request.scheme}://{request.get_host()}"
+        if not frontend_url:
+            return None
+        return f"{frontend_url.rstrip('/')}/public/print-preview/{obj.token}"
+
+    def get_pdf_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(f'/api/v1/printshop/public-preview/{obj.token}/pdf/')
+        return None
+
+
+class SharedPrintPreviewCommentSerializer(serializers.ModelSerializer):
+    author = serializers.CharField(source='author_name')
+
+    class Meta:
+        model = SharedPrintPreviewComment
+        fields = [
+            'id', 'x', 'y', 'w', 'h', 'x2', 'y2',
+            'type', 'page', 'text', 'author', 'created_at', 'resolved', 'color',
+        ]
+        read_only_fields = ['id', 'created_at']
 
 
 class PrintOrderSerializer(serializers.ModelSerializer):

@@ -154,6 +154,13 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
+echo -e "${BLUE}🗄️  ERP migrációk futtatása...${NC}"
+python manage.py migrate --noinput > /tmp/pixierp_migrate.log 2>&1 || {
+    echo -e "${RED}❌ ERP migrate hiba. Részletek: /tmp/pixierp_migrate.log${NC}"
+    deactivate
+    exit 1
+}
+echo -e "${GREEN}✅ ERP migrációk rendben${NC}"
 echo -e "${BLUE}⚡ Starting ERP Backend (Gunicorn + Uvicorn on port ${ERP_BACKEND_PORT})...${NC}"
 gunicorn erp_system.asgi:application --bind 0.0.0.0:${ERP_BACKEND_PORT} -w 4 -k uvicorn.workers.UvicornWorker --timeout 120 --access-logfile - --error-logfile - > /tmp/pixierp_backend.log 2>&1 &
 ERP_BACKEND_PID=$!
@@ -175,6 +182,13 @@ if [ ! -d "venv" ]; then
 fi
 
 source venv/bin/activate
+echo -e "${BLUE}🗄️  Invoice migrációk futtatása...${NC}"
+python manage.py migrate --noinput > /tmp/pixinvoice_migrate.log 2>&1 || {
+    echo -e "${RED}❌ Invoice migrate hiba. Részletek: /tmp/pixinvoice_migrate.log${NC}"
+    deactivate
+    exit 1
+}
+echo -e "${GREEN}✅ Invoice migrációk rendben${NC}"
 echo -e "${BLUE}⚡ Starting Invoice Backend (Gunicorn w/ 6 workers on port ${INV_BACKEND_PORT})...${NC}"
 # Using 6 workers to maximize throughput for 12-core CPU on IO-bound tasks
 gunicorn invoice_system.wsgi:application --bind 0.0.0.0:${INV_BACKEND_PORT} -w 6 --timeout 120 --access-logfile - --error-logfile - > /tmp/pixinvoice_backend.log 2>&1 &

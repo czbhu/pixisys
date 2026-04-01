@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Typography, message, Button, Select, Form, Modal, Result, Segmented, Tooltip, Tag, Space, Row, Col } from 'antd';
-import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, EditOutlined, CommentOutlined, LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined, FileTextOutlined } from '@ant-design/icons';
+import { Typography, message, Button, Select, Modal, Result, Tooltip, Tag, Space, Row, Col, Switch, Input } from 'antd';
+import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined, FileTextOutlined, ShareAltOutlined, CopyOutlined } from '@ant-design/icons';
 import { crmService } from '../../services/crmService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -17,6 +17,19 @@ const { Option } = Select;
 
 interface Company { id: number; name: string; }
 interface Contact { id: number; first_name: string; last_name: string; company?: number; }
+
+interface PreviewShareSettings {
+  enabled: boolean;
+  editable: boolean;
+  commentable: boolean;
+  exportable: boolean;
+  url: string;
+}
+
+const buildStandalonePreviewUrl = (orderId: number | null, itemId: number | null) => {
+  if (!orderId || !itemId || typeof window === 'undefined') return '';
+  return `${window.location.origin}/print-preview?orderId=${orderId}&itemId=${itemId}`;
+};
 
 const PARAMS_PANEL_W = 280;
 const COLLAPSED_W = 28;
@@ -46,7 +59,7 @@ const PrintEditorPage: React.FC = () => {
   const isAdmin = !!(user?.is_staff || user?.is_superuser);
 
   const canvasRef = useRef<CanvasEditorHandle>(null);
-  const [viewMode, setViewMode] = useState<'editor' | 'preview'>('editor');
+  const [viewMode] = useState<'editor' | 'preview'>('editor');
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [canvasPanelOpen, setCanvasPanelOpen] = useState(true);
   const [params, setParams] = useState<PrintParams>(() => {
@@ -98,6 +111,15 @@ const PrintEditorPage: React.FC = () => {
   const [editorLocked, setEditorLocked] = useState(false);
   const [previewLocked, setPreviewLocked] = useState(false);
   const [lockSaving, setLockSaving] = useState(false);
+  const [shareModalOpen, setShareModalOpen] = useState(false);
+  const [shareSaving, setShareSaving] = useState(false);
+  const [previewShare, setPreviewShare] = useState<PreviewShareSettings>({
+    enabled: false,
+    editable: false,
+    commentable: true,
+    exportable: false,
+    url: '',
+  });
 
   // Sync lock state when item is known
   useEffect(() => {
@@ -108,6 +130,13 @@ const PrintEditorPage: React.FC = () => {
         if (item) {
           setEditorLocked(!!item.editor_locked);
           setPreviewLocked(!!item.preview_locked);
+          setPreviewShare({
+            enabled: !!item.preview_share_enabled,
+            editable: !!item.preview_share_editable,
+            commentable: item.preview_share_commentable !== false,
+            exportable: !!item.preview_share_exportable,
+            url: item.preview_share_url || '',
+          });
         }
       }).catch(() => {});
   }, [orderId, itemId]);
@@ -126,6 +155,54 @@ const PrintEditorPage: React.FC = () => {
       message.error(e?.response?.data?.error || 'Hiba');
     } finally {
       setLockSaving(false);
+    }
+  };
+
+  const handleSavePreviewShare = async () => {
+    if (!orderId || !itemId) return;
+    setShareSaving(true);
+    try {
+      const response = await api.post(`printshop/orders/${orderId}/preview-share/`, {
+        item_id: itemId,
+        enabled: previewShare.enabled,
+        editable: previewShare.editable,
+        commentable: previewShare.commentable,
+        exportable: previewShare.exportable,
+      });
+      setPreviewShare({
+        enabled: !!response.data?.enabled,
+        editable: !!response.data?.editable,
+        commentable: response.data?.commentable !== false,
+        exportable: !!response.data?.exportable,
+        url: response.data?.url || '',
+      });
+      message.success('Preview megosztás mentve');
+      setShareModalOpen(false);
+    } catch (e: any) {
+      message.error(e?.response?.data?.error || 'Nem sikerült a preview megosztást menteni');
+    } finally {
+      setShareSaving(false);
+    }
+  };
+
+  const handleCopyPreviewShareUrl = async () => {
+    if (!previewShare.url) return;
+    try {
+      await navigator.clipboard.writeText(previewShare.url);
+      message.success('Link kimásolva');
+    } catch {
+      message.error('A link másolása nem sikerült');
+    }
+  };
+
+  const handleCopyStandalonePreviewUrl = async () => {
+    const previewUrl = buildStandalonePreviewUrl(orderId, itemId);
+    if (!previewUrl) return;
+    try {
+      await navigator.clipboard.writeText(previewUrl);
+      message.success('Preview oldal link kimásolva');
+    } catch {
+      message.error('A preview oldal link másolása nem sikerült');
     }
   };
 
@@ -437,6 +514,16 @@ const PrintEditorPage: React.FC = () => {
                 Preview
               </Button>
             </Tooltip>
+            <Tooltip title="Preview megosztása ügyfélnek">
+              <Button
+                size="small"
+                icon={<ShareAltOutlined />}
+                type={previewShare.enabled ? 'primary' : 'default'}
+                onClick={() => setShareModalOpen(true)}
+              >
+                Megosztás
+              </Button>
+            </Tooltip>
           </>
         ) : !isAdmin ? (
           <>
@@ -534,6 +621,94 @@ const PrintEditorPage: React.FC = () => {
           </Row>
         </div>
       )}
+
+      <Modal
+        title="Preview megosztás"
+        open={shareModalOpen}
+        onCancel={() => setShareModalOpen(false)}
+        onOk={handleSavePreviewShare}
+        okText="Mentés"
+        cancelText="Mégse"
+        confirmLoading={shareSaving}
+        destroyOnClose={false}
+      >
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="Preview: belső kollégáknak | Megosztási link: külső ügyfeleknek"
+          />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div>
+              <Text strong>Publikus link engedélyezése</Text>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>A feltöltött preview PDF tokenes linken lesz elérhető.</Text></div>
+            </div>
+            <Switch
+              checked={previewShare.enabled}
+              onChange={checked => setPreviewShare(prev => ({ ...prev, enabled: checked }))}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div>
+              <Text strong>Szerkeszthető</Text>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Az ügyfél ugyanazokat az eszközöket látja, mint az admin previewban.</Text></div>
+            </div>
+            <Switch
+              checked={previewShare.editable}
+              disabled={!previewShare.enabled}
+              onChange={checked => setPreviewShare(prev => ({ ...prev, editable: checked }))}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div>
+              <Text strong>Kommentelhető</Text>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Ha ki van kapcsolva, a komment eszközök sem jelennek meg.</Text></div>
+            </div>
+            <Switch
+              checked={previewShare.commentable}
+              disabled={!previewShare.enabled}
+              onChange={checked => setPreviewShare(prev => ({ ...prev, commentable: checked }))}
+            />
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <div>
+              <Text strong>Exportálható</Text>
+              <div><Text type="secondary" style={{ fontSize: 12 }}>Az export gomb csak bekapcsolva látszik.</Text></div>
+            </div>
+            <Switch
+              checked={previewShare.exportable}
+              disabled={!previewShare.enabled}
+              onChange={checked => setPreviewShare(prev => ({ ...prev, exportable: checked }))}
+            />
+          </div>
+
+          <div>
+            <Tooltip title="Preview: belső kollégáknak. Ezzel a belső preview oldal nyílik meg ugyanazzal a PDF-fel és állapottal.">
+              <Text strong>Preview oldal link</Text>
+            </Tooltip>
+            <Space.Compact style={{ width: '100%', marginTop: 8, marginBottom: 12 }}>
+              <Input readOnly value={buildStandalonePreviewUrl(orderId, itemId)} placeholder="Az adott PDF preview oldala" />
+              <Button icon={<CopyOutlined />} onClick={handleCopyStandalonePreviewUrl} disabled={!orderId || !itemId}>
+                Másolás
+              </Button>
+            </Space.Compact>
+
+            <Tooltip title="Megosztási link: külső ügyfeleknek. Ezt a publikus, jogosultságokkal szabályozott linket küldd ki az ügyfélnek.">
+              <Text strong>Megosztási link</Text>
+            </Tooltip>
+            <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+              <Input readOnly value={previewShare.enabled ? previewShare.url : ''} placeholder="A mentés után itt jelenik meg a publikus link" />
+              <Button icon={<CopyOutlined />} onClick={handleCopyPreviewShareUrl} disabled={!previewShare.enabled || !previewShare.url}>
+                Másolás
+              </Button>
+            </Space.Compact>
+          </div>
+        </div>
+      </Modal>
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
