@@ -1006,11 +1006,7 @@ class PdfAnalyzeView(APIView):
                         trim_x0, trim_y0, trim_x1, trim_y1 = raw_trim
                         trim_w = trim_x1 - trim_x0
                         trim_h = trim_y1 - trim_y0
-                        crop_w = crop_x1 - crop_x0
-                        crop_h = crop_y1 - crop_y0
-                        # Only report TrimBox if it differs from the visible page box (CropBox)
-                        if (abs(trim_w - crop_w) > 0.5 or abs(trim_h - crop_h) > 0.5
-                                or abs(trim_x0 - crop_x0) > 0.5 or abs(trim_y0 - crop_y0) > 0.5):
+                        if trim_w > 0 and trim_h > 0:
                             trimbox_mm = {
                                 'x': round((trim_x0 - crop_x0) * self.PT_TO_MM, 1),
                                 'y': round((crop_y1 - trim_y1) * self.PT_TO_MM, 1),
