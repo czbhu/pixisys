@@ -1014,13 +1014,13 @@ class PdfAnalyzeView(APIView):
                                 or abs(tb.x0 - mb.x0) > 0.5 or abs(tb.y0 - mb.y0) > 0.5):
                             trimbox_mm = {
                                 'x': round((trim_x0 - crop_x0) * self.PT_TO_MM, 1),
-                                'y': round((crop_y1 - trim_y1) * self.PT_TO_MM, 1),
+                                'y': round((trim_y0 - crop_y0) * self.PT_TO_MM, 1),
                                 'width': round(trim_w * self.PT_TO_MM, 1),
                                 'height': round(trim_h * self.PT_TO_MM, 1),
                             }
                             trimbox_pt = {
                                 'x': round(trim_x0 - crop_x0, 2),
-                                'y': round(crop_y1 - trim_y1, 2),
+                                'y': round(trim_y0 - crop_y0, 2),
                                 'w': round(trim_w, 2),
                                 'h': round(trim_h, 2),
                             }
