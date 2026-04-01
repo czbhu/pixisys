@@ -28,6 +28,19 @@ def _get_raw_pdf_box(doc, page_xref, box_name):
     return tuple(map(float, numbers))
 
 
+def _rect_contains(outer_rect, inner_rect, tolerance=0.01):
+    if not outer_rect or not inner_rect:
+        return False
+    ox0, oy0, ox1, oy1 = outer_rect
+    ix0, iy0, ix1, iy1 = inner_rect
+    return (
+        ox0 <= ix0 + tolerance and
+        oy0 <= iy0 + tolerance and
+        ox1 >= ix1 - tolerance and
+        oy1 >= iy1 - tolerance
+    )
+
+
 def _calculate_price(width_mm, height_mm, quantity, sides, side1_mode, side2_mode,
                      binding, folding_count, config, selected_service_ids=None):
     """Árkalkuláció — visszaad egy részletes breakdown dict-et."""
@@ -2004,6 +2017,7 @@ class PdfCropView(APIView):
                     continue
                 raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
                 raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
+                raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox')
                 if not raw_crop or not raw_media:
                     continue
 
@@ -2038,9 +2052,17 @@ class PdfCropView(APIView):
                     continue
 
                 xref = page.xref
-                arr = "[%g %g %g %g]" % (new_x0, new_y0, new_x1, new_y1)
-                doc.xref_set_key(xref, "MediaBox", arr)
-                doc.xref_set_key(xref, "CropBox", arr)
+                new_crop_rect = (new_x0, new_y0, new_x1, new_y1)
+                crop_arr = "[%g %g %g %g]" % new_crop_rect
+                doc.xref_set_key(xref, "MediaBox", crop_arr)
+                doc.xref_set_key(xref, "CropBox", crop_arr)
+
+                # Keep the original TrimBox only if the new crop fully contains it.
+                # Otherwise the crop becomes the new TrimBox so preview and boxes stay aligned.
+                if raw_trim:
+                    next_trim_rect = raw_trim if _rect_contains(new_crop_rect, raw_trim) else new_crop_rect
+                    trim_arr = "[%g %g %g %g]" % next_trim_rect
+                    doc.xref_set_key(xref, "TrimBox", trim_arr)
 
             out_path = os.path.join(tmpdir, 'cropped.pdf')
             doc.save(out_path)
