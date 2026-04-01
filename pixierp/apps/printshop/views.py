@@ -22,7 +22,18 @@ def _get_raw_pdf_box(doc, page_xref, box_name):
     value = doc.xref_get_key(page_xref, box_name)
     if not value:
         return None
-    numbers = re.findall(r'[-+]?\d*\.?\d+', value)
+
+    # PyMuPDF may return either the raw string value or a tuple like
+    # ('array', '[0 0 595 842]'). Accept both shapes.
+    if isinstance(value, tuple):
+        if len(value) < 2:
+            return None
+        value = value[1]
+
+    if value in (None, 'null', 'none'):
+        return None
+
+    numbers = re.findall(r'[-+]?\d*\.?\d+', str(value))
     if len(numbers) != 4:
         return None
     return tuple(map(float, numbers))
