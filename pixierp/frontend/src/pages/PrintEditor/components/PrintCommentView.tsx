@@ -230,6 +230,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
   const [cropRect, setCropRect] = useState<CropRect | null>(null);
   const [cropDrawStart, setCropDrawStart] = useState<{ x: number; y: number } | null>(null);
   const [cropDrawing, setCropDrawing] = useState(false);
+  const [trimBoxBleed, setTrimBoxBleed] = useState(0); // mm
 
   // Merge state
   const [merging, setMerging] = useState(false);
@@ -1377,15 +1378,17 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               <span style={{ fontSize: 10, color: '#888' }}>Pontos pozíció (mm):</span>
               <InputNumber
                 size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="X mm"
+                parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
                 onPressEnter={e => {
-                  const v = parseFloat((e.target as HTMLInputElement).value);
+                  const v = parseFloat((e.target as HTMLInputElement).value.replace(',', '.'));
                   if (!isNaN(v)) { addGuidelineAtMm('v', v); (e.target as HTMLInputElement).value = ''; }
                 }}
               />
               <InputNumber
                 size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="Y mm"
+                parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
                 onPressEnter={e => {
-                  const v = parseFloat((e.target as HTMLInputElement).value);
+                  const v = parseFloat((e.target as HTMLInputElement).value.replace(',', '.'));
                   if (!isNaN(v)) { addGuidelineAtMm('h', v); (e.target as HTMLInputElement).value = ''; }
                 }}
               />
@@ -1435,6 +1438,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.x * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="0"
+              parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
               onChange={v => {
                 if (v == null || !curInfo) return;
                 const rx = (v * MM_TO_PT) / curInfo.widthPt;
@@ -1446,6 +1450,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.y * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="0"
+              parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
               onChange={v => {
                 if (v == null || !curInfo) return;
                 const ry = (v * MM_TO_PT) / curInfo.heightPt;
@@ -1457,6 +1462,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.w * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="W"
+              parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
               onChange={v => {
                 if (v == null || !curInfo) return;
                 const rw = (v * MM_TO_PT) / curInfo.widthPt;
@@ -1468,6 +1474,7 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.h * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="H"
+              parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
               onChange={v => {
                 if (v == null || !curInfo) return;
                 const rh = (v * MM_TO_PT) / curInfo.heightPt;
@@ -1475,6 +1482,42 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
               }}
             />
             <span style={{ fontSize: 10, color: '#aaa' }}>mm</span>
+            {hasTrimBox && curInfo && (
+              <>
+                <Divider type="vertical" style={{ margin: '0 2px' }} />
+                <Tooltip title="TrimBox területre crop, beállított kifutóval">
+                  <Button
+                    size="small"
+                    type="dashed"
+                    style={{ fontSize: 10, borderColor: '#722ed1', color: '#722ed1' }}
+                    onClick={() => {
+                      const tb = curInfo.trimBox!;
+                      const bleedPt = trimBoxBleed * MM_TO_PT;
+                      const x0 = Math.max(0, tb.x - bleedPt);
+                      const y0 = Math.max(0, tb.y - bleedPt);
+                      const x1 = Math.min(curInfo.widthPt, tb.x + tb.w + bleedPt);
+                      const y1 = Math.min(curInfo.heightPt, tb.y + tb.h + bleedPt);
+                      setCropRect({
+                        x: x0 / curInfo.widthPt,
+                        y: y0 / curInfo.heightPt,
+                        w: (x1 - x0) / curInfo.widthPt,
+                        h: (y1 - y0) / curInfo.heightPt,
+                      });
+                    }}
+                  >
+                    ✂ TrimBox
+                  </Button>
+                </Tooltip>
+                <span style={{ fontSize: 10, color: '#888' }}>Kifutó:</span>
+                <InputNumber
+                  size="small" style={{ width: 55 }} min={0} max={50} step={1}
+                  value={trimBoxBleed}
+                  parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
+                  onChange={v => setTrimBoxBleed(v ?? 0)}
+                  addonAfter="mm"
+                />
+              </>
+            )}
             {cropRect && cropRect.w > 0.001 && cropRect.h > 0.001 ? (
               <>
                 <Button size="small" type="primary" onClick={applyCrop}>Alkalmaz</Button>
