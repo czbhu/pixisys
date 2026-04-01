@@ -501,6 +501,7 @@ if [ "$USE_SYSTEMD" = "true" ]; then
     else
         echo -e "${RED}⚠️  Nincs sudo jog, nem tudom újraindítani a service-eket!${NC}"
         echo -e "Kérlek futtasd kézzel: ${BLUE}sudo systemctl restart pixierp-backend pixinvoice-backend${NC}"
+        exit 1
     fi
 
 else
@@ -527,10 +528,24 @@ check_port() {
     fi
 }
 
+check_route() {
+    local url="$1"
+    local name="$2"
+    local code
+    code=$(curl -s -o /dev/null -w "%{http_code}" -X OPTIONS "$url" || true)
+    if [ "$code" = "404" ] || [ "$code" = "000" ]; then
+        echo -e "${RED}✗ $name: route missing or backend unreachable ($code)${NC}"
+        return 1
+    fi
+    echo -e "${GREEN}✓ $name: route present ($code)${NC}"
+}
+
 # Wait a moment for startup
 sleep 2    
 check_port 8003 "PixiERP Backend"
 check_port 4001 "PixInvoice Backend"
+check_route "http://127.0.0.1:8003/api/v1/printshop/pdf-analyze/" "PixiERP pdf-analyze"
+check_route "http://127.0.0.1:8003/api/v1/printshop/pdf-crop/" "PixiERP pdf-crop"
 
 # Összefoglaló
 echo ""
