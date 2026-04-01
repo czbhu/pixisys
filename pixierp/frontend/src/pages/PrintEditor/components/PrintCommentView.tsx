@@ -1510,12 +1510,12 @@ const PrintCommentView: React.FC<Props> = ({ orderId, itemId, isAdmin, locked = 
                 </Tooltip>
                 <span style={{ fontSize: 10, color: '#888' }}>Kifutó:</span>
                 <InputNumber
-                  size="small" style={{ width: 55 }} min={0} max={50} step={1}
+                  size="small" style={{ width: 70 }} min={0} max={50} step={1}
                   value={trimBoxBleed}
                   parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
                   onChange={v => setTrimBoxBleed(v ?? 0)}
-                  addonAfter="mm"
                 />
+                <span style={{ fontSize: 10, color: '#aaa' }}>mm</span>
               </>
             )}
             {cropRect && cropRect.w > 0.001 && cropRect.h > 0.001 ? (
