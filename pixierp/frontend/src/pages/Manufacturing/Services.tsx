@@ -47,6 +47,7 @@ interface Service {
   setup_cost_selling?: number;
   unit_cost_selling?: number;
   capacity?: number | null;
+  is_protected?: boolean;
 }
 
 interface Supplier {
@@ -876,6 +877,11 @@ const Services: React.FC = () => {
       width: 250,
       ellipsis: true,
       sorter: (a: Service, b: Service) => a.name.localeCompare(b.name),
+      render: (name: string, record: Service) => (
+        <span>
+          {name}
+        </span>
+      ),
     },
     {
       title: 'Kategóriák',
@@ -966,11 +972,7 @@ const Services: React.FC = () => {
                 onClick={() => handleCopy(record)}
              />
           </Tooltip>
-          {record.code === 'DIGIPR_K' || record.code === 'DIGIPR_CMYK' ? (
-            <Tooltip title="Ez a klikk-díj számítási szolgáltatás nem törölhető">
-              <Button type="link" danger icon={<DeleteOutlined />} disabled />
-            </Tooltip>
-          ) : (
+          {record.is_protected ? null : (
             <Popconfirm
               title="Biztosan törli?"
               onConfirm={() => handleDelete(record.id)}

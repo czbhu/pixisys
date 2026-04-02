@@ -74,6 +74,7 @@ interface ProductTemplate {
   required_services?: number[];
   finishing_services?: number[];
   quantity_discounts?: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
+  template_categories?: number[];
 }
 
 export interface PriceBreakdown {
@@ -154,6 +155,7 @@ interface Props {
   params: PrintParams;
   onChange: (p: PrintParams) => void;
   onPriceChange?: (b: PriceBreakdown | null) => void;
+  onTemplateCategoriesChange?: (ids: number[]) => void;
   isAdmin: boolean;
 }
 
@@ -206,7 +208,7 @@ const readClickState = (): any => {
   return {};
 };
 
-const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, isAdmin }) => {
+const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, onTemplateCategoriesChange, isAdmin }) => {
   const [priceOpen, setPriceOpen] = useState(true);
   const [presets, setPresets] = useState<SizePreset[]>([]);
   const [products, setProducts] = useState<ProductTemplate[]>([]);
@@ -298,7 +300,10 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
           const pid = stored.preload_product_id ?? stored.selected_product_id;
           if (pid) {
             const found = list.find(p => p.id === pid);
-            if (found) setSelectedProductId(pid);
+            if (found) {
+              setSelectedProductId(pid);
+              onTemplateCategoriesChange?.(found.template_categories ?? []);
+            }
             if (stored.preload_product_id) {
               delete stored.preload_product_id;
               localStorage.setItem('pixierp_editor_state', JSON.stringify(stored));
@@ -420,13 +425,15 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, is
   const handleProductChange = (productId: number | undefined) => {
     if (!productId) {
       setSelectedProductId(null); setProductSizeKey(null);
-      try { const s = localStorage.getItem('pixierp_editor_state'); if (s) { const o = JSON.parse(s); delete o.selected_product_id; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } } catch {}
+      onTemplateCategoriesChange?.([]);
+      try { const s = localStorage.getItem('pixierp_editor_state'); if (s) { const o = JSON.parse(s); delete o.selected_product_id; delete o.template_category_ids; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } } catch {}
       return;
     }
     setSelectedProductId(productId);
     try { const s = localStorage.getItem('pixierp_editor_state'); const o = s ? JSON.parse(s) : {}; o.selected_product_id = productId; localStorage.setItem('pixierp_editor_state', JSON.stringify(o)); } catch {}
     const product = products.find(p => p.id === productId);
     if (!product) return;
+    onTemplateCategoriesChange?.(product.template_categories ?? []);
     setSelectedPreset(null);
     // Reset click-state for new product
     setClickPricing(null);

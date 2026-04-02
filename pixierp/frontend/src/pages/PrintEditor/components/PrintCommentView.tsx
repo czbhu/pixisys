@@ -7,8 +7,10 @@ import {
   SafetyCertificateOutlined, ExclamationCircleOutlined,
   ScissorOutlined, MergeCellsOutlined, ExportOutlined,
   DragOutlined, PlusOutlined, UndoOutlined, RedoOutlined, ClearOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
+import TemplatePicker from './TemplatePicker';
 import api from '../../../services/api';
 
 const { Text, Title } = Typography;
@@ -89,6 +91,7 @@ interface Props {
   canExport?: boolean;
   initialPdfUrl?: string | null;
   hideUpload?: boolean;
+  showTemplates?: boolean;
   onPdfFileChange?: (file: File | null) => void;
   onAnnotationsChange?: (annotations: CommentAnnotation[]) => void;
 }
@@ -190,6 +193,7 @@ const PrintCommentView: React.FC<Props> = ({
   canExport,
   initialPdfUrl,
   hideUpload = false,
+  showTemplates = false,
   onPdfFileChange,
   onAnnotationsChange,
 }) => {
@@ -221,6 +225,7 @@ const PrintCommentView: React.FC<Props> = ({
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
 
   // Tool state
   const [activeTool, setActiveTool] = useState<CommentToolType>('pointer');
@@ -359,9 +364,8 @@ const PrintCommentView: React.FC<Props> = ({
     (async () => {
       if (initialPdfUrl) {
         try {
-          const response = await fetch(initialPdfUrl);
-          if (!response.ok) throw new Error('PDF fetch failed');
-          const blob = await response.blob();
+          const response = await api.get(initialPdfUrl, { responseType: 'blob' });
+          const blob = response.data;
           if (cancelled) return;
           const file = new File([blob], 'shared-preview.pdf', { type: 'application/pdf' });
           renderPdf(file, true);
@@ -500,7 +504,7 @@ const PrintCommentView: React.FC<Props> = ({
     } finally {
       setLoadingPdf(false);
     }
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [onPdfFileChange]);
 
   // ── IntersectionObserver for scroll-based currentPage ──────────────────────
   useEffect(() => {
@@ -640,7 +644,7 @@ const PrintCommentView: React.FC<Props> = ({
     onPdfFileChange?.(snap.pdfFile);
     pageCanvasRefs.current = snap.canvases;
     setTimeout(() => { skipHistoryRef.current = false; }, 0);
-  }, []);
+  }, [onPdfFileChange]);
 
   const undo = useCallback(() => {
     if (historyStack.current.length === 0) return;
@@ -1107,22 +1111,63 @@ const PrintCommentView: React.FC<Props> = ({
 
   // ── Merge handler ──────────────────────────────────────────────────────────
   const handleMerge = async (files: File[]) => {
-    if (!pdfFileRef.current || files.length === 0) return;
+    if (files.length === 0) return;
     setMerging(true);
     try {
       const formData = new FormData();
-      formData.append('pdfs', pdfFileRef.current);
+      // If there's an existing PDF, include it first
+      if (pdfFileRef.current) {
+        formData.append('pdfs', pdfFileRef.current);
+      }
       for (const f of files) {
         formData.append('pdfs', f);
       }
+
+      // If only one file total and no existing PDF, just render it directly
+      if (!pdfFileRef.current && files.length === 1) {
+        renderPdf(files[0]);
+        return;
+      }
+
       const resp = await api.post('/printshop/pdf-merge/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
         timeout: 60000,
       });
       const blob = new Blob([resp.data], { type: 'application/pdf' });
-      const file = new File([blob], 'merged.pdf', { type: 'application/pdf' });
-      renderPdf(file);
+      const mergedFile = new File([blob], 'merged.pdf', { type: 'application/pdf' });
+
+      // Analyze merged PDF to check for size differences
+      const analyzeForm = new FormData();
+      analyzeForm.append('pdf', mergedFile);
+      try {
+        const analyzeResp = await api.post('/printshop/pdf-analyze/', analyzeForm, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+          timeout: 30000,
+        });
+        const pages = analyzeResp.data?.pages ?? [];
+        if (pages.length > 1) {
+          // Gather sizes (prefer TrimBox, fallback to MediaBox)
+          const sizes = pages.map((p: any) => {
+            const tb = p.trimbox_mm;
+            const mb = p.mediabox_mm;
+            const w = tb ? Math.round(tb.width) : mb ? Math.round(mb.width) : 0;
+            const h = tb ? Math.round(tb.height) : mb ? Math.round(mb.height) : 0;
+            return { w, h };
+          });
+          const firstW = sizes[0].w;
+          const firstH = sizes[0].h;
+          const mismatch = sizes.some((s: { w: number; h: number }) => s.w !== firstW || s.h !== firstH);
+          if (mismatch) {
+            const unique = Array.from(new Set(sizes.map((s: { w: number; h: number }) => `${s.w}×${s.h} mm`)));
+            message.warning(`Eltérő oldalméret a PDF-ben: ${unique.join(', ')}`, 6);
+          }
+        }
+      } catch {
+        // Analyze failure is non-critical, just skip the warning
+      }
+
+      renderPdf(mergedFile);
       message.success('PDF összefűzés kész');
     } catch {
       message.error('PDF összefűzési hiba');
@@ -1365,6 +1410,11 @@ const PrintCommentView: React.FC<Props> = ({
               <Button icon={<FilePdfOutlined />} size="small">PDF betöltése</Button>
             </Upload>
           )}
+          {showTemplates && !hideUpload && canManagePdf && (
+            <Button icon={<AppstoreOutlined />} size="small" onClick={() => setTemplatePickerOpen(true)}>
+              Sablonok
+            </Button>
+          )}
           {pdfPages.length > 0 && (
             <>
               {canManagePdf && (
@@ -1379,7 +1429,7 @@ const PrintCommentView: React.FC<Props> = ({
                     <Button size="small" danger icon={<ClearOutlined />} onClick={() => {
                       Modal.confirm({
                         title: 'Mindent töröl',
-                        content: 'Biztosan törölni szeretnéd az összes annotációt, segédvonalat, mérést és cropot?',
+                        content: 'Biztosan törölni szeretnéd az összes annotációt, segédvonalat, mérést, cropot és a feltöltött PDF-t?',
                         okText: 'Törlés',
                         cancelText: 'Mégse',
                         okButtonProps: { danger: true },
@@ -1394,6 +1444,16 @@ const PrintCommentView: React.FC<Props> = ({
                           setMeasuringStart(null);
                           setSelectedElement(null);
                           setActiveTool('pointer');
+                          // Clear PDF
+                          setPdfPages([]);
+                          setPageInfos([]);
+                          setPageColorSpaces([]);
+                          setPageElements([]);
+                          pdfFileRef.current = null;
+                          onPdfFileChange?.(null);
+                          pageCanvasRefs.current = [];
+                          // Clear IndexedDB cache
+                          try { indexedDB.deleteDatabase('printPreviewPdfCache'); } catch {}
                           message.success('Minden törölve');
                         },
                       });
@@ -1688,13 +1748,21 @@ const PrintCommentView: React.FC<Props> = ({
             </div>
           ) : pdfPages.length === 0 ? (
             !hideUpload && canManagePdf ? (
-              <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
+              <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
+                if (fileList && fileList.length > 1 && file === fileList[fileList.length - 1]) {
+                  handleMerge(fileList as unknown as File[]);
+                } else if (!fileList || fileList.length <= 1) {
+                  renderPdf(file);
+                }
+                return false;
+              }}>
                 <div style={{
                   border: '2px dashed #d9d9d9', borderRadius: 8, padding: 48,
                   cursor: 'pointer', color: '#999', textAlign: 'center', background: '#fff',
                 }}>
                   <FilePdfOutlined style={{ fontSize: 48, marginBottom: 12 }} />
                   <div>Húzz ide egy PDF fájlt, vagy kattints a betöltéshez</div>
+                  <div style={{ fontSize: 11, color: '#bbb', marginTop: 4 }}>Több PDF egyszerre = összefűzés</div>
                 </div>
               </Upload>
             ) : (
@@ -2339,6 +2407,18 @@ const PrintCommentView: React.FC<Props> = ({
                         {(a.type ?? 'area') === 'pin' ? 'Jelölő' : (a.type ?? 'area') === 'arrow' ? 'Nyíl' : 'Terület'}
                       </Text>
                       <Text type="secondary" style={{ fontSize: 10, marginLeft: 'auto' }}>{a.page}. oldal</Text>
+                      {canManageComments && !a.resolved && (
+                        <Tooltip title="Megoldva">
+                          <Button size="small" type="text" icon={<CheckOutlined />} style={{ padding: '0 4px', minWidth: 0 }}
+                            onClick={e => { e.stopPropagation(); handleResolve(a.id); }} />
+                        </Tooltip>
+                      )}
+                      {canManageComments && (
+                        <Tooltip title="Törlés">
+                          <Button size="small" type="text" danger icon={<DeleteOutlined />} style={{ padding: '0 4px', minWidth: 0 }}
+                            onClick={e => { e.stopPropagation(); handleDeleteAnnotation(a.id); }} />
+                        </Tooltip>
+                      )}
                     </div>
                     <Text style={{ fontSize: 12, display: 'block', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                       {a.text}
@@ -2351,6 +2431,12 @@ const PrintCommentView: React.FC<Props> = ({
           )}
         </div>
       </div>
+
+      <TemplatePicker
+        open={templatePickerOpen}
+        onClose={() => setTemplatePickerOpen(false)}
+        onSelect={(file) => renderPdf(file)}
+      />
     </div>
   );
 };

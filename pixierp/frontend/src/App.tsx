@@ -31,6 +31,8 @@ import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview'
 import POSSales from './pages/POS/Sales';
 import PrintEditorPage from './pages/PrintEditor/PrintEditorPage';
 import PrintPreviewPage from './pages/PrintEditor/PrintPreviewPage';
+import PrintShopPage from './pages/PrintEditor/PrintShopPage';
+import PrintTemplatesPage from './pages/PrintEditor/PrintTemplatesPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
@@ -215,6 +217,12 @@ function AppContent() {
     return <PrintEditorPage />;
   }
 
+  // Print Shop fullscreen mode - no sidebar
+  const isPrintShop = location.pathname.startsWith('/print-shop');
+  if (isPrintShop) {
+    return <PrintShopPage />;
+  }
+
   // Print Preview fullscreen mode - no sidebar
   const isPrintPreview = location.pathname.startsWith('/print-preview');
   if (isPrintPreview) {
@@ -289,6 +297,8 @@ function AppContent() {
             <Route path="/site-management" element={<SiteManagement />} />
             <Route path="/site-management/:slug" element={<SiteManagementPreview />} />
             <Route path="/print-editor/*" element={<PrintEditorPage />} />
+            <Route path="/print-shop/*" element={<PrintShopPage />} />
+            <Route path="/manufacturing/print-templates" element={<PrintTemplatesPage />} />
           </Routes>
         </Content>
 

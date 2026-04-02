@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+    PrintTemplateCategory, PrintTemplate,
 )
 
 
@@ -127,7 +128,7 @@ class SharedPrintPreviewSerializer(serializers.ModelSerializer):
     def get_pdf_url(self, obj):
         request = self.context.get('request')
         if request:
-            return request.build_absolute_uri(f'/api/v1/printshop/public-preview/{obj.token}/pdf/')
+            return request.build_absolute_uri(f'/api/v1/printshop/shared-preview/{obj.token}/pdf/')
         return None
 
 
@@ -209,3 +210,51 @@ class PrintOrderListSerializer(serializers.ModelSerializer):
 
     def get_item_count(self, obj):
         return obj.items.count()
+
+
+class PrintTemplateCategorySerializer(serializers.ModelSerializer):
+    template_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PrintTemplateCategory
+        fields = ['id', 'name', 'description', 'sort_order', 'template_count', 'created_at', 'updated_at']
+
+    def get_template_count(self, obj):
+        return obj.templates.filter(is_active=True).count()
+
+
+class PrintTemplateSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source='category.name', read_only=True)
+    created_by_name = serializers.SerializerMethodField()
+    file_url = serializers.SerializerMethodField()
+    thumbnail_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PrintTemplate
+        fields = [
+            'id', 'name', 'category', 'category_name', 'file', 'file_url',
+            'file_type', 'thumbnail', 'thumbnail_url', 'is_active', 'sort_order',
+            'created_by', 'created_by_name', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_by', 'created_by_name', 'file_type', 'file_url', 'thumbnail_url']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+    def get_file_url(self, obj):
+        if obj.file:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.file.url)
+            return obj.file.url
+        return None
+
+    def get_thumbnail_url(self, obj):
+        if obj.thumbnail:
+            request = self.context.get('request')
+            if request:
+                return request.build_absolute_uri(obj.thumbnail.url)
+            return obj.thumbnail.url
+        return None

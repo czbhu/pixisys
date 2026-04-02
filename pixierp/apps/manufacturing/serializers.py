@@ -328,6 +328,7 @@ class ServiceSerializer(serializers.ModelSerializer):
     )
     group_names = serializers.SerializerMethodField()
     cost_summary = serializers.SerializerMethodField()
+    is_protected = serializers.SerializerMethodField()
     
     class Meta:
         model = Service
@@ -337,6 +338,9 @@ class ServiceSerializer(serializers.ModelSerializer):
         if obj.created_by:
             return obj.created_by.get_full_name() or obj.created_by.username
         return 'Rendszer'
+
+    def get_is_protected(self, obj):
+        return obj.is_protected or obj.groups.filter(is_protected=True).exists()
 
     def get_group_names(self, obj):
         return [g.name for g in obj.groups.all()]
@@ -505,6 +509,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
     print_service_options_details = serializers.SerializerMethodField()
     service_groups_1 = serializers.SerializerMethodField()
     service_groups_2 = serializers.SerializerMethodField()
+    template_categories_details = serializers.SerializerMethodField()
 
     class Meta:
         model = ProductTemplate
@@ -521,6 +526,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'finishing_services', 'finishing_services_details',
             'finishing_service_groups',
             'service_groups_1', 'service_groups_2',
+            'template_categories', 'template_categories_details',
             'print_sides', 'print_service',
             'print_service_options', 'print_service_options_details',
             'print_service_options_order', 'fix_cost_first_side_only',
@@ -606,6 +612,9 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         groups = obj.service_groups.filter(side='2').order_by('group_index').prefetch_related('services')
         return [[s.id for s in g.services.all()] for g in groups]
 
+    def get_template_categories_details(self, obj):
+        return [{'id': c.id, 'name': c.name} for c in obj.template_categories.all()]
+
     def _save_service_groups(self, instance, sg1, sg2, sgf=None):
         """Recreate service groups and sync allowed_services / finishing_services (flat union)."""
         from .models import ProductTemplateServiceGroup
@@ -637,6 +646,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         allowed_material_groups = validated_data.pop('allowed_material_groups', [])
         print_service_options = validated_data.pop('print_service_options', [])
         required_services = validated_data.pop('required_services', [])
+        template_categories = validated_data.pop('template_categories', [])
         validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
         sg1 = self.initial_data.get('service_groups_1', [])
@@ -647,6 +657,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         template.allowed_material_groups.set(allowed_material_groups)
         template.print_service_options.set(print_service_options)
         template.required_services.set(required_services)
+        template.template_categories.set(template_categories)
         self._save_service_groups(template, sg1, sg2, sgf)
         self._save_service_groups(template, sg1, sg2)
         for size in sizes_data:
@@ -663,6 +674,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
         allowed_material_groups = validated_data.pop('allowed_material_groups', None)
         print_service_options = validated_data.pop('print_service_options', None)
         required_services = validated_data.pop('required_services', None)
+        template_categories = validated_data.pop('template_categories', None)
         validated_data.pop('finishing_services', None)  # derived from finishing_service_groups
         validated_data.pop('allowed_services', None)  # derived from groups
         sg1 = self.initial_data.get('service_groups_1', None)
@@ -678,6 +690,8 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             instance.print_service_options.set(print_service_options)
         if required_services is not None:
             instance.required_services.set(required_services)
+        if template_categories is not None:
+            instance.template_categories.set(template_categories)
         sgf = self.initial_data.get('finishing_service_groups', None)
         if sg1 is not None or sg2 is not None or sgf is not None:
             self._save_service_groups(

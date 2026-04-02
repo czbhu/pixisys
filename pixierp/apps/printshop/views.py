@@ -17,12 +17,14 @@ from rest_framework.views import APIView
 from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+    PrintTemplateCategory, PrintTemplate,
 )
 from .serializers import (
     PrintSizePresetSerializer, PrintPricingConfigSerializer,
     PrintOrderSerializer, PrintOrderListSerializer, PrintOrderItemSerializer,
     PrintMaterialSerializer, PrintOrderItemCommentSerializer,
     SharedPrintPreviewSerializer, SharedPrintPreviewCommentSerializer,
+    PrintTemplateCategorySerializer, PrintTemplateSerializer,
 )
 
 
@@ -1090,6 +1092,28 @@ class SharedPrintPreviewDetailView(APIView):
         return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data)
 
 
+class SharedPrintPreviewPdfView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, request, token):
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return None
+        return preview
+
+    def get(self, request, token):
+        preview = self.get_object(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        if not preview.pdf:
+            return Response({'error': 'Nincs megosztható PDF a previewhoz'}, status=404)
+
+        filename = os.path.basename(preview.pdf.name) or 'preview.pdf'
+        response = FileResponse(preview.pdf.open('rb'), content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+
+
 class PublicPrintPreviewView(APIView):
     permission_classes = [AllowAny]
 
@@ -1301,6 +1325,306 @@ class PdfToSvgView(APIView):
                 'page_count': page_count,
                 'page': page,
             })
+
+
+class PdfDecomposeView(APIView):
+    """
+    Decompose a PDF page into separate elements:
+    - Vector drawings → SVG groups (spatially clustered)
+    - Raster images → separate base64 PNGs
+    - Text → text items with position/font/size/color
+    POST multipart: pdf (file), page (int, default 1)
+    """
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+
+    PT_TO_MM = 25.4 / 72
+
+    def _cluster_drawings(self, drawings, gap=5):
+        """Group drawings whose bounding boxes overlap or are within `gap` pt."""
+        import fitz
+        if not drawings:
+            return []
+        rects = []
+        for d in drawings:
+            r = d.get('rect')
+            if r:
+                rects.append((fitz.Rect(r), d))
+
+        clusters = []
+        used = set()
+        for i, (ri, di) in enumerate(rects):
+            if i in used:
+                continue
+            cluster = [di]
+            union = fitz.Rect(ri)
+            used.add(i)
+            changed = True
+            while changed:
+                changed = False
+                for j, (rj, dj) in enumerate(rects):
+                    if j in used:
+                        continue
+                    expanded = fitz.Rect(union.x0 - gap, union.y0 - gap,
+                                         union.x1 + gap, union.y1 + gap)
+                    if expanded.intersects(rj):
+                        cluster.append(dj)
+                        union = union | rj
+                        used.add(j)
+                        changed = True
+            clusters.append((union, cluster))
+        return clusters
+
+    def _drawing_to_svg_path(self, drawing, offset_x=0, offset_y=0):
+        """Convert a PyMuPDF drawing dict to an SVG <path> element string."""
+        parts = []
+        current_x, current_y = None, None
+
+        for item in drawing.get('items', []):
+            kind = item[0]
+            if kind == 'l':  # line
+                p1, p2 = item[1], item[2]
+                sx, sy = p1.x - offset_x, p1.y - offset_y
+                ex, ey = p2.x - offset_x, p2.y - offset_y
+                if current_x is None or abs(current_x - sx) > 0.01 or abs(current_y - sy) > 0.01:
+                    parts.append(f'M {sx:.2f} {sy:.2f}')
+                parts.append(f'L {ex:.2f} {ey:.2f}')
+                current_x, current_y = ex, ey
+            elif kind == 're':  # rect
+                r = item[1]
+                x0, y0 = r.x0 - offset_x, r.y0 - offset_y
+                x1, y1 = r.x1 - offset_x, r.y1 - offset_y
+                parts.append(f'M {x0:.2f} {y0:.2f} '
+                             f'L {x1:.2f} {y0:.2f} '
+                             f'L {x1:.2f} {y1:.2f} '
+                             f'L {x0:.2f} {y1:.2f} Z')
+                current_x, current_y = None, None
+            elif kind == 'c':  # bezier curve
+                p1, p2, p3, p4 = item[1], item[2], item[3], item[4]
+                sx, sy = p1.x - offset_x, p1.y - offset_y
+                if current_x is None or abs(current_x - sx) > 0.01 or abs(current_y - sy) > 0.01:
+                    parts.append(f'M {sx:.2f} {sy:.2f}')
+                parts.append(f'C {p2.x - offset_x:.2f} {p2.y - offset_y:.2f} '
+                             f'{p3.x - offset_x:.2f} {p3.y - offset_y:.2f} '
+                             f'{p4.x - offset_x:.2f} {p4.y - offset_y:.2f}')
+                current_x, current_y = p4.x - offset_x, p4.y - offset_y
+            elif kind == 'qu':  # quad
+                q = item[1]
+                parts.append(f'M {q.ul.x - offset_x:.2f} {q.ul.y - offset_y:.2f} '
+                             f'L {q.ur.x - offset_x:.2f} {q.ur.y - offset_y:.2f} '
+                             f'L {q.lr.x - offset_x:.2f} {q.lr.y - offset_y:.2f} '
+                             f'L {q.ll.x - offset_x:.2f} {q.ll.y - offset_y:.2f} Z')
+                current_x, current_y = None, None
+
+        if drawing.get('closePath') and parts:
+            parts.append('Z')
+            current_x, current_y = None, None
+
+        if not parts:
+            return ''
+
+        d_attr = ' '.join(parts)
+
+        fill = drawing.get('fill')
+        stroke = drawing.get('color')
+        width = drawing.get('width', 0)
+        even_odd = drawing.get('even_odd', False)
+
+        style_parts = []
+        if fill:
+            r, g, b = [int(c * 255) for c in fill[:3]]
+            style_parts.append(f'fill:rgb({r},{g},{b})')
+            if drawing.get('fill_opacity') is not None and drawing['fill_opacity'] < 1:
+                style_parts.append(f'fill-opacity:{drawing["fill_opacity"]:.2f}')
+        else:
+            style_parts.append('fill:none')
+
+        if stroke and width:
+            r, g, b = [int(c * 255) for c in stroke[:3]]
+            style_parts.append(f'stroke:rgb({r},{g},{b})')
+            style_parts.append(f'stroke-width:{width:.2f}')
+            if drawing.get('stroke_opacity') is not None and drawing['stroke_opacity'] < 1:
+                style_parts.append(f'stroke-opacity:{drawing["stroke_opacity"]:.2f}')
+        else:
+            style_parts.append('stroke:none')
+
+        if even_odd:
+            style_parts.append('fill-rule:evenodd')
+
+        style = ';'.join(style_parts)
+        return f'<path d="{d_attr}" style="{style}"/>'
+
+    def post(self, request):
+        import fitz
+        import base64
+        import io
+        from PIL import Image as PILImage
+
+        pdf_file = request.FILES.get('pdf')
+        if not pdf_file:
+            return Response({'error': 'PDF fájl szükséges'}, status=400)
+
+        page_num = int(request.data.get('page', 1))
+
+        if pdf_file.size > 50 * 1024 * 1024:
+            return Response({'error': 'A fájl túl nagy (max 50 MB)'}, status=400)
+
+        pdf_bytes = pdf_file.read()
+        doc = fitz.open(stream=pdf_bytes, filetype='pdf')
+        page_num = max(1, min(page_num, doc.page_count))
+        page = doc[page_num - 1]
+        mb = page.mediabox
+        page_w_pt = mb.width
+        page_h_pt = mb.height
+
+        elements = []
+
+        # ── 1. Extract raster images ──────────────────────────────────────────
+        images_on_page = page.get_images(full=True)
+        for img_info in images_on_page:
+            xref = img_info[0]
+            try:
+                base_image = doc.extract_image(xref)
+                if not base_image:
+                    continue
+                img_bytes = base_image['image']
+                ext = base_image.get('ext', 'png')
+                mime = f'image/{ext}' if ext != 'jpg' else 'image/jpeg'
+
+                # Find position of this image on the page
+                img_rects = page.get_image_rects(xref)
+                if not img_rects:
+                    continue
+                rect = img_rects[0]
+
+                # Convert to proper format if needed
+                try:
+                    pil_img = PILImage.open(io.BytesIO(img_bytes))
+                    if pil_img.mode == 'CMYK':
+                        pil_img = pil_img.convert('RGB')
+                    buf = io.BytesIO()
+                    pil_img.save(buf, format='PNG')
+                    img_bytes = buf.getvalue()
+                    mime = 'image/png'
+                except Exception:
+                    pass
+
+                b64 = base64.b64encode(img_bytes).decode('ascii')
+                elements.append({
+                    'type': 'image',
+                    'data_url': f'data:{mime};base64,{b64}',
+                    'x_pt': rect.x0,
+                    'y_pt': rect.y0,
+                    'width_pt': rect.width,
+                    'height_pt': rect.height,
+                })
+            except Exception:
+                continue
+
+        # ── 2. Extract vector drawings ────────────────────────────────────────
+        drawings = page.get_drawings()
+
+        # Filter out drawings that are exactly on image rects (background rects etc.)
+        image_rects = []
+        for img_info in images_on_page:
+            rects = page.get_image_rects(img_info[0])
+            if rects:
+                image_rects.append(rects[0])
+
+        vector_drawings = []
+        for d in drawings:
+            r = fitz.Rect(d.get('rect', (0, 0, 0, 0)))
+            if r.is_empty or r.is_infinite:
+                continue
+            # Skip if this drawing is just a clipping rectangle for an image
+            is_image_frame = False
+            for ir in image_rects:
+                if abs(r.x0 - ir.x0) < 1 and abs(r.y0 - ir.y0) < 1 and abs(r.x1 - ir.x1) < 1 and abs(r.y1 - ir.y1) < 1:
+                    is_image_frame = True
+                    break
+            if is_image_frame:
+                continue
+            vector_drawings.append(d)
+
+        # Cluster vector drawings into spatial groups
+        clusters = self._cluster_drawings(vector_drawings, gap=3)
+        for union_rect, cluster_drawings in clusters:
+            # Build SVG for this cluster
+            svg_paths = []
+            for d in cluster_drawings:
+                path_str = self._drawing_to_svg_path(d, offset_x=union_rect.x0, offset_y=union_rect.y0)
+                if path_str:
+                    svg_paths.append(path_str)
+
+            if not svg_paths:
+                continue
+
+            w = union_rect.width
+            h = union_rect.height
+            svg = (
+                f'<svg xmlns="http://www.w3.org/2000/svg" '
+                f'width="{w:.2f}" height="{h:.2f}" '
+                f'viewBox="0 0 {w:.2f} {h:.2f}">'
+                + ''.join(svg_paths) +
+                '</svg>'
+            )
+
+            elements.append({
+                'type': 'vector',
+                'svg': svg,
+                'x_pt': union_rect.x0,
+                'y_pt': union_rect.y0,
+                'width_pt': w,
+                'height_pt': h,
+            })
+
+        # ── 3. Extract text ───────────────────────────────────────────────────
+        text_dict = page.get_text('dict', flags=fitz.TEXT_PRESERVE_WHITESPACE)
+        for block in text_dict.get('blocks', []):
+            if block.get('type') != 0:  # type 0 = text
+                continue
+            for line in block.get('lines', []):
+                for span in line.get('spans', []):
+                    text = span.get('text', '').strip()
+                    if not text:
+                        continue
+
+                    font_size = span.get('size', 12)
+                    color_int = span.get('color', 0)
+                    r = (color_int >> 16) & 0xFF
+                    g = (color_int >> 8) & 0xFF
+                    b = color_int & 0xFF
+                    color_hex = f'#{r:02x}{g:02x}{b:02x}'
+
+                    font_name = span.get('font', 'Helvetica')
+                    flags = span.get('flags', 0)
+                    is_bold = bool(flags & (1 << 4))
+                    is_italic = bool(flags & (1 << 1))
+
+                    origin = span.get('origin', (span['bbox'][0], span['bbox'][1]))
+
+                    elements.append({
+                        'type': 'text',
+                        'text': text,
+                        'x_pt': origin[0],
+                        'y_pt': origin[1],
+                        'font_size_pt': font_size,
+                        'font_name': font_name,
+                        'is_bold': is_bold,
+                        'is_italic': is_italic,
+                        'color': color_hex,
+                        'bbox': list(span['bbox']),
+                    })
+
+        doc.close()
+
+        return Response({
+            'page_width_pt': page_w_pt,
+            'page_height_pt': page_h_pt,
+            'page_width_mm': round(page_w_pt * self.PT_TO_MM, 1),
+            'page_height_mm': round(page_h_pt * self.PT_TO_MM, 1),
+            'elements': elements,
+        })
 
 
 class PdfAnalyzeView(APIView):
@@ -2582,3 +2906,99 @@ class PdfExportView(APIView):
                 response = HttpResponse(f.read(), content_type='application/pdf')
                 response['Content-Disposition'] = 'attachment; filename="export.pdf"'
                 return response
+
+
+class PrintTemplateCategoryViewSet(viewsets.ModelViewSet):
+    queryset = PrintTemplateCategory.objects.all()
+    serializer_class = PrintTemplateCategorySerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        if self.request.query_params.get('active_only') == 'true':
+            qs = qs.filter(templates__is_active=True).distinct()
+        return qs
+
+
+class PrintTemplateViewSet(viewsets.ModelViewSet):
+    queryset = PrintTemplate.objects.select_related('category', 'created_by').all()
+    serializer_class = PrintTemplateSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        category = self.request.query_params.get('category')
+        if category:
+            qs = qs.filter(category_id=category)
+        active = self.request.query_params.get('is_active')
+        if active is not None:
+            qs = qs.filter(is_active=active.lower() == 'true')
+        return qs
+
+    def _generate_thumbnail(self, instance):
+        """Auto-generate a thumbnail from the uploaded file (PDF or SVG)."""
+        import io
+        from PIL import Image as PILImage
+        from django.core.files.base import ContentFile
+
+        try:
+            if instance.file_type == 'pdf':
+                import fitz
+                doc = fitz.open(stream=instance.file.read(), filetype='pdf')
+                instance.file.seek(0)
+                page = doc[0]
+                # Render at 2x for quality, max 400px wide
+                mat = fitz.Matrix(2, 2)
+                pix = page.get_pixmap(matrix=mat, alpha=False)
+                img = PILImage.frombytes('RGB', [pix.width, pix.height], pix.samples)
+                doc.close()
+            elif instance.file_type == 'svg':
+                import cairosvg
+                png_data = cairosvg.svg2png(
+                    file_obj=instance.file,
+                    output_width=400,
+                )
+                instance.file.seek(0)
+                img = PILImage.open(io.BytesIO(png_data))
+            else:
+                return
+
+            # Resize to max 400px on the longest side
+            max_dim = 400
+            ratio = min(max_dim / img.width, max_dim / img.height, 1)
+            if ratio < 1:
+                img = img.resize((int(img.width * ratio), int(img.height * ratio)), PILImage.LANCZOS)
+
+            buf = io.BytesIO()
+            img.save(buf, format='PNG', optimize=True)
+            buf.seek(0)
+
+            thumb_name = f"thumb_{instance.pk}.png"
+            instance.thumbnail.save(thumb_name, ContentFile(buf.read()), save=True)
+        except Exception:
+            pass  # Thumbnail generation is best-effort
+
+    def perform_create(self, serializer):
+        file = self.request.FILES.get('file')
+        file_type = 'pdf'
+        if file:
+            ext = os.path.splitext(file.name)[1].lower()
+            file_type = 'svg' if ext == '.svg' else 'pdf'
+        instance = serializer.save(
+            created_by=self.request.user,
+            file_type=file_type,
+        )
+        if not instance.thumbnail and instance.file:
+            self._generate_thumbnail(instance)
+
+    def perform_update(self, serializer):
+        file = self.request.FILES.get('file')
+        extra = {}
+        if file:
+            ext = os.path.splitext(file.name)[1].lower()
+            extra['file_type'] = 'svg' if ext == '.svg' else 'pdf'
+        instance = serializer.save(**extra)
+        # Regenerate thumbnail if file changed and no manual thumbnail provided
+        if file and not self.request.FILES.get('thumbnail'):
+            self._generate_thumbnail(instance)

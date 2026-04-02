@@ -315,3 +315,62 @@ class SharedPrintPreviewComment(models.Model):
 
     def __str__(self):
         return f"Megosztott preview komment #{self.pk}"
+
+
+class PrintTemplateCategory(models.Model):
+    """Nyomtatási sablon kategória."""
+    name = models.CharField(max_length=150, verbose_name='Kategória neve')
+    description = models.TextField(blank=True, verbose_name='Leírás')
+    sort_order = models.IntegerField(default=0, verbose_name='Sorrend')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name = 'Sablon kategória'
+        verbose_name_plural = 'Sablon kategóriák'
+
+    def __str__(self):
+        return self.name
+
+
+def template_upload_path(instance, filename):
+    return f'printshop/templates/{instance.category_id or 0}/{filename}'
+
+
+class PrintTemplate(models.Model):
+    """Feltöltött nyomtatási sablon (PDF/SVG)."""
+    name = models.CharField(max_length=200, verbose_name='Sablon neve')
+    category = models.ForeignKey(
+        PrintTemplateCategory,
+        on_delete=models.CASCADE,
+        related_name='templates',
+        verbose_name='Kategória',
+    )
+    file = models.FileField(upload_to=template_upload_path, verbose_name='Fájl (PDF/SVG)')
+    file_type = models.CharField(
+        max_length=10,
+        choices=[('pdf', 'PDF'), ('svg', 'SVG')],
+        verbose_name='Fájl típus',
+    )
+    thumbnail = models.ImageField(
+        upload_to='printshop/templates/thumbnails/',
+        blank=True, null=True,
+        verbose_name='Előnézeti kép',
+    )
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    sort_order = models.IntegerField(default=0, verbose_name='Sorrend')
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name='Feltöltötte',
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['sort_order', 'name']
+        verbose_name = 'Nyomtatási sablon'
+        verbose_name_plural = 'Nyomtatási sablonok'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_file_type_display()})"

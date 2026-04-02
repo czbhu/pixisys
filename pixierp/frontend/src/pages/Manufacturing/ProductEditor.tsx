@@ -86,9 +86,16 @@ interface ProductTemplate {
   custom_size_height_max: number | null;
   sizes: any[];
   quantity_discounts: { id: number; min_amount: number; discount_type: string; discount_value: number }[];
+  template_categories: number[];
+  template_categories_details: { id: number; name: string }[];
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+interface TemplateCategory {
+  id: number;
+  name: string;
 }
 
 interface ProductClass {
@@ -159,6 +166,7 @@ const ProductEditor: React.FC = () => {
   const [materials, setMaterials]           = useState<MaterialItem[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
   const [services, setServices]             = useState<ServiceItem[]>([]);
+  const [templateCategories, setTemplateCategories] = useState<TemplateCategory[]>([]);
   const [loading, setLoading]               = useState(false);
 
   // DIGIPR_K and DIGIPR_CMYK are protected click-pricing services — cannot be removed
@@ -184,6 +192,7 @@ const ProductEditor: React.FC = () => {
   const [requiredServices, setRequiredServices]       = useState<number[]>([]);
   const [finishingServiceGroups, setFinishingServiceGroups] = useState<number[][]>([[]]);
   const [quantityDiscounts, setQuantityDiscounts]     = useState<QuantityDiscount[]>([]);
+  const [selectedTemplateCategories, setSelectedTemplateCategories] = useState<number[]>([]);
 
   // Produkciózás (imposition) modal
   const [impositionOpen, setImpositionOpen]   = useState(false);
@@ -203,18 +212,20 @@ const ProductEditor: React.FC = () => {
   const loadAll = useCallback(async () => {
     setLoading(true);
     try {
-      const [prodRes, catRes, matRes, matGrpRes, svcRes] = await Promise.all([
+      const [prodRes, catRes, matRes, matGrpRes, svcRes, tplCatRes] = await Promise.all([
         api.get('/manufacturing/product-templates/'),
         api.get('/manufacturing/product-classes/?page_size=1000'),
         api.get('/warehouse/materials/?page_size=1000'),
         api.get('/warehouse/material-groups/?page_size=1000'),
         api.get('/manufacturing/services/?page_size=1000'),
+        api.get('/printshop/template-categories/'),
       ]);
       setProducts(Array.isArray(prodRes.data) ? prodRes.data : (prodRes.data.results ?? []));
       setCategories(Array.isArray(catRes.data) ? catRes.data : (catRes.data.results ?? []));
       setMaterials(Array.isArray(matRes.data) ? matRes.data : (matRes.data.results ?? []));
       setMaterialGroups(Array.isArray(matGrpRes.data) ? matGrpRes.data : (matGrpRes.data.results ?? []));
       setServices(Array.isArray(svcRes.data) ? svcRes.data : (svcRes.data.results ?? []));
+      setTemplateCategories(Array.isArray(tplCatRes.data) ? tplCatRes.data : (tplCatRes.data.results ?? []));
     } catch {
       message.error('Hiba az adatok betöltésekor');
     } finally {
@@ -291,6 +302,7 @@ const ProductEditor: React.FC = () => {
     setServiceGroups1([[]]);
     setServiceGroups2([[]]);
     setQuantityDiscounts([]);
+    setSelectedTemplateCategories([]);
     setDrawerOpen(true);
   };
 
@@ -367,6 +379,7 @@ const ProductEditor: React.FC = () => {
       discount_type: d.discount_type as 'percent' | 'fixed',
       discount_value: Number(d.discount_value),
     })));
+    setSelectedTemplateCategories(p.template_categories ?? []);
     setDrawerOpen(true);
   };
 
@@ -433,6 +446,7 @@ const ProductEditor: React.FC = () => {
       finishing_service_groups: finishingServiceGroups,
       service_groups_1: serviceGroups1,
       service_groups_2: serviceGroups2,
+      template_categories: selectedTemplateCategories,
       quantity_discounts: quantityDiscounts
         .filter(d => d.min_amount != null && d.discount_value != null)
         .map(d => ({
@@ -1242,6 +1256,28 @@ const ProductEditor: React.FC = () => {
                     >
                       Kedvezmény sáv hozzáadása
                     </Button>
+                  </>
+                ),
+              },
+              {
+                key: 'template_categories',
+                label: <Text strong style={{ fontSize: 13 }}>Sablon kategóriák</Text>,
+                children: (
+                  <>
+                    <Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 8 }}>
+                      Válaszd ki, mely sablon kategóriák jelenjenek meg a Print Editorban ennél a terméknél. Ha nincs kategória kiválasztva, a sablon gomb nem jelenik meg.
+                    </Text>
+                    <Select
+                      mode="multiple"
+                      allowClear
+                      showSearch
+                      placeholder="Válassz sablon kategóriákat…"
+                      style={{ width: '100%' }}
+                      value={selectedTemplateCategories}
+                      onChange={setSelectedTemplateCategories}
+                      optionFilterProp="label"
+                      options={templateCategories.map(c => ({ label: c.name, value: c.id }))}
+                    />
                   </>
                 ),
               },

@@ -6,11 +6,14 @@ router = DefaultRouter()
 router.register(r'size-presets', views.PrintSizePresetViewSet, basename='print-size-preset')
 router.register(r'materials', views.PrintMaterialViewSet, basename='print-material')
 router.register(r'orders', views.PrintOrderViewSet, basename='print-order')
+router.register(r'template-categories', views.PrintTemplateCategoryViewSet, basename='print-template-category')
+router.register(r'templates', views.PrintTemplateViewSet, basename='print-template')
 
 urlpatterns = [
     path('', include(router.urls)),
     path('shared-preview/', views.SharedPrintPreviewCreateView.as_view(), name='shared-print-preview-create'),
     path('shared-preview/<str:token>/', views.SharedPrintPreviewDetailView.as_view(), name='shared-print-preview-detail'),
+    path('shared-preview/<str:token>/pdf/', views.SharedPrintPreviewPdfView.as_view(), name='shared-print-preview-pdf'),
     path('order-items/<int:item_id>/comments/', views.PrintOrderItemCommentsView.as_view(), name='print-order-item-comments'),
     path('order-items/<int:item_id>/comments/<int:comment_id>/', views.PrintOrderItemCommentDetailView.as_view(), name='print-order-item-comment-detail'),
     path('public-preview/<str:token>/', views.PublicPrintPreviewView.as_view(), name='public-print-preview'),
@@ -22,6 +25,7 @@ urlpatterns = [
         'post': 'create',
     }), name='print-pricing'),
     path('pdf-to-svg/', views.PdfToSvgView.as_view(), name='pdf-to-svg'),
+    path('pdf-decompose/', views.PdfDecomposeView.as_view(), name='pdf-decompose'),
     path('pdf-analyze/', views.PdfAnalyzeView.as_view(), name='pdf-analyze'),
     path('pdf-delete-page/', views.PdfDeletePageView.as_view(), name='pdf-delete-page'),
     path('pdf-reorder/', views.PdfReorderPagesView.as_view(), name='pdf-reorder'),

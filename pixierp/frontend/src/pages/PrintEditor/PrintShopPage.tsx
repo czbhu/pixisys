@@ -1,14 +1,20 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Typography, message, Button, Select, Modal, Result, Tooltip, Tag, Space, Row, Col, Switch, Input, Alert } from 'antd';
-import { LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined, LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined, FileTextOutlined, ShareAltOutlined, CopyOutlined } from '@ant-design/icons';
+import {
+  Typography, message, Button, Select, Modal, Result, Tooltip,
+  Tag, Space, Row, Col, Switch, Input, Alert, InputNumber,
+} from 'antd';
+import {
+  LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined,
+  LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined,
+  FileTextOutlined, ShareAltOutlined, CopyOutlined,
+} from '@ant-design/icons';
 import { crmService } from '../../services/crmService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { useAuth } from '../../contexts/AuthContext';
 import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
 import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
-import Step2CanvasEditor, { CanvasEditorHandle } from './components/Step2CanvasEditor';
 import Step3OrderSummary from './components/Step3OrderSummary';
 import PrintCommentView from './components/PrintCommentView';
 
@@ -50,19 +56,16 @@ const DEFAULT_PARAMS: PrintParams = {
   sheet_count: 1,
 };
 
-const STORAGE_KEY = 'pixierp_editor_state';
+const STORAGE_KEY = 'pixierp_printshop_state';
 
-const PrintEditorPage: React.FC = () => {
+const PrintShopPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const isAdmin = !!(user?.is_staff || user?.is_superuser);
 
-  const canvasRef = useRef<CanvasEditorHandle>(null);
-  const [viewMode] = useState<'editor' | 'preview'>('editor');
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
-  const [canvasPanelOpen, setCanvasPanelOpen] = useState(true);
-  const [templateCategoryIds, setTemplateCategoryIds] = useState<number[]>([]);
+  const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
   const [params, setParams] = useState<PrintParams>(() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
@@ -70,17 +73,6 @@ const PrintEditorPage: React.FC = () => {
     } catch {}
     return DEFAULT_PARAMS;
   });
-
-  const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
-    try {
-      const s = localStorage.getItem(STORAGE_KEY);
-      if (s) {
-        const { d1, d2, sheets } = JSON.parse(s);
-        return (d1 || d2 || sheets) ? { d1: d1 ?? null, d2: d2 ?? null, sheets: sheets ?? undefined } : null;
-      }
-    } catch {}
-    return null;
-  })());
 
   const paramsRef = useRef(params);
   useEffect(() => { paramsRef.current = params; }, [params]);
@@ -93,14 +85,13 @@ const PrintEditorPage: React.FC = () => {
     } catch {}
   }, [params]);
 
-  const handleDesignChange = useCallback((d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => {
-    initialDesignRef.current = { d1, d2, sheets };
-    try {
-      const s = localStorage.getItem(STORAGE_KEY);
-      const existing = s ? JSON.parse(s) : {};
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params: paramsRef.current, d1, d2, sheets: sheets ?? null }));
-    } catch {}
-  }, []);
+  // PDF scale ratio: ratioLeft:ratioRight (e.g. 1:10 → multiply by 10, 2:1 → divide by 2)
+  const [ratioLeft, setRatioLeft] = useState<number>(1);
+  const [ratioRight, setRatioRight] = useState<number>(1);
+  const scaleMultiplier = ratioRight / ratioLeft;
+  // Raw (unscaled) TrimBox/MediaBox dimensions from last PDF analysis
+  const [rawPdfSize, setRawPdfSize] = useState<{ width: number; height: number } | null>(null);
+
   const [orderId, setOrderId] = useState<number | null>(() => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).orderId; return v ?? null; } } catch {} return null;
   });
@@ -128,11 +119,7 @@ const PrintEditorPage: React.FC = () => {
   const [shareModalOpen, setShareModalOpen] = useState(false);
   const [shareSaving, setShareSaving] = useState(false);
   const [previewShare, setPreviewShare] = useState<PreviewShareSettings>({
-    enabled: false,
-    editable: false,
-    commentable: true,
-    exportable: false,
-    url: '',
+    enabled: false, editable: false, commentable: true, exportable: false, url: '',
   });
 
   // Sync lock state when item is known
@@ -220,6 +207,92 @@ const PrintEditorPage: React.FC = () => {
     }
   };
 
+  // ── PDF-based param auto-fill ──────────────────────────────────────────────
+  const handlePdfFileChange = useCallback((file: File | null) => {
+    if (!file) return;
+    // Analyze via backend to get TrimBox and page count
+    const formData = new FormData();
+    formData.append('pdf', file);
+    api.post('/printshop/pdf-analyze/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 30000,
+    }).then(resp => {
+      const pages = resp.data?.pages ?? [];
+      if (pages.length === 0) return;
+
+      const totalPages = pages.length;
+      const first = pages[0];
+
+      // Determine dimensions: prefer TrimBox, fallback to MediaBox
+      let widthMm: number | null = null;
+      let heightMm: number | null = null;
+
+      if (first.trimbox_mm) {
+        widthMm = first.trimbox_mm.width;
+        heightMm = first.trimbox_mm.height;
+      } else if (first.mediabox_mm) {
+        widthMm = first.mediabox_mm.width;
+        heightMm = first.mediabox_mm.height;
+      }
+
+      // Compute sides and sheet_count from total page count
+      // Default assumption: 2-sided if even pages, 1-sided if odd
+      // sheet_count = pages / sides
+      const currentParams = paramsRef.current;
+      const newParams = { ...currentParams };
+
+      if (widthMm != null && heightMm != null) {
+        // Store raw dimensions for later ratio recalculation
+        setRawPdfSize({ width: widthMm, height: heightMm });
+        // Apply current ratio
+        newParams.width_mm = Math.round(widthMm * scaleMultiplier);
+        newParams.height_mm = Math.round(heightMm * scaleMultiplier);
+        // Auto-set product name from file name
+        const baseName = file.name.replace(/\.pdf$/i, '').replace(/[_-]/g, ' ');
+        if (baseName) {
+          newParams.product_name = baseName;
+        }
+      }
+
+      if (totalPages === 1) {
+        // Single page PDF → always 1-sided, 1 sheet
+        newParams.sides = '1';
+        newParams.side2_mode = 'none';
+        newParams.sheet_count = 1;
+      } else {
+        // Multi-page PDF: use current sides setting to calc sheet_count
+        const sidesNum = newParams.sides === '2' ? 2 : 1;
+        newParams.sheet_count = Math.ceil(totalPages / sidesNum);
+        if (newParams.sides === '2' && newParams.side2_mode === 'none') {
+          newParams.side2_mode = 'color';
+        }
+      }
+
+      if ((newParams.sheet_count ?? 1) > 1) {
+        newParams.multi_sheet_enabled = true;
+      }
+
+      setParams(newParams);
+      message.success(
+        `PDF elemezve: ${newParams.width_mm}×${newParams.height_mm} mm, ` +
+        `${totalPages} oldal → ${newParams.sides === '2' ? 'kétoldalas' : 'egyoldalas'}, ` +
+        `${newParams.sheet_count} ív`
+      );
+    }).catch(err => {
+      console.warn('PDF analyze for auto-fill failed:', err);
+    });
+  }, [scaleMultiplier]);
+
+  // ── Recalc dimensions when scale ratio changes (only if we have raw PDF size) ──
+  useEffect(() => {
+    if (!rawPdfSize) return;
+    setParams(prev => ({
+      ...prev,
+      width_mm: Math.round(rawPdfSize.width * scaleMultiplier),
+      height_mm: Math.round(rawPdfSize.height * scaleMultiplier),
+    }));
+  }, [scaleMultiplier, rawPdfSize]);
+
   // Admin: ügyfél/kapcsolattartó választó
   const [companies, setCompanies] = useState<Company[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
@@ -279,7 +352,7 @@ const PrintEditorPage: React.FC = () => {
         <Result
           icon={<LockOutlined style={{ color: '#1890ff' }} />}
           title="Bejelentkezés szükséges"
-          subTitle="A termékszerkesztő használatához be kell jelentkezned."
+          subTitle="A nyomtatás modul használatához be kell jelentkezned."
           extra={
             <Button type="primary" onClick={() => navigate(`/login?next=${encodeURIComponent(location.pathname)}`)}>
               Bejelentkezés
@@ -301,13 +374,11 @@ const PrintEditorPage: React.FC = () => {
         (sheetCount > 1 ? `, ${sheetCount} lap` : '') + '\n' +
         (params.binding && params.binding !== 'none' ? `Kötés: ${params.binding}\n` : '');
 
-      // Build cost_items from price breakdown
       const costItems: any[] = [];
       const bd = priceBreakdown as any;
       const r4 = (v: any) => Math.round((Number(v) || 0) * 10000) / 10000;
       const supId = (v: any) => (v && Number(v) > 0 ? Number(v) : null);
       if (bd) {
-        // Material items
         if (bd.material_items) {
           for (const mi of bd.material_items) {
             const qty = r4(mi.units) || 1;
@@ -317,17 +388,14 @@ const PrintEditorPage: React.FC = () => {
             costItems.push({
               type: 'material', name: mi.name,
               quantity: qty, unit: 'ív',
-              cost_price: costPerUnit,
-              unit_price: sellingPerUnit,
-              selling_unit_price: sellingPerUnit,
-              selling_price: total,
+              cost_price: costPerUnit, unit_price: sellingPerUnit,
+              selling_unit_price: sellingPerUnit, selling_price: total,
               markup_percent: r4(mi.markup_percentage ?? 0),
               is_internal: mi.is_internal ?? false,
               supplier: supId(mi.supplier_id),
             });
           }
         }
-        // Print service items (side 1 & 2)
         for (const key of ['print_service_items_1', 'print_service_items_2'] as const) {
           if (bd[key]) {
             for (const pi of bd[key]) {
@@ -338,10 +406,8 @@ const PrintEditorPage: React.FC = () => {
               costItems.push({
                 type: 'service', name: pi.name,
                 quantity: qty, unit: pi.type === 'fixed' ? 'db' : 'ív',
-                cost_price: costPerUnit,
-                unit_price: sellingPerUnit,
-                selling_unit_price: sellingPerUnit,
-                selling_price: total,
+                cost_price: costPerUnit, unit_price: sellingPerUnit,
+                selling_unit_price: sellingPerUnit, selling_price: total,
                 markup_percent: r4(pi.markup_percentage ?? 0),
                 is_internal: pi.is_internal ?? false,
                 department: pi.department_id ?? null,
@@ -350,7 +416,6 @@ const PrintEditorPage: React.FC = () => {
             }
           }
         }
-        // Service breakdown items
         if (bd.service_breakdown) {
           for (const sb of bd.service_breakdown) {
             if (sb.items) {
@@ -362,10 +427,8 @@ const PrintEditorPage: React.FC = () => {
                 costItems.push({
                   type: 'service', name: `${sb.name}: ${si.name}`,
                   quantity: qty, unit: si.type === 'fixed' ? 'db' : 'db',
-                  cost_price: costPerUnit,
-                  unit_price: sellingPerUnit,
-                  selling_unit_price: sellingPerUnit,
-                  selling_price: total,
+                  cost_price: costPerUnit, unit_price: sellingPerUnit,
+                  selling_unit_price: sellingPerUnit, selling_price: total,
                   markup_percent: r4(si.markup_percentage ?? 0),
                   is_internal: si.is_internal ?? false,
                   department: si.department_id ?? null,
@@ -376,21 +439,15 @@ const PrintEditorPage: React.FC = () => {
               costItems.push({
                 type: 'service', name: sb.name,
                 quantity: 1, unit: 'db',
-                cost_price: r4(sb.total),
-                unit_price: r4(sb.total),
-                selling_unit_price: r4(sb.total),
-                selling_price: r4(sb.total),
-                markup_percent: 0,
-                is_internal: false,
-                supplier: null,
+                cost_price: r4(sb.total), unit_price: r4(sb.total),
+                selling_unit_price: r4(sb.total), selling_price: r4(sb.total),
+                markup_percent: 0, is_internal: false, supplier: null,
               });
             }
           }
         }
       }
 
-      // Compute net_unit_price from cost items' selling totals (not from priceBreakdown.total
-      // which includes an additional overall margin on top of per-item markups)
       const costItemsSellingTotal = costItems.reduce((sum: number, ci: any) => sum + (Number(ci.selling_price) || 0), 0);
       const unitPrice = params.quantity > 0 ? costItemsSellingTotal / params.quantity : 0;
 
@@ -407,7 +464,6 @@ const PrintEditorPage: React.FC = () => {
         cost_items: costItems,
       };
 
-      console.log('[handleRFQ] payload:', JSON.stringify(payload, null, 2));
       const created = await manufacturingService.createProduct(payload);
       message.success('Ajánlat készítése...');
       const rfqParams = new URLSearchParams({
@@ -419,7 +475,7 @@ const PrintEditorPage: React.FC = () => {
       if (selectedContact) rfqParams.set('contact', String(selectedContact));
       window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
     } catch (e: any) {
-      console.error('[handleRFQ] error response:', e?.response?.data);
+      console.error('[handleRFQ] error:', e?.response?.data);
       message.error(e?.response?.data?.error || JSON.stringify(e?.response?.data) || 'Hiba az ajánlat létrehozásakor');
     } finally {
       setRfqSaving(false);
@@ -427,8 +483,6 @@ const PrintEditorPage: React.FC = () => {
   };
 
   const handleOrder = async () => {
-    const design = canvasRef.current?.getDesignJson();
-    if (!design) { message.error('A canvas nem elérhető'); return; }
     setSaving(true);
     try {
       const itemPayload = {
@@ -446,10 +500,7 @@ const PrintEditorPage: React.FC = () => {
         unit_price: priceBreakdown?.unit_price ?? 0,
         total_price: priceBreakdown?.total ?? 0,
         price_breakdown: priceBreakdown ?? null,
-        design_json_side1: design.d1,
-        design_json_side2: design.d2,
         sheet_count: params.sheet_count ?? 1,
-        sheets: (design as any).sheets ?? null,
       };
       const orderPayload = {
         status: 'draft',
@@ -500,27 +551,15 @@ const PrintEditorPage: React.FC = () => {
         borderBottom: '1px solid #e8e8e8', display: 'flex',
         alignItems: 'center', padding: '0 16px', gap: 12,
       }}>
-        <Title level={5} style={{ margin: 0 }}>Íves nyomtatás</Title>
-        <Text type="secondary" style={{ fontSize: 12 }}>Névjegykártya · Szórólap · Poszter</Text>
+        <Title level={5} style={{ margin: 0 }}>Nyomdai megrendelés</Title>
+        <Text type="secondary" style={{ fontSize: 12 }}>PDF feltöltés · Kalkuláció · Megrendelés</Text>
         <div style={{ flex: 1 }} />
-        {/* Lock controls — admin sees toggles, user sees badge if locked */}
+        {/* Lock controls — admin sees toggles */}
         {isAdmin && orderId && itemId ? (
           <>
-            <Tooltip title={editorLocked ? 'Szerkesztő feloldása' : 'Szerkesztő zárolása'}>
-              <Button
-                size="small"
-                danger={editorLocked}
-                icon={editorLocked ? <LockOutlined /> : <UnlockOutlined />}
-                loading={lockSaving}
-                onClick={() => handleSetLock('editor_locked', !editorLocked)}
-              >
-                Szerkesztő
-              </Button>
-            </Tooltip>
             <Tooltip title={previewLocked ? 'Preview feloldása' : 'Preview zárolása'}>
               <Button
-                size="small"
-                danger={previewLocked}
+                size="small" danger={previewLocked}
                 icon={previewLocked ? <LockOutlined /> : <UnlockOutlined />}
                 loading={lockSaving}
                 onClick={() => handleSetLock('preview_locked', !previewLocked)}
@@ -541,7 +580,6 @@ const PrintEditorPage: React.FC = () => {
           </>
         ) : !isAdmin ? (
           <>
-            {editorLocked && <Tag color="error" icon={<LockOutlined />}>Szerkesztő zárolva</Tag>}
             {previewLocked && <Tag color="error" icon={<LockOutlined />}>Preview zárolva</Tag>}
           </>
         ) : null}
@@ -554,7 +592,8 @@ const PrintEditorPage: React.FC = () => {
           </Button>
         )}
       </div>
-      {/* Admin: Ügyfél/kapcsolattartó inline bar (RFQ stílus) */}
+
+      {/* Admin: Ügyfél/kapcsolattartó inline bar */}
       {isAdmin && clientBarOpen && (
         <div style={{
           flexShrink: 0, background: '#f6ffed', borderBottom: '1px solid #b7eb8f',
@@ -566,11 +605,9 @@ const PrintEditorPage: React.FC = () => {
               <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Cég</div>
               <Space.Compact style={{ width: '100%' }}>
                 <Select
-                  showSearch allowClear
-                  optionFilterProp="label"
+                  showSearch allowClear optionFilterProp="label"
                   placeholder="Válassz céget vagy magánszemélyt"
-                  style={{ width: 'calc(100% - 32px)' }}
-                  size="small"
+                  style={{ width: 'calc(100% - 32px)' }} size="small"
                   value={selectedCompany ?? undefined}
                   onFocus={refreshCompanies}
                   onChange={v => { setSelectedCompany(v ?? null); setSelectedContact(null); }}
@@ -590,11 +627,9 @@ const PrintEditorPage: React.FC = () => {
               <div style={{ fontSize: 11, color: '#666', marginBottom: 2 }}>Kapcsolattartók</div>
               <Space.Compact style={{ width: '100%' }}>
                 <Select
-                  showSearch allowClear
-                  optionFilterProp="label"
+                  showSearch allowClear optionFilterProp="label"
                   placeholder="Válassz kapcsolattartókat"
-                  style={{ width: 'calc(100% - 90px)' }}
-                  size="small"
+                  style={{ width: 'calc(100% - 90px)' }} size="small"
                   value={selectedContact ?? undefined}
                   disabled={!selectedCompany}
                   onFocus={() => refreshContacts()}
@@ -636,89 +671,60 @@ const PrintEditorPage: React.FC = () => {
         </div>
       )}
 
+      {/* Share modal */}
       <Modal
         title="Preview megosztás"
         open={shareModalOpen}
         onCancel={() => setShareModalOpen(false)}
         onOk={handleSavePreviewShare}
-        okText="Mentés"
-        cancelText="Mégse"
+        okText="Mentés" cancelText="Mégse"
         confirmLoading={shareSaving}
         destroyOnClose={false}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-          <Alert
-            type="info"
-            showIcon
-            message="Preview: belső kollégáknak | Megosztási link: külső ügyfeleknek"
-          />
-
+          <Alert type="info" showIcon message="Preview: belső kollégáknak | Megosztási link: külső ügyfeleknek" />
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
             <div>
               <Text strong>Publikus link engedélyezése</Text>
               <div><Text type="secondary" style={{ fontSize: 12 }}>A feltöltött preview PDF tokenes linken lesz elérhető.</Text></div>
             </div>
-            <Switch
-              checked={previewShare.enabled}
-              onChange={checked => setPreviewShare(prev => ({ ...prev, enabled: checked }))}
-            />
+            <Switch checked={previewShare.enabled} onChange={checked => setPreviewShare(prev => ({ ...prev, enabled: checked }))} />
           </div>
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
             <div>
               <Text strong>Szerkeszthető</Text>
               <div><Text type="secondary" style={{ fontSize: 12 }}>Az ügyfél ugyanazokat az eszközöket látja, mint az admin previewban.</Text></div>
             </div>
-            <Switch
-              checked={previewShare.editable}
-              disabled={!previewShare.enabled}
-              onChange={checked => setPreviewShare(prev => ({ ...prev, editable: checked }))}
-            />
+            <Switch checked={previewShare.editable} disabled={!previewShare.enabled} onChange={checked => setPreviewShare(prev => ({ ...prev, editable: checked }))} />
           </div>
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
             <div>
               <Text strong>Kommentelhető</Text>
               <div><Text type="secondary" style={{ fontSize: 12 }}>Ha ki van kapcsolva, a komment eszközök sem jelennek meg.</Text></div>
             </div>
-            <Switch
-              checked={previewShare.commentable}
-              disabled={!previewShare.enabled}
-              onChange={checked => setPreviewShare(prev => ({ ...prev, commentable: checked }))}
-            />
+            <Switch checked={previewShare.commentable} disabled={!previewShare.enabled} onChange={checked => setPreviewShare(prev => ({ ...prev, commentable: checked }))} />
           </div>
-
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
             <div>
               <Text strong>Exportálható</Text>
               <div><Text type="secondary" style={{ fontSize: 12 }}>Az export gomb csak bekapcsolva látszik.</Text></div>
             </div>
-            <Switch
-              checked={previewShare.exportable}
-              disabled={!previewShare.enabled}
-              onChange={checked => setPreviewShare(prev => ({ ...prev, exportable: checked }))}
-            />
+            <Switch checked={previewShare.exportable} disabled={!previewShare.enabled} onChange={checked => setPreviewShare(prev => ({ ...prev, exportable: checked }))} />
           </div>
-
           <div>
-            <Tooltip title="Preview: belső kollégáknak. Ezzel a belső preview oldal nyílik meg ugyanazzal a PDF-fel és állapottal.">
+            <Tooltip title="Preview: belső kollégáknak.">
               <Text strong>Preview oldal link</Text>
             </Tooltip>
             <Space.Compact style={{ width: '100%', marginTop: 8, marginBottom: 12 }}>
               <Input readOnly value={buildStandalonePreviewUrl(orderId, itemId)} placeholder="Az adott PDF preview oldala" />
-              <Button icon={<CopyOutlined />} onClick={handleCopyStandalonePreviewUrl} disabled={!orderId || !itemId}>
-                Másolás
-              </Button>
+              <Button icon={<CopyOutlined />} onClick={handleCopyStandalonePreviewUrl} disabled={!orderId || !itemId}>Másolás</Button>
             </Space.Compact>
-
-            <Tooltip title="Megosztási link: külső ügyfeleknek. Ezt a publikus, jogosultságokkal szabályozott linket küldd ki az ügyfélnek.">
+            <Tooltip title="Megosztási link: külső ügyfeleknek.">
               <Text strong>Megosztási link</Text>
             </Tooltip>
             <Space.Compact style={{ width: '100%', marginTop: 8 }}>
               <Input readOnly value={previewShare.enabled ? previewShare.url : ''} placeholder="A mentés után itt jelenik meg a publikus link" />
-              <Button icon={<CopyOutlined />} onClick={handleCopyPreviewShareUrl} disabled={!previewShare.enabled || !previewShare.url}>
-                Másolás
-              </Button>
+              <Button icon={<CopyOutlined />} onClick={handleCopyPreviewShareUrl} disabled={!previewShare.enabled || !previewShare.url}>Másolás</Button>
             </Space.Compact>
           </div>
         </div>
@@ -726,90 +732,86 @@ const PrintEditorPage: React.FC = () => {
 
       {/* Body */}
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
-        {/* Left params panel — collapsible, hidden in preview mode */}
-        {viewMode === 'editor' && (
-          <div style={{
-            width: !canvasPanelOpen ? undefined : (leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W),
-            flex: !canvasPanelOpen ? 1 : undefined,
-            flexShrink: 0,
-            borderRight: '1px solid #e8e8e8',
-            background: '#fff',
-            display: 'flex',
-            flexDirection: 'column',
-            transition: 'width 0.2s ease',
-            overflow: 'hidden',
-          }}>
-            {/* Panel header + toggle */}
-            <div style={{
-              height: 36, flexShrink: 0, display: 'flex', alignItems: 'center',
-              borderBottom: '1px solid #f0f0f0',
-              padding: leftPanelOpen ? '0 8px' : 0,
-              justifyContent: leftPanelOpen ? 'space-between' : 'center',
-            }}>
-              {leftPanelOpen && (
-                <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>PARAMÉTEREK & KALKULÁCIÓ</Text>
-              )}
-              <Button
-                type="text" size="small"
-                icon={leftPanelOpen ? <LeftOutlined /> : <RightOutlined />}
-                onClick={() => setLeftPanelOpen(v => !v)}
-                style={{ padding: '0 4px', flexShrink: 0 }}
-              />
-            </div>
-            {leftPanelOpen ? (
-              <>
-                <div style={{ flex: 1, overflowY: 'auto' }}>
-                  <PrintParamsPanel
-                    params={params}
-                    onChange={setParams}
-                    onPriceChange={setPriceBreakdown}
-                    onTemplateCategoriesChange={setTemplateCategoryIds}
-                    isAdmin={isAdmin}
-                  />
-                </div>
-                <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
-                  <Row gutter={8}>
-                    <Col span={12}>
-                      <Button
-                        type="primary" block size="large"
-                        icon={<ShoppingOutlined />}
-                        loading={saving} onClick={handleOrder}
-                      >
-                        Megrendelés
-                      </Button>
-                    </Col>
-                    <Col span={12}>
-                      <Button
-                        block size="large"
-                        icon={<FileTextOutlined />}
-                        loading={rfqSaving} onClick={handleRFQ}
-                        style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
-                      >
-                        Ajánlat
-                      </Button>
-                    </Col>
-                  </Row>
-                </div>
-              </>
-            ) : (
-              <div
-                style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-                onClick={() => setLeftPanelOpen(true)}
-              >
-                <span style={{
-                  writingMode: 'vertical-rl', textOrientation: 'mixed',
-                  transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
-                  userSelect: 'none', whiteSpace: 'nowrap',
-                }}>Paraméterek & kalkuláció</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Canvas / Preview panel — collapsible */}
+        {/* Left params panel — collapsible */}
         <div style={{
-          flex: canvasPanelOpen ? 1 : undefined,
-          width: canvasPanelOpen ? undefined : COLLAPSED_W,
+          width: !previewPanelOpen ? undefined : (leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W),
+          flex: !previewPanelOpen ? 1 : undefined,
+          flexShrink: 0,
+          borderRight: '1px solid #e8e8e8',
+          background: '#fff',
+          display: 'flex',
+          flexDirection: 'column',
+          transition: 'width 0.2s ease',
+          overflow: 'hidden',
+        }}>
+          <div style={{
+            height: 36, flexShrink: 0, display: 'flex', alignItems: 'center',
+            borderBottom: '1px solid #f0f0f0',
+            padding: leftPanelOpen ? '0 8px' : 0,
+            justifyContent: leftPanelOpen ? 'space-between' : 'center',
+          }}>
+            {leftPanelOpen && (
+              <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>PARAMÉTEREK & KALKULÁCIÓ</Text>
+            )}
+            <Button
+              type="text" size="small"
+              icon={leftPanelOpen ? <LeftOutlined /> : <RightOutlined />}
+              onClick={() => setLeftPanelOpen(v => !v)}
+              style={{ padding: '0 4px', flexShrink: 0 }}
+            />
+          </div>
+          {leftPanelOpen ? (
+            <>
+              <div style={{ flex: 1, overflowY: 'auto' }}>
+                <PrintParamsPanel
+                  params={params}
+                  onChange={setParams}
+                  onPriceChange={setPriceBreakdown}
+                  isAdmin={isAdmin}
+                />
+              </div>
+              <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
+                <Row gutter={8}>
+                  <Col span={12}>
+                    <Button
+                      type="primary" block size="large"
+                      icon={<ShoppingOutlined />}
+                      loading={saving} onClick={handleOrder}
+                    >
+                      Megrendelés
+                    </Button>
+                  </Col>
+                  <Col span={12}>
+                    <Button
+                      block size="large"
+                      icon={<FileTextOutlined />}
+                      loading={rfqSaving} onClick={handleRFQ}
+                      style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: '#fff' }}
+                    >
+                      Ajánlat
+                    </Button>
+                  </Col>
+                </Row>
+              </div>
+            </>
+          ) : (
+            <div
+              style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+              onClick={() => setLeftPanelOpen(true)}
+            >
+              <span style={{
+                writingMode: 'vertical-rl', textOrientation: 'mixed',
+                transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
+                userSelect: 'none', whiteSpace: 'nowrap',
+              }}>Paraméterek & kalkuláció</span>
+            </div>
+          )}
+        </div>
+
+        {/* Right preview panel — collapsible */}
+        <div style={{
+          flex: previewPanelOpen ? 1 : undefined,
+          width: previewPanelOpen ? undefined : COLLAPSED_W,
           flexShrink: 0,
           overflow: 'hidden',
           minWidth: 0,
@@ -817,62 +819,72 @@ const PrintEditorPage: React.FC = () => {
           flexDirection: 'column',
           borderLeft: '1px solid #e8e8e8',
         }}>
-          {/* Panel header + toggle */}
           <div style={{
             height: 36, flexShrink: 0, display: 'flex', alignItems: 'center',
             borderBottom: '1px solid #f0f0f0',
-            padding: canvasPanelOpen ? '0 8px' : 0,
-            justifyContent: canvasPanelOpen ? 'space-between' : 'center',
+            padding: previewPanelOpen ? '0 8px' : 0,
+            justifyContent: previewPanelOpen ? 'space-between' : 'center',
           }}>
-            {canvasPanelOpen && (
-              <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
-                {viewMode === 'editor' ? 'VÁSZON SZERKESZTŐ' : 'PREVIEW & KOMMENT'}
-              </Text>
+            {previewPanelOpen && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
+                  PREVIEW & KOMMENT
+                </Text>
+                <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 8, background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>
+                    <Text style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Arány</Text>
+                    <InputNumber
+                      size="small"
+                      min={1}
+                      max={1000}
+                      value={ratioLeft}
+                      onChange={v => setRatioLeft(v && v > 0 ? v : 1)}
+                      style={{ width: 44 }}
+                      controls={false}
+                    />
+                    <Text style={{ fontSize: 11, color: '#999' }}>:</Text>
+                    <InputNumber
+                      size="small"
+                      min={1}
+                      max={1000}
+                      value={ratioRight}
+                      onChange={v => setRatioRight(v && v > 0 ? v : 1)}
+                      style={{ width: 44 }}
+                      controls={false}
+                    />
+                  </div>
+                </Tooltip>
+              </div>
             )}
             <Button
               type="text" size="small"
-              icon={canvasPanelOpen ? <RightOutlined /> : <LeftOutlined />}
-              onClick={() => setCanvasPanelOpen(v => !v)}
+              icon={previewPanelOpen ? <RightOutlined /> : <LeftOutlined />}
+              onClick={() => setPreviewPanelOpen(v => !v)}
               style={{ padding: '0 4px', flexShrink: 0 }}
             />
           </div>
-          {canvasPanelOpen ? (
+          {previewPanelOpen ? (
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-              {viewMode === 'editor' ? (
-                <Step2CanvasEditor
-                  ref={canvasRef}
-                  params={params}
-                  isAdmin={isAdmin}
-                  priceBreakdown={priceBreakdown}
-                  leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
-                  onParamsChange={setParams}
-                  initialDesign={initialDesignRef.current}
-                  onDesignChange={handleDesignChange}
-                  locked={!isAdmin && editorLocked}
-                  templateCategoryIds={templateCategoryIds}
-                />
-              ) : (
-                <PrintCommentView
-                  orderId={orderId}
-                  itemId={itemId}
-                  isAdmin={isAdmin}
-                  locked={!isAdmin && previewLocked}
-                  authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
-                  params={params}
-                  showTemplates
-                />
-              )}
+              <PrintCommentView
+                orderId={orderId}
+                itemId={itemId}
+                isAdmin={isAdmin}
+                locked={!isAdmin && previewLocked}
+                authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+                params={params}
+                onPdfFileChange={handlePdfFileChange}
+              />
             </div>
           ) : (
             <div
               style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
-              onClick={() => setCanvasPanelOpen(true)}
+              onClick={() => setPreviewPanelOpen(true)}
             >
               <span style={{
                 writingMode: 'vertical-rl', textOrientation: 'mixed',
                 transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
                 userSelect: 'none', whiteSpace: 'nowrap',
-              }}>Vászon szerkesztő</span>
+              }}>Preview & komment</span>
             </div>
           )}
         </div>
@@ -899,10 +911,8 @@ const PrintEditorPage: React.FC = () => {
           onConfirm={handleConfirmOrder}
         />
       </Modal>
-
-
     </div>
   );
 };
 
-export default PrintEditorPage;
+export default PrintShopPage;

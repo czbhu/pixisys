@@ -192,6 +192,15 @@ class ServiceGroupViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
 
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_protected:
+            return Response(
+                {'error': 'Védett szolgáltatás csoport nem törölhető.'},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
+
 
 class ServiceViewSet(viewsets.ModelViewSet):
     """Szolgáltatás viewset"""
@@ -214,6 +223,20 @@ class ServiceViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user if self.request.user.is_authenticated else None)
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_protected:
+            return Response(
+                {'error': 'Védett szolgáltatás nem törölhető.'},
+                status=400,
+            )
+        if instance.groups.filter(is_protected=True).exists():
+            return Response(
+                {'error': 'Védett csoportba tartozó szolgáltatás nem törölhető.'},
+                status=400,
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class CalculatorTemplateViewSet(viewsets.ModelViewSet):

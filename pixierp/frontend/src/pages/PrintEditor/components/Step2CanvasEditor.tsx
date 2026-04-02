@@ -10,12 +10,14 @@ import {
   AlignRightOutlined, CopyOutlined, VerticalAlignTopOutlined,
   VerticalAlignBottomOutlined, BorderOutlined, LeftOutlined,
   RightOutlined, LoadingOutlined, ZoomInOutlined, ZoomOutOutlined,
-  FullscreenOutlined, LockOutlined, CompressOutlined, ExpandOutlined, EyeOutlined, FilePdfOutlined,
+  FullscreenOutlined, LockOutlined, UnlockOutlined, CompressOutlined, ExpandOutlined, EyeOutlined, FilePdfOutlined,
   CommentOutlined, EditOutlined, HighlightOutlined, CheckOutlined, CloseOutlined,
-  ArrowRightOutlined, PlusOutlined,
+  ArrowRightOutlined, PlusOutlined, AppstoreOutlined, BlockOutlined, DisconnectOutlined,
+  DownOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import CanvasRuler from './CanvasRuler';
+import TemplatePicker from './TemplatePicker';
 import api from '../../../services/api';
 
 // Fabric.js import
@@ -145,12 +147,13 @@ interface Props {
   onParamsChange?: (p: PrintParams) => void;
   initialDesign?: { d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null;
   onDesignChange?: (d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => void;
+  templateCategoryIds?: number[];
 }
 
 type Side = '1' | '2';
 
 const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
-  { params, isAdmin, priceBreakdown, leftOffset = 0, locked = false, onParamsChange, initialDesign, onDesignChange }, ref
+  { params, isAdmin, priceBreakdown, leftOffset = 0, locked = false, onParamsChange, initialDesign, onDesignChange, templateCategoryIds }, ref
 ) => {
   const canvasRef1 = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement);
   const canvasRef2 = useRef<HTMLCanvasElement>(null as unknown as HTMLCanvasElement);
@@ -168,6 +171,9 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const [loadedFonts, setLoadedFonts] = useState<Set<string>>(new Set(['Arial']));
   const [huFonts, setHuFonts] = useState<Set<string>>(new Set<string>());
   const [uploadingFile, setUploadingFile] = useState(false);
+  const [templatePickerOpen, setTemplatePickerOpen] = useState(false);
+  const [expandedGroups, setExpandedGroups] = useState<Set<number>>(new Set());
+  const lastLayerClickRef = useRef<number>(-1);
   const [isDragOver, setIsDragOver] = useState(false);
   const [imageDpi, setImageDpi] = useState<number | null>(null);
   const [pdfDialog, setPdfDialog] = useState<PdfDialogState | null>(null);
@@ -205,7 +211,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const fc2 = fabricRef2.current;
     if (!fc1) return;
     const getObjsJson = (fc: fabric.Canvas) => {
-      const objs = fc.getObjects().filter((o: any) => !o.__guideHelper).map(o => o.toObject(['id', 'name']));
+      const objs = fc.getObjects().filter((o: any) => !o.__guideHelper).map(o => o.toObject(['id', 'name', '__locked']));
       return objs.length > 0 ? { objects: objs } : null;
     };
     sheetDesignsRef.current[activeSheetRef.current] = {
@@ -252,6 +258,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const undoRef = useRef<() => void>(() => {});
   const redoRef = useRef<() => void>(() => {});
   const deleteSelectedRef = useRef<() => void>(() => {});
+  const saveHistoryRef = useRef<(side: Side) => void>(() => {});
 
   // Refs for auto-nyomatlan: remember the previous (non-none) mode so we can restore on content add
   const prevSide1ModeRef = useRef<string>(params.side1_mode !== 'none' ? params.side1_mode : 'color');
@@ -454,7 +461,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const fc1 = fabricRef1.current;
       if (!fc1) return null;
       const getCleanJson = (fc: fabric.Canvas) => {
-        const json = fc.toJSON(['id', 'name']) as any;
+        const json = fc.toJSON(['id', 'name', '__locked']) as any;
         json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
         return json;
       };
@@ -482,7 +489,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const saveHistory = useCallback((side: Side) => {
     const fc = side === '1' ? fabricRef1.current : fabricRef2.current;
     if (!fc) return;
-    const json = JSON.stringify(fc.toJSON(['id', 'name']));
+    const json = JSON.stringify(fc.toJSON(['id', 'name', '__locked']));
     if (side === '1') {
       setHistory1(prev => {
         const newH = [...prev.slice(0, histIdx1 + 1), json];
@@ -497,6 +504,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       });
     }
   }, [histIdx1, histIdx2]);
+  saveHistoryRef.current = saveHistory;
 
   const updateObjects = (side: Side) => {
     const fc = side === '1' ? fabricRef1.current : fabricRef2.current;
@@ -673,6 +681,139 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     });
   };
 
+  /** Decompose a PDF into separate vector / image / text elements */
+  const placePdfDecomposed = async (file: File, pageNum = 1) => {
+    setUploadingFile(true);
+    try {
+      const formData = new FormData();
+      formData.append('pdf', file);
+      formData.append('page', String(pageNum));
+
+      const resp = await api.post('printshop/pdf-decompose/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const { page_width_pt, page_height_pt, elements } = resp.data as {
+        page_width_pt: number;
+        page_height_pt: number;
+        elements: Array<{
+          type: 'image' | 'vector' | 'text';
+          data_url?: string;
+          svg?: string;
+          text?: string;
+          x_pt: number;
+          y_pt: number;
+          width_pt?: number;
+          height_pt?: number;
+          font_size_pt?: number;
+          font_name?: string;
+          is_bold?: boolean;
+          is_italic?: boolean;
+          color?: string;
+          bbox?: number[];
+        }>;
+      };
+
+      const fc = getActiveFabric();
+      if (!fc) return;
+
+      // Scale from PDF points to canvas pixels
+      const scaleX = cutW / page_width_pt;
+      const scaleY = cutH / page_height_pt;
+      const scale = Math.min(scaleX, scaleY);
+      const offX = bleedPx + (cutW - page_width_pt * scale) / 2;
+      const offY = bleedPx + (cutH - page_height_pt * scale) / 2;
+
+      const fabricObjects: fabric.Object[] = [];
+
+      for (const el of elements) {
+        if (el.type === 'image' && el.data_url) {
+          await new Promise<void>((resolve) => {
+            fabric.Image.fromURL(el.data_url!, (img) => {
+              if (!img) { resolve(); return; }
+              const imgW = el.width_pt! * scale;
+              const imgH = el.height_pt! * scale;
+              img.set({
+                left: el.x_pt * scale,
+                top: el.y_pt * scale,
+                scaleX: imgW / (img.width || 1),
+                scaleY: imgH / (img.height || 1),
+              });
+              (img as any).name = 'Kép';
+              fabricObjects.push(img);
+              resolve();
+            });
+          });
+        } else if (el.type === 'vector' && el.svg) {
+          await new Promise<void>((resolve) => {
+            fabric.loadSVGFromString(el.svg!, (objects, options) => {
+              if (!objects || objects.length === 0) { resolve(); return; }
+              const svgGroup = fabric.util.groupSVGElements(objects, options);
+              const targetW = el.width_pt! * scale;
+              const targetH = el.height_pt! * scale;
+              svgGroup.set({
+                left: el.x_pt * scale,
+                top: el.y_pt * scale,
+                scaleX: targetW / (svgGroup.width || 1),
+                scaleY: targetH / (svgGroup.height || 1),
+              });
+              (svgGroup as any).name = 'Vektor';
+              fabricObjects.push(svgGroup);
+              resolve();
+            });
+          });
+        } else if (el.type === 'text' && el.text) {
+          const fontSize = (el.font_size_pt || 12) * scale;
+          const textObj = new fabric.Textbox(el.text, {
+            left: el.x_pt * scale,
+            top: el.y_pt * scale - fontSize * 0.85,
+            fontSize,
+            fontFamily: el.font_name || 'Arial',
+            fontWeight: el.is_bold ? 'bold' : 'normal',
+            fontStyle: el.is_italic ? 'italic' : 'normal',
+            fill: el.color || '#000000',
+            width: el.bbox
+              ? (el.bbox[2] - el.bbox[0]) * scale + 4
+              : fontSize * el.text.length * 0.6,
+            splitByGrapheme: false,
+          });
+          (textObj as any).name = el.text.substring(0, 40);
+          fabricObjects.push(textObj);
+        }
+      }
+
+      if (fabricObjects.length > 0) {
+        // Create group — children have positions relative to PDF origin (0,0)
+        // Shift entire group so PDF origin maps to (offX, offY) on canvas
+        const group = new fabric.Group(fabricObjects);
+        group.set({
+          left: (group.left ?? 0) + offX,
+          top: (group.top ?? 0) + offY,
+        });
+        group.setCoords();
+        // Lock template by default — movable/resizable disabled, but text still editable after ungroup
+        group.set({
+          lockMovementX: true,
+          lockMovementY: true,
+          lockRotation: true,
+          lockScalingX: true,
+          lockScalingY: true,
+          hasControls: false,
+        });
+        (group as any).name = file.name?.replace(/\.pdf$/i, '') || 'Sablon';
+        (group as any).__locked = true;
+        fc.add(group);
+        fc.setActiveObject(group);
+      }
+
+      fc.renderAll();
+      saveHistory(activeSide);
+    } catch (err: any) {
+      message.error('Sablon betöltés hiba: ' + (err?.response?.data?.error || err.message));
+    } finally {
+      setUploadingFile(false);
+    }
+  };
+
   const analyzePdf = async (file: File) => {
     try {
       const pdfData = await file.arrayBuffer();
@@ -787,7 +928,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         const saved = side === '1' ? initialDesign?.d1 : initialDesign?.d2;
         return saved ?? null;
       }
-      const json = fc.toJSON(['id', 'name']) as any;
+      const json = fc.toJSON(['id', 'name', '__locked']) as any;
       json.objects = (json.objects as any[]).filter((o: any) => !o.__guideHelper);
       return json;
     };
@@ -851,9 +992,11 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       updateObjPos(obj);
     });
     fc.on('selection:cleared', () => { setSelectedObj(null); setObjPosMm(null); });
-    fc.on('object:modified', () => { saveHistory(side); updateObjects(side); notifyDesignChange(); });
+    fc.on('object:modified', () => { saveHistoryRef.current(side); updateObjects(side); notifyDesignChange(); });
     fc.on('object:added', () => { updateObjects(side); notifyDesignChange(); });
     fc.on('object:removed', () => { updateObjects(side); notifyDesignChange(); });
+    // Save history after inline text editing (not caught by object:modified)
+    fc.on('text:editing:exited', () => { saveHistoryRef.current(side); notifyDesignChange(); });
 
     // Snap + mouse-move és ruler cursor
     fc.on('mouse:move', (e: any) => {
@@ -862,6 +1005,114 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       setCursorMm({ x: p.x / MM_TO_PX - BLEED_MM, y: params.height_mm - (p.y / MM_TO_PX - BLEED_MM) });
     });
     fc.on('mouse:out', () => setCursorMm({ x: null, y: null }));
+
+    // Double-click: drill into groups to edit text without ungrouping
+    fc.on('mouse:dblclick', (e: any) => {
+      if (!e.target || e.target.type !== 'group') return;
+
+      const findTextAt = (group: fabric.Group, pointer: { x: number; y: number }): fabric.Object | null => {
+        const objects = group.getObjects();
+        for (let i = objects.length - 1; i >= 0; i--) {
+          const child = objects[i];
+          const isText = child.type === 'textbox' || child.type === 'i-text' || child.type === 'text';
+          const isChildGroup = child.type === 'group';
+          if (!isText && !isChildGroup) continue;
+          // Get absolute bounding box using full transform chain
+          const matrix = child.calcTransformMatrix();
+          const w = (child.width || 0);
+          const h = (child.height || 0);
+          const corners = [
+            fabric.util.transformPoint(new fabric.Point(-w / 2, -h / 2), matrix),
+            fabric.util.transformPoint(new fabric.Point(w / 2, -h / 2), matrix),
+            fabric.util.transformPoint(new fabric.Point(w / 2, h / 2), matrix),
+            fabric.util.transformPoint(new fabric.Point(-w / 2, h / 2), matrix),
+          ];
+          const minX = Math.min(...corners.map(c => c.x));
+          const maxX = Math.max(...corners.map(c => c.x));
+          const minY = Math.min(...corners.map(c => c.y));
+          const maxY = Math.max(...corners.map(c => c.y));
+          if (pointer.x >= minX && pointer.x <= maxX && pointer.y >= minY && pointer.y <= maxY) {
+            if (isChildGroup) {
+              const deeper = findTextAt(child as fabric.Group, pointer);
+              if (deeper) return deeper;
+            }
+            if (isText) return child;
+          }
+        }
+        return null;
+      };
+
+      const parentGroup = e.target as fabric.Group;
+      // Use canvas-space pointer (not viewport-transformed)
+      const pointer = fc.getPointer(e.e);
+      if (!pointer) return;
+      const textObj = findTextAt(parentGroup, pointer);
+      if (!textObj) return;
+
+      // Calculate the text's absolute position via its transform matrix
+      const absMatrix = textObj.calcTransformMatrix();
+      const absLeft = absMatrix[4] - ((textObj.width || 0) / 2) * absMatrix[0];
+      const absTop = absMatrix[5] - ((textObj.height || 0) / 2) * absMatrix[3];
+
+      // Temporarily remove text from group, add to canvas for editing
+      parentGroup.removeWithUpdate(textObj);
+
+      // Place the text at its absolute position on the canvas
+      const absScaleX = Math.sqrt(absMatrix[0] ** 2 + absMatrix[1] ** 2);
+      const absScaleY = Math.sqrt(absMatrix[2] ** 2 + absMatrix[3] ** 2);
+      textObj.set({
+        left: absMatrix[4] - ((textObj.width || 0) * absScaleX) / 2,
+        top: absMatrix[5] - ((textObj.height || 0) * absScaleY) / 2,
+        scaleX: absScaleX,
+        scaleY: absScaleY,
+      });
+      textObj.setCoords();
+      fc.add(textObj);
+      fc.discardActiveObject();
+
+      // Use setTimeout to let fabric finish processing the current dblclick
+      setTimeout(() => {
+        fc.setActiveObject(textObj);
+        if ((textObj as any).enterEditing) {
+          (textObj as any).enterEditing();
+          (textObj as any).selectAll?.();
+        }
+        fc.renderAll();
+      }, 0);
+
+      // When editing ends, put text back into group
+      const returnToGroup = () => {
+        textObj.off('editing:exited', returnToGroup);
+
+        // Calculate position relative to the group
+        const groupMatrix = parentGroup.calcTransformMatrix();
+        const invGroupMatrix = fabric.util.invertTransform(groupMatrix);
+        const tScaleX = textObj.scaleX || 1;
+        const tScaleY = textObj.scaleY || 1;
+        const textCenter = new fabric.Point(
+          (textObj.left ?? 0) + ((textObj.width || 0) * tScaleX) / 2,
+          (textObj.top ?? 0) + ((textObj.height || 0) * tScaleY) / 2,
+        );
+        const localCenter = fabric.util.transformPoint(textCenter, invGroupMatrix);
+        const gScaleX = Math.sqrt(groupMatrix[0] ** 2 + groupMatrix[1] ** 2);
+        const gScaleY = Math.sqrt(groupMatrix[2] ** 2 + groupMatrix[3] ** 2);
+
+        fc.remove(textObj);
+        textObj.set({
+          left: localCenter.x - ((textObj.width || 0) * (tScaleX / gScaleX)) / 2,
+          top: localCenter.y - ((textObj.height || 0) * (tScaleY / gScaleY)) / 2,
+          scaleX: tScaleX / gScaleX,
+          scaleY: tScaleY / gScaleY,
+        });
+        parentGroup.addWithUpdate(textObj);
+        fc.setActiveObject(parentGroup);
+        fc.renderAll();
+        saveHistoryRef.current(side);
+        updateObjects(side);
+      };
+
+      textObj.on('editing:exited', returnToGroup);
+    });
 
     fc.on('object:moving', (e: any) => {
       if (!snapRef.current && !snapEdgesRef.current) return;
@@ -972,7 +1223,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
         if (!fc) return null;
         const objs = fc.getObjects().filter((o: any) => !o.__guideHelper);
         if (objs.length === 0) return null;
-        return objs.map(o => o.toObject(['id', 'name']));
+        return objs.map(o => o.toObject(['id', 'name', '__locked']));
       };
       // Save active sheet objects from live canvases
       savedCanvasDataRef.current = { d1: extractObjs(fabricRef1.current), d2: extractObjs(fabricRef2.current) };
@@ -1146,6 +1397,12 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const fc = getActiveFabric();
     if (!fc) return;
     fc.loadFromJSON(hist[newIdx], () => {
+      // Restore lock constraints from serialised __locked flag
+      fc.forEachObject((o: fabric.Object) => {
+        if ((o as any).__locked) {
+          o.set({ lockMovementX: true, lockMovementY: true, lockRotation: true, lockScalingX: true, lockScalingY: true, hasControls: false } as any);
+        }
+      });
       fc.renderAll();
       updateObjects(side);
       if (side === '1') setHistIdx1(newIdx);
@@ -1163,6 +1420,12 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const fc = getActiveFabric();
     if (!fc) return;
     fc.loadFromJSON(hist[newIdx], () => {
+      // Restore lock constraints from serialised __locked flag
+      fc.forEachObject((o: fabric.Object) => {
+        if ((o as any).__locked) {
+          o.set({ lockMovementX: true, lockMovementY: true, lockRotation: true, lockScalingX: true, lockScalingY: true, hasControls: false } as any);
+        }
+      });
       fc.renderAll();
       updateObjects(side);
       if (side === '1') setHistIdx1(newIdx);
@@ -1286,6 +1549,44 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     saveHistory(activeSide);
   };
   deleteSelectedRef.current = deleteSelected;
+
+  const ungroupSelected = () => {
+    const fc = getActiveFabric();
+    const obj = fc?.getActiveObject();
+    if (!obj || obj.type !== 'group') return;
+    const group = obj as fabric.Group;
+    const items = group.getObjects();
+    group.destroy();
+    fc!.remove(group);
+    const sel: fabric.Object[] = [];
+    items.forEach((child) => {
+      fc!.add(child);
+      sel.push(child);
+    });
+    fc!.discardActiveObject();
+    if (sel.length > 1) {
+      const activeSel = new fabric.ActiveSelection(sel, { canvas: fc! });
+      fc!.setActiveObject(activeSel);
+    } else if (sel.length === 1) {
+      fc!.setActiveObject(sel[0]);
+    }
+    fc!.renderAll();
+    saveHistory(activeSide);
+    updateObjects(activeSide);
+  };
+
+  const groupSelected = () => {
+    const fc = getActiveFabric();
+    const active = fc?.getActiveObject();
+    if (!active || active.type !== 'activeSelection') return;
+    const sel = active as fabric.ActiveSelection;
+    const group = sel.toGroup();
+    (group as any).name = 'Csoport';
+    fc!.setActiveObject(group);
+    fc!.renderAll();
+    saveHistory(activeSide);
+    updateObjects(activeSide);
+  };
 
   // ── Comment annotation helpers ──
   const addCommentAnnotation = (ann: CommentAnnotation) => {
@@ -2165,66 +2466,183 @@ window.addEventListener('resize',()=>{
           {currentObjects.length === 0 && (
             <Text type="secondary" style={{ fontSize: 12 }}>Nincs elem</Text>
           )}
-          {[...currentObjects].reverse().map((obj: fabric.Object, i: number) => {
-            const isActive = activeFc?.getActiveObject() === obj;
-            return (
-              <div
-                key={i}
-                onClick={() => { activeFc?.setActiveObject(obj); activeFc?.renderAll(); setSelectedObj(obj); }}
-                style={{
-                  padding: '4px 8px', cursor: 'pointer', borderRadius: 4,
-                  background: isActive ? '#e6f4ff' : 'transparent',
-                  fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
-                  marginBottom: 2,
-                }}
-              >
-                {(() => {
-                  const t = obj.type;
-                  if (t === 'i-text' || t === 'textbox')
-                    return <span title="Szöveges" style={{ fontSize: 13, fontWeight: 700, color: '#1890ff', minWidth: 16 }}>T</span>;
-                  if (t === 'image')
-                    return <span title="Raszteres kép" style={{ fontSize: 13, minWidth: 16 }}>🖼</span>;
-                  if (t === 'rect')
-                    return <span title="Téglalap (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>▭</span>;
-                  if (t === 'circle')
-                    return <span title="Kör (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>◯</span>;
-                  if (t === 'triangle')
-                    return <span title="Háromszög (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>△</span>;
-                  if (t === 'path' || t === 'polyline' || t === 'polygon')
-                    return <span title="Vektoros útvonal" style={{ fontSize: 13, color: '#722ed1', minWidth: 16 }}>✦</span>;
-                  if (t === 'group')
-                    return <span title="Csoport" style={{ fontSize: 13, color: '#fa8c16', minWidth: 16 }}>⊞</span>;
-                  return <span title={t} style={{ fontSize: 13, color: '#888', minWidth: 16 }}>◻</span>;
-                })()}
-                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {(obj as any).name || obj.type}
-                </span>
-                <span style={{ cursor: 'pointer', opacity: 0.5 }} onClick={(e: React.MouseEvent) => {
-                  e.stopPropagation();
-                  obj.set('visible', !obj.visible);
-                  activeFc?.renderAll();
-                }}>
-                  {obj.visible !== false ? '👁' : '🚫'}
-                </span>
-                <span
-                  title="Törlés"
-                  style={{ cursor: 'pointer', color: '#ff4d4f', fontSize: 13, lineHeight: 1, opacity: 0.7 }}
-                  onClick={(e: React.MouseEvent) => {
-                    e.stopPropagation();
-                    const fc = activeFc;
-                    if (!fc) return;
-                    fc.remove(obj);
-                    if (fc.getActiveObject() === obj) fc.discardActiveObject();
-                    fc.renderAll();
-                    updateObjects(activeSide);
-                    saveHistory(activeSide);
-                  }}
-                >
-                  ✕
-                </span>
-              </div>
-            );
-          })}
+          {(() => {
+            const renderLayerIcon = (t: string | undefined) => {
+              if (t === 'i-text' || t === 'textbox')
+                return <span title="Szöveges" style={{ fontSize: 13, fontWeight: 700, color: '#1890ff', minWidth: 16 }}>T</span>;
+              if (t === 'image')
+                return <span title="Raszteres kép" style={{ fontSize: 13, minWidth: 16 }}>🖼</span>;
+              if (t === 'rect')
+                return <span title="Téglalap (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>▭</span>;
+              if (t === 'circle')
+                return <span title="Kör (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>◯</span>;
+              if (t === 'triangle')
+                return <span title="Háromszög (vektor)" style={{ fontSize: 13, color: '#52c41a', minWidth: 16 }}>△</span>;
+              if (t === 'path' || t === 'polyline' || t === 'polygon')
+                return <span title="Vektoros útvonal" style={{ fontSize: 13, color: '#722ed1', minWidth: 16 }}>✦</span>;
+              if (t === 'group')
+                return <span title="Csoport" style={{ fontSize: 13, color: '#fa8c16', minWidth: 16 }}>⊞</span>;
+              return <span title={t} style={{ fontSize: 13, color: '#888', minWidth: 16 }}>◻</span>;
+            };
+
+            const renderObj = (obj: fabric.Object, idx: number, depth: number) => {
+              const activeObj = activeFc?.getActiveObject();
+              const isDirectActive = activeObj === obj;
+              const isInSelection = !isDirectActive && activeObj?.type === 'activeSelection'
+                && (activeObj as fabric.ActiveSelection).getObjects().includes(obj);
+              const isActive = isDirectActive || isInSelection;
+              const isGroup = obj.type === 'group';
+              const isExpanded = expandedGroups.has(idx);
+              return (
+                <React.Fragment key={`layer-${depth}-${idx}`}>
+                  <div
+                    onClick={(e: React.MouseEvent) => {
+                      const fc = activeFc;
+                      if (!fc) return;
+                      if (depth > 0) return; // Child inside a group — just select the parent group
+
+                      const topObjs = [...currentObjects].reverse();
+                      const clickedIdx = topObjs.indexOf(obj);
+
+                      if (e.shiftKey && lastLayerClickRef.current >= 0) {
+                        // Shift: range select from last click to current
+                        const from = Math.min(lastLayerClickRef.current, clickedIdx);
+                        const to = Math.max(lastLayerClickRef.current, clickedIdx);
+                        const rangeObjs = topObjs.slice(from, to + 1).filter((o: any) => !o.__guideHelper);
+                        if (rangeObjs.length > 1) {
+                          fc.discardActiveObject();
+                          const sel = new fabric.ActiveSelection(rangeObjs, { canvas: fc });
+                          fc.setActiveObject(sel);
+                        } else if (rangeObjs.length === 1) {
+                          fc.setActiveObject(rangeObjs[0]);
+                        }
+                      } else if (e.ctrlKey || e.metaKey) {
+                        // Ctrl/Cmd: toggle individual item in selection
+                        const current = fc.getActiveObject();
+                        if (!current) {
+                          fc.setActiveObject(obj);
+                        } else if (current.type === 'activeSelection') {
+                          const sel = current as fabric.ActiveSelection;
+                          if (sel.getObjects().includes(obj)) {
+                            sel.removeWithUpdate(obj);
+                            if (sel.getObjects().length === 1) {
+                              fc.setActiveObject(sel.getObjects()[0]);
+                            } else if (sel.getObjects().length === 0) {
+                              fc.discardActiveObject();
+                            }
+                          } else {
+                            sel.addWithUpdate(obj);
+                          }
+                        } else if (current === obj) {
+                          fc.discardActiveObject();
+                        } else {
+                          const sel = new fabric.ActiveSelection([current, obj], { canvas: fc });
+                          fc.setActiveObject(sel);
+                        }
+                      } else {
+                        fc.setActiveObject(obj);
+                      }
+                      lastLayerClickRef.current = clickedIdx;
+                      fc.renderAll();
+                      setSelectedObj(fc.getActiveObject() ?? null);
+                    }}
+                    style={{
+                      padding: '4px 8px', paddingLeft: 8 + depth * 16, cursor: 'pointer', borderRadius: 4,
+                      background: isActive ? '#e6f4ff' : 'transparent',
+                      fontSize: 12, display: 'flex', alignItems: 'center', gap: 6,
+                      marginBottom: 2,
+                    }}
+                  >
+                    {isGroup && (
+                      <span
+                        style={{ cursor: 'pointer', fontSize: 10, color: '#fa8c16', minWidth: 12 }}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          setExpandedGroups(prev => {
+                            const next = new Set(prev);
+                            if (next.has(idx)) next.delete(idx); else next.add(idx);
+                            return next;
+                          });
+                        }}
+                      >
+                        {isExpanded ? <DownOutlined /> : <RightOutlined />}
+                      </span>
+                    )}
+                    {renderLayerIcon(obj.type)}
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {(obj as any).name || obj.type}
+                    </span>
+                    <span
+                      title={(obj as any).__locked ? 'Feloldás' : 'Zárolás'}
+                      style={{ cursor: 'pointer', opacity: 0.5, fontSize: 13, minWidth: 14 }}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        const locked = !(obj as any).__locked;
+                        (obj as any).__locked = locked;
+                        obj.set({
+                          lockMovementX: locked,
+                          lockMovementY: locked,
+                          lockRotation: locked,
+                          lockScalingX: locked,
+                          lockScalingY: locked,
+                          hasControls: !locked,
+                        } as any);
+                        activeFc?.renderAll();
+                        saveHistory(activeSide);
+                        forceToolbarUpdate(t => t + 1);
+                      }}
+                    >
+                      {(obj as any).__locked ? <LockOutlined /> : <UnlockOutlined />}
+                    </span>
+                    <span style={{ cursor: 'pointer', opacity: 0.5 }} onClick={(e: React.MouseEvent) => {
+                      e.stopPropagation();
+                      obj.set('visible', !obj.visible);
+                      activeFc?.renderAll();
+                      saveHistory(activeSide);
+                    }}>
+                      {obj.visible !== false ? '👁' : '🚫'}
+                    </span>
+                    {isGroup && (
+                      <span
+                        title="Csoportbontás"
+                        style={{ cursor: 'pointer', color: '#fa8c16', fontSize: 13, lineHeight: 1, opacity: 0.7 }}
+                        onClick={(e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          const fc = activeFc;
+                          if (!fc) return;
+                          fc.setActiveObject(obj);
+                          ungroupSelected();
+                        }}
+                      >
+                        <DisconnectOutlined />
+                      </span>
+                    )}
+                    <span
+                      title="Törlés"
+                      style={{ cursor: 'pointer', color: '#ff4d4f', fontSize: 13, lineHeight: 1, opacity: 0.7 }}
+                      onClick={(e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        const fc = activeFc;
+                        if (!fc) return;
+                        fc.remove(obj);
+                        if (fc.getActiveObject() === obj) fc.discardActiveObject();
+                        fc.renderAll();
+                        updateObjects(activeSide);
+                        saveHistory(activeSide);
+                      }}
+                    >
+                      ✕
+                    </span>
+                  </div>
+                  {isGroup && isExpanded && (obj as fabric.Group).getObjects().map((child, ci) =>
+                    renderObj(child, idx * 1000 + ci, depth + 1)
+                  )}
+                </React.Fragment>
+              );
+            };
+
+            return [...currentObjects].reverse().map((obj, i) => renderObj(obj, i, 0));
+          })()}
         </div>
 
         {/* Guide management */}
@@ -2410,6 +2828,13 @@ window.addEventListener('resize',()=>{
             <Tooltip title="Nyomdakész PDF letöltése (CMYK, vágójel, kifutó)">
               <Button size="small" icon={<FilePdfOutlined />} onClick={handleExportPrintPDF} style={{ color: '#d4380d' }}>
                 PDF
+              </Button>
+            </Tooltip>
+          )}
+          {templateCategoryIds && templateCategoryIds.length > 0 && (
+            <Tooltip title="Sablon betöltése">
+              <Button size="small" icon={<AppstoreOutlined />} onClick={() => setTemplatePickerOpen(true)}>
+                Sablonok
               </Button>
             </Tooltip>
           )}
@@ -2609,6 +3034,16 @@ window.addEventListener('resize',()=>{
               <Tooltip title="Hátra küld">
                 <Button size="small" icon={<VerticalAlignBottomOutlined />} onClick={sendToBack} />
               </Tooltip>
+              {selectedObj?.type === 'group' && (
+                <Tooltip title="Csoportbontás">
+                  <Button size="small" icon={<DisconnectOutlined />} onClick={ungroupSelected} />
+                </Tooltip>
+              )}
+              {selectedObj?.type === 'activeSelection' && (
+                <Tooltip title="Csoportosítás">
+                  <Button size="small" icon={<BlockOutlined />} onClick={groupSelected} />
+                </Tooltip>
+              )}
               <Tooltip title="Töröl">
                 <Button size="small" danger icon={<DeleteOutlined />} onClick={deleteSelected} />
               </Tooltip>
@@ -3341,6 +3776,20 @@ window.addEventListener('resize',()=>{
         </div>
         );
       })()}
+
+  <TemplatePicker
+    open={templatePickerOpen}
+    onClose={() => setTemplatePickerOpen(false)}
+    onSelect={(file) => {
+      setTemplatePickerOpen(false);
+      if (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf')) {
+        placePdfDecomposed(file);
+      } else {
+        handleImageUpload(file);
+      }
+    }}
+    categoryIds={templateCategoryIds}
+  />
   </>
   );
 });

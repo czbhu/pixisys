@@ -382,6 +382,11 @@ class ServiceGroup(models.Model):
         verbose_name="Szülő csoport"
     )
 
+    is_protected = models.BooleanField(
+        default=False, verbose_name="Védett",
+        help_text="Védett csoport és benne lévő szolgáltatások nem törölhetők."
+    )
+
     class Meta:
         verbose_name = "Szolgáltatás csoport"
         verbose_name_plural = "Szolgáltatás csoportok"
@@ -389,6 +394,11 @@ class ServiceGroup(models.Model):
 
     def __str__(self):
         return self.name
+
+    def delete(self, *args, **kwargs):
+        if self.is_protected:
+            raise ValueError("Védett szolgáltatás csoport nem törölhető.")
+        super().delete(*args, **kwargs)
 
 
 class Service(models.Model):
@@ -618,6 +628,10 @@ class Service(models.Model):
     )
 
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    is_protected = models.BooleanField(
+        default=False, verbose_name="Védett",
+        help_text="Védett szolgáltatások nem törölhetők. Rendszer-szintű kalkulációhoz szükségesek."
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
     created_by = models.ForeignKey(
@@ -658,6 +672,13 @@ class Service(models.Model):
             self.calculate_selling_price()
         
         super().save(*args, **kwargs)
+
+    def delete(self, *args, **kwargs):
+        if self.is_protected:
+            raise ValueError("Védett szolgáltatás nem törölhető.")
+        if self.groups.filter(is_protected=True).exists():
+            raise ValueError("Védett csoportba tartozó szolgáltatás nem törölhető.")
+        super().delete(*args, **kwargs)
 
 
 class CalculatorTemplate(models.Model):
@@ -1283,6 +1304,14 @@ class ProductTemplate(models.Model):
         default=False,
         verbose_name="Több ív engedélyezése",
         help_text="Ha igaz, a felhasználó több ívet (oldalt) adhat a megrendeléshez.",
+    )
+
+    template_categories = models.ManyToManyField(
+        'printshop.PrintTemplateCategory',
+        blank=True,
+        related_name='product_templates',
+        verbose_name="Sablon kategóriák",
+        help_text="Válaszd ki, mely sablon kategóriák jelenjenek meg a Print Editorban ennél a terméknél.",
     )
 
     is_active = models.BooleanField(default=True, verbose_name="Aktív")

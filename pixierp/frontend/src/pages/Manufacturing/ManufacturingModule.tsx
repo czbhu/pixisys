@@ -11,7 +11,8 @@ import {
     ToolOutlined,
     CheckCircleOutlined,
     GroupOutlined,
-    AppstoreOutlined
+    AppstoreOutlined,
+    FileOutlined,
 } from '@ant-design/icons';
 import Products from './Products';
 import ProductEditor from './ProductEditor';
@@ -33,10 +34,7 @@ const ManufacturingModule: React.FC = () => {
         { key: '/manufacturing/services', label: 'Szolgáltatások', icon: <ScissorOutlined /> },
         { key: '/manufacturing/service-groups', label: 'Szolgáltatás csoportok', icon: <GroupOutlined /> },
         { key: '/manufacturing/calculators', label: 'Kalkulátorok', icon: <CalculatorOutlined /> },
-        { key: '/manufacturing/boms', label: 'BOM-ok', icon: <ForkOutlined /> },
-        { key: '/manufacturing/inventory', label: 'Készlet', icon: <DatabaseOutlined /> },
-        { key: '/manufacturing/work-orders', label: 'Munkarendelések', icon: <ToolOutlined /> },
-        { key: '/manufacturing/quality', label: 'Minőségbiztosítás', icon: <CheckCircleOutlined /> },
+        { key: '/manufacturing/print-templates', label: 'Sablonok', icon: <FileOutlined /> },
     ];
 
     return (
@@ -51,10 +49,6 @@ const ManufacturingModule: React.FC = () => {
             <Route path="/service-groups" element={<ServiceGroups />} />
             <Route path="/calculators" element={<CalculatorTemplates />} />
             <Route path="/calculator/:templateId" element={<Calculator />} />
-            <Route path="/boms" element={<div>BOM-ok (Fejlesztés alatt)</div>} />
-            <Route path="/inventory" element={<div>Készlet (Fejlesztés alatt)</div>} />
-            <Route path="/work-orders" element={<div>Munkarendelések (Fejlesztés alatt)</div>} />
-            <Route path="/quality" element={<div>Minőségbiztosítás (Fejlesztés alatt)</div>} />
         </Routes>
     );
 };
