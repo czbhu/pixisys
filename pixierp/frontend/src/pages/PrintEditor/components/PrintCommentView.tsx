@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Button, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal } from 'antd';
+import { Button, Checkbox, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal } from 'antd';
 import {
   CommentOutlined, CheckOutlined, DeleteOutlined,
   FilePdfOutlined, MessageOutlined, CloseOutlined, LockOutlined,
@@ -8,6 +8,7 @@ import {
   ScissorOutlined, MergeCellsOutlined, ExportOutlined,
   DragOutlined, PlusOutlined, UndoOutlined, RedoOutlined, ClearOutlined,
   AppstoreOutlined,
+  LeftOutlined, RightOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import TemplatePicker from './TemplatePicker';
@@ -70,12 +71,22 @@ interface PdfElement {
   text?: string;
   spot?: boolean;
   spot_name?: string;
+  path_d?: string;
+}
+
+interface SpotPath {
+  d: string;
+  type?: string;       // 's' | 'f' | 'fs'
+  width?: number;      // stroke width in points
+  spot_name?: string;
+  closed?: boolean;
 }
 
 interface PdfPageInfo {
   widthPt: number;
   heightPt: number;
   trimBox?: { x: number; y: number; w: number; h: number };
+  spotPaths?: SpotPath[];
 }
 
 interface Props {
@@ -178,6 +189,47 @@ const ensurePdfWorkerSrc = async (pdfjs: any): Promise<void> => {
   }
 };
 
+// ─── Spot path overlay ──────────────────────────────────────────────────────
+// Renders the actual vector paths of spot color elements as an SVG overlay,
+// so only the real shape (not the bounding box) is highlighted in magenta.
+interface SpotPathOverlayProps {
+  paths: SpotPath[] | undefined;
+  pageWidthPt: number;
+  pageHeightPt: number;
+}
+const SpotPathOverlay: React.FC<SpotPathOverlayProps> = ({ paths, pageWidthPt, pageHeightPt }) => {
+  if (!paths || paths.length === 0) return null;
+  return (
+    <svg
+      viewBox={`0 0 ${pageWidthPt} ${pageHeightPt}`}
+      preserveAspectRatio="none"
+      style={{
+        position: 'absolute', inset: 0, width: '100%', height: '100%',
+        pointerEvents: 'none', zIndex: 12,
+      }}
+    >
+      {paths.map((p, i) => {
+        const isFill = p.type === 'f' || p.type === 'fs';
+        const isStroke = p.type === 's' || p.type === 'fs' || !p.type;
+        const sw = Math.max(0.3, (p.width ?? 0.5));
+        return (
+          <path
+            key={i}
+            d={p.d}
+            fill={isFill ? '#ff00ff' : 'none'}
+            fillOpacity={isFill ? 0.85 : undefined}
+            stroke={isStroke ? '#ff00ff' : 'none'}
+            strokeWidth={isStroke ? Math.max(sw, 1.2) : undefined}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
+          />
+        );
+      })}
+    </svg>
+  );
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const PrintCommentView: React.FC<Props> = ({
@@ -214,7 +266,7 @@ const PrintCommentView: React.FC<Props> = ({
       { value: 'arrow', label: 'Nyíl' },
     ] : []),
     ...(effectiveCanEdit ? [
-      { value: 'measure', label: 'Mérő' },
+      { value: 'measure', label: <Tooltip title="Esc: újrakezdi a mérést. Shift: csak X vagy Y irányban mér.">Mérő</Tooltip> },
       { value: 'guideline', label: <Tooltip title="Segédvonal"><DragOutlined /></Tooltip> },
       { value: 'crop', label: <Tooltip title="Croppolás"><ScissorOutlined /></Tooltip> },
     ] : []),
@@ -230,7 +282,8 @@ const PrintCommentView: React.FC<Props> = ({
   // Tool state
   const [activeTool, setActiveTool] = useState<CommentToolType>('pointer');
   const [zoomLevel, setZoomLevel] = useState(1);
-
+  const [pagesPanelCollapsed, setPagesPanelCollapsed] = useState(false);
+  const [rightPanelCollapsed, setRightPanelCollapsed] = useState(false);
   // Annotation state
   const [annotations, setAnnotations] = useState<CommentAnnotation[]>([]);
   const [loadingAnnotations, setLoadingAnnotations] = useState(false);
@@ -258,6 +311,7 @@ const PrintCommentView: React.FC<Props> = ({
   const [cursorPos, setCursorPos] = useState<{ x: number; y: number } | null>(null);
 
   const [showTrimBox, setShowTrimBox] = useState(true);
+  const [highlightSpot, setHighlightSpot] = useState(true);
 
   // Color detection
   const [cursorColor, setCursorColor] = useState<{ r: number; g: number; b: number } | null>(null);
@@ -312,10 +366,32 @@ const PrintCommentView: React.FC<Props> = ({
   } | null>(null);
   const pageElementsRef = useRef<PdfElement[][]>([]);
   pageElementsRef.current = pageElements;
+  const pageInfosRef = useRef<PdfPageInfo[]>([]);
+  pageInfosRef.current = pageInfos;
 
-  const ZOOM_MIN = 0.25;
+  const ZOOM_MIN_HARD = 0.05;
   const ZOOM_MAX = 5;
   const ZOOM_STEP = 0.15;
+  // Compute minimum zoom so the largest page still fits the viewport (both axes).
+  const computeFitZoom = useCallback((): number => {
+    const container = scrollContainerRef.current;
+    if (!container || pageInfos.length === 0) return ZOOM_MIN_HARD;
+    const cw = container.clientWidth - 32; // account for padding
+    const ch = container.clientHeight - 32;
+    if (cw <= 0 || ch <= 0) return ZOOM_MIN_HARD;
+    let minFit = 1;
+    for (const pi of pageInfos) {
+      if (!pi || !pi.widthPt || !pi.heightPt) continue;
+      // At zoom=1 page width = container width; pageHeight scales accordingly
+      const heightAtZoom1 = cw * (pi.heightPt / pi.widthPt);
+      const fitW = 1; // width fits at zoom=1
+      const fitH = ch / heightAtZoom1;
+      const fit = Math.min(fitW, fitH);
+      if (fit < minFit) minFit = fit;
+    }
+    return Math.max(ZOOM_MIN_HARD, +minFit.toFixed(2));
+  }, [pageInfos]);
+  const ZOOM_MIN = computeFitZoom();
   const zoomIn = () => setZoomLevel(z => Math.min(ZOOM_MAX, +(z + ZOOM_STEP).toFixed(2)));
   const zoomOut = () => setZoomLevel(z => Math.max(ZOOM_MIN, +(z - ZOOM_STEP).toFixed(2)));
   const zoomReset = () => setZoomLevel(1);
@@ -482,14 +558,14 @@ const PrintCommentView: React.FC<Props> = ({
               type: el.type, x: el.x, y: el.y, w: el.w, h: el.h,
               colorspace: el.colorspace, width_px: el.width_px, height_px: el.height_px,
               font: el.font, font_size: el.font_size, color: el.color, text: el.text,
-              spot: el.spot, spot_name: el.spot_name,
+              spot: el.spot, spot_name: el.spot_name, path_d: el.path_d,
             });
           }
         }
         elemsPerPage.push(elems);
         if (elems.length > 0) console.log(`Page ${i}: ${elems.length} elements detected`, elems.map(e => ({ type: e.type, text: e.text, cs: e.colorspace })));
 
-        infos.push({ widthPt: pageW, heightPt: pageH, trimBox });
+        infos.push({ widthPt: pageW, heightPt: pageH, trimBox, spotPaths: sp?.spot_paths || [] });
         setLoadingProgress(20 + Math.round((i / totalPages) * 75));
       }
       setLoadingProgress(100);
@@ -537,9 +613,25 @@ const PrintCommentView: React.FC<Props> = ({
     const onWheel = (e: WheelEvent) => {
       if (e.ctrlKey || e.metaKey) {
         e.preventDefault();
+        // Compute zoom anchor from current cursor position relative to scroll content
+        const rect = container.getBoundingClientRect();
+        const cursorX = e.clientX - rect.left;
+        const cursorY = e.clientY - rect.top;
+        // Position of the cursor in the scroll content (before zoom change)
+        const contentX = container.scrollLeft + cursorX;
+        const contentY = container.scrollTop + cursorY;
         setZoomLevel(z => {
           const next = e.deltaY < 0 ? z + ZOOM_STEP : z - ZOOM_STEP;
-          return Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +next.toFixed(2)));
+          const newZoom = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, +next.toFixed(2)));
+          if (newZoom === z) return z;
+          const ratio = newZoom / z;
+          // After zoom, content point under cursor will be at contentX*ratio
+          // Adjust scroll so it stays under cursor
+          requestAnimationFrame(() => {
+            container.scrollLeft = contentX * ratio - cursorX;
+            container.scrollTop = contentY * ratio - cursorY;
+          });
+          return newZoom;
         });
       }
     };
@@ -574,18 +666,84 @@ const PrintCommentView: React.FC<Props> = ({
     if (drag.moved) return; // Was a pan drag, not a click
     // Click → select element
     const elems = pageElementsRef.current[drag.pageNum - 1];
-    if (elems && elems.length > 0) {
-      const pos = drag.relPos;
-      // Collect all elements at click position
-      const hits: PdfElement[] = [];
-      for (const el of elems) {
-        if (pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h) {
-          hits.push(el);
+    const pInfoLocal = pageInfosRef.current[drag.pageNum - 1];
+    const pos = drag.relPos;
+
+    // Spot path hit-test first (path-based, not bbox)
+    if (pInfoLocal && pInfoLocal.spotPaths && pInfoLocal.spotPaths.length > 0) {
+      try {
+        const ptX = pos.x * pInfoLocal.widthPt;
+        const ptY = pos.y * pInfoLocal.heightPt;
+        const hitCtx = document.createElement('canvas').getContext('2d');
+        if (hitCtx) {
+          const tol = 4;
+          for (const sp of pInfoLocal.spotPaths) {
+            const path2d = new Path2D(sp.d);
+            const isFill = sp.type === 'f' || sp.type === 'fs';
+            const isStroke = sp.type === 's' || sp.type === 'fs' || !sp.type;
+            let hit = false;
+            if (isFill && hitCtx.isPointInPath(path2d, ptX, ptY)) hit = true;
+            if (!hit && isStroke) {
+              hitCtx.lineWidth = Math.max((sp.width ?? 0.5), tol);
+              if (hitCtx.isPointInStroke(path2d, ptX, ptY)) hit = true;
+            }
+            if (hit) {
+              // Build a synthetic vector element representing this single path
+              const synthEl: PdfElement = {
+                type: 'vector',
+                x: 0, y: 0, w: 1, h: 1, // bbox unused for path-rendered selection
+                colorspace: 'Spot',
+                spot: true,
+                spot_name: sp.spot_name,
+              } as any;
+              (synthEl as any).__spotPath = sp;
+              setSelectedElement({ page: drag.pageNum, element: synthEl });
+              return;
+            }
+          }
         }
+      } catch { /* ignore */ }
+    }
+
+    if (elems && elems.length > 0) {
+      // Collect all elements at click position (skip spot vectors — handled above)
+      // For vector elements with path_d, do a precise Path2D hit-test instead of bbox.
+      const hits: PdfElement[] = [];
+      let hitCtx: CanvasRenderingContext2D | null = null;
+      const ptX = pInfoLocal ? pos.x * pInfoLocal.widthPt : 0;
+      const ptY = pInfoLocal ? pos.y * pInfoLocal.heightPt : 0;
+      for (const el of elems) {
+        if (el.spot && el.type === 'vector') continue;
+        // Bbox prefilter
+        if (!(pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h)) continue;
+        // For vectors with path data, prefer path hits but allow bbox as fallback (lower priority)
+        let isPathHit = false;
+        if (el.type === 'vector' && el.path_d && pInfoLocal) {
+          try {
+            if (!hitCtx) hitCtx = document.createElement('canvas').getContext('2d');
+            if (hitCtx) {
+              const p2d = new Path2D(el.path_d);
+              const tol = 4;
+              isPathHit = hitCtx.isPointInPath(p2d, ptX, ptY);
+              if (!isPathHit) {
+                hitCtx.lineWidth = tol;
+                isPathHit = hitCtx.isPointInStroke(p2d, ptX, ptY);
+              }
+            }
+          } catch { /* ignore */ }
+        } else {
+          // No path data → treat bbox hit as a path hit (no better info)
+          isPathHit = true;
+        }
+        (el as any).__pathHit = isPathHit;
+        hits.push(el);
       }
-      // Priority: image > text > vector, then smallest area within same type
+      // Priority: path-hit first; then image > text > vector; then smallest area
       const typePriority: Record<string, number> = { image: 0, text: 1, vector: 2 };
       hits.sort((a, b) => {
+        const ah = (a as any).__pathHit ? 0 : 1;
+        const bh = (b as any).__pathHit ? 0 : 1;
+        if (ah !== bh) return ah - bh;
         const pa = typePriority[a.type] ?? 9;
         const pb = typePriority[b.type] ?? 9;
         if (pa !== pb) return pa - pb;
@@ -669,8 +827,15 @@ const PrintCommentView: React.FC<Props> = ({
   // Keyboard shortcuts: ESC, Ctrl+Z, Ctrl+Y
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && selectedElement) {
-        setSelectedElement(null);
+      if (e.key === 'Escape') {
+        if (measuring) {
+          setMeasuring(false);
+          setMeasuringStart(null);
+          setActiveMeasure(null);
+        }
+        if (selectedElement) {
+          setSelectedElement(null);
+        }
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -683,7 +848,7 @@ const PrintCommentView: React.FC<Props> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedElement, undo, redo]);
+  }, [selectedElement, measuring, undo, redo]);
 
   const scrollToPage = (pageNum: number) => {
     const el = pageRefs.current[pageNum - 1];
@@ -698,8 +863,8 @@ const PrintCommentView: React.FC<Props> = ({
     const target = imgWrapper || pageEl;
     const targetRect = target.getBoundingClientRect();
     const containerRect = container.getBoundingClientRect();
-    const elCenterY = targetRect.top + (elem.y + elem.h / 2) * targetRect.height * zoomLevel;
-    const elCenterX = targetRect.left + (elem.x + elem.w / 2) * targetRect.width * zoomLevel;
+    const elCenterY = targetRect.top + (elem.y + elem.h / 2) * targetRect.height;
+    const elCenterX = targetRect.left + (elem.x + elem.w / 2) * targetRect.width;
     const offsetY = elCenterY - containerRect.top - containerRect.height / 2;
     const offsetX = elCenterX - containerRect.left - containerRect.width / 2;
     container.scrollBy({ top: offsetY, left: offsetX, behavior: 'smooth' });
@@ -732,7 +897,12 @@ const PrintCommentView: React.FC<Props> = ({
         const px = Math.min(Math.max(Math.round(pos.x * canvas.width), 0), canvas.width - 1);
         const py = Math.min(Math.max(Math.round(pos.y * canvas.height), 0), canvas.height - 1);
         const data = ctx.getImageData(px, py, 1, 1).data;
-        setCursorColor({ r: data[0], g: data[1], b: data[2] });
+        // Skip pure white background — don't display color readout there
+        if (data[0] === 255 && data[1] === 255 && data[2] === 255) {
+          setCursorColor(null);
+        } else {
+          setCursorColor({ r: data[0], g: data[1], b: data[2] });
+        }
       }
     }
 
@@ -741,10 +911,47 @@ const PrintCommentView: React.FC<Props> = ({
       const els = pageElements[pageNum - 1];
       let foundSpot: string | null = null;
       let foundCS: string | null = null;
-      if (els) {
+
+      // Spot color hit-test: check if cursor lies on any actual spot path (not bbox).
+      // This is more accurate than bbox containment since spot strokes can cover
+      // a huge bbox while only being painted along thin lines.
+      const pInfoLocal = pageInfos[pageNum - 1];
+      if (pInfoLocal && pInfoLocal.spotPaths && pInfoLocal.spotPaths.length > 0) {
+        try {
+          const ptX = pos.x * pInfoLocal.widthPt;
+          const ptY = pos.y * pInfoLocal.heightPt;
+          const hitCtx = document.createElement('canvas').getContext('2d');
+          if (hitCtx) {
+            // Tolerance in points (~1.5mm) so thin strokes are easy to hover
+            const tol = 4;
+            for (const sp of pInfoLocal.spotPaths) {
+              const path2d = new Path2D(sp.d);
+              const isFill = sp.type === 'f' || sp.type === 'fs';
+              const isStroke = sp.type === 's' || sp.type === 'fs' || !sp.type;
+              let hit = false;
+              if (isFill && hitCtx.isPointInPath(path2d, ptX, ptY)) hit = true;
+              if (!hit && isStroke) {
+                hitCtx.lineWidth = Math.max((sp.width ?? 0.5), tol);
+                if (hitCtx.isPointInStroke(path2d, ptX, ptY)) hit = true;
+              }
+              if (hit) {
+                foundSpot = sp.spot_name || 'Spot';
+                foundCS = 'Spot';
+                break;
+              }
+            }
+          }
+        } catch {
+          /* ignore Path2D errors */
+        }
+      }
+
+      if (els && !foundCS) {
         // Collect all elements under cursor, pick best match (same priority as click)
         const hits: PdfElement[] = [];
         for (const el of els) {
+          // Skip spot vectors here — they're handled by the path-based hit test above.
+          if (el.spot && el.type === 'vector') continue;
           if (pos.x >= el.x && pos.x <= el.x + el.w && pos.y >= el.y && pos.y <= el.y + el.h) {
             hits.push(el);
           }
@@ -758,9 +965,11 @@ const PrintCommentView: React.FC<Props> = ({
           return (a.w * a.h) - (b.w * b.h);
         });
         for (const el of hits) {
-          if (!foundCS && el.colorspace) foundCS = el.colorspace;
-          if (!foundSpot && el.spot && el.spot_name) foundSpot = el.spot_name;
-          if (foundCS || foundSpot) break;
+          // Use only the topmost (smallest/most-specific) element so a giant
+          // spot-stroke bbox doesn't override a smaller CMYK element under it.
+          if (el.colorspace) foundCS = el.colorspace;
+          if (el.spot && el.spot_name) foundSpot = el.spot_name;
+          break;
         }
       }
       setCursorSpotName(foundSpot);
@@ -770,7 +979,18 @@ const PrintCommentView: React.FC<Props> = ({
     if (activeTool === 'pointer') return;
 
     if (measuring && measuringStart && pos) {
-      setActiveMeasure({ x1: measuringStart.x, y1: measuringStart.y, x2: pos.x, y2: pos.y, page: pageNum });
+      let mx2 = pos.x;
+      let my2 = pos.y;
+      if (e.shiftKey) {
+        const dx = Math.abs(pos.x - measuringStart.x);
+        const dy = Math.abs(pos.y - measuringStart.y);
+        if (dx >= dy) {
+          my2 = measuringStart.y;
+        } else {
+          mx2 = measuringStart.x;
+        }
+      }
+      setActiveMeasure({ x1: measuringStart.x, y1: measuringStart.y, x2: mx2, y2: my2, page: pageNum });
     }
 
     if (drawing && drawStart && pos) {
@@ -1311,12 +1531,27 @@ const PrintCommentView: React.FC<Props> = ({
 
       {/* ── Page thumbnails sidebar ── */}
       {pdfPages.length > 0 && (
+        pagesPanelCollapsed ? (
+          <div style={{
+            width: 24, flexShrink: 0, borderRight: '1px solid #e8e8e8',
+            background: '#fafafa', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 8,
+          }}>
+            <Tooltip title="Oldalak panel kinyitása" placement="right">
+              <Button size="small" type="text" icon={<RightOutlined />} onClick={() => setPagesPanelCollapsed(false)} />
+            </Tooltip>
+          </div>
+        ) : (
         <div style={{
           width: 130, flexShrink: 0, borderRight: '1px solid #e8e8e8',
           background: '#fff', overflow: 'hidden',
           display: 'flex', flexDirection: 'column',
         }}>
-          <Text strong style={{ fontSize: 11, textAlign: 'center', color: '#666', padding: '8px 4px 4px', flexShrink: 0 }}>Oldalak</Text>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 4px 4px', flexShrink: 0 }}>
+            <Text strong style={{ fontSize: 11, color: '#666', flex: 1, textAlign: 'center' }}>Oldalak</Text>
+            <Tooltip title="Panel becsukása">
+              <Button size="small" type="text" icon={<LeftOutlined />} onClick={() => setPagesPanelCollapsed(true)} />
+            </Tooltip>
+          </div>
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 4px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {pdfPages.map((src, idx) => {
             const cs = pageColorSpaces[idx];
@@ -1398,6 +1633,7 @@ const PrintCommentView: React.FC<Props> = ({
           })}
           </div>
         </div>
+        )
       )}
 
       {/* ── Center: PDF viewer + overlay ── */}
@@ -1739,7 +1975,7 @@ const PrintCommentView: React.FC<Props> = ({
         )}
 
         {/* PDF + overlay */}
-        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 24, padding: '16px 0' }}>
+        <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 24, padding: '16px 0' }}>
           {loadingPdf ? (
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: 300, width: '100%', gap: 16 }}>
               <Spin size="large" />
@@ -1788,7 +2024,7 @@ const PrintCommentView: React.FC<Props> = ({
               const showPending = pendingPage === pageNum;
 
               return (
-                <div key={pageIdx} ref={el => { pageRefs.current[pageIdx] = el; }} style={{ display: 'inline-block', zoom: zoomLevel }}>
+                <div key={pageIdx} ref={el => { pageRefs.current[pageIdx] = el; }} style={{ display: 'block', width: `${zoomLevel * 100}%`, flexShrink: 0, textAlign: 'center', alignSelf: zoomLevel <= 1 ? 'center' : 'flex-start' }}>
                   {/* Page number label */}
                   {pdfPages.length > 1 && (
                     <div style={{ textAlign: 'center', marginBottom: 4 }}>
@@ -1800,7 +2036,7 @@ const PrintCommentView: React.FC<Props> = ({
                   <img
                     src={pageSrc}
                     alt={`oldal ${pageNum}`}
-                    style={{ display: 'block', maxWidth: '100%', userSelect: 'none' }}
+                    style={{ display: 'block', width: '100%', userSelect: 'none' }}
                     draggable={false}
                   />
 
@@ -1833,9 +2069,7 @@ const PrintCommentView: React.FC<Props> = ({
                   <div
                     style={{
                       position: 'absolute', inset: 0, zIndex: 10,
-                      cursor: activeTool === 'pointer' ? 'grab'
-                        : activeTool === 'crop' ? 'crosshair'
-                        : activeTool === 'guideline' ? 'default'
+                      cursor: activeTool === 'pointer' ? 'crosshair'
                         : 'crosshair',
                     }}
                     onMouseDown={e => {
@@ -1896,7 +2130,7 @@ const PrintCommentView: React.FC<Props> = ({
                           fontSize: 9, color: '#00bcd4', background: 'rgba(255,255,255,0.9)',
                           padding: '0 3px', borderRadius: 2, whiteSpace: 'nowrap',
                           pointerEvents: 'auto', cursor: 'pointer',
-                          zoom: 1 / zoomLevel,
+                          
                         }}>
                           {pInfo && (g.orientation === 'h'
                             ? `${(g.position * pInfo.heightPt * PT_TO_MM).toFixed(1)} mm`
@@ -1940,7 +2174,7 @@ const PrintCommentView: React.FC<Props> = ({
                             position: 'absolute', top: -16, left: 0,
                             fontSize: 9, background: '#fa541c', color: '#fff',
                             padding: '0 4px', borderRadius: 2, whiteSpace: 'nowrap',
-                            zoom: 1 / zoomLevel,
+                            
                           }}>
                             Crop {pInfo ? `${Math.round(cropRect.w * pInfo.widthPt * PT_TO_MM)}×${Math.round(cropRect.h * pInfo.heightPt * PT_TO_MM)} mm` : ''}
                           </span>
@@ -2225,27 +2459,86 @@ const PrintCommentView: React.FC<Props> = ({
                     </div>
                   )}
 
+                  {/* Spot color highlight overlay (only actual shape pixels) */}
+                  {highlightSpot && pInfo && pInfo.spotPaths && pInfo.spotPaths.length > 0 && (
+                    <SpotPathOverlay
+                      paths={pInfo.spotPaths}
+                      pageWidthPt={pInfo.widthPt}
+                      pageHeightPt={pInfo.heightPt}
+                    />
+                  )}
+
                   {/* Selected element highlight + properties */}
                   {selectedElement && selectedElement.page === pageNum && (() => {
                     const el = selectedElement.element;
                     const typeLabel = el.type === 'image' ? 'Raszteres kép' : el.type === 'vector' ? 'Vektoros' : 'Szöveg';
-                    const showBelow = el.y < 0.12;
+                    const spotPath: SpotPath | undefined = (el as any).__spotPath;
+                    // Determine path d-string to draw (spot click → spotPath.d; vector element → el.path_d)
+                    const pathD: string | undefined = spotPath?.d || el.path_d;
+                    const pathFill = spotPath
+                      ? (spotPath.type === 'f' || spotPath.type === 'fs' ? 'rgba(19,194,194,0.25)' : 'none')
+                      : (el.type === 'vector' ? 'rgba(19,194,194,0.18)' : 'none');
+
+                    // Compute label anchor: use path bbox if available, else element bbox
+                    let labelX = el.x;
+                    let labelY = el.y;
+                    let labelH = el.h;
+                    if (pathD && pInfo) {
+                      try {
+                        const m = pathD.match(/-?\d+(\.\d+)?/g);
+                        if (m && m.length >= 2) {
+                          const nums = m.map(Number);
+                          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+                          for (let k = 0; k < nums.length - 1; k += 2) {
+                            const x = nums[k], y = nums[k + 1];
+                            if (x < minX) minX = x; if (x > maxX) maxX = x;
+                            if (y < minY) minY = y; if (y > maxY) maxY = y;
+                          }
+                          labelX = minX / pInfo.widthPt;
+                          labelY = minY / pInfo.heightPt;
+                          labelH = (maxY - minY) / pInfo.heightPt;
+                        }
+                      } catch { /* ignore */ }
+                    }
+                    const showBelow = labelY < 0.12;
+
                     return (
                       <>
+                        {pathD && pInfo ? (
+                          <svg
+                            viewBox={`0 0 ${pInfo.widthPt} ${pInfo.heightPt}`}
+                            preserveAspectRatio="none"
+                            style={{
+                              position: 'absolute', inset: 0, width: '100%', height: '100%',
+                              pointerEvents: 'none', zIndex: 15,
+                            }}
+                          >
+                            <path
+                              d={pathD}
+                              fill={pathFill}
+                              stroke="#13c2c2"
+                              strokeWidth={2}
+                              strokeLinejoin="round"
+                              strokeLinecap="round"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                          </svg>
+                        ) : (
+                          <div style={{
+                            position: 'absolute',
+                            left: `${el.x * 100}%`, top: `${el.y * 100}%`,
+                            width: `${el.w * 100}%`, height: `${el.h * 100}%`,
+                            border: '2px solid #13c2c2', background: 'rgba(19,194,194,0.08)',
+                            pointerEvents: 'none', zIndex: 15, boxSizing: 'border-box',
+                          }} />
+                        )}
                         <div style={{
                           position: 'absolute',
-                          left: `${el.x * 100}%`, top: `${el.y * 100}%`,
-                          width: `${el.w * 100}%`, height: `${el.h * 100}%`,
-                          border: '2px solid #13c2c2', background: 'rgba(19,194,194,0.08)',
-                          pointerEvents: 'none', zIndex: 15, boxSizing: 'border-box',
-                        }} />
-                        <div style={{
-                          position: 'absolute',
-                          left: `${el.x * 100}%`,
-                          top: showBelow ? `${(el.y + el.h) * 100}%` : `${el.y * 100}%`,
+                          left: `${labelX * 100}%`,
+                          top: showBelow ? `${(labelY + labelH) * 100}%` : `${labelY * 100}%`,
                           transform: showBelow ? undefined : 'translateY(-100%)',
                           transformOrigin: showBelow ? 'top left' : 'bottom left',
-                          zoom: 1 / zoomLevel,
+                          
                           zIndex: 16, pointerEvents: 'none',
                         }}>
                           <div style={{
@@ -2281,10 +2574,26 @@ const PrintCommentView: React.FC<Props> = ({
       </div>
 
       {/* ── Right: Comments + Checks panel ── */}
+      {rightPanelCollapsed ? (
+        <div style={{
+          width: 24, flexShrink: 0, borderLeft: '1px solid #e8e8e8',
+          background: '#fafafa', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', paddingTop: 8,
+        }}>
+          <Tooltip title="Ellenőrzés panel kinyitása" placement="left">
+            <Button size="small" type="text" icon={<LeftOutlined />} onClick={() => setRightPanelCollapsed(false)} />
+          </Tooltip>
+        </div>
+      ) : (
       <div style={{
         width: 300, flexShrink: 0, borderLeft: '1px solid #e8e8e8',
         background: '#fff', display: 'flex', flexDirection: 'column', overflow: 'hidden',
       }}>
+        {/* Collapse button */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '4px 4px 0' }}>
+          <Tooltip title="Panel becsukása">
+            <Button size="small" type="text" icon={<RightOutlined />} onClick={() => setRightPanelCollapsed(true)} />
+          </Tooltip>
+        </div>
         {/* Check buttons */}
         {pageElements.length > 0 && (
           <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
@@ -2338,6 +2647,19 @@ const PrintCommentView: React.FC<Props> = ({
                 setCheckResults({ label: 'Spot színek', issues });
               }}>SPOT</Button>
             </div>
+            {(pageInfos.some(pi => pi.spotPaths && pi.spotPaths.length > 0) || pageElements.some(els => els.some(el => el.spot))) && (
+              <div style={{ marginTop: 6 }}>
+                <Tooltip title="spot szín kiemelése">
+                  <Checkbox
+                    checked={highlightSpot}
+                    onChange={e => setHighlightSpot(e.target.checked)}
+                    style={{ fontSize: 11 }}
+                  >
+                    Spot színek
+                  </Checkbox>
+                </Tooltip>
+              </div>
+            )}
             {checkResults && (
               <div style={{ marginTop: 8, fontSize: 11 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
@@ -2431,6 +2753,7 @@ const PrintCommentView: React.FC<Props> = ({
           )}
         </div>
       </div>
+      )}
 
       <TemplatePicker
         open={templatePickerOpen}

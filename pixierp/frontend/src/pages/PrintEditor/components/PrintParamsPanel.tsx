@@ -458,8 +458,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
       setProductSizeKey('idx_0');
       update({
         product_name: product.name,
-        width_mm: first.width_mm ?? 148,
-        height_mm: first.height_mm ?? 210,
+        width_mm: Number(first.width_mm) || 148,
+        height_mm: Number(first.height_mm) || 210,
       });
     } else {
       setProductSizeKey('custom');
@@ -476,8 +476,8 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
     const sz = product.sizes[idx];
     if (!sz) return;
     update({
-      width_mm: sz.width_mm ?? params.width_mm,
-      height_mm: sz.height_mm ?? params.height_mm,
+      width_mm: Number(sz.width_mm) || params.width_mm,
+      height_mm: Number(sz.height_mm) || params.height_mm,
     });
   };
 

@@ -1616,6 +1616,27 @@ class PdfDecomposeView(APIView):
                         'bbox': list(span['bbox']),
                     })
 
+        # ── 4. Extract TrimBox ────────────────────────────────────────────
+        trimbox_pt = None
+        try:
+            raw_media = _get_raw_pdf_box(doc, page.xref, 'MediaBox')
+            raw_crop = _get_raw_pdf_box(doc, page.xref, 'CropBox') or raw_media
+            raw_trim = _get_raw_pdf_box(doc, page.xref, 'TrimBox')
+            if raw_trim and raw_crop:
+                crop_x0, crop_y0, crop_x1, crop_y1 = raw_crop
+                trim_x0, trim_y0, trim_x1, trim_y1 = raw_trim
+                trim_w = trim_x1 - trim_x0
+                trim_h = trim_y1 - trim_y0
+                if trim_w > 0 and trim_h > 0:
+                    trimbox_pt = {
+                        'x': round(trim_x0 - crop_x0, 2),
+                        'y': round((crop_y1 - trim_y1), 2),
+                        'w': round(trim_w, 2),
+                        'h': round(trim_h, 2),
+                    }
+        except Exception:
+            pass
+
         doc.close()
 
         return Response({
@@ -1623,6 +1644,7 @@ class PdfDecomposeView(APIView):
             'page_height_pt': page_h_pt,
             'page_width_mm': round(page_w_pt * self.PT_TO_MM, 1),
             'page_height_mm': round(page_h_pt * self.PT_TO_MM, 1),
+            'trimbox_pt': trimbox_pt,
             'elements': elements,
         })
 
@@ -2043,6 +2065,8 @@ class PdfAnalyzeView(APIView):
                 # (get_drawings() converts ALL colors to RGB, losing original CS)
                 rect_cs_map = {}  # "x0,y0,x1,y1" -> (cs, is_spot, spot_name)
                 text_cs_regions = []  # list of (y_top_down, cs, is_spot, spot_name) for ALL text renders
+                spot_path_geoms = []  # list of {ops: [...], spot_name, paint: 'f'|'s'|'fs'} - actual spot path geometry
+                all_path_geoms = []  # list of {ops, paint, cs, spot, spot_name, bbox} - all painted paths
                 page_height = mb_h
                 used_cs_in_stream = set()  # collect all CS used in this page's stream
 
@@ -2147,6 +2171,7 @@ class PdfAnalyzeView(APIView):
                     cur_stroke_spot_name = None
                     path_rects = []
                     path_points = []
+                    path_ops = []  # list of ('M'|'L'|'C'|'RE'|'Z', *coords) in TOP-DOWN page coords
                     gs_stack = []
                     ctm = initial_ctm
                     text_tm = None
@@ -2160,6 +2185,7 @@ class PdfAnalyzeView(APIView):
                                 cur_fill_cs, cur_stroke_cs, cur_fill_spot, cur_stroke_spot, cur_fill_spot_name, cur_stroke_spot_name, ctm = gs_stack.pop()
                             path_rects = []
                             path_points = []
+                            path_ops = []
                         elif tok == 'cm' and i >= 6:
                             try:
                                 cm_a = float(tokens[i-6])
@@ -2313,24 +2339,37 @@ class PdfAnalyzeView(APIView):
                             try:
                                 px = float(tokens[i-2])
                                 py = float(tokens[i-1])
-                                path_points = [_ctm_apply(px, py, ctm)]
+                                pt = _ctm_apply(px, py, ctm)
+                                path_points = [pt]
+                                path_ops.append(('M', pt[0], page_height - pt[1]))
                             except (ValueError, IndexError):
                                 pass
                         elif tok == 'l' and i >= 2:
                             try:
                                 px = float(tokens[i-2])
                                 py = float(tokens[i-1])
-                                path_points.append(_ctm_apply(px, py, ctm))
+                                pt = _ctm_apply(px, py, ctm)
+                                path_points.append(pt)
+                                path_ops.append(('L', pt[0], page_height - pt[1]))
                             except (ValueError, IndexError):
                                 pass
                         elif tok == 'c' and i >= 6:
                             try:
+                                cps = []
                                 for ci in range(3):
                                     px = float(tokens[i-6+ci*2])
                                     py = float(tokens[i-5+ci*2])
-                                    path_points.append(_ctm_apply(px, py, ctm))
+                                    pt = _ctm_apply(px, py, ctm)
+                                    path_points.append(pt)
+                                    cps.append(pt)
+                                path_ops.append(('C',
+                                                 cps[0][0], page_height - cps[0][1],
+                                                 cps[1][0], page_height - cps[1][1],
+                                                 cps[2][0], page_height - cps[2][1]))
                             except (ValueError, IndexError):
                                 pass
+                        elif tok == 'h':
+                            path_ops.append(('Z',))
                         elif tok == 're' and i >= 4:
                             try:
                                 rx = float(tokens[i-4])
@@ -2354,6 +2393,12 @@ class PdfAnalyzeView(APIView):
                                 td_x1 = bx1
                                 td_y1 = page_height - by0
                                 path_rects.append((td_x0, td_y0, td_x1, td_y1))
+                                # Also record as a 4-segment path
+                                path_ops.append(('M', td_x0, td_y0))
+                                path_ops.append(('L', td_x1, td_y0))
+                                path_ops.append(('L', td_x1, td_y1))
+                                path_ops.append(('L', td_x0, td_y1))
+                                path_ops.append(('Z',))
                             except (ValueError, IndexError):
                                 pass
                         elif tok in ('f', 'F', 'f*', 'B', 'B*', 'b', 'b*'):
@@ -2372,8 +2417,34 @@ class PdfAnalyzeView(APIView):
                             for pr in path_rects:
                                 key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
                                 rect_cs_map[key] = (cur_fill_cs or "Ismeretlen", cur_fill_spot, cur_fill_spot_name)
+                            # Record actual spot path geometry
+                            if path_ops and (cur_fill_spot or (tok in ('B', 'B*', 'b', 'b*') and cur_stroke_spot)):
+                                paint = 'fs' if tok in ('B', 'B*', 'b', 'b*') else 'f'
+                                spot_path_geoms.append({
+                                    'ops': list(path_ops),
+                                    'paint': paint,
+                                    'spot_name': cur_fill_spot_name or cur_stroke_spot_name,
+                                })
+                            # Record geometry for all paints (used for vector selection)
+                            if path_ops and path_rects:
+                                _bbox = (
+                                    min(pr[0] for pr in path_rects),
+                                    min(pr[1] for pr in path_rects),
+                                    max(pr[2] for pr in path_rects),
+                                    max(pr[3] for pr in path_rects),
+                                )
+                                _paint = 'fs' if tok in ('B', 'B*', 'b', 'b*') else 'f'
+                                all_path_geoms.append({
+                                    'ops': list(path_ops),
+                                    'paint': _paint,
+                                    'cs': cur_fill_cs or 'Ismeretlen',
+                                    'spot': cur_fill_spot,
+                                    'spot_name': cur_fill_spot_name or cur_stroke_spot_name,
+                                    'bbox': _bbox,
+                                })
                             path_rects = []
                             path_points = []
+                            path_ops = []
                         elif tok in ('S', 's'):
                             if path_points and not path_rects:
                                 xs = [p[0] for p in path_points]
@@ -2390,11 +2461,36 @@ class PdfAnalyzeView(APIView):
                             for pr in path_rects:
                                 key = f"{pr[0]:.1f},{pr[1]:.1f},{pr[2]:.1f},{pr[3]:.1f}"
                                 rect_cs_map[key] = (cur_stroke_cs or "Ismeretlen", cur_stroke_spot, cur_stroke_spot_name)
+                            # Record actual spot path geometry (stroke)
+                            if path_ops and cur_stroke_spot:
+                                spot_path_geoms.append({
+                                    'ops': list(path_ops),
+                                    'paint': 's',
+                                    'spot_name': cur_stroke_spot_name,
+                                })
+                            # Record geometry for all stroked paths
+                            if path_ops and path_rects:
+                                _bbox = (
+                                    min(pr[0] for pr in path_rects),
+                                    min(pr[1] for pr in path_rects),
+                                    max(pr[2] for pr in path_rects),
+                                    max(pr[3] for pr in path_rects),
+                                )
+                                all_path_geoms.append({
+                                    'ops': list(path_ops),
+                                    'paint': 's',
+                                    'cs': cur_stroke_cs or 'Ismeretlen',
+                                    'spot': cur_stroke_spot,
+                                    'spot_name': cur_stroke_spot_name,
+                                    'bbox': _bbox,
+                                })
                             path_rects = []
                             path_points = []
+                            path_ops = []
                         elif tok == 'n':
                             path_rects = []
                             path_points = []
+                            path_ops = []
                         i += 1
 
                 # Parse page content streams
@@ -2489,24 +2585,27 @@ class PdfAnalyzeView(APIView):
                                 'spot': vec_spot,
                                 'spot_name': vec_spot_name,
                             })
-                    # Merge overlapping vector rects into groups
+                    # Merge overlapping vector rects into groups, but keep
+                    # CMYK and spot rects separate so a large spot bbox doesn't
+                    # absorb CMYK content (and vice versa).
                     merged = []
                     for vr in all_rects:
                         r = vr['rect']
+                        vr_spot = bool(vr.get('spot'))
                         found = False
                         for m in merged:
+                            if bool(m.get('spot')) != vr_spot:
+                                continue
                             if r.intersects(m['rect']):
                                 m['rect'] = m['rect'] | r  # union
                                 if vr['cs'] != "Ismeretlen":
                                     m['cs'] = vr['cs']
-                                if vr.get('spot'):
-                                    m['spot'] = True
                                 if vr.get('spot_name'):
                                     m['spot_name'] = vr['spot_name']
                                 found = True
                                 break
                         if not found:
-                            merged.append({'rect': fitz.Rect(r), 'cs': vr['cs'], 'spot': vr.get('spot', False), 'spot_name': vr.get('spot_name')})
+                            merged.append({'rect': fitz.Rect(r), 'cs': vr['cs'], 'spot': vr_spot, 'spot_name': vr.get('spot_name')})
                     for m in merged:
                         r = m['rect']
                         vel = {
@@ -2521,15 +2620,87 @@ class PdfAnalyzeView(APIView):
                             vel['spot'] = True
                             if m.get('spot_name'):
                                 vel['spot_name'] = m['spot_name']
+                        # Attach combined SVG path data of all paths whose bbox
+                        # falls inside this merged element rect (and matches spot/non-spot).
+                        try:
+                            d_parts = []
+                            tol = 2.0
+                            el_spot = bool(m.get('spot'))
+                            cs_counts = {}
+                            for g in all_path_geoms:
+                                if bool(g.get('spot')) != el_spot:
+                                    continue
+                                gb = g['bbox']
+                                # Match if path's center is inside element rect (looser than full containment)
+                                gcx = (gb[0] + gb[2]) / 2.0
+                                gcy = (gb[1] + gb[3]) / 2.0
+                                inside = (gcx >= r.x0 - tol and gcx <= r.x1 + tol and
+                                          gcy >= r.y0 - tol and gcy <= r.y1 + tol)
+                                if not inside:
+                                    continue
+                                gcs = g.get('cs') or 'Ismeretlen'
+                                if gcs and gcs != 'Ismeretlen':
+                                    cs_counts[gcs] = cs_counts.get(gcs, 0) + 1
+                                for op in g['ops']:
+                                    if op[0] == 'M':
+                                        d_parts.append(f"M{op[1]:.2f},{op[2]:.2f}")
+                                    elif op[0] == 'L':
+                                        d_parts.append(f"L{op[1]:.2f},{op[2]:.2f}")
+                                    elif op[0] == 'C':
+                                        d_parts.append(f"C{op[1]:.2f},{op[2]:.2f} {op[3]:.2f},{op[4]:.2f} {op[5]:.2f},{op[6]:.2f}")
+                                    elif op[0] == 'Z':
+                                        d_parts.append("Z")
+                            if d_parts:
+                                vel['path_d'] = ' '.join(d_parts)
+                            # If element CS is unknown, derive from most common path CS
+                            if (vel.get('colorspace') in (None, '', 'Ismeretlen')) and cs_counts:
+                                top_cs = max(cs_counts.items(), key=lambda kv: kv[1])[0]
+                                vel['colorspace'] = top_cs
+                            _dbgw(f"VEC EL spot={el_spot} bbox=({r.x0:.1f},{r.y0:.1f},{r.x1:.1f},{r.y1:.1f}) all_geoms={len(all_path_geoms)} matched={len(d_parts)} cs_counts={cs_counts} final_cs={vel.get('colorspace')}")
+                        except Exception as _vex:
+                            _dbgw(f"VEC EL path_d EXC: {_vex}")
+                            pass
                         elements.append(vel)
+
+                # Build SVG-style spot paths directly from collected geometry
+                # (recorded during stream parsing, so CMYK paths are never included).
+                spot_paths = []
+                for geom in spot_path_geoms:
+                    d_parts = []
+                    last_is_move = False
+                    for op in geom['ops']:
+                        if op[0] == 'M':
+                            d_parts.append(f"M{op[1]:.2f},{op[2]:.2f}")
+                            last_is_move = True
+                        elif op[0] == 'L':
+                            d_parts.append(f"L{op[1]:.2f},{op[2]:.2f}")
+                            last_is_move = False
+                        elif op[0] == 'C':
+                            d_parts.append(f"C{op[1]:.2f},{op[2]:.2f} {op[3]:.2f},{op[4]:.2f} {op[5]:.2f},{op[6]:.2f}")
+                            last_is_move = False
+                        elif op[0] == 'Z':
+                            d_parts.append("Z")
+                            last_is_move = False
+                    if not d_parts:
+                        continue
+                    sp = {
+                        'd': ' '.join(d_parts),
+                        'type': geom['paint'],
+                        'width': 0.5,
+                    }
+                    if geom.get('spot_name'):
+                        sp['spot_name'] = geom['spot_name']
+                    spot_paths.append(sp)
 
                 page_info = {
                     'page': page_num + 1,
                     'mediabox_mm': mediabox_mm,
                     'trimbox_mm': trimbox_mm,
                     'trimbox_pt': trimbox_pt,
+                    'mediabox_pt': {'w': float(mb_w), 'h': float(mb_h)},
                     'color_spaces': sorted(color_spaces),
                     'elements': elements,
+                    'spot_paths': spot_paths,
                 }
                 pages_info.append(page_info)
 

@@ -259,6 +259,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const redoRef = useRef<() => void>(() => {});
   const deleteSelectedRef = useRef<() => void>(() => {});
   const saveHistoryRef = useRef<(side: Side) => void>(() => {});
+  const dragStartPosRef = useRef<{ left: number; top: number } | null>(null);
 
   // Refs for auto-nyomatlan: remember the previous (non-none) mode so we can restore on content add
   const prevSide1ModeRef = useRef<string>(params.side1_mode !== 'none' ? params.side1_mode : 'color');
@@ -346,12 +347,14 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
   const availW = containerSize.w > 0 ? containerSize.w - CHROME_W : window.innerWidth - (leftOffset + 220 + 48) - CHROME_W;
   const availH = containerSize.h > 0 ? containerSize.h - CHROME_H : window.innerHeight - 140 - CHROME_H;
   const bleedPx = BLEED_MM * MM_TO_PX;
-  const sheetW_mm = params.width_mm + 2 * BLEED_MM;
-  const sheetH_mm = params.height_mm + 2 * BLEED_MM;
+  const widthMmN = Number(params.width_mm) || 148;
+  const heightMmN = Number(params.height_mm) || 210;
+  const sheetW_mm = widthMmN + 2 * BLEED_MM;
+  const sheetH_mm = heightMmN + 2 * BLEED_MM;
   const canvasW = sheetW_mm * MM_TO_PX;   // sheet = product + 2×bleed
   const canvasH = sheetH_mm * MM_TO_PX;
-  const cutW = params.width_mm * MM_TO_PX; // cut/product area
-  const cutH = params.height_mm * MM_TO_PX;
+  const cutW = widthMmN * MM_TO_PX; // cut/product area
+  const cutH = heightMmN * MM_TO_PX;
   // baseScale = fit the canvas to the container at zoom=1
   const baseScale = Math.min(
     availW > 0 ? availW / canvasW : 1,
@@ -692,9 +695,10 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const resp = await api.post('printshop/pdf-decompose/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      const { page_width_pt, page_height_pt, elements } = resp.data as {
+      const { page_width_pt, page_height_pt, trimbox_pt, elements } = resp.data as {
         page_width_pt: number;
         page_height_pt: number;
+        trimbox_pt: { x: number; y: number; w: number; h: number } | null;
         elements: Array<{
           type: 'image' | 'vector' | 'text';
           data_url?: string;
@@ -716,12 +720,24 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const fc = getActiveFabric();
       if (!fc) return;
 
-      // Scale from PDF points to canvas pixels
-      const scaleX = cutW / page_width_pt;
-      const scaleY = cutH / page_height_pt;
-      const scale = Math.min(scaleX, scaleY);
-      const offX = bleedPx + (cutW - page_width_pt * scale) / 2;
-      const offY = bleedPx + (cutH - page_height_pt * scale) / 2;
+      // Scale & offset: align template to canvas cut area
+      let scale: number;
+      let offX: number;
+      let offY: number;
+
+      if (trimbox_pt) {
+        // Template has TrimBox → scale TrimBox to fit cut area, align TrimBox to canvas trim
+        scale = Math.min(cutW / trimbox_pt.w, cutH / trimbox_pt.h);
+        offX = bleedPx - trimbox_pt.x * scale;
+        offY = bleedPx - trimbox_pt.y * scale;
+      } else {
+        // No TrimBox → center entire page on cut area
+        const scaleX = cutW / page_width_pt;
+        const scaleY = cutH / page_height_pt;
+        scale = Math.min(scaleX, scaleY);
+        offX = bleedPx + (cutW - page_width_pt * scale) / 2;
+        offY = bleedPx + (cutH - page_height_pt * scale) / 2;
+      }
 
       const fabricObjects: fabric.Object[] = [];
 
@@ -827,8 +843,8 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       const heightMm = parseFloat((vp1.height * 25.4 / 72).toFixed(1));
 
       const dimMatch =
-        Math.abs(widthMm  - params.width_mm)  < 2 &&
-        Math.abs(heightMm - params.height_mm) < 2;
+        Math.abs(widthMm  - widthMmN)  < 2 &&
+        Math.abs(heightMm - heightMmN) < 2;
       const pagesMatch = pageCount <= parseInt(params.sides);
 
       if (dimMatch && pagesMatch) {
@@ -992,7 +1008,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       updateObjPos(obj);
     });
     fc.on('selection:cleared', () => { setSelectedObj(null); setObjPosMm(null); });
-    fc.on('object:modified', () => { saveHistoryRef.current(side); updateObjects(side); notifyDesignChange(); });
+    fc.on('object:modified', () => { dragStartPosRef.current = null; saveHistoryRef.current(side); updateObjects(side); notifyDesignChange(); });
     fc.on('object:added', () => { updateObjects(side); notifyDesignChange(); });
     fc.on('object:removed', () => { updateObjects(side); notifyDesignChange(); });
     // Save history after inline text editing (not caught by object:modified)
@@ -1002,7 +1018,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     fc.on('mouse:move', (e: any) => {
       const p = e.absolutePointer;
       if (!p) return;
-      setCursorMm({ x: p.x / MM_TO_PX - BLEED_MM, y: params.height_mm - (p.y / MM_TO_PX - BLEED_MM) });
+      setCursorMm({ x: p.x / MM_TO_PX - BLEED_MM, y: p.y / MM_TO_PX - BLEED_MM });
     });
     fc.on('mouse:out', () => setCursorMm({ x: null, y: null }));
 
@@ -1114,16 +1130,36 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
       textObj.on('editing:exited', returnToGroup);
     });
 
+    fc.on('before:transform', (opt: any) => {
+      const t = opt?.transform;
+      if (t?.action === 'drag') {
+        dragStartPosRef.current = { left: t.target.left ?? 0, top: t.target.top ?? 0 };
+      }
+    });
+
     fc.on('object:moving', (e: any) => {
-      if (!snapRef.current && !snapEdgesRef.current) return;
       const obj = e.target;
       if (!obj) return;
-      snapObjectToGuides(obj);
+
+      // Shift held → constrain to horizontal or vertical axis
+      if (e.e?.shiftKey && dragStartPosRef.current) {
+        const dx = Math.abs((obj.left ?? 0) - dragStartPosRef.current.left);
+        const dy = Math.abs((obj.top ?? 0) - dragStartPosRef.current.top);
+        if (dx >= dy) {
+          obj.set('top', dragStartPosRef.current.top);
+        } else {
+          obj.set('left', dragStartPosRef.current.left);
+        }
+      }
+
+      if (snapRef.current || snapEdgesRef.current) {
+        snapObjectToGuides(obj);
+      }
       const left = obj.left ?? 0;
       const top = obj.top ?? 0;
       const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
       const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
-      setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: params.height_mm - ((top + oh - bleedPx) / MM_TO_PX), w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+      setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: (top - bleedPx) / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
     });
 
     // Set initial zoom + dimensions (Fabric zoom instead of CSS transform = sharp rendering)
@@ -1271,7 +1307,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const top = obj.top ?? 0;
     const ow = (obj.width ?? 0) * (obj.scaleX ?? 1);
     const oh = (obj.height ?? 0) * (obj.scaleY ?? 1);
-    setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: params.height_mm - ((top + oh - bleedPx) / MM_TO_PX), w: ow / MM_TO_PX, h: oh / MM_TO_PX });
+    setObjPosMm({ x: (left - bleedPx) / MM_TO_PX, y: (top - bleedPx) / MM_TO_PX, w: ow / MM_TO_PX, h: oh / MM_TO_PX });
   };
 
   // Snap object to nearest guide (includes fold lines) + page edges + trim/safe zone
@@ -1350,7 +1386,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     if (!rect) return;
     const pos = draggingItem.axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top;
     const newMm = pos / displayScale - BLEED_MM;  // convert to cut-relative mm
-    const max = draggingItem.axis === 'x' ? params.width_mm : params.height_mm;
+    const max = draggingItem.axis === 'x' ? widthMmN : heightMmN;
     const clamped = Math.max(-BLEED_MM, Math.min(max + BLEED_MM, parseFloat(newMm.toFixed(1))));
     if (draggingItem.type === 'guide') updateGuide(draggingItem.id, clamped);
     else updateFoldLine(draggingItem.id, clamped);
@@ -1362,7 +1398,7 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     const posPx = axis === 'x' ? e.clientX - rect.left : e.clientY - rect.top;
     const mm = Math.round(((posPx / displayScale) - BLEED_MM) * 2) / 2;  // 0.5mm precision, cut-relative
-    const clamped = Math.max(-BLEED_MM, Math.min(axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM, mm));
+    const clamped = Math.max(-BLEED_MM, Math.min(axis === 'x' ? widthMmN + BLEED_MM : heightMmN + BLEED_MM, mm));
     addGuide(axis, clamped);
   };
 
@@ -1708,37 +1744,37 @@ const Step2CanvasEditor = forwardRef<CanvasEditorHandle, Props>((
     commentDrawStartRef.current = null;
   };
 
-  /** Lapszélig húzás — arányos, az első lapszélt elérő oldalt veszi figyelembe (contain) */
+  /** Lapszélig húzás — arányos, a vágott területhez igazít (contain) */
   const fitToPage = () => {
     const fc = getActiveFabric();
     const obj = fc?.getActiveObject();
     if (!obj) return;
     const objW = obj.width ?? 1;
     const objH = obj.height ?? 1;
-    const s = Math.min(canvasW / objW, canvasH / objH);
+    const s = Math.min(cutW / objW, cutH / objH);
     obj.set({
       scaleX: s,
       scaleY: s,
-      left: (canvasW - objW * s) / 2,
-      top:  (canvasH - objH * s) / 2,
+      left: bleedPx + (cutW - objW * s) / 2,
+      top:  bleedPx + (cutH - objH * s) / 2,
     });
     fc!.renderAll();
     saveHistory(activeSide);
   };
 
-  /** Lap kitöltése — arányos, mindkét lapszélt eléri (cover) */
+  /** Lap kitöltése — arányos, a vágott területet teljesen lefedi (cover) */
   const fillPage = () => {
     const fc = getActiveFabric();
     const obj = fc?.getActiveObject();
     if (!obj) return;
     const objW = obj.width ?? 1;
     const objH = obj.height ?? 1;
-    const s = Math.max(canvasW / objW, canvasH / objH);
+    const s = Math.max(cutW / objW, cutH / objH);
     obj.set({
       scaleX: s,
       scaleY: s,
-      left: (canvasW - objW * s) / 2,
-      top:  (canvasH - objH * s) / 2,
+      left: bleedPx + (cutW - objW * s) / 2,
+      top:  bleedPx + (cutH - objH * s) / 2,
     });
     fc!.renderAll();
     saveHistory(activeSide);
@@ -2237,29 +2273,27 @@ window.addEventListener('resize',()=>{
     ctx.setLineDash([]);
     ctx.strokeRect(0.5, 0.5, displayW - 1, displayH - 1);
 
-    if (hasActiveObjects) {
-      // Cut / product edge (inner) — dark dashed
-      ctx.strokeStyle = '#333';
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([6, 4]);
-      ctx.strokeRect(bleedDsp, bleedDsp, displayW - 2 * bleedDsp, displayH - 2 * bleedDsp);
+    // Cut / product edge (inner) — dark dashed (always visible)
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    ctx.strokeRect(bleedDsp, bleedDsp, displayW - 2 * bleedDsp, displayH - 2 * bleedDsp);
 
-      // Dimension labels on the cut area edges
-      ctx.save();
-      ctx.fillStyle = '#999';
-      ctx.font = '10px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(`${params.width_mm} mm`, displayW / 2, bleedDsp - 3);
-      ctx.save();
-      ctx.translate(bleedDsp - 3, displayH / 2);
-      ctx.rotate(-Math.PI / 2);
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'bottom';
-      ctx.fillText(`${params.height_mm} mm`, 0, 0);
-      ctx.restore();
-      ctx.restore();
-    }
+    // Dimension labels on the cut area edges (always visible)
+    ctx.save();
+    ctx.fillStyle = '#999';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`${widthMmN} mm`, displayW / 2, bleedDsp - 3);
+    ctx.save();
+    ctx.translate(bleedDsp - 3, displayH / 2);
+    ctx.rotate(-Math.PI / 2);
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(`${heightMmN} mm`, 0, 0);
+    ctx.restore();
+    ctx.restore();
 
     // Draw guides (stored in cut-relative mm, offset by bleedDsp)
     ctx.strokeStyle = GUIDE_COLOR;
@@ -2300,12 +2334,12 @@ window.addEventListener('resize',()=>{
     ctx.save();
     const OL = 10;
     const ox = bleedDsp;
-    const oy = displayH - bleedDsp;
+    const oy = bleedDsp;
     ctx.strokeStyle = '#1890ff';
     ctx.lineWidth = 1.5;
     ctx.setLineDash([]);
     ctx.beginPath();
-    ctx.moveTo(ox + OL, oy); ctx.lineTo(ox, oy); ctx.lineTo(ox, oy - OL);
+    ctx.moveTo(ox + OL, oy); ctx.lineTo(ox, oy); ctx.lineTo(ox, oy + OL);
     ctx.stroke();
     ctx.fillStyle = '#1890ff';
     ctx.beginPath();
@@ -2313,7 +2347,7 @@ window.addEventListener('resize',()=>{
     ctx.fill();
     ctx.restore();
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [displayW, displayH, displayScale, params.width_mm, params.height_mm, guides, foldLines, dpr, hasActiveObjects]);
+  }, [displayW, displayH, displayScale, params.width_mm, params.height_mm, guides, foldLines, dpr]);
 
   return (
     <>
@@ -2592,7 +2626,7 @@ window.addEventListener('resize',()=>{
                         forceToolbarUpdate(t => t + 1);
                       }}
                     >
-                      {(obj as any).__locked ? <LockOutlined /> : <UnlockOutlined />}
+                      {(obj as any).__locked ? <LockOutlined style={{ color: '#e74c3c' }} /> : <UnlockOutlined />}
                     </span>
                     <span style={{ cursor: 'pointer', opacity: 0.5 }} onClick={(e: React.MouseEvent) => {
                       e.stopPropagation();
@@ -3158,7 +3192,7 @@ window.addEventListener('resize',()=>{
                 }}
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" style={{ display: 'block' }}>
-                  <path d="M1 9 L1 1 L9 1" stroke="#1890ff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
+                  <path d="M9 1 L1 1 L1 9" stroke="#1890ff" strokeWidth="1.5" fill="none" strokeLinecap="round" strokeLinejoin="round"/>
                   <circle cx="1" cy="1" r="1.5" fill="#1890ff" />
                 </svg>
               </div>
@@ -3192,7 +3226,6 @@ window.addEventListener('resize',()=>{
                   size={RULER_SIZE}
                   cursorMm={cursorMm.y}
                   offsetMm={-BLEED_MM}
-                  reverse
                 />
               </div>
 
@@ -3482,8 +3515,8 @@ window.addEventListener('resize',()=>{
 
           {/* Info legend */}
           <div style={{ marginTop: 8, fontSize: 11, color: '#aaa', display: 'flex', gap: 16, alignItems: 'center' }}>
-            <span style={{ color: '#bbb' }}>Lap: {sheetW_mm}×{sheetH_mm}mm</span>
-            <span style={{ color: '#333' }}>Vágott: {params.width_mm}×{params.height_mm}mm</span>
+            <span style={{ color: '#bbb' }}>Lap: {sheetW_mm.toFixed(1)}×{sheetH_mm.toFixed(1)}mm</span>
+            <span style={{ color: '#333' }}>Vágott: {widthMmN}×{heightMmN}mm</span>
             <span>Kifutó: {BLEED_MM}mm — {params.quantity} db</span>
             {snapEnabled && <span style={{ color: GUIDE_COLOR }}>Snap: BE</span>}
             {cursorMm.x !== null && cursorMm.y !== null && (

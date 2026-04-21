@@ -160,6 +160,19 @@ const KioskPage: React.FC = () => {
         }
     }, [status, pendingQrData]);
 
+    // Auto-hide QR after timeout if user does not log in
+    useEffect(() => {
+        if (status !== 'SHOW_QR') return;
+        const ms = Math.max(3000, (successDuration || 30) * 1000);
+        const timer = setTimeout(() => {
+            setStatus('IDLE');
+            setQrData('');
+            setRequestUser(null);
+            setRequestMode(null);
+        }, ms);
+        return () => clearTimeout(timer);
+    }, [status, qrData, successDuration]);
+
 
     // State Refs for WebSocket access
     const statusRef = useRef(status);
