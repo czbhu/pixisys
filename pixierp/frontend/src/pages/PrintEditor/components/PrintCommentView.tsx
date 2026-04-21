@@ -164,6 +164,16 @@ const loadPdfFromIDB = async (): Promise<{ buffer: ArrayBuffer; name: string } |
   } catch { return null; }
 };
 
+export const clearPdfFromIDB = async (): Promise<void> => {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).delete(IDB_KEY);
+    await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+    db.close();
+  } catch { /* silent */ }
+};
+
 let pdfWorkerBlobUrl: string | null = null;
 
 const ensurePdfWorkerSrc = async (pdfjs: any): Promise<void> => {

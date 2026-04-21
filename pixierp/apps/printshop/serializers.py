@@ -3,6 +3,7 @@ from rest_framework import serializers
 from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+    SharedPrintPreviewFolder, SharedPrintPreviewVersion,
     PrintTemplateCategory, PrintTemplate,
 )
 
@@ -107,14 +108,31 @@ class PrintOrderItemCommentSerializer(serializers.ModelSerializer):
 class SharedPrintPreviewSerializer(serializers.ModelSerializer):
     url = serializers.SerializerMethodField()
     pdf_url = serializers.SerializerMethodField()
+    is_expired = serializers.BooleanField(read_only=True)
+    folder_name = serializers.CharField(source='folder.name', read_only=True, default=None)
+    latest_version_number = serializers.SerializerMethodField()
+    version_count = serializers.SerializerMethodField()
 
     class Meta:
         model = SharedPrintPreview
         fields = [
             'id', 'title', 'token', 'editable', 'commentable', 'exportable',
-            'is_active', 'url', 'pdf_url', 'created_at', 'updated_at',
+            'is_active', 'expires_at', 'is_expired',
+            'folder', 'folder_name',
+            'url', 'pdf_url', 'created_at', 'updated_at',
+            'latest_version_number', 'version_count',
         ]
-        read_only_fields = ['id', 'token', 'url', 'pdf_url', 'created_at', 'updated_at']
+        read_only_fields = [
+            'id', 'token', 'url', 'pdf_url', 'created_at', 'updated_at',
+            'is_expired', 'folder_name', 'latest_version_number', 'version_count',
+        ]
+
+    def get_latest_version_number(self, obj):
+        latest = obj.versions.order_by('-version_number').first()
+        return latest.version_number if latest else None
+
+    def get_version_count(self, obj):
+        return obj.versions.count()
 
     def get_url(self, obj):
         frontend_url = getattr(settings, 'FRONTEND_BASE_URL', None)
@@ -142,6 +160,48 @@ class SharedPrintPreviewCommentSerializer(serializers.ModelSerializer):
             'type', 'page', 'text', 'author', 'created_at', 'resolved', 'color',
         ]
         read_only_fields = ['id', 'created_at']
+
+
+class SharedPrintPreviewFolderSerializer(serializers.ModelSerializer):
+    preview_count = serializers.SerializerMethodField()
+    children_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SharedPrintPreviewFolder
+        fields = ['id', 'name', 'parent', 'preview_count', 'children_count', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'created_at', 'updated_at', 'preview_count', 'children_count']
+
+    def get_preview_count(self, obj):
+        return obj.previews.count()
+
+    def get_children_count(self, obj):
+        return obj.children.count()
+
+
+class SharedPrintPreviewVersionSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    pdf_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SharedPrintPreviewVersion
+        fields = [
+            'id', 'version_number', 'note', 'annotations',
+            'created_at', 'created_by_name', 'pdf_url',
+        ]
+        read_only_fields = ['id', 'created_at', 'created_by_name', 'pdf_url']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return None
+
+    def get_pdf_url(self, obj):
+        request = self.context.get('request')
+        if request:
+            return request.build_absolute_uri(
+                f'/api/v1/printshop/shared-preview/{obj.preview.token}/versions/{obj.id}/pdf/'
+            )
+        return None
 
 
 class PrintOrderSerializer(serializers.ModelSerializer):

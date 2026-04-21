@@ -31,6 +31,7 @@ import SiteManagementPreview from './pages/SiteManagement/SiteManagementPreview'
 import POSSales from './pages/POS/Sales';
 import PrintEditorPage from './pages/PrintEditor/PrintEditorPage';
 import PrintPreviewPage from './pages/PrintEditor/PrintPreviewPage';
+import PrintStoragePage from './pages/PrintEditor/PrintStoragePage';
 import PrintShopPage from './pages/PrintEditor/PrintShopPage';
 import PrintTemplatesPage from './pages/PrintEditor/PrintTemplatesPage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
@@ -227,6 +228,12 @@ function AppContent() {
   const isPrintPreview = location.pathname.startsWith('/print-preview');
   if (isPrintPreview) {
     return <PrintPreviewPage />;
+  }
+
+  // Print Storage fullscreen mode - no sidebar
+  const isPrintStorage = location.pathname.startsWith('/print-storage');
+  if (isPrintStorage) {
+    return <PrintStoragePage />;
   }
 
   return (

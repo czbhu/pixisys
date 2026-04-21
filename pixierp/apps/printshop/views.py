@@ -17,6 +17,7 @@ from rest_framework.views import APIView
 from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
+    SharedPrintPreviewFolder, SharedPrintPreviewVersion,
     PrintTemplateCategory, PrintTemplate,
 )
 from .serializers import (
@@ -24,6 +25,7 @@ from .serializers import (
     PrintOrderSerializer, PrintOrderListSerializer, PrintOrderItemSerializer,
     PrintMaterialSerializer, PrintOrderItemCommentSerializer,
     SharedPrintPreviewSerializer, SharedPrintPreviewCommentSerializer,
+    SharedPrintPreviewFolderSerializer, SharedPrintPreviewVersionSerializer,
     PrintTemplateCategorySerializer, PrintTemplateSerializer,
 )
 
@@ -99,6 +101,18 @@ def _get_public_preview_target(token):
     if shared_preview:
         return ('shared', shared_preview)
     return ('item', _get_shared_preview_item(token))
+
+
+def _is_preview_owner(request, target_type, target) -> bool:
+    """Authenticated owner / staff bypass the public-share gating."""
+    user = getattr(request, 'user', None)
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_staff:
+        return True
+    if target_type == 'shared':
+        return target.created_by_id == user.id
+    return False
 
 
 def _get_public_preview_author_name(target_type, target):
@@ -1023,30 +1037,61 @@ class SharedPrintPreviewCreateView(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = [MultiPartParser, FormParser, JSONParser]
 
+    def get(self, request):
+        """List the current user's saved previews (admin sees all). Optional ?folder=<id> or 'root'."""
+        qs = SharedPrintPreview.objects.all()
+        if not request.user.is_staff:
+            qs = qs.filter(created_by=request.user)
+        folder = request.query_params.get('folder')
+        if folder == 'root' or folder == '':
+            qs = qs.filter(folder__isnull=True)
+        elif folder:
+            try:
+                qs = qs.filter(folder_id=int(folder))
+            except (TypeError, ValueError):
+                pass
+        return Response(SharedPrintPreviewSerializer(qs, many=True, context={'request': request}).data)
+
     def post(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
         pdf = request.FILES.get('pdf')
         if not pdf:
             return Response({'error': 'PDF feltöltése kötelező'}, status=400)
 
+        folder = None
+        folder_id = request.data.get('folder')
+        if folder_id:
+            try:
+                folder = SharedPrintPreviewFolder.objects.get(pk=int(folder_id))
+                if not request.user.is_staff and folder.created_by_id != request.user.id:
+                    return Response({'error': 'Nincs jogosultság ehhez a mappához'}, status=403)
+            except (SharedPrintPreviewFolder.DoesNotExist, TypeError, ValueError):
+                return Response({'error': 'Ismeretlen mappa'}, status=400)
+
+        enabled = _parse_bool(request.data.get('enabled'), False)
         preview = SharedPrintPreview.objects.create(
             created_by=request.user,
+            folder=folder,
             title=request.data.get('title') or getattr(pdf, 'name', 'Preview PDF'),
             pdf=pdf,
             token=secrets.token_urlsafe(24),
             editable=_parse_bool(request.data.get('editable'), False),
             commentable=_parse_bool(request.data.get('commentable'), True),
             exportable=_parse_bool(request.data.get('exportable'), False),
-            is_active=_parse_bool(request.data.get('enabled'), False),
+            is_active=enabled,
+            expires_at=(timezone.now() + timedelta(days=14)) if enabled else None,
         )
 
         raw_annotations = request.data.get('annotations')
+        import json
+        annotations_list = []
         if raw_annotations:
-            import json
             try:
-                annotations = json.loads(raw_annotations)
+                annotations_list = json.loads(raw_annotations) or []
             except Exception:
-                annotations = []
-            for annotation in annotations:
+                annotations_list = []
+            for annotation in annotations_list:
                 serializer = SharedPrintPreviewCommentSerializer(data=annotation)
                 if serializer.is_valid():
                     SharedPrintPreviewComment.objects.create(
@@ -1055,6 +1100,20 @@ class SharedPrintPreviewCreateView(APIView):
                         author_name=serializer.validated_data.get('author_name') or (request.user.get_full_name() or request.user.username),
                         **{k: v for k, v in serializer.validated_data.items() if k != 'author_name'}
                     )
+
+        # Initial version (v1) snapshot
+        try:
+            pdf.seek(0)
+        except Exception:
+            pass
+        SharedPrintPreviewVersion.objects.create(
+            preview=preview,
+            version_number=1,
+            pdf=pdf,
+            annotations=annotations_list,
+            note=request.data.get('version_note') or 'Kezdeti mentés',
+            created_by=request.user,
+        )
 
         return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data, status=201)
 
@@ -1080,16 +1139,315 @@ class SharedPrintPreviewDetailView(APIView):
         if preview is None:
             return Response({'error': 'Nincs jogosultság'}, status=403)
 
+        from django.utils import timezone
+        from datetime import timedelta
+        update_fields = ['updated_at']
         if 'enabled' in request.data:
-            preview.is_active = _parse_bool(request.data.get('enabled'), preview.is_active)
+            new_enabled = _parse_bool(request.data.get('enabled'), preview.is_active)
+            if new_enabled and not preview.is_active and (not preview.expires_at or preview.expires_at <= timezone.now()):
+                preview.expires_at = timezone.now() + timedelta(days=14)
+                update_fields.append('expires_at')
+            preview.is_active = new_enabled
+            update_fields.append('is_active')
         if 'editable' in request.data:
             preview.editable = _parse_bool(request.data.get('editable'), preview.editable)
+            update_fields.append('editable')
         if 'commentable' in request.data:
             preview.commentable = _parse_bool(request.data.get('commentable'), preview.commentable)
+            update_fields.append('commentable')
         if 'exportable' in request.data:
             preview.exportable = _parse_bool(request.data.get('exportable'), preview.exportable)
-        preview.save(update_fields=['is_active', 'editable', 'commentable', 'exportable', 'updated_at'])
+            update_fields.append('exportable')
+        if 'title' in request.data:
+            preview.title = (request.data.get('title') or '').strip() or preview.title
+            update_fields.append('title')
+        if 'folder' in request.data:
+            raw = request.data.get('folder')
+            if raw in (None, '', 'null'):
+                preview.folder = None
+            else:
+                try:
+                    folder = SharedPrintPreviewFolder.objects.get(pk=int(raw))
+                    if not request.user.is_staff and folder.created_by_id != request.user.id:
+                        return Response({'error': 'Nincs jogosultság ehhez a mappához'}, status=403)
+                    preview.folder = folder
+                except (SharedPrintPreviewFolder.DoesNotExist, TypeError, ValueError):
+                    return Response({'error': 'Ismeretlen mappa'}, status=400)
+            update_fields.append('folder')
+        preview.save(update_fields=update_fields)
         return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data)
+
+    def delete(self, request, token):
+        preview = self.get_object(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        try:
+            if preview.pdf:
+                preview.pdf.delete(save=False)
+        except Exception:
+            pass
+        preview.delete()
+        return Response(status=204)
+
+
+class SharedPrintPreviewExtendView(APIView):
+    """Extends the expiry of a shared preview by a given number of days (default 14)."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def post(self, request, token):
+        from django.utils import timezone
+        from datetime import timedelta
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        try:
+            days = int(request.data.get('days') or 14)
+        except (TypeError, ValueError):
+            days = 14
+        days = max(1, min(days, 365))
+        base = preview.expires_at if (preview.expires_at and preview.expires_at > timezone.now()) else timezone.now()
+        preview.expires_at = base + timedelta(days=days)
+        preview.save(update_fields=['expires_at', 'updated_at'])
+        return Response(SharedPrintPreviewSerializer(preview, context={'request': request}).data)
+
+
+class SharedPrintPreviewVersionListView(APIView):
+    """Verziók listázása és új verzió létrehozása egy preview-hoz."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    def _get_preview(self, request, token):
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return None
+        return preview
+
+    def get(self, request, token):
+        preview = self._get_preview(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        versions = preview.versions.all()
+        return Response(SharedPrintPreviewVersionSerializer(versions, many=True, context={'request': request}).data)
+
+    def post(self, request, token):
+        preview = self._get_preview(request, token)
+        if preview is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+
+        pdf = request.FILES.get('pdf')
+        raw_annotations = request.data.get('annotations')
+        note = (request.data.get('note') or '').strip()
+
+        import json
+        try:
+            annotations = json.loads(raw_annotations) if raw_annotations else []
+        except Exception:
+            annotations = []
+
+        latest = preview.versions.order_by('-version_number').first()
+        next_no = (latest.version_number + 1) if latest else 1
+
+        # If no new PDF, reuse the current preview PDF as snapshot base.
+        version_pdf = pdf
+        if not version_pdf:
+            if not preview.pdf:
+                return Response({'error': 'Nincs PDF a verzióhoz'}, status=400)
+            # Copy the current preview file as the new version snapshot
+            from django.core.files.base import ContentFile
+            preview.pdf.open('rb')
+            try:
+                data = preview.pdf.read()
+            finally:
+                preview.pdf.close()
+            import os as _os
+            filename = _os.path.basename(preview.pdf.name) or 'preview.pdf'
+            version_pdf = ContentFile(data, name=filename)
+
+        version = SharedPrintPreviewVersion.objects.create(
+            preview=preview,
+            version_number=next_no,
+            pdf=version_pdf,
+            annotations=annotations,
+            note=note,
+            created_by=request.user,
+        )
+
+        # Update the main preview PDF to match the new version (so the share link points at latest)
+        if pdf:
+            preview.pdf = pdf
+            preview.save(update_fields=['pdf', 'updated_at'])
+
+        # Replace the preview's live comments with the new snapshot
+        preview.comments.all().delete()
+        for annotation in annotations:
+            ser = SharedPrintPreviewCommentSerializer(data=annotation)
+            if ser.is_valid():
+                SharedPrintPreviewComment.objects.create(
+                    preview=preview,
+                    user=request.user,
+                    author_name=ser.validated_data.get('author_name') or (request.user.get_full_name() or request.user.username),
+                    **{k: v for k, v in ser.validated_data.items() if k != 'author_name'}
+                )
+
+        return Response(SharedPrintPreviewVersionSerializer(version, context={'request': request}).data, status=201)
+
+
+class SharedPrintPreviewVersionPdfView(APIView):
+    """Egy adott verzió PDF-jének letöltése."""
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, token, pk):
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        version = get_object_or_404(SharedPrintPreviewVersion, pk=pk, preview=preview)
+        if not version.pdf:
+            return Response({'error': 'Nincs PDF'}, status=404)
+        filename = os.path.basename(version.pdf.name) or f'preview_v{version.version_number}.pdf'
+        response = FileResponse(version.pdf.open('rb'), content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="{filename}"'
+        return response
+
+
+class SharedPrintPreviewVersionRestoreView(APIView):
+    """Egy korábbi verzió visszaállítása: új verziót készít a kiválasztott tartalommal."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def post(self, request, token, pk):
+        preview = get_object_or_404(SharedPrintPreview, token=token)
+        if not request.user.is_staff and preview.created_by_id != request.user.id:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        source = get_object_or_404(SharedPrintPreviewVersion, pk=pk, preview=preview)
+
+        latest = preview.versions.order_by('-version_number').first()
+        next_no = (latest.version_number + 1) if latest else 1
+
+        from django.core.files.base import ContentFile
+        source.pdf.open('rb')
+        try:
+            data = source.pdf.read()
+        finally:
+            source.pdf.close()
+        filename = os.path.basename(source.pdf.name) or 'preview.pdf'
+        new_pdf = ContentFile(data, name=filename)
+
+        version = SharedPrintPreviewVersion.objects.create(
+            preview=preview,
+            version_number=next_no,
+            pdf=new_pdf,
+            annotations=source.annotations or [],
+            note=f'Visszaállítva v{source.version_number} alapján',
+            created_by=request.user,
+        )
+
+        # Point main preview at restored content
+        preview.pdf = ContentFile(data, name=filename)
+        preview.save(update_fields=['pdf', 'updated_at'])
+
+        preview.comments.all().delete()
+        for annotation in (source.annotations or []):
+            ser = SharedPrintPreviewCommentSerializer(data=annotation)
+            if ser.is_valid():
+                SharedPrintPreviewComment.objects.create(
+                    preview=preview,
+                    user=request.user,
+                    author_name=ser.validated_data.get('author_name') or (request.user.get_full_name() or request.user.username),
+                    **{k: v for k, v in ser.validated_data.items() if k != 'author_name'}
+                )
+
+        return Response(SharedPrintPreviewVersionSerializer(version, context={'request': request}).data, status=201)
+
+
+class SharedPrintPreviewFolderListView(APIView):
+    """Tárhely mappák listázása és létrehozása."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def _user_folders(self, request):
+        qs = SharedPrintPreviewFolder.objects.all()
+        if not request.user.is_staff:
+            qs = qs.filter(created_by=request.user)
+        return qs
+
+    def get(self, request):
+        qs = self._user_folders(request)
+        parent = request.query_params.get('parent')
+        if parent == 'root' or parent == '':
+            qs = qs.filter(parent__isnull=True)
+        elif parent:
+            try:
+                qs = qs.filter(parent_id=int(parent))
+            except (TypeError, ValueError):
+                pass
+        return Response(SharedPrintPreviewFolderSerializer(qs, many=True).data)
+
+    def post(self, request):
+        name = (request.data.get('name') or '').strip()
+        if not name:
+            return Response({'error': 'A mappa neve kötelező'}, status=400)
+        parent = None
+        parent_id = request.data.get('parent')
+        if parent_id:
+            try:
+                parent = SharedPrintPreviewFolder.objects.get(pk=int(parent_id))
+                if not request.user.is_staff and parent.created_by_id != request.user.id:
+                    return Response({'error': 'Nincs jogosultság'}, status=403)
+            except (SharedPrintPreviewFolder.DoesNotExist, TypeError, ValueError):
+                return Response({'error': 'Ismeretlen szülő mappa'}, status=400)
+        folder = SharedPrintPreviewFolder.objects.create(
+            created_by=request.user, parent=parent, name=name,
+        )
+        return Response(SharedPrintPreviewFolderSerializer(folder).data, status=201)
+
+
+class SharedPrintPreviewFolderDetailView(APIView):
+    """Mappa átnevezése / törlése."""
+    permission_classes = [IsAuthenticated]
+    parser_classes = [JSONParser]
+
+    def _get(self, request, pk):
+        folder = get_object_or_404(SharedPrintPreviewFolder, pk=pk)
+        if not request.user.is_staff and folder.created_by_id != request.user.id:
+            return None
+        return folder
+
+    def patch(self, request, pk):
+        folder = self._get(request, pk)
+        if folder is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        if 'name' in request.data:
+            name = (request.data.get('name') or '').strip()
+            if not name:
+                return Response({'error': 'A mappa neve nem lehet üres'}, status=400)
+            folder.name = name
+        if 'parent' in request.data:
+            raw = request.data.get('parent')
+            if raw in (None, '', 'null'):
+                folder.parent = None
+            else:
+                try:
+                    new_parent = SharedPrintPreviewFolder.objects.get(pk=int(raw))
+                    if new_parent.pk == folder.pk:
+                        return Response({'error': 'Önmaga nem lehet szülő'}, status=400)
+                    if not request.user.is_staff and new_parent.created_by_id != request.user.id:
+                        return Response({'error': 'Nincs jogosultság'}, status=403)
+                    folder.parent = new_parent
+                except (SharedPrintPreviewFolder.DoesNotExist, TypeError, ValueError):
+                    return Response({'error': 'Ismeretlen mappa'}, status=400)
+        folder.save()
+        return Response(SharedPrintPreviewFolderSerializer(folder).data)
+
+    def delete(self, request, pk):
+        folder = self._get(request, pk)
+        if folder is None:
+            return Response({'error': 'Nincs jogosultság'}, status=403)
+        # Move child previews and folders to parent (or root) instead of cascading delete of files.
+        SharedPrintPreview.objects.filter(folder=folder).update(folder=folder.parent)
+        SharedPrintPreviewFolder.objects.filter(parent=folder).update(parent=folder.parent)
+        folder.delete()
+        return Response(status=204)
 
 
 class SharedPrintPreviewPdfView(APIView):
@@ -1119,9 +1477,12 @@ class PublicPrintPreviewView(APIView):
 
     def get(self, request, token):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         if target_type == 'shared' and not target.pdf:
             return Response({'error': 'Nincs megosztható PDF a previewhoz'}, status=404)
         if target_type == 'item' and not target.generated_pdf:
@@ -1143,9 +1504,12 @@ class PublicPrintPreviewPdfView(APIView):
 
     def get(self, request, token):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         file_field = target.pdf if target_type == 'shared' else target.generated_pdf
         if not file_field:
             return Response({'error': 'Nincs megosztható PDF'}, status=404)
@@ -1161,21 +1525,27 @@ class PublicPrintPreviewCommentsView(APIView):
 
     def get(self, request, token):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         comments = target.comments.all()
         serializer_cls = SharedPrintPreviewCommentSerializer if target_type == 'shared' else PrintOrderItemCommentSerializer
         return Response(serializer_cls(comments, many=True).data)
 
     def post(self, request, token):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         commentable = target.commentable if target_type == 'shared' else target.preview_share_commentable
         editable = target.editable if target_type == 'shared' else target.preview_share_editable
-        if not commentable and not editable:
+        if not commentable and not editable and not is_owner:
             return Response({'error': 'A kommentelés nincs engedélyezve'}, status=403)
         serializer_cls = SharedPrintPreviewCommentSerializer if target_type == 'shared' else PrintOrderItemCommentSerializer
         serializer = serializer_cls(data=request.data)
@@ -1197,11 +1567,14 @@ class PublicPrintPreviewCommentDetailView(APIView):
 
     def patch(self, request, token, comment_id):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         editable = target.editable if target_type == 'shared' else target.preview_share_editable
-        if not editable:
+        if not editable and not is_owner:
             return Response({'error': 'A szerkesztés nincs engedélyezve'}, status=403)
         comment_model = SharedPrintPreviewComment if target_type == 'shared' else PrintOrderItemComment
         filter_key = 'preview' if target_type == 'shared' else 'item'
@@ -1216,11 +1589,14 @@ class PublicPrintPreviewCommentDetailView(APIView):
 
     def delete(self, request, token, comment_id):
         target_type, target = _get_public_preview_target(token)
+        is_owner = _is_preview_owner(request, target_type, target)
         is_enabled = target.is_active if target_type == 'shared' else target.preview_share_enabled
-        if not is_enabled:
+        if not is_enabled and not is_owner:
             return Response({'error': 'Ez a megosztási link jelenleg nincs engedélyezve'}, status=403)
+        if target_type == 'shared' and getattr(target, 'is_expired', False) and not is_owner:
+            return Response({'error': 'A megosztási link lejárt'}, status=403)
         editable = target.editable if target_type == 'shared' else target.preview_share_editable
-        if not editable:
+        if not editable and not is_owner:
             return Response({'error': 'A szerkesztés nincs engedélyezve'}, status=403)
         comment_model = SharedPrintPreviewComment if target_type == 'shared' else PrintOrderItemComment
         filter_key = 'preview' if target_type == 'shared' else 'item'

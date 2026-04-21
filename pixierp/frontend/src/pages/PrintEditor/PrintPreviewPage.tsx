@@ -1,8 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Input, Modal, Space, Spin, Switch, Tooltip, Typography, message } from 'antd';
-import { CopyOutlined, ShareAltOutlined } from '@ant-design/icons';
+import { Alert, Button, Input, List, Modal, Popconfirm, Select, Space, Spin, Switch, Tag, Tooltip, Typography, message } from 'antd';
+import {
+  BranchesOutlined, CopyOutlined, DeleteOutlined, FolderAddOutlined, FolderOpenOutlined,
+  PlusOutlined, ReloadOutlined, SaveOutlined, ShareAltOutlined,
+} from '@ant-design/icons';
 import { useAuth } from '../../contexts/AuthContext';
-import PrintCommentView from './components/PrintCommentView';
+import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
 import api from '../../services/api';
 
 const { Text } = Typography;
@@ -39,6 +42,22 @@ const PrintPreviewPage: React.FC = () => {
     exportable: false,
     url: '',
   });
+  // Tárhely / mentés UI
+  const [saveModalOpen, setSaveModalOpen] = useState(false);
+  const [saveTitle, setSaveTitle] = useState('');
+  const [saveFolders, setSaveFolders] = useState<Array<{ id: number; name: string; parent: number | null }>>([]);
+  const [saveFolderId, setSaveFolderId] = useState<number | null>(null);
+  const [saveCreateFolderOpen, setSaveCreateFolderOpen] = useState(false);
+  const [saveNewFolderName, setSaveNewFolderName] = useState('');
+  const [saveVersionNote, setSaveVersionNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  // Verziók
+  const [versionsModalOpen, setVersionsModalOpen] = useState(false);
+  const [versions, setVersions] = useState<Array<any>>([]);
+  const [versionsLoading, setVersionsLoading] = useState(false);
+  const [latestVersionNumber, setLatestVersionNumber] = useState<number | null>(null);
+  const [currentPreviewTitle, setCurrentPreviewTitle] = useState<string | null>(null);
+  const [currentPreviewFolder, setCurrentPreviewFolder] = useState<number | null>(null);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -88,6 +107,9 @@ const PrintPreviewPage: React.FC = () => {
           exportable: !!detailResponse.data?.exportable,
           url: detailResponse.data?.url || '',
         });
+        setLatestVersionNumber(detailResponse.data?.latest_version_number ?? null);
+        setCurrentPreviewTitle(detailResponse.data?.title ?? null);
+        setCurrentPreviewFolder(detailResponse.data?.folder ?? null);
       } catch (err: any) {
         if (cancelled) return;
         setError(err?.response?.data?.error || 'A preview nem érhető el.');
@@ -244,6 +266,192 @@ const PrintPreviewPage: React.FC = () => {
     }
   };
 
+  const handleNewPreview = async () => {
+    // Clear the cached PDF from IndexedDB so the viewer doesn't restore it.
+    await clearPdfFromIDB();
+    try {
+      sessionStorage.removeItem('printStorageReturnUrl');
+    } catch {
+      // ignore
+    }
+    if (typeof window !== 'undefined') {
+      const target = '/print-preview';
+      if (window.location.pathname === target && !window.location.search) {
+        window.location.reload();
+      } else {
+        window.location.replace(target);
+      }
+    }
+  };
+
+  const loadSaveFolders = async () => {
+    try {
+      const res = await api.get('/printshop/preview-folders/');
+      setSaveFolders(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setSaveFolders([]);
+    }
+  };
+
+  const handleOpenSaveModal = async () => {
+    if (!localPdfFile && !standaloneShareToken) {
+      message.warning('Először tölts fel egy PDF-et a mentéshez');
+      return;
+    }
+    const defaultTitle = currentPreviewTitle
+      || localPdfFile?.name?.replace(/\.pdf$/i, '')
+      || (shareConfig?.product_name || 'Preview PDF');
+    setSaveTitle(defaultTitle);
+    setSaveFolderId(currentPreviewFolder ?? null);
+    await loadSaveFolders();
+    setSaveModalOpen(true);
+  };
+
+  const handleSaveCreateFolder = async () => {
+    const name = saveNewFolderName.trim();
+    if (!name) { message.warning('Add meg a mappa nevét'); return; }
+    try {
+      const res = await api.post('/printshop/preview-folders/', { name, parent: saveFolderId });
+      message.success('Mappa létrehozva');
+      setSaveNewFolderName('');
+      setSaveCreateFolderOpen(false);
+      await loadSaveFolders();
+      setSaveFolderId(res.data?.id ?? null);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'A mappa létrehozása sikertelen');
+    }
+  };
+
+  const handleSaveToStorage = async () => {
+    setSaving(true);
+    try {
+      if (standaloneShareToken) {
+        // Update folder/title metadata first
+        await api.patch(`/printshop/shared-preview/${standaloneShareToken}/`, {
+          folder: saveFolderId ?? null,
+          title: saveTitle || undefined,
+        });
+        // Create a new version snapshot
+        const fd = new FormData();
+        if (localPdfFile) fd.append('pdf', localPdfFile);
+        fd.append('annotations', JSON.stringify(localAnnotations));
+        if (saveVersionNote.trim()) fd.append('note', saveVersionNote.trim());
+        const vr = await api.post(
+          `/printshop/shared-preview/${standaloneShareToken}/versions/`,
+          fd,
+          { headers: { 'Content-Type': 'multipart/form-data' } },
+        );
+        setLatestVersionNumber(vr.data?.version_number ?? null);
+        setCurrentPreviewTitle(saveTitle || currentPreviewTitle);
+        setCurrentPreviewFolder(saveFolderId ?? null);
+        message.success(`Elmentve (v${vr.data?.version_number ?? '?'})`);
+      } else {
+        if (!localPdfFile) { message.error('Nincs PDF a mentéshez'); return; }
+        const formData = new FormData();
+        formData.append('pdf', localPdfFile);
+        formData.append('enabled', 'false');
+        formData.append('editable', String(previewShare.editable));
+        formData.append('commentable', String(previewShare.commentable));
+        formData.append('exportable', String(previewShare.exportable));
+        formData.append('annotations', JSON.stringify(localAnnotations));
+        formData.append('title', saveTitle || localPdfFile.name || 'Preview PDF');
+        if (saveVersionNote.trim()) formData.append('version_note', saveVersionNote.trim());
+        if (saveFolderId != null) formData.append('folder', String(saveFolderId));
+        const response = await api.post('/printshop/shared-preview/', formData, {
+          headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        const newToken = response.data?.token;
+        if (newToken && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', `/print-preview?shareToken=${newToken}`);
+        }
+        setShareConfig({
+          pdf_url: response.data?.pdf_url,
+          editable: response.data?.editable,
+          commentable: response.data?.commentable,
+          exportable: response.data?.exportable,
+          default_author_name: authorName,
+        });
+        setPreviewShare({
+          enabled: response.data?.is_active ?? false,
+          editable: !!response.data?.editable,
+          commentable: response.data?.commentable !== false,
+          exportable: !!response.data?.exportable,
+          url: response.data?.url || '',
+        });
+        setLatestVersionNumber(response.data?.latest_version_number ?? 1);
+        setCurrentPreviewTitle(response.data?.title ?? saveTitle ?? null);
+        setCurrentPreviewFolder(response.data?.folder ?? saveFolderId ?? null);
+        message.success('Tárhelybe mentve (v1)');
+      }
+      setSaveVersionNote('');
+      setSaveModalOpen(false);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'A mentés sikertelen');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleOpenVersions = async () => {
+    if (!standaloneShareToken) {
+      message.info('Előbb mentsd el a preview-t a tárhelybe.');
+      return;
+    }
+    setVersionsModalOpen(true);
+    setVersionsLoading(true);
+    try {
+      const res = await api.get(`/printshop/shared-preview/${standaloneShareToken}/versions/`);
+      const list = Array.isArray(res.data) ? res.data : [];
+      setVersions(list);
+      if (list.length) setLatestVersionNumber(list[0].version_number);
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'A verziók betöltése sikertelen');
+    } finally {
+      setVersionsLoading(false);
+    }
+  };
+
+  const handleOpenVersionPdf = (v: any) => {
+    if (v?.pdf_url) window.open(v.pdf_url, '_blank');
+  };
+
+  const handleRestoreVersion = async (v: any) => {
+    if (!standaloneShareToken) return;
+    try {
+      await api.post(`/printshop/shared-preview/${standaloneShareToken}/versions/${v.id}/restore/`);
+      message.success(`v${v.version_number} visszaállítva új verzióként`);
+      setVersionsModalOpen(false);
+      // Reload page so the latest PDF + annotations are picked up
+      window.location.reload();
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'A visszaállítás sikertelen');
+    }
+  };
+
+  const handleDeleteCurrent = async () => {
+    if (!standaloneShareToken) {
+      message.info('Nincs elmentett preview, amit törölni lehetne');
+      return;
+    }
+    try {
+      await api.delete(`/printshop/shared-preview/${standaloneShareToken}/`);
+      message.success('PDF törölve');
+      handleNewPreview();
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'A törlés sikertelen');
+    }
+  };
+
+  const handleOpenStorage = () => {
+    try {
+      const current = window.location.pathname + window.location.search;
+      sessionStorage.setItem('printStorageReturnUrl', current);
+    } catch {
+      // ignore storage errors
+    }
+    window.location.href = '/print-storage';
+  };
+
   const handleCopyStandalonePreviewUrl = async () => {
     const previewUrl = buildStandalonePreviewUrl(orderId, itemId, standaloneShareToken);
     if (!previewUrl) return;
@@ -331,14 +539,54 @@ const PrintPreviewPage: React.FC = () => {
           background: '#fff',
         }}>
           <Text strong>Preview</Text>
-          <Button
-            size="small"
-            icon={<ShareAltOutlined />}
-            type={previewShare.enabled ? 'primary' : 'default'}
-            onClick={() => setShareModalOpen(true)}
-          >
-            Megosztás
-          </Button>
+          <Space size="small" wrap>
+            <Tooltip title="Új üres preview (aktuális PDF eldobva)">
+              <Button size="small" icon={<PlusOutlined />} onClick={handleNewPreview}>Új</Button>
+            </Tooltip>
+            <Tooltip title="PDF + kommentek mentése a tárhelyre">
+              <Button
+                size="small"
+                icon={<SaveOutlined />}
+                onClick={handleOpenSaveModal}
+                disabled={!localPdfFile && !standaloneShareToken}
+              >
+                Mentés
+              </Button>
+            </Tooltip>
+            <Popconfirm
+              title="Biztosan törlöd az aktuális mentett previewt?"
+              okText="Törlés"
+              cancelText="Mégse"
+              okButtonProps={{ danger: true }}
+              onConfirm={handleDeleteCurrent}
+              disabled={!standaloneShareToken}
+            >
+              <Tooltip title={standaloneShareToken ? 'Jelenlegi mentett preview törlése' : 'Nincs elmentett preview'}>
+                <Button size="small" danger icon={<DeleteOutlined />} disabled={!standaloneShareToken}>Töröl</Button>
+              </Tooltip>
+            </Popconfirm>
+            <Tooltip title="Tárhely megnyitása">
+              <Button size="small" icon={<FolderOpenOutlined />} onClick={handleOpenStorage}>Tárhely</Button>
+            </Tooltip>
+            <Tooltip title={standaloneShareToken ? 'Verziók kezelése' : 'Előbb mentsd a tárhelybe'}>
+              <Button
+                size="small"
+                icon={<BranchesOutlined />}
+                onClick={handleOpenVersions}
+                disabled={!standaloneShareToken}
+              >
+                Verziók{latestVersionNumber ? ` (v${latestVersionNumber})` : ''}
+              </Button>
+            </Tooltip>
+            <Button
+              size="small"
+              icon={<ShareAltOutlined />}
+              type={previewShare.enabled ? 'primary' : 'default'}
+              onClick={() => setShareModalOpen(true)}
+            >
+              Megosztás
+            </Button>
+          </Space>
         </div>
       )}
 
@@ -423,6 +671,139 @@ const PrintPreviewPage: React.FC = () => {
             </Space.Compact>
           </div>
         </div>
+      </Modal>
+
+      <Modal
+        title="Mentés a tárhelyre"
+        open={saveModalOpen}
+        onCancel={() => setSaveModalOpen(false)}
+        onOk={handleSaveToStorage}
+        okText="Mentés"
+        cancelText="Mégse"
+        confirmLoading={saving}
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <div>
+            <Text strong>Fájl neve</Text>
+            <Input
+              value={saveTitle}
+              onChange={e => setSaveTitle(e.target.value)}
+              placeholder="PDF neve a tárhelyen"
+              style={{ marginTop: 4 }}
+            />
+          </div>
+          <div>
+            <Text strong>Mappa</Text>
+            <Space.Compact style={{ width: '100%', marginTop: 4 }}>
+              <Select
+                style={{ flex: 1 }}
+                placeholder="Gyökér (nincs mappa)"
+                value={saveFolderId ?? undefined}
+                onChange={v => setSaveFolderId(v ?? null)}
+                allowClear
+                options={saveFolders.map(f => ({
+                  value: f.id,
+                  label: f.parent
+                    ? `${saveFolders.find(pp => pp.id === f.parent)?.name || '…'} / ${f.name}`
+                    : f.name,
+                }))}
+              />
+              <Tooltip title="Új mappa létrehozása">
+                <Button icon={<FolderAddOutlined />} onClick={() => setSaveCreateFolderOpen(true)} />
+              </Tooltip>
+            </Space.Compact>
+          </div>
+          {!standaloneShareToken && (
+            <Alert
+              type="info"
+              showIcon
+              message={`A PDF ${localAnnotations.length ? `és ${localAnnotations.length} komment ` : ''}elmentésre kerül a tárhelybe (v1). Megosztás alapból kikapcsolva.`}
+            />
+          )}
+          {standaloneShareToken && (
+            <Alert
+              type="info"
+              showIcon
+              message={`Új verzió készül a jelenlegi tartalomból${latestVersionNumber ? ` (legutóbbi: v${latestVersionNumber})` : ''}. A régi verziók megmaradnak.`}
+            />
+          )}
+          <div>
+            <Text strong>Verzió megjegyzés (opcionális)</Text>
+            <Input
+              value={saveVersionNote}
+              onChange={e => setSaveVersionNote(e.target.value)}
+              placeholder="pl. Kommentek javítva, új layout, stb."
+              maxLength={500}
+              style={{ marginTop: 4 }}
+            />
+          </div>
+        </Space>
+      </Modal>
+
+      <Modal
+        title="Verziók"
+        open={versionsModalOpen}
+        onCancel={() => setVersionsModalOpen(false)}
+        footer={<Button onClick={() => setVersionsModalOpen(false)}>Bezár</Button>}
+        width={640}
+      >
+        {versionsLoading ? (
+          <div style={{ textAlign: 'center', padding: 24 }}><Spin /></div>
+        ) : (
+          <List
+            dataSource={versions}
+            locale={{ emptyText: 'Nincsenek verziók' }}
+            renderItem={(v: any) => (
+              <List.Item
+                actions={[
+                  <Button key="open" size="small" icon={<FolderOpenOutlined />} onClick={() => handleOpenVersionPdf(v)}>Megnyit</Button>,
+                  <Popconfirm
+                    key="restore"
+                    title={`Visszaállítod a v${v.version_number} verziót?`}
+                    description="A jelenlegi tartalom új verziószámmal megmarad."
+                    onConfirm={() => handleRestoreVersion(v)}
+                    okText="Visszaállít"
+                    cancelText="Mégse"
+                  >
+                    <Button size="small" icon={<ReloadOutlined />}>Visszaállít</Button>
+                  </Popconfirm>,
+                ]}
+              >
+                <List.Item.Meta
+                  title={
+                    <Space>
+                      <Tag color="blue">v{v.version_number}</Tag>
+                      <span>{v.note || <Text type="secondary">(nincs megjegyzés)</Text>}</span>
+                    </Space>
+                  }
+                  description={
+                    <Text type="secondary">
+                      {v.created_by_name || 'Ismeretlen'} • {v.created_at ? new Date(v.created_at).toLocaleString('hu-HU') : ''}
+                      {Array.isArray(v.annotations) && v.annotations.length ? ` • ${v.annotations.length} komment` : ''}
+                    </Text>
+                  }
+                />
+              </List.Item>
+            )}
+          />
+        )}
+      </Modal>
+
+      <Modal
+        title="Új mappa létrehozása"
+        open={saveCreateFolderOpen}
+        onCancel={() => { setSaveCreateFolderOpen(false); setSaveNewFolderName(''); }}
+        onOk={handleSaveCreateFolder}
+        okText="Létrehoz"
+        cancelText="Mégse"
+      >
+        <Input
+          placeholder="Mappa neve"
+          value={saveNewFolderName}
+          onChange={e => setSaveNewFolderName(e.target.value)}
+          onPressEnter={handleSaveCreateFolder}
+          autoFocus
+        />
       </Modal>
     </>
   );

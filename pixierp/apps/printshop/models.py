@@ -257,10 +257,34 @@ class PrintOrderItemComment(models.Model):
         return f"Komment #{self.pk} - {self.item.product_name}"
 
 
+class SharedPrintPreviewFolder(models.Model):
+    """Mappa a megosztott preview PDF-ek rendszerezésére (felhasználónként)."""
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shared_print_preview_folders', verbose_name='Tulajdonos')
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE,
+        related_name='children', verbose_name='Szülő mappa')
+    name = models.CharField(max_length=200, verbose_name='Mappa neve')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['name']
+        verbose_name = 'Tárhely mappa'
+        verbose_name_plural = 'Tárhely mappák'
+
+    def __str__(self):
+        return self.name
+
+
 class SharedPrintPreview(models.Model):
     created_by = models.ForeignKey(
         User, null=True, blank=True, on_delete=models.SET_NULL,
         related_name='shared_print_previews', verbose_name='Létrehozó user')
+    folder = models.ForeignKey(
+        SharedPrintPreviewFolder, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='previews', verbose_name='Mappa')
     title = models.CharField(max_length=200, blank=True, verbose_name='Preview neve')
     pdf = models.FileField(upload_to='printshop/shared_preview/', verbose_name='Megosztott PDF')
     token = models.CharField(max_length=64, unique=True, verbose_name='Megosztási token')
@@ -268,6 +292,7 @@ class SharedPrintPreview(models.Model):
     commentable = models.BooleanField(default=True, verbose_name='Kommentelhető')
     exportable = models.BooleanField(default=False, verbose_name='Exportálható')
     is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    expires_at = models.DateTimeField(null=True, blank=True, verbose_name='Megosztás lejárati ideje')
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -278,6 +303,35 @@ class SharedPrintPreview(models.Model):
 
     def __str__(self):
         return self.title or f"Megosztott preview #{self.pk}"
+
+    @property
+    def is_expired(self) -> bool:
+        from django.utils import timezone
+        return bool(self.expires_at and self.expires_at <= timezone.now())
+
+
+class SharedPrintPreviewVersion(models.Model):
+    """Egy preview-hoz tartozó PDF verzió (snapshot). Minden mentés új verziót készít."""
+    preview = models.ForeignKey(
+        SharedPrintPreview, on_delete=models.CASCADE,
+        related_name='versions', verbose_name='Preview')
+    version_number = models.PositiveIntegerField(verbose_name='Verziószám')
+    pdf = models.FileField(upload_to='printshop/shared_preview/versions/', verbose_name='Verzió PDF')
+    annotations = models.JSONField(default=list, blank=True, verbose_name='Kommentek snapshot')
+    note = models.CharField(max_length=500, blank=True, verbose_name='Verzió megjegyzés')
+    created_by = models.ForeignKey(
+        User, null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='shared_print_preview_versions', verbose_name='Készítő')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-version_number']
+        unique_together = [('preview', 'version_number')]
+        verbose_name = 'Preview verzió'
+        verbose_name_plural = 'Preview verziók'
+
+    def __str__(self):
+        return f"{self.preview_id} v{self.version_number}"
 
 
 class SharedPrintPreviewComment(models.Model):
