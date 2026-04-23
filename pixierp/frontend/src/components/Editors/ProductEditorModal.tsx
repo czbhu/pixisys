@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, InputNumber, message, Checkbox, Select, Tabs, Button } from 'antd';
+import NumInput from '../NumInput';
 import { EditOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { warehouseService } from '../../services/warehouseService';
@@ -265,7 +266,7 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
               <Form form={form} layout="vertical">
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   <Form.Item name="unit_cost_price" label="Bekerülési ár">
-                    <InputNumber 
+                    <NumInput 
                       style={{ width: '100%' }} 
                       min={0} 
                       precision={2}
@@ -273,7 +274,7 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
                     />
                   </Form.Item>
                   <Form.Item name="markup_percentage" label="Haszonkulcs (%)">
-                    <InputNumber 
+                    <NumInput 
                       style={{ width: '100%' }} 
                       min={0} 
                       precision={2}
@@ -283,7 +284,7 @@ const ProductEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
                 </div>
 
                 <Form.Item name="unit_selling_price" label="Eladási ár">
-                  <InputNumber 
+                  <NumInput 
                     style={{ width: '100%' }} 
                     min={0} 
                     precision={2}

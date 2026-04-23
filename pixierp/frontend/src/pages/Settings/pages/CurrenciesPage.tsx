@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Table, Button, Modal, Form, Input, message, Switch, Space, Popconfirm, InputNumber, Select, AutoComplete } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ReloadOutlined, SearchOutlined } from '@ant-design/icons';
 import { manufacturingService, Currency } from '../../../services/manufacturingService';
 
@@ -297,7 +298,7 @@ const CurrenciesPage: React.FC = () => {
             tooltip="1 HUF = ? pénznem. Például EUR esetén kb. 0.0025"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber 
+            <NumInput 
               min={0.0001} 
               max={999999} 
               step={0.0001}

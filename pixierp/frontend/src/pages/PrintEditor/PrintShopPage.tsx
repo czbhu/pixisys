@@ -4,6 +4,7 @@ import {
   Typography, message, Button, Select, Modal, Result, Tooltip,
   Tag, Space, Row, Col, Switch, Input, Alert, InputNumber,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   LockOutlined, UnlockOutlined, ShoppingOutlined, UserOutlined,
   LeftOutlined, RightOutlined, PlusCircleOutlined, ReloadOutlined,
@@ -833,7 +834,7 @@ const PrintShopPage: React.FC = () => {
                 <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 8, background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>
                     <Text style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Arány</Text>
-                    <InputNumber
+                    <NumInput
                       size="small"
                       min={1}
                       max={1000}
@@ -843,7 +844,7 @@ const PrintShopPage: React.FC = () => {
                       controls={false}
                     />
                     <Text style={{ fontSize: 11, color: '#999' }}>:</Text>
-                    <InputNumber
+                    <NumInput
                       size="small"
                       min={1}
                       max={1000}

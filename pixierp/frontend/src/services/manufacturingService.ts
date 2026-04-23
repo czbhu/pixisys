@@ -183,6 +183,11 @@ class ManufacturingService {
         return response.data;
     }
 
+    async patchProduct(id: number, data: any): Promise<ManufacturingProduct> {
+        const response = await api.patch(`/manufacturing/products/${id}/`, data);
+        return response.data;
+    }
+
     async deleteProduct(id: number): Promise<void> {
         await api.delete(`/manufacturing/products/${id}/`);
     }

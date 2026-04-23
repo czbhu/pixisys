@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Form, Input, Button, Space, message, Select, DatePicker, InputNumber } from 'antd';
+import NumInput from '../../components/NumInput';
 import { ArrowLeftOutlined, SaveOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import dayjs from 'dayjs';
@@ -115,7 +116,7 @@ const OrderForm: React.FC = () => {
                         name="total_amount"
                         label="Összeg (Ft)"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}

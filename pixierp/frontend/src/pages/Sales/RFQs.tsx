@@ -282,10 +282,13 @@ const RFQs: React.FC = () => {
       return aName.localeCompare(bName, 'hu');
     },
     render: (_: any, r: any): React.ReactNode => {
-      const isPrivate = !r.company?.name && !r.company_name;
+      // Company can come from r.company, r.company_name, or inferred from a contact's company
+      const contactCompany = (r.contacts || []).find((c: any) => c.company_name || c.company?.name);
+      const resolvedCompanyName = r.company?.name || r.company_name || contactCompany?.company_name || contactCompany?.company?.name;
+      const isPrivate = !resolvedCompanyName;
       const primaryName = isPrivate
         ? (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', ') || 'Magánszemély')
-        : (r.company?.name || r.company_name);
+        : resolvedCompanyName;
       const secondaryName = isPrivate
         ? null
         : (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '));
@@ -439,35 +442,55 @@ const RFQs: React.FC = () => {
               }
             }} />
           </Tooltip>
-          <Tooltip title="Összes tétel megrendelése">
-            <Button size="small" type="primary" style={{ height: 'auto', padding: '3px 10px', lineHeight: 1 }} onClick={async () => {
-              try {
-                const res = await salesService.orderAllFromRfq(record.id);
-                message.success(`Megrendelés létrehozva: ${res.order_number}`);
-                loadData();
-                // Navigálás a megrendelésekhez
-                setTimeout(() => navigate('/sales/customer-orders'), 1000);
-              } catch (e: any) {
-                message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
-              }
-            }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
-                <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Összes</span>
-              </div>
-            </Button>
-          </Tooltip>
-          <Tooltip title="Részleges megrendelés">
-            <Button size="small" style={{ height: 'auto', padding: '3px 10px', lineHeight: 1, background: '#e6f4ff', borderColor: '#91caff', color: '#1677ff' }} onClick={() => {
-              setPartialOrderOpenId(record.id);
-              setPartialSelection((record.items || []).map((it: any) => it.id));
-            }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
-                <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Részleges</span>
-              </div>
-            </Button>
-          </Tooltip>
+          {(() => {
+            const items: any[] = record.items || [];
+            const allOrdered = items.length > 0 && items.every((it: any) => it.is_ordered);
+            const someOrdered = items.some((it: any) => it.is_ordered);
+            const unorderedItems = items.filter((it: any) => !it.is_ordered);
+            return (
+              <>
+                <Tooltip title={allOrdered ? 'Minden tétel meg van rendelve' : someOrdered ? 'Van részlegesen megrendelt tétel' : 'Összes tétel megrendelése'}>
+                  <Button
+                    size="small"
+                    type="primary"
+                    disabled={allOrdered || someOrdered}
+                    style={{ height: 'auto', padding: '3px 10px', lineHeight: 1 }}
+                    onClick={async () => {
+                      try {
+                        const res = await salesService.orderAllFromRfq(record.id);
+                        message.success(`Megrendelés létrehozva: ${res.order_number}`);
+                        loadData();
+                        setTimeout(() => navigate('/sales/customer-orders'), 1000);
+                      } catch (e: any) {
+                        message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
+                      }
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                      <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
+                      <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Összes</span>
+                    </div>
+                  </Button>
+                </Tooltip>
+                <Tooltip title={allOrdered ? 'Minden tétel meg van rendelve' : 'Részleges megrendelés'}>
+                  <Button
+                    size="small"
+                    disabled={allOrdered}
+                    style={{ height: 'auto', padding: '3px 10px', lineHeight: 1, background: allOrdered ? undefined : '#e6f4ff', borderColor: allOrdered ? undefined : '#91caff', color: allOrdered ? undefined : '#1677ff' }}
+                    onClick={() => {
+                      setPartialOrderOpenId(record.id);
+                      setPartialSelection(unorderedItems.map((it: any) => it.id));
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
+                      <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
+                      <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Részleges</span>
+                    </div>
+                  </Button>
+                </Tooltip>
+              </>
+            );
+          })()}
         </Space>
       )
     }
@@ -698,7 +721,19 @@ const RFQs: React.FC = () => {
               }
             }
           } else if (it.item_type === 'manufacturing') {
-            const createdItem = await salesService.addRfqManufacturingItem(created.id, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+            // For pending items (not yet saved), create the product first
+            let manuRefId = it.ref_id;
+            if ((it as any).pendingManuPayload && it.ref_id < 0) {
+              try {
+                const { _costItemsState: _cs, _currency: _cur, ...createPayload } = (it as any).pendingManuPayload;
+                const createdProduct = await manufacturingService.createProduct(createPayload);
+                manuRefId = createdProduct.id;
+              } catch (productErr) {
+                message.error(`Egyedi gyártás létrehozása sikertelen: ${it.name}`);
+                continue; // skip adding RFQ item for this
+              }
+            }
+            const createdItem = await salesService.addRfqManufacturingItem(created.id, manuRefId, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
             if (createdItem?.id && it.files?.length) {
               for (const f of it.files) {
                 const key = (f as any)?.uid || (f as any)?.name;
@@ -723,8 +758,21 @@ const RFQs: React.FC = () => {
       if (newCosts.length) {
         for (const c of newCosts) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            const payload: any = { ...c, quote_request: created.id };
+            const payload: any = {
+              ...c,
+              quote_request: created.id,
+              // normalize field names: manu cost items use supplier_id / selling_unit_price
+              supplier: c.supplier ?? c.supplier_id ?? null,
+              net_unit_price: c.net_unit_price ?? c.selling_unit_price ?? 0,
+              currency_code: (c.currency_code || c.currency || 'HUF').toUpperCase(),
+              name: c.name || undefined, // prevent blank string (causes 400)
+            };
             delete payload.id; // temporary ID
+            delete payload._rfqItemRef;
+            if (!payload.name) {
+              console.warn('Skipping cost with empty name:', c);
+              continue;
+            }
             try {
                 await salesService.createQuoteRequestCost(payload);
             } catch (err) {
@@ -1302,13 +1350,17 @@ const RFQs: React.FC = () => {
                 <List.Item>
                   <Checkbox
                     checked={partialSelection.includes(it.id)}
+                    disabled={!!it.is_ordered}
                     onChange={(e) => {
                       const checked = e.target.checked;
                       setPartialSelection((prev) => checked ? [...prev, it.id] : prev.filter(id => id !== it.id));
                     }}
                   >
-                    {(it.product_name || it.manufacturing_product_name || it.service_name || it.description || '-')}
-                    {' '}— {Number(it.quantity)} {it.unit || ''} × {Number(it.net_unit_price).toLocaleString('hu-HU')} Ft
+                    <span style={{ color: it.is_ordered ? '#aaa' : undefined }}>
+                      {(it.product_name || it.manufacturing_product_name || it.service_name || it.description || '-')}
+                      {' '}— {Number(it.quantity)} {it.unit || ''} × {Number(it.net_unit_price).toLocaleString('hu-HU')} Ft
+                    </span>
+                    {it.is_ordered && <Tag style={{ marginLeft: 8 }} color="purple">Megrendelve</Tag>}
                   </Checkbox>
                 </List.Item>
               )}
@@ -1646,7 +1698,25 @@ const RFQs: React.FC = () => {
                     optionFilterProp="label"
                     placeholder="Válassz pénznemet"
                     value={currency}
-                    onChange={(val) => setCurrency(String(val))}
+                    onChange={(val) => {
+                      const newCode = String(val);
+                      const fromCurr = currencyList.find(c => c.code.toUpperCase() === currency.toUpperCase());
+                      const toCurr = currencyList.find(c => c.code.toUpperCase() === newCode.toUpperCase());
+                      const fromRate = (fromCurr?.exchange_rate && fromCurr.exchange_rate > 0) ? fromCurr.exchange_rate : 1;
+                      const toRate = (toCurr?.exchange_rate && toCurr.exchange_rate > 0) ? toCurr.exchange_rate : 1;
+                      if (fromRate !== toRate) {
+                        const ratio = fromRate / toRate;
+                        setNewItems(prev => prev.map(it => ({
+                          ...it,
+                          net_unit_price: parseFloat(((Number(it.net_unit_price) || 0) * ratio).toFixed(4)),
+                        })));
+                        setNewCosts(prev => prev.map(c => {
+                          const unitPrice = parseFloat(((Number(c.net_unit_price) || 0) * ratio).toFixed(4));
+                          return { ...c, net_unit_price: unitPrice, net_total: parseFloat((unitPrice * (Number(c.quantity) || 0)).toFixed(4)) };
+                        }));
+                      }
+                      setCurrency(newCode);
+                    }}
                     style={{ width: 200 }}
                     size="small"
                   >
@@ -1659,7 +1729,12 @@ const RFQs: React.FC = () => {
                 </div>
               }
               onDeleteItem={(rec) => {
-                setNewItems((prev) => prev.filter((_, idx) => (idx + 1) !== rec.id));
+                const idx = (rec.id as number) - 1;
+                const removedItem = newItems[idx];
+                setNewItems((prev) => prev.filter((_, i) => i !== idx));
+                if (removedItem?.ref_id !== undefined) {
+                  setNewCosts((prev) => prev.filter((c: any) => c._rfqItemRef !== removedItem.ref_id));
+                }
               }}
               onCopyItem={(rec) => {
                 const idx = (rec.id as number) - 1;
@@ -1763,15 +1838,40 @@ const RFQs: React.FC = () => {
           const c = companies.find((x: any) => x.id === cid);
           return c ? { id: c.id, name: c.name } : undefined;
         })()}
+        rfqCurrency={currency}
         onCancel={() => { setSelectorOpen(false); setEditIdx(null); }}
         onAdd={(p: SelectedItemPayload) => {
           if (editIdx !== null && editIdx >= 0 && editIdx < newItems.length) {
             setNewItems((prev) => prev.map((it, i) => i === editIdx ? { ...it, ...p } : it));
           } else {
-            setNewItems((prev) => [...prev, p]);
+            // For pending manufacturing items (negative ref_id), update the existing entry instead of appending a duplicate
+            const pendingIdx = (p.ref_id !== undefined && p.ref_id < 0)
+              ? newItems.findIndex(it => it.ref_id === p.ref_id && it.item_type === p.item_type)
+              : -1;
+            if (pendingIdx >= 0) {
+              setNewItems((prev) => prev.map((it, i) => i === pendingIdx ? { ...it, ...p } : it));
+            } else {
+              setNewItems((prev) => [...prev, p]);
+            }
           }
-          setSelectorOpen(false);
-          setEditIdx(null);
+          // If the manufacturing inline form added cost items, append them to draft costs
+          if ((p as any).manuCostItems && (p as any).manuCostItems.length > 0) {
+            setNewCosts((prev) => {
+              // Remove stale costs linked to this item before re-adding (handles edit case)
+              const filtered = p.ref_id !== undefined ? prev.filter((c: any) => c._rfqItemRef !== p.ref_id) : prev;
+              const baseId = filtered.length > 0 ? Math.max(...filtered.map((c: any) => Number(c.id) || 0)) : 0;
+              const additions = (p as any).manuCostItems.map((ci: any, i: number) => ({
+                ...ci,
+                id: baseId + i + 1,
+                _rfqItemRef: p.ref_id,
+              }));
+              return [...filtered, ...additions];
+            });
+          }
+          if (!(p as any).keepOpen) {
+            setSelectorOpen(false);
+            setEditIdx(null);
+          }
         }}
         mode={editIdx !== null ? 'edit' : 'add'}
         initialSelection={editIdx !== null ? (newItems[editIdx] ? { 
@@ -1780,6 +1880,7 @@ const RFQs: React.FC = () => {
             name: newItems[editIdx].name,
             code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined)
         } : undefined) : undefined}
+        initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? (newItems[editIdx] as any).pendingManuPayload : undefined}
         initialValues={editIdx !== null ? (newItems[editIdx] ? {
           quantity: Number(newItems[editIdx].quantity || 1),
           unit: newItems[editIdx].unit,

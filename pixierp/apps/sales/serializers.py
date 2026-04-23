@@ -72,7 +72,11 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     discounted_net_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     discounted_gross_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     attachments = QuoteRequestItemAttachmentSerializer(many=True, read_only=True)
-    
+    is_ordered = serializers.SerializerMethodField()
+
+    def get_is_ordered(self, obj):
+        return obj.customerorderitem_set.exclude(customer_order__status='cancelled').exists()
+
     class Meta:
         model = QuoteRequestItem
         fields = '__all__'
@@ -881,7 +885,7 @@ class QuoteRequestCostSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = QuoteRequestCost
-        fields = ['id', 'quote_request', 'material', 'material_name', 'code', 'name', 'quantity', 'unit', 'net_unit_price', 'net_total', 'supplier', 'supplier_name', 'is_stock', 'created_at']
+        fields = ['id', 'quote_request', 'material', 'material_name', 'code', 'name', 'quantity', 'unit', 'net_unit_price', 'net_total', 'supplier', 'supplier_name', 'is_stock', 'currency_code', 'created_at']
         read_only_fields = ['net_total', 'created_at']
 
 class WorkLogSerializer(serializers.ModelSerializer):

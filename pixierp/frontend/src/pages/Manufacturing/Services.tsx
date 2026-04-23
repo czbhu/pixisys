@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import { useSearchParams } from 'react-router-dom';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip } from 'antd';
+import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 
@@ -1196,7 +1197,7 @@ const Services: React.FC = () => {
               </Form.Item>
 
               <Form.Item name="unit_price" label="Egységár (régi, kompatibilitás)" hidden>
-                <InputNumber style={{ width: '100%' }} />
+                <NumInput style={{ width: '100%' }} />
               </Form.Item>
 
               <Form.Item shouldUpdate noStyle>
@@ -1222,15 +1223,15 @@ const Services: React.FC = () => {
               </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden initialValue={0}>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
               
               <Form.Item name="markup_percentage" hidden initialValue={35}>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
               
               <Form.Item name="unit_selling_price" hidden initialValue={0}>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
 
               <Form.Item 
@@ -1255,10 +1256,10 @@ const Services: React.FC = () => {
               <Tooltip title="Add meg a maximálisan feldolgozható méretet. Ha 0 vagy üres, nincs korlát (végtelen).">
                 <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
                   <Form.Item name="max_width_mm" label="Max szélesség (mm)" style={{ flex: 1, marginBottom: 0 }}>
-                    <InputNumber min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
+                    <NumInput min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
                   </Form.Item>
                   <Form.Item name="max_height_mm" label="Max magasság (mm)" style={{ flex: 1, marginBottom: 0 }}>
-                    <InputNumber min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
+                    <NumInput min={0} placeholder="0 = végtelen" style={{ width: '100%' }} addonAfter="mm" />
                   </Form.Item>
                 </div>
               </Tooltip>
@@ -1547,7 +1548,7 @@ const Services: React.FC = () => {
              initialValue={1}
              help="Pl. 0.5 = minden megkezdett fél egység. 1 = egészre kerekítés. 10 = tizesével. Mindig felfelé kerekít."
           >
-            <InputNumber min={0.0001} step={0.1} style={{ width: '100%' }} />
+            <NumInput min={0.0001} step={0.1} style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item
@@ -1555,7 +1556,7 @@ const Services: React.FC = () => {
             label="Egységár (bekerülési)"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -1574,7 +1575,7 @@ const Services: React.FC = () => {
             label="Haszon kulcs"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               max={1000}
@@ -1594,7 +1595,7 @@ const Services: React.FC = () => {
             label="Eladási ár"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}

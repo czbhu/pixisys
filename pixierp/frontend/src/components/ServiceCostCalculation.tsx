@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Table, Button, Form, Input, InputNumber, Select, message, Space, Popconfirm, AutoComplete } from 'antd';
+import NumInput from './NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '../services/api';
 
@@ -306,15 +307,15 @@ const ServiceCostCalculation: React.FC<ServiceCostCalculationProps> = ({
                     onFinish={handleSubmit}
                 >
                     <Form.Item name="service" hidden>
-                        <InputNumber />
+                        <NumInput />
                     </Form.Item>
 
                     <Form.Item name="supplier" hidden>
-                        <InputNumber />
+                        <NumInput />
                     </Form.Item>
 
                     <Form.Item name="is_internal" hidden>
-                        <InputNumber />
+                        <NumInput />
                     </Form.Item>
 
                     <Form.Item
@@ -354,7 +355,7 @@ const ServiceCostCalculation: React.FC<ServiceCostCalculationProps> = ({
                         label="Egységár (bekerülési)"
                         rules={[{ required: true, message: 'Kötelező mező' }]}
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -367,7 +368,7 @@ const ServiceCostCalculation: React.FC<ServiceCostCalculationProps> = ({
                         label="Haszon kulcs"
                         rules={[{ required: true, message: 'Kötelező mező' }]}
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             max={100}

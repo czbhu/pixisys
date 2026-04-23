@@ -1,7 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps } from 'antd';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
+import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
 import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined } from '@ant-design/icons';
@@ -40,6 +41,16 @@ const CustomerOrderDetail: React.FC = () => {
   const [chatOpen, setChatOpen] = useState(false);
   const [activityLogOpen, setActivityLogOpen] = useState(false);
 
+  // Long-press for status dropdown
+  const pressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggeredRef = useRef(false);
+  const [statusMenuOpen, setStatusMenuOpen] = useState(false);
+
+  // Item editing
+  const [selectorOpen, setSelectorOpen] = useState(false);
+  const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
+  const [editContext, setEditContext] = useState<null | { item: any }>(null);
+
   const loadLogs = async () => {
     try {
         const params: any = { order_id: id };
@@ -70,7 +81,7 @@ const CustomerOrderDetail: React.FC = () => {
           created_by_name: createdByName,
           issue_date: rfq?.issue_date ? dayjs(rfq.issue_date) : null,
           deadline: rfq?.deadline ? dayjs(rfq.deadline) : null,
-          company_id: rfq?.company?.name || '',
+          company_id: rfq?.company?.name || rfq?.company_name || rfq?.contacts?.[0]?.company_name || '',
           contact_ids: rfq?.contact_names || '',
           title: rfq?.title || '',
           project_id: orderData.project_name || rfq?.project?.name || '',
@@ -120,6 +131,88 @@ const CustomerOrderDetail: React.FC = () => {
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [handleBack]);
+
+  const startLongPress = () => {
+    longPressTriggeredRef.current = false;
+    pressTimerRef.current = setTimeout(() => {
+      longPressTriggeredRef.current = true;
+      setStatusMenuOpen(true);
+    }, 600);
+  };
+
+  const endLongPress = (normalAction?: () => void) => {
+    if (pressTimerRef.current) {
+      clearTimeout(pressTimerRef.current);
+      pressTimerRef.current = null;
+    }
+    if (!longPressTriggeredRef.current && normalAction) {
+      normalAction();
+    }
+    longPressTriggeredRef.current = false;
+  };
+
+  const handleUpdateStatus = async (newStatus: string) => {
+    try {
+      await api.post(`/sales/customer-orders/${id}/update_status/`, { status: newStatus });
+      message.success('Státusz frissítve');
+      load();
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || err?.response?.data?.detail || 'Hiba történt a státuszváltáskor');
+    }
+  };
+
+  const onEditSelected = async (payload: SelectedItemPayload) => {
+    if (!editContext?.item) return;
+    try {
+      const patch: any = {
+        quantity: payload.quantity,
+        unit: payload.unit,
+        net_unit_price: payload.net_unit_price,
+        vat_rate: payload.vat_rate,
+        description: payload.description,
+        discount_percent: (payload as any).discount_percent,
+        discount_amount: (payload as any).discount_amount,
+      };
+      if (payload.item_type === 'product') {
+        patch.item_type = 'product'; patch.product = payload.ref_id; patch.manufacturing_product = null; patch.service = null;
+      } else if (payload.item_type === 'manufacturing') {
+        patch.item_type = 'manufacturing'; patch.manufacturing_product = payload.ref_id; patch.product = null; patch.service = null;
+      } else if (payload.item_type === 'service') {
+        patch.item_type = 'service'; patch.service = payload.ref_id; patch.product = null; patch.manufacturing_product = null;
+      }
+      // CustomerOrderItem has its own quantity/price fields; patch via customer-order-items endpoint
+      const coiPatch: any = {
+        quantity: patch.quantity,
+        unit: patch.unit,
+        net_unit_price: patch.net_unit_price,
+        vat_rate: patch.vat_rate,
+        description: patch.description,
+        discount_percent: patch.discount_percent,
+      };
+      await api.patch(`/sales/customer-order-items/${editContext.item.id}/`, coiPatch);
+      // Also update attachments on the underlying quote_item
+      if ((payload as any).files && (payload as any).files.length) {
+        const qiId = editContext.item.quote_item?.id;
+        if (qiId) {
+          for (const f of (payload as any).files) {
+            try {
+              const key = (f as any)?.uid || (f as any)?.name;
+              const remark = (payload as any).fileRemarks ? (payload as any).fileRemarks[key] : undefined;
+              await salesService.uploadQuoteRequestItemAttachment(qiId, f as any, remark);
+            } catch {
+              message.error('Nem sikerült feltölteni egy csatolmányt');
+            }
+          }
+        }
+      }
+      message.success('Tétel frissítve');
+      setSelectorOpen(false);
+      setEditContext(null);
+      load();
+    } catch {
+      message.error('Nem sikerült frissíteni a tételt');
+    }
+  };
 
   const handleStatusChange = async (action: string) => {
     try {
@@ -176,6 +269,22 @@ const CustomerOrderDetail: React.FC = () => {
 
   const { current: currentStep, status: stepStatus } = getStepStatus();
 
+  const ALL_STATUSES = [
+    { key: 'new', label: 'Új', icon: <FileDoneOutlined /> },
+    { key: 'confirmed', label: 'Megerősítve', icon: <CheckCircleOutlined /> },
+    { key: 'in_production', label: 'Gyártásban', icon: <RocketOutlined /> },
+    { key: 'ready', label: 'Kész', icon: <CheckOutlined /> },
+    { key: 'in_delivery', label: 'Szállítás alatt', icon: <CarOutlined /> },
+    { key: 'delivered', label: 'Kiszállítva', icon: <SmileOutlined /> },
+    { key: 'cancelled', label: 'Törölve', icon: <CloseCircleOutlined /> },
+  ];
+
+  const statusMenuItems = order
+    ? ALL_STATUSES.filter(s => s.key !== order.status).map(s => ({
+        key: s.key, icon: s.icon, label: s.label, danger: s.key === 'cancelled',
+      }))
+    : [];
+
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -202,31 +311,50 @@ const CustomerOrderDetail: React.FC = () => {
         }}>Stopper</Button>
         <Button icon={<HistoryOutlined />} onClick={loadLogs}>Munkanapló</Button>
         <Button icon={<FileTextOutlined />} onClick={() => setActivityLogOpen(true)}>Napló</Button>
-        {order.status === 'new' && (
-          <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('confirm')}>
-            Megerősítés
-          </Button>
-        )}
-        {order.status === 'confirmed' && (
-          <Button type="primary" icon={<RocketOutlined />} onClick={() => handleStatusChange('start_production')}>
-            Gyártás indítása
-          </Button>
-        )}
-        {order.status === 'in_production' && (
-          <Button type="primary" icon={<CheckOutlined />} onClick={() => handleStatusChange('mark_ready')}>
-            Készre jelölés
-          </Button>
-        )}
-        {order.status === 'ready' && (
-          <Button type="primary" icon={<CarOutlined />} onClick={() => handleStatusChange('start_delivery')}>
-            Szállítás indítása
-          </Button>
-        )}
-        {order.status === 'in_delivery' && (
-          <Button type="primary" icon={<CheckCircleOutlined />} onClick={() => handleStatusChange('mark_delivered')}>
-            Kiszállítva jelölés
-          </Button>
-        )}
+        <Dropdown
+          open={statusMenuOpen}
+          onOpenChange={(v) => { if (!v) setStatusMenuOpen(false); }}
+          trigger={[]}
+          placement="bottomRight"
+          menu={{
+            items: statusMenuItems,
+            onClick: ({ key }) => { setStatusMenuOpen(false); handleUpdateStatus(key); },
+          }}
+        >
+          {order.status === 'new' ? (
+            <Button type="primary" icon={<CheckCircleOutlined />}
+              onMouseDown={startLongPress}
+              onMouseUp={() => endLongPress(() => handleStatusChange('confirm'))}
+              onMouseLeave={() => endLongPress()}
+            >Megerősítés</Button>
+          ) : order.status === 'confirmed' ? (
+            <Button type="primary" icon={<RocketOutlined />}
+              onMouseDown={startLongPress}
+              onMouseUp={() => endLongPress(() => handleStatusChange('start_production'))}
+              onMouseLeave={() => endLongPress()}
+            >Gyártás indítása</Button>
+          ) : order.status === 'in_production' ? (
+            <Button type="primary" icon={<CheckOutlined />}
+              onMouseDown={startLongPress}
+              onMouseUp={() => endLongPress(() => handleStatusChange('mark_ready'))}
+              onMouseLeave={() => endLongPress()}
+            >Készre jelölés</Button>
+          ) : order.status === 'ready' ? (
+            <Button type="primary" icon={<CarOutlined />}
+              onMouseDown={startLongPress}
+              onMouseUp={() => endLongPress(() => handleStatusChange('start_delivery'))}
+              onMouseLeave={() => endLongPress()}
+            >Szállítás indítása</Button>
+          ) : order.status === 'in_delivery' ? (
+            <Button type="primary" icon={<CheckCircleOutlined />}
+              onMouseDown={startLongPress}
+              onMouseUp={() => endLongPress(() => handleStatusChange('mark_delivered'))}
+              onMouseLeave={() => endLongPress()}
+            >Kiszállítva jelölés</Button>
+          ) : (
+            <Button icon={<SettingOutlined />} onClick={() => setStatusMenuOpen(true)}>Státusz módosítás</Button>
+          )}
+        </Dropdown>
       </Space>}>
         <div style={{ marginBottom: 8 }}>
           <Space>
@@ -468,6 +596,11 @@ const CustomerOrderDetail: React.FC = () => {
           quoteRequestId={rfq?.id ? Number(rfq.id) : undefined}
           currency={rfq?.currency_code || 'HUF'}
           hidePrices={hidePrices}
+          onEditItem={order.status === 'new' ? (item) => {
+            setEditContext({ item });
+            setSelectorType(item.item_type);
+            setSelectorOpen(true);
+          } : undefined}
         />
 
         <Divider />
@@ -599,6 +732,33 @@ const CustomerOrderDetail: React.FC = () => {
         objectId={Number(id)}
         objectTitle={order.order_number || ''}
       />
+
+      {selectorOpen && (
+        <ItemSelectorModal
+          open={selectorOpen}
+          defaultType={selectorType}
+          onCancel={() => { setSelectorOpen(false); setEditContext(null); }}
+          onAdd={onEditSelected}
+          mode="edit"
+          rfqId={rfq?.id ? Number(rfq.id) : undefined}
+          rfqCurrency={rfq?.currency_code || 'HUF'}
+          initialSelection={editContext ? {
+            item_type: editContext.item.item_type,
+            ref_id: (editContext.item.quote_item?.product || editContext.item.quote_item?.manufacturing_product || editContext.item.quote_item?.service) as number,
+            name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name),
+          } : undefined}
+          initialValues={editContext ? {
+            quantity: Number(editContext.item.quantity),
+            unit: editContext.item.unit,
+            net_unit_price: Number(editContext.item.net_unit_price),
+            vat_rate: Number(editContext.item.vat_rate),
+            description: editContext.item.description,
+            discount_percent: Number(editContext.item.discount_percent || 0),
+            discount_amount: Number(editContext.item.discount_amount || 0),
+          } : undefined}
+          quoteItemId={editContext?.item?.quote_item?.id}
+        />
+      )}
     </div>
   );
 };

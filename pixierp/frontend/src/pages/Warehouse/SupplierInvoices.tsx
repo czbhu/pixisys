@@ -21,6 +21,7 @@ import {
   Upload,
   Image,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   PlusOutlined,
   EditOutlined,
@@ -1141,7 +1142,7 @@ const SupplierInvoices: React.FC = () => {
                 label="Végösszeg"
                 rules={[{ required: true, message: 'Kötelező mező' }]}
               >
-                <InputNumber
+                <NumInput
                   style={{ width: '100%' }}
                   min={0}
                   precision={2}
@@ -1341,7 +1342,7 @@ const SupplierInvoices: React.FC = () => {
                 label="Mennyiség"
                 rules={[{ required: true, message: 'Kötelező mező' }]}
               >
-                <InputNumber style={{ width: '100%' }} min={0} precision={3} />
+                <NumInput style={{ width: '100%' }} min={0} precision={3} />
               </Form.Item>
             </Col>
             <Col span={8}>
@@ -1370,7 +1371,7 @@ const SupplierInvoices: React.FC = () => {
                 label="Egységár"
                 rules={[{ required: true, message: 'Kötelező mező' }]}
               >
-                <InputNumber 
+                <NumInput 
                   style={{ width: '100%' }} 
                   min={0} 
                   precision={2}
@@ -1403,7 +1404,7 @@ const SupplierInvoices: React.FC = () => {
                     ))}
                   </Select>
                 ) : (
-                  <InputNumber style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi szélesség" />
+                  <NumInput style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi szélesség" />
                 )}
               </Form.Item>
             </Col>
@@ -1416,7 +1417,7 @@ const SupplierInvoices: React.FC = () => {
                     ))}
                   </Select>
                 ) : (
-                  <InputNumber style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi hosszúság" />
+                  <NumInput style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi hosszúság" />
                 )}
               </Form.Item>
             </Col>
@@ -1429,7 +1430,7 @@ const SupplierInvoices: React.FC = () => {
                     ))}
                   </Select>
                 ) : (
-                  <InputNumber style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi vastagság" />
+                  <NumInput style={{ width: '100%' }} min={0} precision={2} placeholder="Egyedi vastagság" />
                 )}
               </Form.Item>
             </Col>

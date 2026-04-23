@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Form, Input, InputNumber, Switch, Button, message, Space, Divider, Modal, Select } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { SendOutlined, SyncOutlined } from '@ant-design/icons';
 import { settingsService } from '../../../services/settingsService';
 
@@ -117,13 +118,13 @@ const EmailServerPage: React.FC = () => {
           <Form.Item label="Feladó név" name="from_name"><Input /></Form.Item>
           <Form.Item label="Feladó e-mail" name="from_email" rules={[{ type: 'email' }]}><Input /></Form.Item>
           <Form.Item label="SMTP host" name="smtp_host" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item label="SMTP port" name="smtp_port"><InputNumber style={{ width: '100%' }} /></Form.Item>
+          <Form.Item label="SMTP port" name="smtp_port"><NumInput style={{ width: '100%' }} /></Form.Item>
           <Form.Item label="SMTP felhasználó" name="smtp_username"><Input /></Form.Item>
           <Form.Item label="SMTP jelszó" name="smtp_password"><Input.Password /></Form.Item>
           <Form.Item label="TLS" name="smtp_use_tls" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item label="SSL" name="smtp_use_ssl" valuePropName="checked"><Switch /></Form.Item>
           <Form.Item label="IMAP host" name="imap_host"><Input /></Form.Item>
-          <Form.Item label="IMAP port" name="imap_port"><InputNumber style={{ width: '100%' }} /></Form.Item>
+          <Form.Item label="IMAP port" name="imap_port"><NumInput style={{ width: '100%' }} /></Form.Item>
           <Form.Item label="IMAP felhasználó" name="imap_username"><Input /></Form.Item>
           <Form.Item label="IMAP jelszó" name="imap_password"><Input.Password /></Form.Item>
           <Form.Item label="Sent mappa" style={{ marginBottom: 0 }}>

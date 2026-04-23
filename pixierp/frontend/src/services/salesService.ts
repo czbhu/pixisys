@@ -457,6 +457,9 @@ export const salesService = {
         const response = await api.post(`/sales/quote-request-items/${itemId}/update_attachment_remark/`, { attachment_id: attachmentId, remark });
         return response.data;
     },
+    async deleteQuoteRequestItemAttachment(itemId: number, attachmentId: number) {
+        await api.post(`/sales/quote-request-items/${itemId}/delete_attachment/`, { attachment_id: attachmentId });
+    },
 
     // Costs
     async getQuoteRequestCosts(rfqId: number) {

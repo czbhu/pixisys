@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip } from 'antd';
+import NumInput from '../../components/NumInput';
 import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
@@ -626,7 +627,7 @@ const DeliveryNotes: React.FC = () => {
         width: 150,
         render: (_, record, index) => (
             <Space>
-                <InputNumber 
+                <NumInput 
                     min={0}
                     max={record.remaining_quantity}
                     value={record.to_deliver}

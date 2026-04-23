@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip } from 'antd';
-import { UploadOutlined, SyncOutlined, EditOutlined } from '@ant-design/icons';
+import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch } from 'antd';
+import NumInput from '../NumInput';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
-import { manufacturingService } from '../../services/manufacturingService';
+import { manufacturingService, Currency as ManuCurrency } from '../../services/manufacturingService';
+import { hrService } from '../../services/hrService';
 import ProductEditorModal from '../Editors/ProductEditorModal';
 import ServiceEditorModal from '../Editors/ServiceEditorModal';
 import ManufacturingProductEditorModal from '../Editors/ManufacturingProductEditorModal';
@@ -27,6 +29,10 @@ export interface SelectedItemPayload {
   discount_amount?: number;
   files?: File[];
   fileRemarks?: Record<string, string>; // key: file.uid or file.name
+  manuCostItems?: Array<{ code?: string; name: string; quantity: number; unit: string; net_unit_price: number; net_total: number; supplier?: number | null; supplier_name?: string; is_stock?: boolean }>;
+  keepOpen?: boolean;
+  /** Stored manufacturing product creation payload for deferred creation (new unsaved RFQ) */
+  pendingManuPayload?: any;
 }
 
 interface ItemSelectorModalProps {
@@ -39,13 +45,40 @@ interface ItemSelectorModalProps {
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number }>;
   customer?: { id: any; name: string; company_id?: any };
+  rfqId?: number;
+  /** The RFQ's currency code (e.g. 'HUF', 'EUR'). Used to convert manu sell price to the RFQ currency. */
+  rfqCurrency?: string;
+  /** Full stored payload for pending (not yet API-created) manufacturing items in a new unsaved RFQ */
+  initialManuPayload?: any;
+  /** The quote_item id — used to load & display existing attachments in edit mode */
+  quoteItemId?: number;
+}
+
+interface CostItem {
+  id: number;
+  type: 'material' | 'service' | 'other';
+  ref_id?: number;
+  name: string;
+  unit: string;
+  quantity: number;
+  unit_price: number;
+  cost_price: number;
+  markup_percent: number;
+  selling_unit_price: number;
+  selling_price: number;
+  supplier_id?: number | null;
+  is_per_unit?: boolean;
+  is_internal?: boolean;
+  department_id?: number | null;
+  currency_code?: string;
+  currency_id?: number | null;
 }
 
 const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId }) => {
   const navigate = useNavigate();
   const [activeKey, setActiveKey] = useState<ItemType>(defaultType);
   const [search, setSearch] = useState('');
@@ -61,6 +94,41 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [manuEditorOpen, setManuEditorOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFileRemarks, setPendingFileRemarks] = useState<Record<string, string>>({});
+
+  // Inline manufacturing form state
+  const [manuForm] = Form.useForm();
+  const [manuSearchDrawerOpen, setManuSearchDrawerOpen] = useState(false);
+  const [manuSearchQuery, setManuSearchQuery] = useState('');
+  const [manuSubmitting, setManuSubmitting] = useState(false);
+  const [manuExistingProducts, setManuExistingProducts] = useState<any[]>([]);
+
+  // Manu inline — cost items and dimensions state
+  const [manuCostItems, setManuCostItems] = useState<CostItem[]>([]);
+  const [manuDimensionsPerUnit, setManuDimensionsPerUnit] = useState(true);
+  const [manuCalculatedVolumes, setManuCalculatedVolumes] = useState({ unit: 0, total: 0 });
+  const [manuCalculatedTotalDims, setManuCalculatedTotalDims] = useState<{width:number;length:number;height:number;unit:string}|null>(null);
+  const [manuDisplayedTotals, setManuDisplayedTotals] = useState({ totalCost: 0, totalSelling: 0, unitCost: 0, unitSelling: 0, quantity: 1 });
+  const [manuMaterials, setManuMaterials] = useState<any[]>([]);
+  const [manuCostServices, setManuCostServices] = useState<any[]>([]);
+  const [manuSuppliers, setManuSuppliers] = useState<any[]>([]);
+  const [manuDepartments, setManuDepartments] = useState<any[]>([]);
+  const [manuDefaultMarkup, setManuDefaultMarkup] = useState(30);
+  const [manuDefaultMarkupActive, setManuDefaultMarkupActive] = useState(false);
+  const [manuPriceFromCalc, setManuPriceFromCalc] = useState(true);
+  const [manuCreatedId, setManuCreatedId] = useState<number | null>(null);
+  const [manuPendingFiles, setManuPendingFiles] = useState<File[]>([]);
+  const [manuPendingFileRemarks, setManuPendingFileRemarks] = useState<Record<string, string>>({});
+  const [existingAttachments, setExistingAttachments] = useState<any[]>([]);
+  // Currency state for the inline manu form
+  const [manuCurrencies, setManuCurrencies] = useState<ManuCurrency[]>([]);
+  const [manuSellCurrencyCode, setManuSellCurrencyCode] = useState<string>('HUF');
+  const [manuSellCurrencyId, setManuSellCurrencyId] = useState<number | null>(null);
+  // Cost-side currency (prices in the cost panel are entered in this currency)
+  const [manuCostCurrencyCode, setManuCostCurrencyCode] = useState<string>('HUF');
+  const [manuCostCurrencyId, setManuCostCurrencyId] = useState<number | null>(null);
+
+  const manuWatchQty = Form.useWatch('manu_quantity', manuForm);
+  const manuWatchPrice = Form.useWatch('manu_net_unit_price', manuForm);
 
   const translateUnit = (unit: string | undefined | null) => {
     if (!unit) return '';
@@ -99,10 +167,71 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   }, []); // eslint-disable-next-line react-hooks/exhaustive-deps
 
   useEffect(() => {
+    const productQty = manuForm.getFieldValue('manu_quantity') || 1;
+    // Convert cost-side totals to base currency: each row uses its own exchange rate
+    let tc_base = 0;
+    let ts_base = 0;
+    manuCostItems.forEach(item => {
+      const itemSelling = Number(item.selling_unit_price) || 0;
+      const itemQty = Number(item.quantity) || 0;
+      const itemCost = Number(item.cost_price) || 0;
+      const multiplier = item.is_per_unit ? productQty : 1;
+      const rowCurrObj = item.currency_code
+        ? manuCurrencies.find(c => c.id === item.currency_id || c.code.toUpperCase() === item.currency_code!.toUpperCase())
+        : (manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode));
+      const rowRate = (rowCurrObj && rowCurrObj.exchange_rate > 0) ? rowCurrObj.exchange_rate : 1;
+      tc_base += (itemCost * itemQty * multiplier) * rowRate;
+      ts_base += (itemSelling * itemQty * multiplier) * rowRate;
+    });
+    const costCurrObj = manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode);
+    const costExchRate = (costCurrObj && costCurrObj.exchange_rate > 0) ? costCurrObj.exchange_rate : 1;
+    const unitSelling = productQty > 0 ? ts_base / productQty : 0;
+    setManuDisplayedTotals({
+      totalCost: tc_base,
+      totalSelling: ts_base,
+      unitCost: productQty > 0 ? tc_base / productQty : 0,
+      unitSelling,
+      quantity: productQty,
+    });
+    if (manuPriceFromCalc) {
+      const q = manuForm.getFieldValue('manu_quantity') || 1;
+      // If selling currency has exchange_rate > 1 (i.e. non-base), convert base total to that currency
+      const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+      const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+      const unitSellingConverted = exchRate !== 1 ? parseFloat((unitSelling / exchRate).toFixed(2)) : parseFloat(unitSelling.toFixed(2));
+      manuForm.setFieldsValue({
+        manu_net_unit_price: unitSellingConverted,
+        manu_net_total: parseFloat((unitSellingConverted * q).toFixed(2)),
+      });
+    }
+  }, [manuCostItems, manuPriceFromCalc, manuSellCurrencyCode, manuSellCurrencyId, manuCostCurrencyCode, manuCostCurrencyId, manuCurrencies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
     if (!open) return;
     setActiveKey(mode === 'edit' && initialSelection?.item_type ? initialSelection.item_type : defaultType);
-  setPendingFiles([]);
-  setPendingFileRemarks({});
+    setPendingFiles([]);
+    setPendingFileRemarks({});
+    manuForm.resetFields();
+    setManuCostItems([]);
+    setManuDimensionsPerUnit(true);
+    setManuCalculatedVolumes({ unit: 0, total: 0 });
+    setManuCalculatedTotalDims(null);
+    setManuPriceFromCalc(true);
+    setManuPendingFiles([]);
+    setManuPendingFileRemarks({});
+    setExistingAttachments([]);
+    if (mode === 'edit' && quoteItemId) {
+      salesService.getQuoteRequestItemAttachments(quoteItemId)
+        .then((atts: any[]) => setExistingAttachments(atts || []))
+        .catch(() => {});
+    }
+    setManuDefaultMarkup(30);
+    setManuDefaultMarkupActive(false);
+    setManuCreatedId(null);
+    setManuSellCurrencyCode('HUF');
+    setManuSellCurrencyId(null);
+    setManuCostCurrencyCode('HUF');
+    setManuCostCurrencyId(null);
     loadData();
     if (mode === 'edit') {
       if (initialValues) {
@@ -117,7 +246,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         });
       }
     }
-  }, [open, defaultType]);
+  }, [open, defaultType, mode, quoteItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open || !initialSelection) return;
@@ -143,17 +272,144 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     pickFromLists();
   }, [open, products, manuProducts, services, initialSelection]);
 
+  // When editing an existing manufacturing item, fetch full product (incl. cost_items) and pre-fill the inline form
+  useEffect(() => {
+    if (!open) return;
+    if (mode !== 'edit') return;
+    if (!initialSelection || initialSelection.item_type !== 'manufacturing' || !initialSelection.ref_id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        // Pending (not yet API-created) manufacturing item — restore from stored payload
+        if (initialSelection.ref_id < 0) {
+          if (!initialManuPayload) return;
+          const p = initialManuPayload;
+          manuForm.setFieldsValue({
+            name: p.name,
+            code: p.code,
+            description: p.description || '',
+            internal_description: p.internal_description || '',
+            manu_quantity: p.quantity || 1,
+            quantity_unit: p.quantity_unit || 'db',
+            manu_net_unit_price: p.net_unit_price || 0,
+            manu_net_total: p.net_total_price || 0,
+            width: p.width ?? null,
+            length: p.length ?? null,
+            height: p.height ?? null,
+            dimension_unit: p.dimension_unit || 'mm',
+            unit_weight: p.unit_weight ?? null,
+            total_weight: p.total_weight ?? null,
+            weight_unit: p.weight_unit || 'kg',
+            specific_weight: p.specific_weight ?? null,
+            specific_weight_unit: p.specific_weight_unit || 'kg/m3',
+          });
+          const items: CostItem[] = p._costItemsState || [];
+          setManuCostItems(items);
+          setManuPriceFromCalc(items.length > 0);
+          if (p._currency) {
+            setManuSellCurrencyCode((p._currency.code || 'HUF').toUpperCase());
+            setManuSellCurrencyId(p._currency.id ?? null);
+          }
+          setManuCostCurrencyCode((p._costCurrency?.code || 'HUF').toUpperCase());
+          setManuCostCurrencyId(p._costCurrency?.id ?? null);
+          setManuCreatedId(initialSelection.ref_id); // Keep negative temp ID
+          setSelected({ ...p, id: initialSelection.ref_id, __type: 'manufacturing' });
+          setActiveKey('manufacturing');
+          return;
+        }
+        const p: any = await manufacturingService.getProduct(initialSelection.ref_id);
+        if (cancelled || !p) return;
+        const qty = Number(p.quantity) || 1;
+        const unitPrice = Number(p.net_unit_price) || 0;
+        const totalPrice = Number(p.net_total_price) || (unitPrice * qty);
+        // Detect whether a saved order-item price exists (used to disable auto-calc below)
+        const savedPrice = (mode === 'edit' && initialValues?.net_unit_price != null && Number(initialValues.net_unit_price) > 0)
+          ? Number(initialValues.net_unit_price)
+          : null;
+        manuForm.setFieldsValue({
+          name: p.name,
+          code: p.code,
+          description: p.description || '',
+          internal_description: p.internal_description || '',
+          manu_quantity: qty,
+          quantity_unit: p.quantity_unit || 'db',
+          manu_net_unit_price: unitPrice,
+          manu_net_total: totalPrice,
+          width: p.width ?? null,
+          length: p.length ?? null,
+          height: p.height ?? null,
+          dimension_unit: p.dimension_unit || 'mm',
+          unit_weight: p.unit_weight ?? null,
+          total_weight: p.total_weight ?? null,
+          weight_unit: p.weight_unit || 'kg',
+          specific_weight: p.specific_weight ?? null,
+          specific_weight_unit: p.specific_weight_unit || 'kg/m3',
+        });
+        const items: CostItem[] = ((p.cost_items as any[]) || []).map((c: any, idx: number) => ({
+          id: c.id ?? Date.now() + idx,
+          type: (c.type as any) || 'other',
+          ref_id: c.ref_id || undefined,
+          name: c.name || '',
+          unit: c.unit || 'db',
+          quantity: Number(c.quantity) || 0,
+          unit_price: Number(c.unit_price) || 0,
+          cost_price: Number(c.cost_price) || 0,
+          markup_percent: Number(c.markup_percent) || 0,
+          selling_unit_price: Number(c.selling_unit_price) || 0,
+          selling_price: Number(c.selling_price) || 0,
+          supplier_id: c.supplier ?? null,
+          department_id: c.department ?? null,
+          is_internal: !!c.is_internal,
+          is_per_unit: !!c.is_per_unit,
+          currency_code: c.currency_info?.code
+            ? (c.currency_info.code as string).toUpperCase()
+            : (c.currency ? (c.currency as string).toUpperCase()
+              : (c.currency_code ? (c.currency_code as string).toUpperCase() : 'HUF')),
+          currency_id: c.currency_info?.id ?? null,
+        }));
+        setManuCostItems(items);
+        // In edit mode with a saved price, disable price-from-calc so the saved price isn't overwritten
+        // Otherwise enable it when there are cost items
+        setManuPriceFromCalc(savedPrice == null && items.length > 0);
+        // Restore saved currency
+        if (p.currency_info) {
+          setManuSellCurrencyCode((p.currency_info.code || 'HUF').toUpperCase());
+          setManuSellCurrencyId(p.currency_info.id ?? null);
+        } else if (p.currency) {
+          setManuSellCurrencyId(p.currency);
+        }
+        if ((p as any).cost_currency_info) {
+          setManuCostCurrencyCode(((p as any).cost_currency_info.code || 'HUF').toUpperCase());
+          setManuCostCurrencyId((p as any).cost_currency_info.id ?? null);
+        } else if ((p as any).cost_currency) {
+          setManuCostCurrencyId((p as any).cost_currency);
+        }
+        setManuCreatedId(p.id);
+        setSelected({ ...p, __type: 'manufacturing' });
+        setActiveKey('manufacturing');
+      } catch (e) {
+        // ignore — form simply not pre-filled
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [open, mode, initialSelection]);
+
   const loadData = async () => {
     try {
       setLoading(true);
       // Load warehouse materials with is_product=true filter for products
-      const [prodRes, manuRes, svcRes, topProd, topManu, topSvc] = await Promise.all([
+      const [prodRes, manuRes, svcRes, topProd, topManu, topSvc, matsAllRes, manuSvcsRes, suppsRes, deptsRes, currencyRes] = await Promise.all([
         api.get('/warehouse/materials/?filter_type=products').then(r => r.data),
         manufacturingService.getProducts(),
         salesService.getServices(),
         salesService.getTopProducts().catch(() => []),
         salesService.getTopManufacturingProducts().catch(() => []),
         salesService.getTopServices().catch(() => []),
+        api.get('/warehouse/materials/?filter_type=all&page_size=1000').then(r => r.data).catch(() => ({})),
+        manufacturingService.getServices().catch(() => []),
+        api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => r.data).catch(() => ({})),
+        hrService.getDepartments().catch(() => []),
+        manufacturingService.getCurrencies().catch(() => []),
       ]);
       
       let pList = prodRes.results ?? prodRes;
@@ -218,6 +474,28 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       setManuProducts(mList);
       setServices(sList);
       setTop({ product: topProd as any[], manufacturing: topManu as any[], service: topSvc as any[] });
+      // Keep a full (unfiltered) list for article number collision check
+      setManuExistingProducts(mList);
+      // Cost item resources for inline manu form
+      const rawMats = (matsAllRes as any).results ?? (matsAllRes as any) ?? [];
+      setManuMaterials(Array.isArray(rawMats) ? rawMats.map((m: any) => ({ ...m, name: m.code ? `[${m.code}] ${m.name}` : m.name })) : []);
+      const manuSvcList = (manuSvcsRes as any).results ?? manuSvcsRes ?? [];
+      setManuCostServices(Array.isArray(manuSvcList) ? manuSvcList : []);
+      const rawSupps = (suppsRes as any).results ?? suppsRes ?? [];
+      setManuSuppliers(Array.isArray(rawSupps) ? rawSupps.sort((a: any, b: any) => a.name.localeCompare(b.name)) : []);
+      const deptList = (deptsRes as any).results ?? deptsRes ?? [];
+      setManuDepartments(Array.isArray(deptList) ? deptList : []);
+      // Currencies
+      const currList: ManuCurrency[] = Array.isArray(currencyRes) ? currencyRes : [];
+      setManuCurrencies(currList);
+      // Set default currency if not yet set
+      const defCurr = currList.find(c => c.is_default);
+      if (defCurr) {
+        setManuSellCurrencyCode(defCurr.code.toUpperCase());
+        setManuSellCurrencyId(defCurr.id);
+        setManuCostCurrencyCode(defCurr.code.toUpperCase());
+        setManuCostCurrencyId(defCurr.id);
+      }
     } catch (e) {
       console.error('Error loading data:', e);
     } finally {
@@ -264,7 +542,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     <>
       <Space style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Form.Item label="Mennyiség" name="quantity" initialValue={1} rules={[{ required: true }]} style={{ marginBottom: 8 }}> 
-          <InputNumber 
+          <NumInput 
             min={0.01} 
             step={1} 
             style={{ width: 120 }} 
@@ -291,10 +569,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           <Input disabled style={{ width: 100 }} />
         </Form.Item>
         <Form.Item label="Nettó egységár" name="net_unit_price" style={{ marginBottom: 8 }}> 
-          <InputNumber min={0} step={1} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+          <NumInput min={0} step={1} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
         </Form.Item>
         <Form.Item label="ÁFA %" name="vat_rate" initialValue={defaultVat} style={{ marginBottom: 8 }}> 
-          <InputNumber min={0} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+          <NumInput min={0} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
         </Form.Item>
         <Form.Item label="Nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
           {() => {
@@ -311,6 +589,30 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         <Form.Item label="Megjegyzés" name="description" style={{ marginBottom: 8 }}> 
           <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} />
         </Form.Item>
+        {existingAttachments.length > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>Meglévő csatolmányok:</div>
+            {existingAttachments.map((att: any) => (
+              <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                <Button type="link" size="small" style={{ padding: 0 }} href={att.file_url || att.file} target="_blank" rel="noopener noreferrer">{att.file?.split('/').pop() || `#${att.id}`}</Button>
+                {att.remark && <span style={{ color: '#888', fontSize: 12 }}>{att.remark}</span>}
+                <Button
+                  type="text"
+                  danger
+                  size="small"
+                  icon={<DeleteOutlined />}
+                  onClick={async () => {
+                    if (!quoteItemId) return;
+                    try {
+                      await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id);
+                      setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id));
+                    } catch { message.error('Nem sikerült törölni'); }
+                  }}
+                />
+              </div>
+            ))}
+          </div>
+        )}
         {(
         <Upload.Dragger
           name="files"
@@ -348,10 +650,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         )}
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
           <Form.Item label="Kedvezmény %" name="discount_percent" style={{ marginBottom: 8 }}>
-            <InputNumber min={0} max={100} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+            <NumInput min={0} max={100} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
           </Form.Item>
           <Form.Item label="Kedvezmény (fix)" name="discount_amount" style={{ marginBottom: 8 }}>
-            <InputNumber min={0} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+            <NumInput min={0} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
           </Form.Item>
           <Form.Item label="Kedvezményes nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
             {() => {
@@ -449,6 +751,562 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     
     if (url) {
       window.open(url, '_blank');
+    }
+  };
+
+  // Save inline manufacturing product and add to RFQ
+  const handleManuInlineSubmit = async () => {
+    try {
+      const v = await manuForm.validateFields();
+      setManuSubmitting(true);
+
+      // In edit mode, use initialSelection.ref_id as fallback if async preload hasn't set manuCreatedId yet
+      const effectiveManuId = manuCreatedId !== null
+        ? manuCreatedId
+        : (mode === 'edit' && initialSelection?.item_type === 'manufacturing' && initialSelection?.ref_id)
+          ? initialSelection.ref_id
+          : null;
+      const isEdit = effectiveManuId !== null;
+
+      if (!isEdit) {
+        // Auto-generate code if empty
+        if (!v.code) {
+          const name = v.name || '';
+          let base = (name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10)).toUpperCase().replace(/[^A-Z0-9]/g, '');
+          if (!base) base = 'EGY';
+          const codes = new Set(manuExistingProducts.map((p: any) => p.code));
+          let i = 1;
+          let suffix = i.toString().padStart(3, '0');
+          while (codes.has(`${base}-${suffix}`)) {
+            i++;
+            suffix = i.toString().padStart(3, '0');
+            if (i > 999) break;
+          }
+          v.code = `${base}-${suffix}`;
+        } else {
+          // Increment if duplicate
+          const isDuplicate = manuExistingProducts.some((p: any) => p.code && p.code.toLowerCase() === v.code.toLowerCase());
+          if (isDuplicate) {
+            const match = v.code.match(/^(.*?)(\d+)$/);
+            if (match) {
+              const prefix = match[1];
+              const numStr = match[2];
+              const width = Math.max(numStr.length, 3);
+              const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+              let maxNum = parseInt(numStr, 10);
+              manuExistingProducts.forEach((p: any) => {
+                if (!p.code) return;
+                const m = p.code.match(regex);
+                if (m) { const n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
+              });
+              v.code = `${prefix}${(maxNum + 1).toString().padStart(width, '0')}`;
+            } else {
+              const prefix = v.code + '-';
+              let maxNum = 0;
+              const escapedPrefix = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+              const regex = new RegExp(`^${escapedPrefix}(\\d+)$`, 'i');
+              manuExistingProducts.forEach((p: any) => {
+                if (!p.code) return;
+                const m = p.code.match(regex);
+                if (m) { const n = parseInt(m[1], 10); if (n > maxNum) maxNum = n; }
+              });
+              v.code = `${prefix}${(maxNum + 1).toString().padStart(3, '0')}`;
+            }
+          }
+        }
+      } // end if (!isEdit)
+
+      const productQtyForPayload = v.manu_quantity || 1;
+      // Always use the form field value — when manuPriceFromCalc is true the useEffect has already
+      // applied per-row exchange rates and selling-currency conversion and written the result there.
+      const netUnitPriceForPayload = Number(v.manu_net_unit_price) || 0;
+      const netTotalPriceForPayload = netUnitPriceForPayload * productQtyForPayload;
+
+      // Convert from manu sell currency → RFQ currency
+      const _sellCurrObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode.toUpperCase());
+      const _sellCurrRate = (_sellCurrObj && _sellCurrObj.exchange_rate > 0) ? _sellCurrObj.exchange_rate : 1;
+      const _rfqCurrObj = rfqCurrency ? manuCurrencies.find(c => c.code.toUpperCase() === rfqCurrency.toUpperCase()) : null;
+      const _rfqCurrRate = (_rfqCurrObj && _rfqCurrObj.exchange_rate > 0) ? _rfqCurrObj.exchange_rate : 1;
+      const netUnitPriceForRfq = parseFloat((netUnitPriceForPayload * _sellCurrRate / _rfqCurrRate).toFixed(4));
+
+      const payload = {
+        name: v.name,
+        code: v.code,
+        description: v.description || '',
+        internal_description: v.internal_description || '',
+        quantity: productQtyForPayload,
+        quantity_unit: v.quantity_unit || 'db',
+        net_unit_price: netUnitPriceForPayload,
+        net_total_price: netTotalPriceForPayload,
+        status: 'quote_request_priced',
+        allowed_companies: customer ? [customer.id] : [],
+        allowed_contacts: [],
+        cost_items: manuCostItems.map(c => ({
+          type: c.type || 'other',
+          ref_id: c.ref_id || null,
+          name: c.name,
+          quantity: Number(Number(c.quantity).toFixed(4)) || 0,
+          unit: c.unit || 'db',
+          unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+          selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+          cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
+          markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
+          selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
+          supplier: c.supplier_id || null,
+          department: c.department_id || null,
+          is_internal: c.is_internal || false,
+          is_per_unit: c.is_per_unit || false,
+          currency: (c.currency_code || 'HUF').toUpperCase(),
+        })),
+        is_fixed_quantity: false,
+        date: new Date().toISOString().split('T')[0],
+        deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        width: v.width || null,
+        length: v.length || null,
+        height: v.height || null,
+        dimension_unit: v.dimension_unit || 'mm',
+        unit_weight: v.unit_weight || null,
+        total_weight: v.total_weight || null,
+        weight_unit: v.weight_unit || 'kg',
+        specific_weight: v.specific_weight || null,
+        specific_weight_unit: v.specific_weight_unit || 'kg/m3',
+        currency: manuSellCurrencyId || null,
+        cost_currency: manuCostCurrencyId || null,
+      };
+
+      if (isEdit && effectiveManuId! > 0) {
+        // ── Real product: PATCH (status unchanged) ───────────────────────
+        const { status: _s, ...patchPayload } = payload as any;
+        const updated = await manufacturingService.patchProduct(effectiveManuId!, patchPayload);
+        message.success('Egyedi gyártás mentve');
+        setManuProducts(prev => prev.map((p: any) => p.id === effectiveManuId ? updated : p));
+        setManuExistingProducts(prev => prev.map((p: any) => p.id === effectiveManuId ? updated : p));
+        if (effectiveManuId !== manuCreatedId) setManuCreatedId(effectiveManuId);
+        const unit = translateUnit(updated.quantity_unit || 'db');
+        form.setFieldsValue({ unit, net_unit_price: updated.net_unit_price || 0, quantity: updated.quantity || 1 });
+        setSelected({ ...updated, __type: 'manufacturing' });
+        // Sync the RFQ line item with the updated manufacturing product values
+        const updatedQty = Number(updated.quantity) > 0 ? Number(updated.quantity) : (productQtyForPayload || 1);
+        const updatedUnitPrice = isFinite(Number(updated.net_unit_price)) ? Number(updated.net_unit_price) : netUnitPriceForPayload;
+        // Convert updated price to RFQ currency
+        const updatedUnitPriceForRfq = parseFloat((updatedUnitPrice * _sellCurrRate / _rfqCurrRate).toFixed(4));
+        form.setFieldsValue({ unit, net_unit_price: updatedUnitPriceForRfq, quantity: updated.quantity || 1 });
+        const rfqUpdatePayload: SelectedItemPayload = {
+          item_type: 'manufacturing',
+          ref_id: effectiveManuId!,
+          name: updated.name,
+          code: updated.code,
+          unit,
+          base_price: updatedUnitPriceForRfq,
+          quantity: updatedQty,
+          net_unit_price: updatedUnitPriceForRfq,
+          vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+          description: updated.description || '',
+          discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
+          discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+        };
+        await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+        setManuPendingFiles([]);
+        setManuPendingFileRemarks({});
+
+      } else if (isEdit && effectiveManuId! < 0) {
+        // ── Pending item update — no API call yet, just update stored payload ─
+        const tempId = effectiveManuId!;
+        const unit = translateUnit(v.quantity_unit || 'db');
+        form.setFieldsValue({ unit, net_unit_price: netUnitPriceForRfq, quantity: productQtyForPayload });
+        setSelected({ ...v, id: tempId, __type: 'manufacturing' });
+        const deferredPayload = {
+          ...payload,
+          _costItemsState: manuCostItems,
+          _currency: { id: manuSellCurrencyId, code: manuSellCurrencyCode },
+          _costCurrency: { id: manuCostCurrencyId, code: manuCostCurrencyCode },
+        };
+        const pendingUpdatePayload = {
+          item_type: 'manufacturing',
+          ref_id: tempId,
+          name: v.name,
+          code: v.code,
+          unit,
+          base_price: netUnitPriceForRfq,
+          quantity: productQtyForPayload,
+          net_unit_price: netUnitPriceForRfq,
+          vat_rate: Number(form.getFieldValue('vat_rate')) || defaultVat,
+          description: v.description || '',
+          discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
+          discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          pendingManuPayload: deferredPayload,
+        };
+        await onAdd(pendingUpdatePayload as any);
+        message.success('Egyedi gyártás módosítva (az ajánlat mentésekor kerül a rendszerbe)');
+
+      } else if (rfqId) {
+        // ── New product, existing RFQ → create immediately ───────────────
+        const created = await manufacturingService.createProduct(payload);
+        message.success('Egyedi gyártás létrehozva és hozzáadva');
+
+        setManuProducts(prev => [created, ...prev]);
+        setManuExistingProducts(prev => [created, ...prev]);
+
+        // Set code in form so it's visible and won't be regenerated on save
+        manuForm.setFieldsValue({ code: created.code });
+
+        // Fill RFQ item form (price converted to RFQ currency)
+        const unit = translateUnit(created.quantity_unit || 'db');
+        form.setFieldsValue({
+          unit,
+          net_unit_price: netUnitPriceForRfq,
+          quantity: created.quantity || 1,
+        });
+
+        setSelected({ ...created, __type: 'manufacturing' });
+        setManuCreatedId(created.id);
+
+        // Build cost items shaped for QuoteRequestCost (convert each row to base currency via its exchange rate)
+        const productQty = productQtyForPayload;
+        const costItemsForRfq = manuCostItems.map(ci => {
+          const itemQty = (Number(ci.quantity) || 0) * (ci.is_per_unit ? productQty : 1);
+          const costPrice = Number(ci.cost_price) || 0;
+          const rowCurrObj = ci.currency_code
+            ? manuCurrencies.find(c => c.id === ci.currency_id || c.code.toUpperCase() === (ci.currency_code as string).toUpperCase())
+            : manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode.toUpperCase());
+          const rowRate = (rowCurrObj && rowCurrObj.exchange_rate > 0) ? rowCurrObj.exchange_rate : 1;
+          const costPriceBase = costPrice * rowRate;
+          return {
+            code: '',
+            name: `${created.code || created.name} – ${ci.name}`,
+            quantity: itemQty,
+            unit: ci.unit || 'db',
+            net_unit_price: costPriceBase,
+            net_total: itemQty * costPriceBase,
+            supplier: ci.supplier_id || null,
+            is_stock: false,
+          };
+        });
+
+        // Add to RFQ as item via onAdd
+        try {
+          const rfqPayload: SelectedItemPayload = {
+            item_type: 'manufacturing',
+            ref_id: created.id,
+            name: created.name,
+            code: created.code,
+            unit,
+            base_price: created.net_unit_price || 0,
+            quantity: created.quantity || 1,
+            net_unit_price: netUnitPriceForRfq,
+            vat_rate: 27,
+            description: created.description || '',
+            manuCostItems: costItemsForRfq,
+          };
+          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+          setManuPendingFiles([]);
+          setManuPendingFileRemarks({});
+        } catch (addErr) {
+          message.warning('A gyártás létrejött, de az ajánlat tételhez adása nem sikerült');
+        }
+
+        // POST cost items to the QuoteRequestCost API directly
+        if (costItemsForRfq.length > 0) {
+          for (const ci of costItemsForRfq) {
+            try {
+              await salesService.createQuoteRequestCost({ ...ci, quote_request: rfqId });
+            } catch (e) {
+              // continue
+            }
+          }
+        }
+        // Form stays open for editing — do NOT reset
+
+      } else {
+        // ── New product, new unsaved RFQ → defer creation ────────────────
+        const tempId = -Date.now();
+        setManuCreatedId(tempId);
+        const unit = translateUnit(v.quantity_unit || 'db');
+        form.setFieldsValue({ unit, net_unit_price: netUnitPriceForRfq, quantity: productQtyForPayload });
+        setSelected({ ...v, id: tempId, quantity_unit: v.quantity_unit || 'db', net_unit_price: netUnitPriceForRfq, __type: 'manufacturing' });
+
+        // Build cost items for draft display (convert each row to base currency via its exchange rate)
+        const productQty = productQtyForPayload;
+        const costItemsForRfq = manuCostItems.map(ci => {
+          const itemQty = (Number(ci.quantity) || 0) * (ci.is_per_unit ? productQty : 1);
+          const costPrice = Number(ci.cost_price) || 0;
+          const rowCurrObj = ci.currency_code
+            ? manuCurrencies.find(c => c.id === ci.currency_id || c.code.toUpperCase() === (ci.currency_code as string).toUpperCase())
+            : manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode.toUpperCase());
+          const rowRate = (rowCurrObj && rowCurrObj.exchange_rate > 0) ? rowCurrObj.exchange_rate : 1;
+          const costPriceBase = costPrice * rowRate;
+          return {
+            code: '',
+            name: `${v.code || v.name} – ${ci.name}`,
+            quantity: itemQty,
+            unit: ci.unit || 'db',
+            net_unit_price: costPriceBase,
+            net_total: itemQty * costPriceBase,
+            supplier: ci.supplier_id || null,
+            is_stock: false,
+          };
+        });
+
+        // Store the full creation payload (with CostItem state and currency) for later
+        const deferredPayload = {
+          ...payload,
+          _costItemsState: manuCostItems,
+          _currency: { id: manuSellCurrencyId, code: manuSellCurrencyCode },
+          _costCurrency: { id: manuCostCurrencyId, code: manuCostCurrencyCode },
+        };
+
+        try {
+          const rfqPayload: SelectedItemPayload = {
+            item_type: 'manufacturing',
+            ref_id: tempId,
+            name: v.name,
+            code: v.code,
+            unit,
+            base_price: netUnitPriceForRfq,
+            quantity: productQtyForPayload,
+            net_unit_price: netUnitPriceForRfq,
+            vat_rate: 27,
+            description: v.description || '',
+            manuCostItems: costItemsForRfq,
+            pendingManuPayload: deferredPayload,
+          };
+          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+          setManuPendingFiles([]);
+          setManuPendingFileRemarks({});
+        } catch (addErr) {
+          message.warning('Egyedi gyártás hozzáadása nem sikerült');
+        }
+        message.success('Egyedi gyártás hozzáadva (az ajánlat mentésekor kerül a rendszerbe)');
+        // Form stays open for editing — do NOT reset
+      }
+    } catch (e: any) {
+      if (e.response?.data) {
+        message.error(`Mentési hiba: ${JSON.stringify(e.response.data)}`);
+      }
+      // else form validation errors are shown inline
+    } finally {
+      setManuSubmitting(false);
+    }
+  };
+
+  const manuGenerateCode = () => {
+    const name = manuForm.getFieldValue('name') || '';
+    let base = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 10).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!base) base = 'EGY';
+    let custPart = '';
+    if (customer?.name) {
+      custPart = customer.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '');
+    }
+    const prefix = custPart ? `${base}-${custPart}` : base;
+    const codes = new Set(manuExistingProducts.map((p: any) => p.code));
+    let i = 1;
+    let suffix = '001';
+    while (codes.has(`${prefix}-${suffix}`)) {
+      i++;
+      suffix = i.toString().padStart(3, '0');
+      if (i > 999) break;
+    }
+    manuForm.setFieldsValue({ code: `${prefix}-${suffix}` });
+  };
+
+  const manuCalculateWeight = () => {
+    const width = manuForm.getFieldValue('width');
+    const length = manuForm.getFieldValue('length');
+    const height = manuForm.getFieldValue('height');
+    const dimensionUnit = manuForm.getFieldValue('dimension_unit') || 'mm';
+    const specificWeight = manuForm.getFieldValue('specific_weight');
+    const specificWeightUnit = manuForm.getFieldValue('specific_weight_unit') || 'kg/m3';
+    const qty = manuForm.getFieldValue('manu_quantity') || 1;
+    if (!width && !length) { setManuCalculatedTotalDims(null); return; }
+    let wM = (width || 0), lM = (length || 0), hM = (height || 0);
+    if (dimensionUnit === 'mm') { wM /= 1000; lM /= 1000; hM /= 1000; }
+    else if (dimensionUnit === 'cm') { wM /= 100; lM /= 100; hM /= 100; }
+    const baseVol = hM > 0 ? wM * lM * hM : 0;
+    let uVol = 0, tVol = 0;
+    if (manuDimensionsPerUnit) {
+      uVol = baseVol; tVol = baseVol * qty;
+      setManuCalculatedTotalDims({ width: width || 0, length: length || 0, height: parseFloat(((height || 0) * qty).toFixed(2)), unit: dimensionUnit });
+    } else {
+      tVol = baseVol; uVol = qty > 0 ? baseVol / qty : 0;
+      setManuCalculatedTotalDims({ width: width || 0, length: length || 0, height: parseFloat(((height || 0) / (qty || 1)).toFixed(2)), unit: dimensionUnit });
+    }
+    setManuCalculatedVolumes({ unit: uVol, total: tVol });
+    if (specificWeight && specificWeight > 0 && uVol > 0) {
+      let spKgM3 = specificWeight;
+      if (specificWeightUnit === 'g/cm3' || specificWeightUnit === 'kg/liter') spKgM3 *= 1000;
+      manuForm.setFieldsValue({
+        total_weight: parseFloat((tVol * spKgM3).toFixed(3)),
+        unit_weight: parseFloat((uVol * spKgM3).toFixed(3)),
+        weight_unit: 'kg',
+      });
+    } else {
+      const uw = manuForm.getFieldValue('unit_weight');
+      if (uw && uw > 0 && !specificWeight) {
+        manuForm.setFieldsValue({ total_weight: parseFloat((uw * qty).toFixed(3)) });
+      }
+    }
+  };
+
+  const manuUpdateCostItem = (id: number, field: string, value: any) => {
+    setManuCostItems(prev => prev.map(item => {
+      if (item.id !== id) return item;
+      const updated = { ...item, [field]: value };
+      // Clamp markup to 0 minimum
+      if ('markup_percent' in updated) updated.markup_percent = Math.max(0, Number(updated.markup_percent) || 0);
+      const cp = Number(updated.cost_price) || 0;
+      const mu = Number(updated.markup_percent) || 0;
+      const sup = Number(updated.selling_unit_price) || 0;
+      const qty = Number(updated.quantity) || 1;
+      if (field === 'cost_price' || field === 'markup_percent') {
+        updated.selling_unit_price = Math.max(0, cp * (1 + mu / 100));
+        updated.selling_price = updated.selling_unit_price * qty;
+      } else if (field === 'selling_unit_price') {
+        if (cp > 0) updated.markup_percent = Math.max(0, ((sup / cp) - 1) * 100);
+        updated.selling_price = Math.max(0, sup) * qty;
+      } else if (field === 'quantity') {
+        updated.selling_price = sup * qty;
+      }
+      return updated;
+    }));
+  };
+
+  const manuApplyDefaultMarkup = () => {
+    setManuCostItems(prev => prev.map(item => {
+      const cp = Number(item.cost_price) || 0;
+      const qty = Number(item.quantity) || 1;
+      const sup = cp * (1 + manuDefaultMarkup / 100);
+      return { ...item, markup_percent: manuDefaultMarkup, selling_unit_price: sup, selling_price: sup * qty };
+    }));
+  };
+
+  const manuHandleAddCost = (type: 'material' | 'service' | 'other') => {
+    let defaultSupplierId: number | null = null;
+    let defaultIsInternal = false;
+    let defaultDeptId: number | null = null;
+    if (type === 'other') {
+      // Find internal/gyartás dept for default
+      defaultIsInternal = true;
+      const gyartasDept = manuDepartments.find((d: any) =>
+        (d.name || '').toLowerCase().includes('gyártás') ||
+        (d.name || '').toLowerCase().includes('gyartas')
+      );
+      if (gyartasDept) defaultDeptId = gyartasDept.id;
+      else if (manuDepartments.length > 0) defaultDeptId = manuDepartments[0].id;
+    } else {
+      const ds = manuSuppliers.find((s: any) =>
+        (s.name || '').toLowerCase().includes('belső gyártás') ||
+        (s.name || '').toLowerCase().includes('belső márka') ||
+        (s.name || '').toLowerCase().includes('internal')
+      );
+      if (ds) defaultSupplierId = ds.id;
+    }
+    setManuCostItems(prev => [...prev, {
+      id: Date.now() + Math.random(),
+      type,
+      name: type === 'other' ? 'Egyéb költség' : '',
+      unit: 'db',
+      quantity: 1,
+      unit_price: 0,
+      cost_price: 0,
+      markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : 30,
+      selling_unit_price: 0,
+      selling_price: 0,
+      supplier_id: defaultSupplierId,
+      is_per_unit: false,
+      is_internal: defaultIsInternal,
+      department_id: defaultDeptId,
+      currency_code: manuCostCurrencyCode,
+      currency_id: manuCostCurrencyId,
+    }]);
+  };
+
+  const manuCostColumns: any[] = [
+    { title: 'Megnevezés', key: 'name', width: 220, render: (_: any, r: CostItem) => {
+      if (r.type === 'other') return <Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />;
+      if (r.name && !r.ref_id) return <Tooltip title={r.name}><span style={{ display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 }}>{r.name}</span></Tooltip>;
+      const isMat = r.type === 'material';
+      const list = isMat ? manuMaterials : manuCostServices;
+      return (
+        <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id}
+          onChange={(val, opt: any) => {
+            manuUpdateCostItem(r.id, 'ref_id', val);
+            manuUpdateCostItem(r.id, 'name', opt.label);
+            const found = list.find((x: any) => x.id === val);
+            if (found) {
+              const unit = found.unit || (isMat ? 'db' : 'alkalom');
+              const cp = isMat ? (Number(found.moving_average_cost) || Number(found.net_unit_price) || 0) : (Number(found.unit_cost_price) || Number(found.unit_price) || 0);
+              const mu = found.markup_percentage ? Number(found.markup_percentage) : 35;
+              const sellUnit = found.unit_selling_price ? Number(found.unit_selling_price) : (cp > 0 ? cp * (1 + mu / 100) : 0);
+              const qty = r.quantity || 1;
+              manuUpdateCostItem(r.id, 'unit', unit);
+              manuUpdateCostItem(r.id, 'unit_price', cp);
+              manuUpdateCostItem(r.id, 'cost_price', cp * qty);
+              manuUpdateCostItem(r.id, 'markup_percent', mu);
+              manuUpdateCostItem(r.id, 'selling_unit_price', sellUnit);
+              manuUpdateCostItem(r.id, 'selling_price', sellUnit * qty);
+            }
+          }}>
+          {list.map((m: any) => <Select.Option key={m.id} value={m.id} label={m.name}>{m.name}</Select.Option>)}
+        </Select>
+      );
+    }},
+    { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
+    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 60 }} /> },
+    { title: 'Egység', key: 'unit', width: 65, render: (_: any, r: CostItem) => r.type === 'other' ? <Input size="small" value={r.unit} onChange={e => manuUpdateCostItem(r.id, 'unit', e.target.value)} style={{ width: 56 }} /> : <span>{r.unit}</span> },
+    { title: 'Bek.ár', key: 'cost_price', width: 80, render: (_: any, r: CostItem) => <NumInput size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 72 }} min={0} /> },
+    { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
+    { title: 'El.e.ár', key: 'sell_up', width: 80, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 72 }} min={0} /> },
+    { title: 'Pénznem', key: 'currency', width: 90, render: (_: any, r: CostItem) => (
+      <Select
+        size="small"
+        style={{ width: 82 }}
+        value={(r.currency_code || manuCostCurrencyCode || 'HUF').toUpperCase()}
+        onChange={(val: string) => {
+          const found = manuCurrencies.find(c => c.code.toUpperCase() === val.toUpperCase());
+          manuUpdateCostItem(r.id, 'currency_code', val.toUpperCase());
+          manuUpdateCostItem(r.id, 'currency_id', found?.id ?? null);
+        }}
+      >
+        {manuCurrencies.map(c => (
+          <Select.Option key={c.code} value={c.code.toUpperCase()}>{c.code.toUpperCase()}</Select.Option>
+        ))}
+      </Select>
+    )},
+    { title: 'Beszállító', key: 'supplier', render: (_: any, r: CostItem) => (
+      <div style={{ display:'flex', alignItems:'center', gap:4 }}>
+        <Checkbox checked={r.is_internal} onChange={e => { manuUpdateCostItem(r.id, 'is_internal', e.target.checked); manuUpdateCostItem(r.id, 'department_id', null); manuUpdateCostItem(r.id, 'supplier_id', null); }}>Belső</Checkbox>
+        {r.is_internal
+          ? <Select size="small" style={{ width:150 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
+              {manuDepartments.map((d: any) => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
+            </Select>
+          : <Select size="small" style={{ width:150 }} value={r.supplier_id} onChange={v => manuUpdateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Beszállító">
+              {manuSuppliers.map((s: any) => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
+            </Select>
+        }
+      </div>
+    )},
+    { title: '', key: 'del', width: 36, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
+  ];
+
+  const manuHasUnsavedData = () => {
+    const v = manuForm.getFieldsValue();
+    return !!(v.name || manuCostItems.length > 0 || manuPendingFiles.length > 0);
+  };
+
+  const handleModalCancel = () => {
+    const inManuForm = activeKey === 'manufacturing' && !selected && manuHasUnsavedData();
+    if (inManuForm) {
+      Modal.confirm({
+        title: 'Mentés nélkül bezár?',
+        icon: <ExclamationCircleOutlined />,
+        content: 'Az új egyedi gyártás adatai elvesznek.',
+        okText: 'Igen, bezár',
+        cancelText: 'Mégse',
+        onOk: onCancel,
+      });
+    } else {
+      onCancel();
     }
   };
 
@@ -569,7 +1427,30 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   );
 
   return (
-    <Modal open={open} onCancel={onCancel} onOk={confirmAdd} okText={mode === 'edit' ? 'Mentés' : 'Hozzáadás'} title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'} width={1100}>
+    <Modal
+      open={open}
+      onCancel={handleModalCancel}
+      onOk={() => {
+        // In manu tab: use inline create/save flow when:
+        // 1. Editing an existing manufacturing item (mode='edit' with manufacturing initialSelection)
+        // 2. No item selected yet (inline create mode)
+        // 3. A newly-created manufacturing item is selected (has __type set by inline flow)
+        const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
+        if (activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId))) {
+          handleManuInlineSubmit();
+        } else {
+          confirmAdd();
+        }
+      }}
+      okText={
+        (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés'
+          : activeKey === 'manufacturing' && !selected ? 'Hozzáadás'
+          : mode === 'edit' ? 'Mentés' : 'Hozzáadás'
+      }
+      okButtonProps={{ loading: manuSubmitting }}
+      title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
+      width={1100}
+    >
       <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
         <Tabs
           activeKey={activeKey}
@@ -581,42 +1462,501 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           }}
           items={tabItems as any}
         />
-        <Space align="start" style={{ gap: 8 }}>
-          <Search placeholder="Gyors keresés" allowClear onSearch={setSearch as any} onChange={(e) => setSearch(e.target.value)} style={{ width: 360 }} />
-          <Button icon={<SyncOutlined />} onClick={() => loadData()} title="Lista frissítése" />
-          {allowCreate && mode === 'add' && (
-            <>
-              <Button onClick={createNew} type="dashed">
-                {activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás'}
-              </Button>
-              <Button onClick={createCopy} disabled={!selected} title="Másolás és szerkesztés újként">
-                Másol
-              </Button>
-            </>
-          )}
-        </Space>
-        {renderTable(activeKey)}
-        {selected && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0 }}>
-               <Tooltip 
+
+        {/* Inline manufacturing form — shown on manufacturing tab in add mode, or when editing a manufacturing item */}
+        {activeKey === 'manufacturing' && (mode === 'add' || (mode === 'edit' && initialSelection?.item_type === 'manufacturing')) && (
+          <div>
+            {/* If a previously created manu product is selected, show it */}
+            {selected && (selected.__type === 'manufacturing' || activeKey === 'manufacturing') && (
+              <Alert
+                message={`Kiválasztva: ${selected.name} (${selected.code || 'nincs kód'})`}
+                type="success"
+                showIcon
+                style={{ marginBottom: 8 }}
+                action={
+                  <Button size="small" onClick={() => { setSelected(null); manuForm.resetFields(); }}>
+                    Töröl
+                  </Button>
+                }
+              />
+            )}
+
+            <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+                  <strong>{manuCreatedId ? 'Egyedi gyártás szerkesztése' : 'Új egyedi gyártás'}</strong>
+                  <Button
+                    icon={<SearchOutlined />}
+                    onClick={() => setManuSearchDrawerOpen(true)}
+                  >
+                    Korábbi gyártásból
+                  </Button>
+                </div>                <Form layout="vertical" form={manuForm}>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
+                    <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: 2, marginBottom: 8 }}>
+                      <Input placeholder="Egyedi gyártás neve" />
+                    </Form.Item>
+                    <Form.Item label="Cikkszám" name="code" style={{ flex: 1, marginBottom: 8 }}>
+                      <Input placeholder="Auto-generál, ha üres" />
+                    </Form.Item>
+                    <Button style={{ marginBottom: 8 }} onClick={manuGenerateCode}>Generál</Button>
+                  </div>
+
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <Form.Item label="Mennyiség" name="manu_quantity" initialValue={1} style={{ marginBottom: 8 }}>
+                      <NumInput min={0.01} style={{ width: 120 }} onChange={() => setTimeout(() => {
+                        const q = manuForm.getFieldValue('manu_quantity') || 1;
+                        if (manuPriceFromCalc) {
+                          const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                          const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                          const us = exchRate !== 1 ? manuDisplayedTotals.unitSelling / exchRate : manuDisplayedTotals.unitSelling;
+                          manuForm.setFieldsValue({ manu_net_unit_price: parseFloat(us.toFixed(2)), manu_net_total: parseFloat((us * q).toFixed(2)) });
+                        } else {
+                          const up = manuForm.getFieldValue('manu_net_unit_price') || 0;
+                          manuForm.setFieldsValue({ manu_net_total: parseFloat((up * q).toFixed(2)) });
+                        }
+                        manuCalculateWeight();
+                      }, 0)} />
+                    </Form.Item>
+                    <Form.Item label="Egység" name="quantity_unit" initialValue="db" style={{ marginBottom: 8 }}>
+                      <Input style={{ width: 80 }} />
+                    </Form.Item>
+                    <Form.Item label="Nettó egységár" name="manu_net_unit_price" style={{ marginBottom: 8 }}>
+                      <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
+                        onChange={() => setTimeout(() => {
+                          const up = manuForm.getFieldValue('manu_net_unit_price') || 0;
+                          const q = manuForm.getFieldValue('manu_quantity') || 1;
+                          manuForm.setFieldsValue({ manu_net_total: parseFloat((up * q).toFixed(2)) });
+                        }, 0)}
+                      />
+                    </Form.Item>
+                    <Form.Item label="Össz. nettó ár" name="manu_net_total" style={{ marginBottom: 8 }}>
+                      <NumInput min={0} style={{ width: 150 }} placeholder="0" disabled={manuPriceFromCalc}
+                        onChange={() => setTimeout(() => {
+                          const total = manuForm.getFieldValue('manu_net_total') || 0;
+                          const q = manuForm.getFieldValue('manu_quantity') || 1;
+                          manuForm.setFieldsValue({ manu_net_unit_price: parseFloat((total / q).toFixed(6)) });
+                        }, 0)}
+                      />
+                    </Form.Item>
+                    <Form.Item label=" " style={{ marginBottom: 8 }}>
+                      <Checkbox checked={manuPriceFromCalc} onChange={e => setManuPriceFromCalc(e.target.checked)}>Árkalkuláció alapján</Checkbox>
+                    </Form.Item>
+                    <Form.Item label="Pénznem" style={{ marginBottom: 8 }}>
+                      <Select
+                        style={{ width: 140 }}
+                        value={manuSellCurrencyCode}
+                        onChange={(val: string) => {
+                          const found = manuCurrencies.find(c => c.code.toUpperCase() === val.toUpperCase());
+                          setManuSellCurrencyCode(val.toUpperCase());
+                          setManuSellCurrencyId(found?.id ?? null);
+                        }}
+                      >
+                        {manuCurrencies.map(c => (
+                          <Select.Option key={c.code} value={c.code.toUpperCase()}>{c.code.toUpperCase()} – {c.name}</Select.Option>
+                        ))}
+                      </Select>
+                      {(() => {
+                        const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                        if (currObj && currObj.exchange_rate && currObj.exchange_rate !== 1) {
+                          const defCurr = manuCurrencies.find(c => c.is_default);
+                          const baseName = defCurr?.code?.toUpperCase() || 'HUF';
+                          return <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>1 {currObj.code.toUpperCase()} = {currObj.exchange_rate.toLocaleString('hu-HU')} {baseName}</div>;
+                        }
+                        return null;
+                      })()}
+                    </Form.Item>
+                    {(manuWatchQty != null) && (() => {
+                      const qty = manuWatchQty || 1;
+                      const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);
+                      const totalRevenue = effectiveUnitPrice * qty;
+                      const totalCost = manuDisplayedTotals.totalCost;
+                      const profit = totalRevenue - totalCost;
+                      const showProfit = totalCost > 0;
+                      const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                      const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                      const profitInSellCurr = exchRate !== 1 ? profit / exchRate : profit;
+                      const currLabel = manuSellCurrencyCode || 'HUF';
+                      return (
+                        <div style={{ marginBottom: 8, fontSize: 12, color: '#666', display: 'flex', gap: 12 }}>
+                          {showProfit && (
+                            <span>Haszon: <b style={{ color: profit >= 0 ? 'green' : 'red' }}>{profitInSellCurr.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {currLabel}</b></span>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+
+                  <Row gutter={8}>
+                    <Col span={12}>
+                      <Form.Item label="Leírás" name="description" style={{ marginBottom: 8 }}>
+                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Külső leírás" />
+                      </Form.Item>
+                    </Col>
+                    <Col span={12}>
+                      <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 8 }}>
+                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Belső leírás" />
+                      </Form.Item>
+                    </Col>
+                  </Row>
+
+                  <Collapse ghost size="small" style={{ marginBottom: 8 }}>
+                    <Collapse.Panel header="Méret és súly" key="dims">
+                      <Row gutter={8}>
+                        <Col span={6}>
+                          <Form.Item label="Szélesség" name="width" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Hosszúság" name="length" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Magasság" name="height" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Mértékegység" name="dimension_unit" initialValue="mm" style={{ marginBottom: 8 }}>
+                            <Select onChange={() => manuCalculateWeight()}>
+                              <Select.Option value="mm">mm</Select.Option>
+                              <Select.Option value="cm">cm</Select.Option>
+                              <Select.Option value="m">m</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <div style={{ marginBottom: 8, padding: '6px 0', borderTop: '1px solid #eee' }}>
+                        <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                          <Checkbox checked={manuDimensionsPerUnit} onChange={e => { setManuDimensionsPerUnit(e.target.checked); setTimeout(manuCalculateWeight, 0); }}>
+                            Méretek egy egységre vonatkoznak
+                          </Checkbox>
+                          <span>Egység térfogat: <b>{manuCalculatedVolumes.unit.toFixed(6)} m³</b></span>
+                          <span>Összes térfogat: <b>{manuCalculatedVolumes.total.toFixed(6)} m³</b></span>
+                        </div>
+                        {manuCalculatedTotalDims && (
+                          <div style={{ marginTop: 4, fontSize: 12, color: '#1890ff' }}>
+                            {manuDimensionsPerUnit
+                              ? <span>Össz. méret: <b>{manuCalculatedTotalDims.width} × {manuCalculatedTotalDims.length} × {manuCalculatedTotalDims.height} {manuCalculatedTotalDims.unit}</b></span>
+                              : <span>Egység méret: <b>{manuCalculatedTotalDims.width} × {manuCalculatedTotalDims.length} × {manuCalculatedTotalDims.height} {manuCalculatedTotalDims.unit}</b></span>
+                            }
+                          </div>
+                        )}
+                      </div>
+                      <Row gutter={8}>
+                        <Col span={6}>
+                          <Form.Item label="Fajsúly" name="specific_weight" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Fajsúly egység" name="specific_weight_unit" initialValue="kg/m3" style={{ marginBottom: 8 }}>
+                            <Select onChange={() => manuCalculateWeight()}>
+                              <Select.Option value="kg/m3">kg/m³</Select.Option>
+                              <Select.Option value="g/cm3">g/cm³</Select.Option>
+                              <Select.Option value="kg/liter">kg/liter</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Egység súly" name="unit_weight" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                        <Col span={6}>
+                          <Form.Item label="Össz. súly" name="total_weight" style={{ marginBottom: 8 }}>
+                            <NumInput style={{ width: '100%' }} onChange={() => manuCalculateWeight()} />
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                      <Row gutter={8}>
+                        <Col span={6}>
+                          <Form.Item label="Súly egység" name="weight_unit" initialValue="kg" style={{ marginBottom: 8 }}>
+                            <Select onChange={() => manuCalculateWeight()}>
+                              <Select.Option value="g">g</Select.Option>
+                              <Select.Option value="kg">kg</Select.Option>
+                              <Select.Option value="t">t</Select.Option>
+                            </Select>
+                          </Form.Item>
+                        </Col>
+                      </Row>
+                    </Collapse.Panel>
+                    <Collapse.Panel header="Beszállítók és árkalkuláció" key="costs">
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 13 }}>Alap haszonkulcs:</span>
+                        <NumInput size="small" value={manuDefaultMarkup} min={0} style={{ width: 80 }} onChange={v => {
+                          setManuDefaultMarkup(Math.max(0, Number(v) || 0));
+                        }} addonAfter="%" />
+                        <Switch
+                          size="small"
+                          checked={manuDefaultMarkupActive}
+                          onChange={checked => setManuDefaultMarkupActive(checked)}
+                          checkedChildren="aktív"
+                          unCheckedChildren="ki"
+                        />
+                        <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('material')}>Alapanyag/Termék</Button>
+                        <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('service')}>Szolgáltatás</Button>
+                        <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('other')}>Egyéb költség</Button>
+                        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontSize: 12, color: '#888' }}>Pénznem:</span>
+                          <Select
+                            size="small"
+                            style={{ width: 130 }}
+                            value={manuCostCurrencyCode}
+                            onChange={(val: string) => {
+                              const found = manuCurrencies.find(c => c.code.toUpperCase() === val.toUpperCase());
+                              setManuCostCurrencyCode(val.toUpperCase());
+                              setManuCostCurrencyId(found?.id ?? null);
+                            }}
+                          >
+                            {manuCurrencies.map(c => (
+                              <Select.Option key={c.code} value={c.code.toUpperCase()}>{c.code.toUpperCase()} – {c.name}</Select.Option>
+                            ))}
+                          </Select>
+                          {(() => {
+                            const costCurrObj = manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode);
+                            if (costCurrObj && costCurrObj.exchange_rate && costCurrObj.exchange_rate !== 1) {
+                              const defCurr = manuCurrencies.find(c => c.is_default);
+                              return <span style={{ fontSize: 11, color: '#888' }}>1 {manuCostCurrencyCode} = {costCurrObj.exchange_rate.toLocaleString('hu-HU')} {defCurr?.code?.toUpperCase() || 'HUF'}</span>;
+                            }
+                            return null;
+                          })()}
+                        </div>
+                      </div>
+                      <Table
+                        dataSource={manuCostItems}
+                        columns={[
+                          { title: '', key: 'is_per_unit', width: 36, render: (_: any, r: CostItem) => (
+                            <input type="checkbox" checked={!!r.is_per_unit} onChange={e => manuUpdateCostItem(r.id, 'is_per_unit', e.target.checked)} title="Egységre vonatkozik?" />
+                          )},
+                          ...manuCostColumns,
+                        ]}
+                        pagination={false}
+                        rowKey="id"
+                        scroll={{ x: 900 }}
+                        size="small"
+                      />
+                      {manuCostItems.length > 0 && (() => {
+                        const qty = manuWatchQty || 1;
+                        const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);
+                        const totalRevenue = effectiveUnitPrice * qty;
+                        const totalCost = manuDisplayedTotals.totalCost;
+                        const profit = totalRevenue - totalCost;
+                        const profitPct = totalCost > 0 ? (profit / totalCost * 100) : null;
+                        const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                        const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                        const defCurr = manuCurrencies.find(c => c.is_default);
+                        const baseCurrLabel = defCurr?.code?.toUpperCase() || 'HUF';
+                        const sellCurrLabel = manuSellCurrencyCode || baseCurrLabel;
+                        const isForeignSell = exchRate !== 1;
+                        // Cost currency
+                        const costCurrObj = manuCurrencies.find(c => c.id === manuCostCurrencyId || c.code.toUpperCase() === manuCostCurrencyCode);
+                        const costExchRate = (costCurrObj && costCurrObj.exchange_rate > 0) ? costCurrObj.exchange_rate : 1;
+                        const isForeignCost = costExchRate !== 1;
+                        const costCurrLabel = manuCostCurrencyCode || baseCurrLabel;
+                        // manuDisplayedTotals already stores base-currency (HUF) values
+                        const unitCostInCostCurr = isForeignCost ? manuDisplayedTotals.unitCost / costExchRate : manuDisplayedTotals.unitCost;
+                        const totalCostInCostCurr = isForeignCost ? manuDisplayedTotals.totalCost / costExchRate : manuDisplayedTotals.totalCost;
+                        // Selling totals in sell currency
+                        const unitSellingConverted = isForeignSell ? manuDisplayedTotals.unitSelling / exchRate : manuDisplayedTotals.unitSelling;
+                        const totalSellingConverted = isForeignSell ? manuDisplayedTotals.totalSelling / exchRate : manuDisplayedTotals.totalSelling;
+                        const profitConverted = isForeignSell ? profit / exchRate : profit;
+                        return (
+                          <div style={{ marginTop: 8, padding: 8, background: '#f5f5f5', borderRadius: 4, fontSize: 13 }}>
+                            <Row gutter={16}>
+                              <Col>
+                                <div style={{ color: '#888', fontWeight: 600, marginBottom: 4 }}>BEKERÜLÉSI</div>
+                                <Space size="large">
+                                  <span>Darabár: <b>{unitCostInCostCurr.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {costCurrLabel}</b>{isForeignCost && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.unitCost.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
+                                  <span>Összesen: <b>{totalCostInCostCurr.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {costCurrLabel}</b>{isForeignCost && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.totalCost.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
+                                </Space>
+                              </Col>
+                              <Col>
+                                <div style={{ color: '#1677ff', fontWeight: 600, marginBottom: 4 }}>ELADÁSI</div>
+                                <Space size="large">
+                                  <span>Darabár: <b>{unitSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
+                                  <span>Összesen: <b>{totalSellingConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({manuDisplayedTotals.totalSelling.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
+                                </Space>
+                              </Col>
+                              <Col>
+                                <div style={{ color: profit >= 0 ? 'green' : 'red', fontWeight: 600, marginBottom: 4 }}>HASZON</div>
+                                <Space size="large">
+                                  <span><b style={{ color: profit >= 0 ? 'green' : 'red' }}>{profitConverted.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {sellCurrLabel}</b>{isForeignSell && <span style={{ color: '#aaa', fontSize: 11, marginLeft: 4 }}>({profit.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} {baseCurrLabel})</span>}</span>
+                                  {profitPct !== null && <span style={{ color: '#888' }}>({profitPct.toFixed(1)}%)</span>}
+                                </Space>
+                              </Col>
+                            </Row>
+                          </div>
+                        );
+                      })()}
+                    </Collapse.Panel>
+                  </Collapse>
+
+                  <Divider style={{ margin: '12px 0' }} />
+
+                  {existingAttachments.length > 0 && (
+                    <div style={{ marginBottom: 8 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>Meglévő csatolmányok:</div>
+                      {existingAttachments.map((att: any) => (
+                        <div key={att.id} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                          <Button type="link" size="small" style={{ padding: 0 }} href={att.file_url || att.file} target="_blank" rel="noopener noreferrer">{att.file?.split('/').pop() || `#${att.id}`}</Button>
+                          {att.remark && <span style={{ color: '#888', fontSize: 12 }}>{att.remark}</span>}
+                          <Button
+                            type="text"
+                            danger
+                            size="small"
+                            icon={<DeleteOutlined />}
+                            onClick={async () => {
+                              if (!quoteItemId) return;
+                              try {
+                                await salesService.deleteQuoteRequestItemAttachment(quoteItemId, att.id);
+                                setExistingAttachments(prev => prev.filter((a: any) => a.id !== att.id));
+                              } catch { message.error('Nem sikerült törölni'); }
+                            }}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <Upload.Dragger
+                    name="manuFiles"
+                    multiple
+                    showUploadList
+                    beforeUpload={(file) => { setManuPendingFiles(prev => [...prev, file]); return false; }}
+                    fileList={manuPendingFiles as any}
+                    onRemove={(f) => {
+                      const uid = (f as any)?.uid;
+                      const key = uid || (f as any)?.name;
+                      setManuPendingFiles(prev => prev.filter((x: any) => (x as any).uid ? (x as any).uid !== uid : (x as any).name !== (f as any).name));
+                      setManuPendingFileRemarks(prev => { const { [key]: _, ...rest } = prev; return rest; });
+                    }}
+                    style={{ padding: 8, marginBottom: 8 }}
+                  >
+                    <p className="ant-upload-drag-icon"><UploadOutlined /></p>
+                    <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a tallózáshoz</p>
+                  </Upload.Dragger>
+                  {manuPendingFiles.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                      {manuPendingFiles.map((f: any) => {
+                        const key = (f as any)?.uid || (f as any)?.name;
+                        return (
+                          <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ minWidth: 180, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{(f as any)?.name}</span>
+                            <Input size="small" placeholder="Megjegyzés ehhez a fájlhoz" value={manuPendingFileRemarks[key] || ''} onChange={e => setManuPendingFileRemarks(prev => ({ ...prev, [key]: e.target.value }))} />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </Form>
+              </div>
+
+            {/* Korábbi gyártás kereső drawer */}
+            <Drawer
+              title="Korábbi egyedi gyártás keresése"
+              open={manuSearchDrawerOpen}
+              onClose={() => setManuSearchDrawerOpen(false)}
+              width={600}
+            >
+              <Input.Search
+                placeholder="Keresés név, cikkszám alapján..."
+                allowClear
+                value={manuSearchQuery}
+                onChange={e => setManuSearchQuery(e.target.value)}
+                style={{ marginBottom: 12 }}
+              />
+              <Table
+                size="small"
+                loading={loading}
+                rowKey="id"
+                dataSource={manuProducts.filter(p => {
+                  const q = manuSearchQuery.trim().toLowerCase();
+                  if (!q) return true;
+                  return (p.name || '').toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q);
+                })}
+                columns={[
+                  { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: (v: any) => v || '-', width: 120 },
+                  { title: 'Név', dataIndex: 'name', key: 'name' },
+                  { title: 'Egységár', dataIndex: 'net_unit_price', key: 'net_unit_price', width: 100, render: (v: any) => v ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
+                  {
+                    title: '',
+                    key: 'select',
+                    width: 80,
+                    render: (_: any, record: any) => (
+                      <Button
+                        size="small"
+                        type="primary"
+                        onClick={() => {
+                          const unit = translateUnit(record.quantity_unit || 'db');
+                          let price = record.net_unit_price || 0;
+                          if (Number(record.quantity) > 0 && Number(record.net_total_price) > 0) {
+                            price = Number(record.net_total_price) / Number(record.quantity);
+                          }
+                          form.setFieldsValue({ unit, net_unit_price: price, quantity: record.is_fixed_quantity ? Number(record.quantity) : 1 });
+                          setSelected({ ...record, __type: 'manufacturing' });
+                          setManuSearchDrawerOpen(false);
+                        }}
+                      >
+                        Kiválaszt
+                      </Button>
+                    ),
+                  },
+                ]}
+                pagination={{ pageSize: 10 }}
+              />
+            </Drawer>
+          </div>
+        )}
+
+        {/* Normal product/service/all table */}
+        {activeKey !== 'manufacturing' && (
+          <>
+            <Space align="start" style={{ gap: 8 }}>
+              <Search placeholder="Gyors keresés" allowClear onSearch={setSearch as any} onChange={(e) => setSearch(e.target.value)} style={{ width: 360 }} />
+              <Button icon={<SyncOutlined />} onClick={() => loadData()} title="Lista frissítése" />
+              {allowCreate && mode === 'add' && (
+                <>
+                  <Button onClick={createNew} type="dashed">
+                    {activeKey === 'product' ? 'Új termék' : activeKey === 'service' ? 'Új szolgáltatás' : 'Új egyedi gyártás'}
+                  </Button>
+                  <Button onClick={createCopy} disabled={!selected} title="Másolás és szerkesztés újként">
+                    Másol
+                  </Button>
+                </>
+              )}
+            </Space>
+            {renderTable(activeKey)}
+            {selected && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0 }}>
+                <Tooltip
                   title={
                     <div>
-                        <div style={{marginBottom: 4}}><strong>Külső leírás:</strong> {selected.description || '-'}</div>
-                        <div><strong>Belső leírás:</strong> {selected.internal_description || '-'}</div>
+                      <div style={{ marginBottom: 4 }}><strong>Külső leírás:</strong> {selected.description || '-'}</div>
+                      <div><strong>Belső leírás:</strong> {selected.internal_description || '-'}</div>
                     </div>
                   }
                   placement="topLeft"
-               >
+                >
                   <div style={{ flex: 1 }}>
                     <Alert message={`Kiválasztva: ${selected.name} (${selected.code || 'nincs kód'})`} type="info" showIcon style={{ marginBottom: 0 }} />
                   </div>
-               </Tooltip>
-               <Button icon={<EditOutlined />} onClick={() => openEdit(selected)} title="Tétel szerkesztése új lapon" />
-            </div>
+                </Tooltip>
+                <Button icon={<EditOutlined />} onClick={() => openEdit(selected)} title="Tétel szerkesztése új lapon" />
+              </div>
+            )}
+          </>
         )}
-        <Form layout="vertical" form={form}>
-          {commonFields}
-        </Form>
+
+        {/* Manufacturing tab: also show the price/qty/discount form when selected.
+            When editing a manufacturing item the detailed inline form already contains qty/price,
+            so we hide this simplified line-item form.
+            Also hide when the item was created/edited via the inline form (manuCreatedId is set). */}
+        {(activeKey !== 'manufacturing' || selected) && !(mode === 'edit' && activeKey === 'manufacturing') && !(activeKey === 'manufacturing' && manuCreatedId !== null) && (
+          <Form layout="vertical" form={form}>
+            {commonFields}
+          </Form>
+        )}
       </Space>
       <ProductEditorModal
         open={productEditorOpen}

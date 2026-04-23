@@ -14,6 +14,7 @@ import {
     InputNumber,
     Tooltip,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
     PlusOutlined,
     EditOutlined,
@@ -358,7 +359,7 @@ const Suppliers: React.FC = () => {
                                 label="Egységár"
                                 rules={[{ required: true, message: 'Kérjük, adja meg az egységárat!' }]}
                             >
-                                <InputNumber min={0} step={0.01} style={{ width: '100%' }} />
+                                <NumInput min={0} step={0.01} style={{ width: '100%' }} />
                             </Form.Item>
                         </Col>
                     </Row>

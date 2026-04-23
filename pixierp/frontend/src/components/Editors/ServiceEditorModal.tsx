@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Modal, Form, Input, InputNumber, message, Button } from 'antd';
+import NumInput from '../NumInput';
 import { salesService } from '../../services/salesService';
 
 interface Props {
@@ -149,7 +150,7 @@ const ServiceEditorModal: React.FC<Props> = ({ open, onCancel, onCreated }) => {
           <Input placeholder="óra" />
         </Form.Item>
         <Form.Item label="Nettó ár" name="base_price">
-          <InputNumber min={0} style={{ width: '100%' }} />
+          <NumInput min={0} style={{ width: '100%' }} />
         </Form.Item>
         <Form.Item label="Leírás" name="description">
           <Input.TextArea autoSize={{ minRows: 2, maxRows: 6 }} />

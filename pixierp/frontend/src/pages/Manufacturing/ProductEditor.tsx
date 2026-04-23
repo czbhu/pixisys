@@ -5,6 +5,7 @@ import {
   message, Tag, Popconfirm, Tooltip, Drawer, Row, Col, Divider,
   Switch, Empty, Typography, Checkbox, Collapse,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, MinusCircleOutlined, CopyOutlined,
   CalculatorOutlined, TagsOutlined, AppstoreOutlined, SyncOutlined, PrinterOutlined,
@@ -790,25 +791,25 @@ const ProductEditor: React.FC = () => {
                             <Col flex="none"><Text style={{ fontSize: 12 }}>Szél.:</Text></Col>
                             <Col style={{ width: 80 }}>
                               <Form.Item name="custom_size_width_min" noStyle>
-                                <InputNumber placeholder="min" min={0} size="small" style={{ width: '100%' }} />
+                                <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
                             <Col style={{ width: 80 }}>
                               <Form.Item name="custom_size_width_max" noStyle>
-                                <InputNumber placeholder="max" min={0} size="small" style={{ width: '100%' }} />
+                                <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col flex="none" style={{ paddingLeft: 12 }}><Text style={{ fontSize: 12 }}>Mag.:</Text></Col>
                             <Col style={{ width: 80 }}>
                               <Form.Item name="custom_size_height_min" noStyle>
-                                <InputNumber placeholder="min" min={0} size="small" style={{ width: '100%' }} />
+                                <NumInput placeholder="min" min={0} size="small" style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col flex="none"><Text style={{ color: '#bbb', padding: '0 2px' }}>–</Text></Col>
                             <Col style={{ width: 80 }}>
                               <Form.Item name="custom_size_height_max" noStyle>
-                                <InputNumber placeholder="max" min={0} size="small" style={{ width: '100%' }} />
+                                <NumInput placeholder="max" min={0} size="small" style={{ width: '100%' }} />
                               </Form.Item>
                             </Col>
                             <Col flex="none" style={{ paddingLeft: 8 }}>
@@ -835,7 +836,7 @@ const ProductEditor: React.FC = () => {
                             />
                           </Col>
                           <Col style={{ width: 62 }}>
-                            <InputNumber
+                            <NumInput
                               placeholder="Sz."
                               min={0}
                               style={{ width: '100%' }}
@@ -848,7 +849,7 @@ const ProductEditor: React.FC = () => {
                             <Text style={{ color: '#bbb', fontSize: 14 }}>×</Text>
                           </Col>
                           <Col style={{ width: 62 }}>
-                            <InputNumber
+                            <NumInput
                               placeholder="M."
                               min={0}
                               style={{ width: '100%' }}
@@ -1205,7 +1206,7 @@ const ProductEditor: React.FC = () => {
                         {quantityDiscounts.map((d, idx) => (
                           <Row key={d._key} gutter={6} align="middle" style={{ marginBottom: 6 }}>
                             <Col style={{ width: 130 }}>
-                              <InputNumber
+                              <NumInput
                                 size="small"
                                 min={0}
                                 style={{ width: '100%' }}
@@ -1227,7 +1228,7 @@ const ProductEditor: React.FC = () => {
                               </Select>
                             </Col>
                             <Col flex="auto">
-                              <InputNumber
+                              <NumInput
                                 size="small"
                                 min={0}
                                 style={{ width: '100%' }}
@@ -1322,7 +1323,7 @@ const ProductEditor: React.FC = () => {
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)</Text>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }}
                         placeholder="Szélesség"
                         min={1}
@@ -1332,7 +1333,7 @@ const ProductEditor: React.FC = () => {
                       />
                     </Col>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }}
                         placeholder="Magasság"
                         min={1}
@@ -1347,7 +1348,7 @@ const ProductEditor: React.FC = () => {
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Termékméret (mm)</Text>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }}
                         placeholder="Szélesség"
                         min={1}
@@ -1357,7 +1358,7 @@ const ProductEditor: React.FC = () => {
                       />
                     </Col>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }}
                         placeholder="Magasság"
                         min={1}
@@ -1373,7 +1374,7 @@ const ProductEditor: React.FC = () => {
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Kifutó (mm / oldal)</Text>
-                  <InputNumber
+                  <NumInput
                     style={{ width: '100%' }}
                     min={0}
                     value={impBleed}
@@ -1383,7 +1384,7 @@ const ProductEditor: React.FC = () => {
                 </Col>
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Példányszám</Text>
-                  <InputNumber
+                  <NumInput
                     style={{ width: '100%' }}
                     min={1}
                     value={impQty}

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Card, Tag, Divider, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
+import { Card, Tag, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -61,6 +61,8 @@ const RFQDetail: React.FC = () => {
   const [navPreviewSel, setNavPreviewSel] = useState<Record<string, boolean>>({});
   const [navDebug, setNavDebug] = useState<boolean>(false);
   const selectedCompanyId = Form.useWatch('company_id', formBasic);
+  const watchedCurrency = Form.useWatch('currency_code', formBasic);
+  const activeCurrency = watchedCurrency || rfq?.currency_code || 'HUF';
   
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatureTemplates, setSignatureTemplates] = useState<any[]>([]);
@@ -97,6 +99,9 @@ const RFQDetail: React.FC = () => {
       // Keep current company (if any) so selected label can render immediately.
       if (rfqRes?.company?.id) {
         setCompanies([rfqRes.company]);
+      } else if (rfqRes?.contacts?.[0]?.company) {
+        // Seed from first contact's company so Select can render immediately
+        setCompanies([{ id: rfqRes.contacts[0].company, name: rfqRes.contacts[0].company_name }]);
       } else {
         setCompanies([]);
       }
@@ -109,9 +114,17 @@ const RFQDetail: React.FC = () => {
       (async () => {
         try {
           let baseContacts: any[] = [];
+          const contactCompanyId = rfqRes?.contacts?.[0]?.company;
           if (rfqRes?.company?.id) {
             const cl = await crmService.getContactsByCompany(rfqRes.company.id);
             baseContacts = ((cl as any).results ?? cl) || [];
+          } else if (contactCompanyId) {
+            const cl = await crmService.getContactsByCompany(contactCompanyId);
+            baseContacts = ((cl as any).results ?? cl) || [];
+            // Also populate the companies list with this company
+            if (rfqRes.contacts[0].company_name) {
+              setCompanies([{ id: contactCompanyId, name: rfqRes.contacts[0].company_name }]);
+            }
           } else if (assignedContacts.length > 0) {
             const cl = await crmService.getPrivateContacts();
             baseContacts = ((cl as any).results ?? cl) || [];
@@ -138,7 +151,7 @@ const RFQDetail: React.FC = () => {
           created_by_name: createdByName,
           issue_date: rfqRes.issue_date ? dayjs(rfqRes.issue_date) : null,
           deadline: rfqRes.deadline ? dayjs(rfqRes.deadline) : null,
-          company_id: rfqRes.company?.id || (rfqRes.contacts && rfqRes.contacts.length > 0 ? 'private' : undefined),
+          company_id: rfqRes.company?.id || rfqRes.contacts?.[0]?.company || (rfqRes.contacts && rfqRes.contacts.length > 0 ? 'private' : undefined),
           contact_ids: (rfqRes.contacts || []).map((c: any) => String(c.id)),
           title: computedDemandTitle,
           project_id: rfqRes.project?.id || rfqRes.project,
@@ -304,7 +317,9 @@ const RFQDetail: React.FC = () => {
       }
     }
     message.success('Tétel hozzáadva');
-    setSelectorOpen(false);
+    if (!(payload as any).keepOpen) {
+      setSelectorOpen(false);
+    }
     load();
   };
 
@@ -441,7 +456,7 @@ const RFQDetail: React.FC = () => {
             {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}
           </Space>
         </div>
-        <Form layout="vertical" form={formBasic} onFinish={async (v) => {
+        <Form layout="vertical" form={formBasic} size="small" onFinish={async (v) => {
           console.log('[RFQDetail] Form submitted with values:', v);
           try {
             // Company or 'private' required for new quote and demand on save
@@ -513,196 +528,189 @@ const RFQDetail: React.FC = () => {
                </Space>
             </Col>
           </Row>
-          <Row gutter={12}>
-            <Col span={6}>
-              <Form.Item label="Ajánlatszám" name="number">
-                <Input disabled />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label="Rögzítette" name="created_by_name">
-                <Input readOnly />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label="Keltezés" name="issue_date">
-                <DatePicker style={{ width: '100%' }} disabled />
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label="Határidő" name="deadline">
-                <DatePicker style={{ width: '100%' }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={8}>
-              <Row gutter={4}>
-                <Col flex="auto">
-                  <Form.Item label="Cég" name="company_id">
-                    <Select
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="Válassz céget"
-                      onFocus={async () => {
-                        // Frissítjük a cégek listáját amikor rákattintanak
-                        const list = await crmService.getCompanies({ is_customer: true, compact: true });
-                        const loaded = ((list as any).results ?? list) || [];
-                        const merged = Array.isArray(loaded) ? [...loaded] : [];
-                        if (rfq?.company?.id && !merged.find((c: any) => c.id === rfq.company.id)) {
-                          merged.unshift({
-                            id: rfq.company.id,
-                            name: rfq.company.name,
-                            is_customer: true,
-                            is_supplier: !!rfq.company.is_supplier,
-                          });
-                        }
-                        setCompanies(merged);
-                      }}
-                      onChange={async (val) => {
-                        try {
-                          if (val === 'private') {
-                            const list = await crmService.getPrivateContacts();
-                            setContacts((list as any).results ?? list);
-                            formBasic.setFieldValue('contact_ids', []);
-                          } else {
-                            const list = await crmService.getContactsByCompany(val);
-                            setContacts((list as any).results ?? list);
-                            formBasic.setFieldValue('contact_ids', []);
+          {/* ── Alap adatok ─────────────────────────────────────────────── */}
+          <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={6}>
+                <Form.Item label="Ajánlatszám" name="number" style={{ marginBottom: 6 }}>
+                  <Input disabled />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Rögzítette" name="created_by_name" style={{ marginBottom: 6 }}>
+                  <Input readOnly />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} disabled />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          {/* ── Ügyfél ──────────────────────────────────────────────────── */}
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={8}>
+                <Form.Item label="Cég" style={{ marginBottom: 6 }}>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Form.Item name="company_id" noStyle>
+                      <Select
+                        showSearch
+                        optionFilterProp="label"
+                        placeholder="Válassz céget"
+                        style={{ width: 'calc(100% - 32px)' }}
+                        onFocus={async () => {
+                          const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                          const loaded = ((list as any).results ?? list) || [];
+                          const merged = Array.isArray(loaded) ? [...loaded] : [];
+                          if (rfq?.company?.id && !merged.find((c: any) => c.id === rfq.company.id)) {
+                            merged.unshift({
+                              id: rfq.company.id,
+                              name: rfq.company.name,
+                              is_customer: true,
+                              is_supplier: !!rfq.company.is_supplier,
+                            });
                           }
-                        } catch {}
-                      }}
-                    >
-                      <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
-                      {(companies || []).map((c: any) => (
-                        <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-                <Col flex="40px">
-                  <Form.Item label=" ">
+                          setCompanies(merged);
+                        }}
+                        onChange={async (val) => {
+                          try {
+                            if (val === 'private') {
+                              const list = await crmService.getPrivateContacts();
+                              setContacts((list as any).results ?? list);
+                              formBasic.setFieldValue('contact_ids', []);
+                            } else {
+                              const list = await crmService.getContactsByCompany(val);
+                              setContacts((list as any).results ?? list);
+                              formBasic.setFieldValue('contact_ids', []);
+                            }
+                          } catch {}
+                        }}
+                      >
+                        <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
+                        {(companies || []).map((c: any) => (
+                          <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                        ))}
+                      </Select>
+                    </Form.Item>
                     <Button
                       icon={<PlusOutlined />}
+                      title="Új cég"
                       onClick={() => {
                         setSelectedCountry('Magyarország');
                         companyForm.resetFields();
-                        companyForm.setFieldsValue({ 
-                          country: 'Magyarország',
-                          is_customer: true,
-                          is_supplier: false
-                        });
+                        companyForm.setFieldsValue({ country: 'Magyarország', is_customer: true, is_supplier: false });
                         setIsCompanyModalVisible(true);
                       }}
-                      title="Új cég"
-                      style={{ width: '100%' }}
                     />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Col>
-            <Col span={16}>
-              <Row gutter={4}>
-                <Col flex="auto">
-                  <Form.Item label="Kapcsolattartók" name="contact_ids">
-                    <Select 
-                      mode="multiple" 
-                      allowClear 
-                      showSearch 
-                      optionFilterProp="label" 
-                      optionLabelProp="label"
-                      placeholder="Válassz kapcsolattartókat"
-                      options={(contacts || []).map((p: any, idx: number) => ({
-                        value: String(p.id ?? idx),
-                        label: contactOptionLabel(p),
-                      }))}
-                      onFocus={async () => {
-                        // Frissítjük a kapcsolattartók listáját amikor rákattintanak
-                        const companyId = formBasic.getFieldValue('company_id');
-                        if (companyId === 'private') {
-                          const list = await crmService.getPrivateContacts();
-                          setContacts((list as any).results ?? list);
-                        } else if (companyId) {
-                          const list = await crmService.getContactsByCompany(companyId);
-                          setContacts((list as any).results ?? list);
-                        }
-                      }}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col flex="40px">
-                  <Form.Item label=" ">
+                  </Space.Compact>
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={16}>
+                <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Form.Item name="contact_ids" noStyle>
+                      <Select
+                        mode="multiple"
+                        allowClear
+                        showSearch
+                        optionFilterProp="label"
+                        optionLabelProp="label"
+                        placeholder="Válassz kapcsolattartókat"
+                        style={{ width: 'calc(100% - 127px)' }}
+                        options={(contacts || []).map((p: any, idx: number) => ({
+                          value: String(p.id ?? idx),
+                          label: contactOptionLabel(p),
+                        }))}
+                        onFocus={async () => {
+                          const companyId = formBasic.getFieldValue('company_id');
+                          if (companyId === 'private') {
+                            const list = await crmService.getPrivateContacts();
+                            setContacts((list as any).results ?? list);
+                          } else if (companyId) {
+                            const list = await crmService.getContactsByCompany(companyId);
+                            setContacts((list as any).results ?? list);
+                          }
+                        }}
+                      />
+                    </Form.Item>
                     <Button
                       icon={<PlusOutlined />}
+                      title="Új kapcsolattartó"
                       onClick={() => {
                         const companyId = formBasic.getFieldValue('company_id');
                         let url = '/crm/contacts?action=create';
                         if (companyId && companyId !== 'private') {
                           url += `&company=${companyId}`;
                           const company = companies.find((c: any) => c.id === companyId);
-                          if (company?.name) {
-                            url += `&company_name=${encodeURIComponent(company.name)}`;
-                          }
+                          if (company?.name) url += `&company_name=${encodeURIComponent(company.name)}`;
                         }
                         window.open(url, '_blank');
                       }}
-                      title="Új kapcsolattartó"
-                      style={{ width: '100%' }}
                     />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={14}>
-              <Form.Item label="Megnevezés" name="title">
-                <Input placeholder="Ha üres, az ajánlatszám lesz" />
-              </Form.Item>
-            </Col>
-            <Col span={10}>
-              <Form.Item label="Projekt" name="project_id">
-                <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                  {(projects || []).map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={12}>
-              <Form.Item label="Leírás" name="description">
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Belső leírás" name="internal_description">
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} />
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={12}>
-            <Col span={6}>
-              <Form.Item label="Pénznem" name="currency_code">
-                <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet">
-                  {(currencyList || []).map((c: any) => (
-                    <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
-                      {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={6}>
-              <Form.Item label=" " name="partial_order_allowed" valuePropName="checked">
-                <Checkbox>Részlegesen megrendelhető</Checkbox>
-              </Form.Item>
-            </Col>
-            <Col span={12} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
-            </Col>
-          </Row>
-        </Form>
+                    <Button
+                      onClick={async () => {
+                        const companyId = formBasic.getFieldValue('company_id');
+                        if (companyId === 'private') {
+                          const list = await crmService.getPrivateContacts();
+                          setContacts((list as any).results ?? list);
+                          message.success('Kapcsolattartók frissítve');
+                        } else if (companyId) {
+                          const list = await crmService.getContactsByCompany(companyId);
+                          setContacts((list as any).results ?? list);
+                          message.success('Kapcsolattartók frissítve');
+                        } else {
+                          message.warning('Először válassz céget');
+                        }
+                      }}
+                    >
+                      Frissítés
+                    </Button>
+                  </Space.Compact>
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          {/* ── Tartalom ─────────────────────────────────────────────────── */}
+          <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tartalom</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={14}>
+                <Form.Item label="Megnevezés" name="title" style={{ marginBottom: 6 }}>
+                  <Input placeholder="Ha üres, az ajánlatszám lesz" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={10}>
+                <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 6 }}>
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
+                    {(projects || []).map((p: any) => (
+                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={12}>
+                <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                  <ReactQuill theme="snow" style={{ background: '#fff' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={12}>
+                <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                  <ReactQuill theme="snow" style={{ background: '#fff' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
 
         {/* Assignment controls under the save button */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
@@ -808,41 +816,9 @@ const RFQDetail: React.FC = () => {
           </Space>
         </div>
 
-        <Divider />
-
-        <Row gutter={12}>
-          <Col>
-            <Space>
-              <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
-              <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
-              <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
-            </Space>
-          </Col>
-        </Row>
-
-        <Divider />
-
-  <ItemsTable
-    items={rfq.items || []}
-    onRefresh={load}
-    quoteRequestId={Number(id)}
-    currency={rfq.currency_code || 'HUF'}
-    onEditItem={(item) => {
-      setEditContext({ item });
-      setSelectorType(item.item_type);
-      setSelectorOpen(true);
-    }}
-  />
-
-  <RFQCostsTable 
-    rfqId={Number(id)} 
-    totalRevenue={(rfq?.items || []).reduce((sum: number, item: any) => sum + (Number(item.discounted_net_total || item.net_total) || 0), 0)}
-    currency={rfq?.currency_code || 'HUF'}
-  />
-
-        <Divider />
-
-        <Card size="small" title="Ajánlat csatolmányok">
+        {/* ── Csatolmányok ──────────────────────────────────────────────── */}
+        <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Csatolmányok</div>
           <div style={{ marginBottom: 8 }}>
             <Upload.Dragger
               multiple
@@ -855,7 +831,7 @@ const RFQDetail: React.FC = () => {
                 } catch {
                   message.error(`${file.name} feltöltése nem sikerült`);
                 }
-                return Upload.LIST_IGNORE; // prevent auto upload by antd
+                return Upload.LIST_IGNORE;
               }}
               onRemove={undefined}
             >
@@ -873,7 +849,6 @@ const RFQDetail: React.FC = () => {
             locale={{ emptyText: 'Nincs csatolmány' }}
             renderItem={(f: UploadFile & { response?: any }) => {
               const isImage = (f.name || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
-              
               const handleDownload = async () => {
                 const url = f.url;
                 if (!url) return;
@@ -894,67 +869,120 @@ const RFQDetail: React.FC = () => {
                   window.open(url, '_blank');
                 }
               };
-
               const linkBtn = (
                 <Button type="link" style={{ padding: 0 }} onClick={handleDownload}>{f.name}</Button>
               );
-
               return (
-              <List.Item>
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <Space>
-                    {isImage && f.url ? (
-                      <Popover 
-                        content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
-                        title={f.name}
+                <List.Item>
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    <Space>
+                      {isImage && f.url ? (
+                        <Popover
+                          content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
+                          title={f.name}
+                        >
+                          {linkBtn}
+                        </Popover>
+                      ) : linkBtn}
+                      <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
+                    </Space>
+                    <Space>
+                      <Input
+                        defaultValue={f.response?.remark || ''}
+                        placeholder="Megjegyzés"
+                        style={{ width: 260 }}
+                        onBlur={async (e) => {
+                          const val = e.target.value;
+                          const att = f.response;
+                          if (!att) return;
+                          if ((att.remark || '') === val) return;
+                          try {
+                            await salesService.updateQuoteRequestAttachmentRemark(Number(id), att.id, val);
+                            message.success('Megjegyzés mentve');
+                          } catch {
+                            message.error('Nem sikerült menteni a megjegyzést');
+                          }
+                        }}
+                      />
+                      <Popconfirm
+                        title="Csatolmány törlése"
+                        okText="Törlés"
+                        cancelText="Mégse"
+                        onConfirm={async () => {
+                          const att = f.response;
+                          if (!att) return;
+                          try {
+                            await salesService.deleteQuoteRequestAttachment(Number(id), att.id);
+                            setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
+                            message.success('Csatolmány törölve');
+                          } catch {
+                            message.error('Nem sikerült törölni');
+                          }
+                        }}
                       >
-                        {linkBtn}
-                      </Popover>
-                    ) : linkBtn}
-                    <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
+                        <Button danger size="small">Törlés</Button>
+                      </Popconfirm>
+                    </Space>
                   </Space>
-                  <Space>
-                    <Input
-                      defaultValue={f.response?.remark || ''}
-                      placeholder="Megjegyzés"
-                      style={{ width: 260 }}
-                      onBlur={async (e) => {
-                        const val = e.target.value;
-                        const att = f.response;
-                        if (!att) return;
-                        if ((att.remark || '') === val) return;
-                        try {
-                          await salesService.updateQuoteRequestAttachmentRemark(Number(id), att.id, val);
-                          message.success('Megjegyzés mentve');
-                        } catch {
-                          message.error('Nem sikerült menteni a megjegyzést');
-                        }
-                      }}
-                    />
-                    <Popconfirm
-                      title="Csatolmány törlése"
-                      okText="Törlés"
-                      cancelText="Mégse"
-                      onConfirm={async () => {
-                        const att = f.response;
-                        if (!att) return;
-                        try {
-                          await salesService.deleteQuoteRequestAttachment(Number(id), att.id);
-                          setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
-                          message.success('Csatolmány törölve');
-                        } catch {
-                          message.error('Nem sikerült törölni');
-                        }
-                      }}
-                    >
-                      <Button danger size="small">Törlés</Button>
-                    </Popconfirm>
-                  </Space>
-                </Space>
-              </List.Item>
-            );}}
+                </List.Item>
+              );
+            }}
           />
-        </Card>
+        </div>
+
+        {/* ── Tételek ──────────────────────────────────────────────────── */}
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
+          <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
+            <Form.Item name="partial_order_allowed" valuePropName="checked" style={{ marginBottom: 0 }}>
+              <Checkbox>Részlegesen megrendelhető</Checkbox>
+            </Form.Item>
+          </div>
+          <Space>
+            <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
+            <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
+            <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
+          </Space>
+          <div style={{ marginTop: 6 }}>
+            <ItemsTable
+              items={rfq.items || []}
+              onRefresh={load}
+              quoteRequestId={Number(id)}
+              currency={activeCurrency}
+              onEditItem={(item) => {
+                setEditContext({ item });
+                setSelectorType(item.item_type);
+                setSelectorOpen(true);
+              }}
+              currencySelector={
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
+                  <Form.Item name="currency_code" noStyle>
+                    <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
+                      {(currencyList || []).map((c: any) => (
+                        <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
+                          {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
+                        </Select.Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </div>
+              }
+            />
+          </div>
+        </div>
+
+        {/* ── Költség kalkuláció ───────────────────────────────────────── */}
+        <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
+          <RFQCostsTable
+            rfqId={Number(id)}
+            totalRevenue={(rfq?.items || []).reduce((sum: number, item: any) => sum + (Number(item.discounted_net_total || item.net_total) || 0), 0)}
+            currency={activeCurrency}
+            rfqItems={rfq?.items || []}
+          />
+        </div>
+        </Form>
 
         <Modal
           title={filePreviewTitle}
@@ -977,8 +1005,6 @@ const RFQDetail: React.FC = () => {
             <div>Nincs előnézet</div>
           )}
         </Modal>
-
-        <Divider />
 
       </Card>
       <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {
@@ -1085,6 +1111,8 @@ const RFQDetail: React.FC = () => {
         onCancel={() => { setSelectorOpen(false); setEditContext(null); }}
         onAdd={editContext ? async (p) => onEditSelected(p) : onAddSelected}
         mode={editContext ? 'edit' : 'add'}
+        rfqId={Number(id)}
+        rfqCurrency={activeCurrency}
         initialSelection={editContext ? { item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name) } : undefined}
         initialValues={editContext ? {
           quantity: Number(editContext.item.quantity),
@@ -1095,6 +1123,7 @@ const RFQDetail: React.FC = () => {
           discount_percent: Number(editContext.item.discount_percent || 0),
           discount_amount: Number(editContext.item.discount_amount || 0),
         } : undefined}
+        quoteItemId={editContext?.item?.id}
       />
 
       <Modal title="Napló" open={logsOpen} onCancel={() => setLogsOpen(false)} footer={null}>

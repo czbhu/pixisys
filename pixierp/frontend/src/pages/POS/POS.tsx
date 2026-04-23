@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Typography, Card, Row, Col, Button, Table, Input, InputNumber, message, Modal, Space, Tag } from 'antd';
+import NumInput from '../../components/NumInput';
 import { ShoppingCartOutlined, UserOutlined, PlusOutlined, MinusOutlined, DeleteOutlined } from '@ant-design/icons';
 import CustomerSelection from './components/CustomerSelection';
 import CheckoutSummary from './components/CheckoutSummary';
@@ -430,7 +431,7 @@ const POS: React.FC<POSProps> = ({ showAllCategories = true, allowedMaterialGrou
                 size="small"
                 style={{ height: 26 }}
               />
-              <InputNumber
+              <NumInput
                 value={record.quantity}
                 min={1}
                 onChange={(value) => handleUpdateCartItem(index, value || 1)}

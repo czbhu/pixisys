@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Select, InputNumber, Radio, Divider, Typography, Spin, Tooltip, Tag, Modal, Row, Col } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { InfoCircleOutlined, CaretDownOutlined, CaretRightOutlined, AppstoreOutlined } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import api from '../../../services/api';
@@ -621,7 +622,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
         )}
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
-          <InputNumber
+          <NumInput
             size="small"
             min={wMin} max={wMax}
             placeholder="Szél."
@@ -631,7 +632,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
             onChange={v => { if (v) { update({ width_mm: v }); setSelectedPreset(null); if (productSizeKey !== 'custom' && selectedProduct?.sizes.length) setProductSizeKey('custom'); } }}
           />
           <Text style={{ fontSize: 11, color: '#aaa' }}>×</Text>
-          <InputNumber
+          <NumInput
             size="small"
             min={hMin} max={hMax}
             placeholder="Mag."
@@ -698,7 +699,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               <SectionLabel label="Nyomtatás" />
               <div style={{ marginBottom: 6 }}>
                 <Text style={{ fontSize: 11, color: '#666', display: 'block', marginBottom: 3 }}>Lapok száma</Text>
-                <InputNumber
+                <NumInput
                   size="small"
                   min={1}
                   max={50}
@@ -841,7 +842,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
           )}
 
           <SectionLabel label="Mennyiség" />
-          <InputNumber
+          <NumInput
             size="small"
             min={1}
             max={100000}
@@ -1271,13 +1272,13 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Ívméret (mm)</Text>
                   <Row gutter={8}>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }} placeholder="Szélesség" min={1}
                         value={modalSheetW} onChange={v => setModalSheetW(v ?? 330)} addonAfter="mm"
                       />
                     </Col>
                     <Col span={12}>
-                      <InputNumber
+                      <NumInput
                         style={{ width: '100%' }} placeholder="Magasság" min={1}
                         value={modalSheetH} onChange={v => setModalSheetH(v ?? 487)} addonAfter="mm"
                       />
@@ -1294,7 +1295,7 @@ const PrintParamsPanel: React.FC<Props> = ({ params, onChange, onPriceChange, on
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={12}>
                   <Text strong style={{ display: 'block', marginBottom: 6 }}>Nyomdai ráhagyás (mm/oldal)</Text>
-                  <InputNumber
+                  <NumInput
                     style={{ width: '100%' }} min={0} value={modalBleed}
                     onChange={v => setModalBleed(v ?? 0)} addonAfter="mm"
                   />

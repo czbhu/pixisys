@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Checkbox } from 'antd';
+import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, DollarOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import ServiceCostCalculation from '../../components/ServiceCostCalculation';
@@ -356,15 +357,15 @@ const Services: React.FC = () => {
           </div>
 
           <Form.Item name="unit_cost_price" hidden initialValue={0}>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
           
           <Form.Item name="markup_percentage" hidden initialValue={35}>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
           
           <Form.Item name="unit_selling_price" hidden initialValue={0}>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
 
           <Form.Item
@@ -372,7 +373,7 @@ const Services: React.FC = () => {
             label="Egységár (régi, kompatibilitás)"
             hidden
           >
-            <InputNumber style={{ width: '100%' }} />
+            <NumInput style={{ width: '100%' }} />
           </Form.Item>
 
           <h4 style={{ marginTop: 16, marginBottom: 8 }}>Alapértelmezett forrás</h4>

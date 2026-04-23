@@ -17,6 +17,7 @@ import {
   InputNumber,
   Tag
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   ArrowLeftOutlined,
   DollarOutlined,
@@ -583,7 +584,7 @@ const CheckoutSummary: React.FC<Props> = ({
                     <Col span={12}>
                       <Space direction="vertical" style={{ width: '100%' }}>
                         <Text strong>Átvett összeg:</Text>
-                        <InputNumber
+                        <NumInput
                           id="amount-received-input"
                           value={amountReceived}
                           onChange={setAmountReceived}

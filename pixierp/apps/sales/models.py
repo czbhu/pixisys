@@ -491,6 +491,7 @@ class QuoteRequestCost(models.Model):
     net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Nettó összesen")
     supplier = models.ForeignKey(CrmCompany, null=True, blank=True, on_delete=models.SET_NULL, verbose_name="Beszállító", related_name='quote_costs')
     is_stock = models.BooleanField(default=False, verbose_name="Raktári")
+    currency_code = models.CharField(max_length=3, default='HUF', verbose_name="Pénznem")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

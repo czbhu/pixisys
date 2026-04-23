@@ -12,6 +12,7 @@ import {
   Row,
   Col
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { ArrowLeftOutlined, PlusOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 
@@ -207,7 +208,7 @@ const ProductSelection: React.FC<Props> = ({ showDiscountPrices, customer, onAdd
       key: 'quantity',
       width: 120,
       render: (_: any, record: Material) => (
-        <InputNumber
+        <NumInput
           min={1}
           max={record.current_stock !== undefined ? record.current_stock : undefined}
           value={quantities[record.id] || 1}

@@ -4,6 +4,7 @@ import {
   Popconfirm, message, Divider, Alert, Typography, Row, Col, InputNumber,
   Tooltip,
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined,
   CloseCircleOutlined, CopyOutlined, ScanOutlined,
@@ -348,7 +349,7 @@ const NfcPage: React.FC = () => {
 
           {!selectedDevice && (
             <Form.Item name="iot_channel" label="Csatorna">
-              <InputNumber min={0} max={10} style={{ width: '100%' }} />
+              <NumInput min={0} max={10} style={{ width: '100%' }} />
             </Form.Item>
           )}
 

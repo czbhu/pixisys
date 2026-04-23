@@ -3,6 +3,7 @@ import {
   Form, Select, InputNumber, Row, Col, Divider, Radio, Button,
   Card, Collapse, Input, Tooltip, message,
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { PlusOutlined, MinusOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 
@@ -210,7 +211,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Szélesség" name="width_mm">
-                <InputNumber
+                <NumInput
                   min={1} max={5000} addonAfter="mm"
                   style={{ width: '100%' }}
                   value={params.width_mm}
@@ -220,7 +221,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
             </Col>
             <Col span={12}>
               <Form.Item label="Magasság" name="height_mm">
-                <InputNumber
+                <NumInput
                   min={1} max={5000} addonAfter="mm"
                   style={{ width: '100%' }}
                   value={params.height_mm}
@@ -232,7 +233,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
 
           <Divider orientation="left" style={{ fontSize: 13 }}>Mennyiség</Divider>
           <Form.Item label="Példányszám" name="quantity">
-            <InputNumber
+            <NumInput
               min={1} max={100000} addonAfter="db"
               style={{ width: 180 }}
               value={params.quantity}
@@ -242,7 +243,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
 
           <Divider orientation="left" style={{ fontSize: 13 }}>Nyomtatás</Divider>
           <Form.Item label="Lapok száma" tooltip="Egy lapnak 2 oldala van: cím oldal és hátoldal.">
-            <InputNumber
+            <NumInput
               min={1} max={50}
               value={params.sheet_count ?? 1}
               onChange={v => { if (v && v >= 1) update({ sheet_count: v }); }}
@@ -328,7 +329,7 @@ const Step1Params: React.FC<Props> = ({ isAdmin, params, onParamsChange, onNext,
                     </Select>
                   </Col>
                   <Col span={9}>
-                    <InputNumber
+                    <NumInput
                       size="small"
                       min={1}
                       max={5000}

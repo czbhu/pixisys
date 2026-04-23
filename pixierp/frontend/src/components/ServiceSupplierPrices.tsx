@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Modal, Table, Button, Form, InputNumber, Select, message, Space, Popconfirm, Checkbox } from 'antd';
+import NumInput from './NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import api from '../services/api';
 
@@ -251,7 +252,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                     onFinish={handleSubmit}
                 >
                     <Form.Item name="service" hidden>
-                        <InputNumber />
+                        <NumInput />
                     </Form.Item>
 
                     <Form.Item
@@ -281,7 +282,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="fixed_cost"
                         label="Fix költség"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -293,7 +294,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="price_per_unit"
                         label="Darab alapú ár"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -305,7 +306,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="price_per_perimeter"
                         label="Kerület alapú ár"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -317,7 +318,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="price_per_area"
                         label="Terület alapú ár"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -329,7 +330,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="price_per_weight"
                         label="Súly alapú ár"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -341,7 +342,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="price_per_time"
                         label="Idő alapú ár"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                             precision={2}
@@ -353,7 +354,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="min_order_quantity"
                         label="Min. rendelési mennyiség"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                         />
@@ -363,7 +364,7 @@ const ServiceSupplierPrices: React.FC<ServiceSupplierPricesProps> = ({
                         name="lead_time_days"
                         label="Szállítási idő (nap)"
                     >
-                        <InputNumber
+                        <NumInput
                             style={{ width: '100%' }}
                             min={0}
                         />

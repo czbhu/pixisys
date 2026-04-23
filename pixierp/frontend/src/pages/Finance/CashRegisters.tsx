@@ -4,6 +4,7 @@ import {
     Card, Table, Button, Modal, Form, Input, Select, DatePicker, Space, Grid,
     InputNumber, message, Tag, Row, Col, Statistic, Alert 
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import { PlusOutlined, MinusOutlined, SearchOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs, { Dayjs } from 'dayjs';
@@ -540,7 +541,7 @@ const CashRegisters: React.FC = () => {
             >
                 <Form form={depositForm} onFinish={handleDeposit} layout="vertical">
                     <Form.Item label="Összeg" name="amount" rules={[{ required: true, message: 'Kötelező mező' }]}>
-                        <InputNumber
+                        <NumInput
                             ref={depositAmountInputRef}
                             addonBefore={<span style={{ fontSize: 24, color: 'green' }}>+</span>}
                             style={{ width: '100%' }}
@@ -595,7 +596,7 @@ const CashRegisters: React.FC = () => {
             >
                 <Form form={withdrawalForm} onFinish={handleWithdrawal} layout="vertical">
                     <Form.Item label="Összeg" name="amount" rules={[{ required: true, message: 'Kötelező mező' }]}>
-                        <InputNumber
+                        <NumInput
                             ref={withdrawalAmountInputRef}
                             addonBefore={<span style={{ fontSize: 24, color: 'red' }}>-</span>}
                             style={{ width: '100%' }}

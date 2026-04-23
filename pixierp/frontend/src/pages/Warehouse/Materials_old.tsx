@@ -17,6 +17,7 @@ import {
     InputNumber,
     Checkbox,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
     PlusOutlined,
     EditOutlined,
@@ -596,7 +597,7 @@ const Materials: React.FC = () => {
                     <Row gutter={16}>
                         <Col span={8}>
                             <Form.Item name="unit_cost_price" label="Bekerülési ár">
-                                <InputNumber
+                                <NumInput
                                     style={{ width: '100%' }}
                                     min={0}
                                     precision={2}
@@ -612,7 +613,7 @@ const Materials: React.FC = () => {
                         </Col>
                         <Col span={8}>
                             <Form.Item name="markup_percentage" label="Haszonkulcs %">
-                                <InputNumber
+                                <NumInput
                                     style={{ width: '100%' }}
                                     min={0}
                                     max={1000}
@@ -629,7 +630,7 @@ const Materials: React.FC = () => {
                         </Col>
                         <Col span={8}>
                             <Form.Item name="unit_selling_price" label="Eladási ár">
-                                <InputNumber
+                                <NumInput
                                     style={{ width: '100%' }}
                                     min={0}
                                     precision={2}
@@ -669,7 +670,7 @@ const Materials: React.FC = () => {
                             <Row gutter={16}>
                                 <Col span={12}>
                                     <Form.Item name="internal_fixed_cost" label="Fix költség">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}
@@ -680,7 +681,7 @@ const Materials: React.FC = () => {
                                 </Col>
                                 <Col span={12}>
                                     <Form.Item name="internal_price_per_unit" label="Darab alapú ár">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}
@@ -694,7 +695,7 @@ const Materials: React.FC = () => {
                             <Row gutter={16}>
                                 <Col span={12}>
                                     <Form.Item name="internal_price_per_perimeter" label="Kerület alapú ár">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}
@@ -705,7 +706,7 @@ const Materials: React.FC = () => {
                                 </Col>
                                 <Col span={12}>
                                     <Form.Item name="internal_price_per_area" label="Terület alapú ár">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}
@@ -719,7 +720,7 @@ const Materials: React.FC = () => {
                             <Row gutter={16}>
                                 <Col span={12}>
                                     <Form.Item name="internal_price_per_weight" label="Súly alapú ár">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}
@@ -730,7 +731,7 @@ const Materials: React.FC = () => {
                                 </Col>
                                 <Col span={12}>
                                     <Form.Item name="internal_price_per_time" label="Idő alapú ár">
-                                        <InputNumber
+                                        <NumInput
                                             style={{ width: '100%' }}
                                             min={0}
                                             precision={2}

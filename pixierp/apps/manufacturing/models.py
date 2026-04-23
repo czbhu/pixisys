@@ -356,6 +356,8 @@ class ManufacturingCostItem(models.Model):
     supplier = models.ForeignKey('crm.Company', on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Beszállító")
     is_internal = models.BooleanField(default=False, verbose_name="Belső gyártás")
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Belső részleg")
+    currency = models.CharField(max_length=3, default='HUF', verbose_name="Pénznem")
+    is_per_unit = models.BooleanField(default=False, verbose_name="Egységre vetített")
 
     class Meta:
         verbose_name = "Gyártási költség elem"

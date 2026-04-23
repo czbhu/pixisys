@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Collapse, Statistic, Row, Col, Modal, Form, Input, InputNumber, Select, Checkbox, message, Space, Popconfirm, Card, Typography } from 'antd';
+import { Table, Button, Collapse, Statistic, Row, Col, Modal, Form, Input, InputNumber, Select, Checkbox, message, Space, Popconfirm, Card, Typography, Tag } from 'antd';
+import NumInput from '../NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
+import { manufacturingService } from '../../services/manufacturingService';
 
 const { Panel } = Collapse;
 const { Text } = Typography;
@@ -14,10 +16,12 @@ interface RFQCostsTableProps {
   draftMode?: boolean;
   value?: any[];
   onChange?: (val: any[]) => void;
+  rfqItems?: any[];
 }
 
-export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenue, currency, draftMode, value, onChange }) => {
+export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenue, currency, draftMode, value, onChange, rfqItems }) => {
   const [costs, setCosts] = useState<any[]>([]);
+  const [manuCostItems, setManuCostItems] = useState<{ productName: string; items: any[] }[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState<any | null>(null);
@@ -31,11 +35,32 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
     } else if (draftMode && value) {
         setCosts(value);
     }
-  }, [rfqId, draftMode, value]);
+  }, [rfqId, draftMode, value, rfqItems]);
 
   useEffect(() => {
     loadSuppliers();
   }, []);
+
+  useEffect(() => {
+    const manuItems = (rfqItems || []).filter((it: any) => it.item_type === 'manufacturing' && it.manufacturing_product);
+    if (manuItems.length === 0) {
+      setManuCostItems([]);
+      return;
+    }
+    Promise.all(
+      manuItems.map(async (it: any) => {
+        try {
+          const pid = typeof it.manufacturing_product === 'object' ? it.manufacturing_product.id : it.manufacturing_product;
+          const product = await manufacturingService.getProduct(pid);
+          return { productName: product.name || `#${pid}`, items: product.cost_items || [] };
+        } catch {
+          return null;
+        }
+      })
+    ).then(results => {
+      setManuCostItems(results.filter(Boolean) as any);
+    });
+  }, [rfqItems]);
 
   const loadCosts = async () => {
     if (!rfqId) return;
@@ -152,7 +177,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
       key: 'actions',
       width: 100,
       render: (_: any, r: any) => {
-        if (r.is_implicit) {
+        if (r.is_implicit || r._rfqItemRef !== undefined) {
           return <Text type="secondary" style={{ fontSize: '12px' }}>Auto</Text>;
         }
         return (
@@ -194,6 +219,17 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
                   );
               }}
             />
+
+            {manuCostItems.length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <Text type="secondary" style={{ fontSize: 12 }}>Egyedi gyártások kalkulációi (referencia)</Text>
+                {manuCostItems.map((group, gi) => (
+                  <div key={gi} style={{ marginTop: 4 }}>
+                    <Tag color="blue" style={{ marginBottom: 4 }}>{group.productName}</Tag>
+                  </div>
+                ))}
+              </div>
+            )}
             
             <div style={{ marginTop: 24, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
               <Row gutter={16}>
@@ -232,14 +268,14 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenu
              </Form.Item>
              <Space>
                <Form.Item name="quantity" label="Mennyiség" initialValue={1} rules={[{ required: true }]}>
-                 <InputNumber min={0} />
+                 <NumInput min={0} />
                </Form.Item>
                <Form.Item name="unit" label="Egység" initialValue="db">
                  <Input />
                </Form.Item>
              </Space>
              <Form.Item name="net_unit_price" label="Nettó egységár" initialValue={0} rules={[{ required: true }]}>
-               <InputNumber min={0} style={{ width: '100%' }} />
+               <NumInput min={0} style={{ width: '100%' }} />
              </Form.Item>
              <Form.Item name="supplier_id" label="Beszállító">
                <Select 

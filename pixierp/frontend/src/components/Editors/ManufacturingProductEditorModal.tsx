@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag, Tooltip } from 'antd';
+import NumInput from '../NumInput';
 import { useNavigate } from 'react-router-dom';
 import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -952,11 +953,11 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
         );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 90, render: (t: string) => t === 'material' ? 'Alapanyag' : t === 'service' ? 'Szolgáltatás' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.quantity} onChange={v => updateCostItem(r.id, 'quantity', v)} min={0} controls={false} /> },
+    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput value={r.quantity} onChange={v => updateCostItem(r.id, 'quantity', v)} min={0} controls={false} /> },
     { title: 'Egység', key: 'unit', width: 70, render: (_: any, r: CostItem) => r.type === 'other' ? <Input value={r.unit} onChange={e => updateCostItem(r.id, 'unit', e.target.value)} /> : r.unit },
-    { title: 'Beker. ár', key: 'cost_price', width: 90, render: (_: any, r: CostItem) => <InputNumber value={r.cost_price} onChange={v => updateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} /> }, 
-    { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <InputNumber value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} precision={2} /> },
-    { title: 'Eladási e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CostItem) => <InputNumber value={r.selling_unit_price} onChange={v => updateCostItem(r.id, 'selling_unit_price', v)} disabled={r.type !== 'other'} controls={false} /> },
+    { title: 'Beker. ár', key: 'cost_price', width: 90, render: (_: any, r: CostItem) => <NumInput value={r.cost_price} onChange={v => updateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} /> }, 
+    { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <NumInput value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} precision={2} /> },
+    { title: 'Eladási e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CostItem) => <NumInput value={r.selling_unit_price} onChange={v => updateCostItem(r.id, 'selling_unit_price', v)} disabled={r.type !== 'other'} controls={false} /> },
     { title: 'Beszállító', key: 'supplier_id', width: 260, render: (_: any, r: CostItem) => {
         return (
             <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -1145,7 +1146,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                              <Form.Item label="Mennyiség" style={{ marginBottom: 0 }}>
                                 <Space.Compact style={{ width: '100%' }}>
                                      <Form.Item name="quantity" initialValue={1} noStyle>
-                                        <InputNumber min={0.01} style={{ width: '100%' }} disabled={isFixedQuantity} />
+                                        <NumInput min={0.01} style={{ width: '100%' }} disabled={isFixedQuantity} />
                                      </Form.Item>
                                      <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8, border: '1px solid #d9d9d9', borderLeft: 0, backgroundColor: '#fafafa', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}>
                                          <Checkbox 
@@ -1202,9 +1203,9 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                          </Col>
                      </Row>
                      <Row gutter={16}>
-                        <Col span={6}><Form.Item label="Szélesség" name="width"><InputNumber style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
-                        <Col span={6}><Form.Item label="Hosszúság" name="length"><InputNumber style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
-                        <Col span={6}><Form.Item label="Magasság" name="height"><InputNumber style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Szélesség" name="width"><NumInput style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Hosszúság" name="length"><NumInput style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Magasság" name="height"><NumInput style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
                         <Col span={6}><Form.Item label="Mértékegység" name="dimension_unit" initialValue="mm">
                             <Select onChange={() => calculateWeightFromDimensions()}>
                                 <Select.Option value="mm">mm</Select.Option>
@@ -1237,7 +1238,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                      </div>
 
                      <Row gutter={16}>
-                        <Col span={6}><Form.Item label="Fajsúly" name="specific_weight"><InputNumber style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Fajsúly" name="specific_weight"><NumInput style={{width:'100%'}} onChange={() => calculateWeightFromDimensions()} /></Form.Item></Col>
                         <Col span={6}><Form.Item label="Fajsúly egység" name="specific_weight_unit" initialValue="kg/m3">
                             <Select onChange={() => calculateWeightFromDimensions()}>
                                 <Select.Option value="kg/m3">kg/m³</Select.Option>
@@ -1247,8 +1248,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                         </Form.Item></Col>
                      </Row>
                      <Row gutter={16}>
-                        <Col span={6}><Form.Item label="Egység súly" name="unit_weight"><InputNumber style={{width:'100%'}} onChange={(v) => calculateDimensionsFromWeight(v, true)} /></Form.Item></Col>
-                        <Col span={6}><Form.Item label="Összesen súly" name="total_weight"><InputNumber style={{width:'100%'}} onChange={(v) => calculateDimensionsFromWeight(v, false)} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Egység súly" name="unit_weight"><NumInput style={{width:'100%'}} onChange={(v) => calculateDimensionsFromWeight(v, true)} /></Form.Item></Col>
+                        <Col span={6}><Form.Item label="Összesen súly" name="total_weight"><NumInput style={{width:'100%'}} onChange={(v) => calculateDimensionsFromWeight(v, false)} /></Form.Item></Col>
                         <Col span={6}><Form.Item label="Súly egység" name="weight_unit" initialValue="kg">
                              <Select onChange={() => calculateWeightFromDimensions()}>
                                 <Select.Option value="g">g</Select.Option>
@@ -1267,7 +1268,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                     <div>
                         <Space style={{ marginBottom: 16 }}>
                             <Form.Item label="Mennyiség" name="quantity" style={{ marginBottom: 0, width: 200 }}> 
-                               <InputNumber min={0.01} style={{ width: '100%' }} prefix="Mennyiség:" />
+                               <NumInput min={0.01} style={{ width: '100%' }} prefix="Mennyiség:" />
                              </Form.Item>
                             <Button icon={<PlusOutlined />} onClick={() => handleAddCost('material')}>Alapanyag/Termék</Button>
                             <Button icon={<PlusOutlined />} onClick={() => handleAddCost('service')}>Szolgáltatás</Button>
@@ -1388,7 +1389,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                                                 </Col>
                                                  <Col span={12}>
                                                     <Form.Item label="Tekercs szélesség (mm)">
-                                                        <InputNumber style={{ width: '100%' }} />
+                                                        <NumInput style={{ width: '100%' }} />
                                                     </Form.Item>
                                                 </Col>
                                             </Row>

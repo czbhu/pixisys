@@ -3,6 +3,7 @@ import {
   Card, Button, Modal, Form, Input, InputNumber, Upload, message, Space, Tag,
   Popconfirm, Tabs, Table, Select, Empty, Spin, Image,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined,
   FolderOutlined, FileOutlined, InboxOutlined,
@@ -357,7 +358,7 @@ const PrintTemplatesPage: React.FC = () => {
             <Input.TextArea rows={2} />
           </Form.Item>
           <Form.Item name="sort_order" label="Sorrend" initialValue={0}>
-            <InputNumber style={{ width: '100%' }} />
+            <NumInput style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>
@@ -412,7 +413,7 @@ const PrintTemplatesPage: React.FC = () => {
             </Upload>
           </Form.Item>
           <Form.Item name="sort_order" label="Sorrend" initialValue={0}>
-            <InputNumber style={{ width: '100%' }} />
+            <NumInput style={{ width: '100%' }} />
           </Form.Item>
         </Form>
       </Modal>

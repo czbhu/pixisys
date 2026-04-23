@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Modal, Form, Input, Select, Switch, Tag,
   Popconfirm, message, Divider, Alert, Typography, Row, Col, InputNumber
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined,
   CloseCircleOutlined, ApiOutlined, ThunderboltOutlined
@@ -384,7 +385,7 @@ const IotPage: React.FC = () => {
                   help={f.help}
                 >
                   {f.type === 'number' ? (
-                    <InputNumber
+                    <NumInput
                       min={f.min}
                       max={f.max}
                       addonAfter={f.suffix}

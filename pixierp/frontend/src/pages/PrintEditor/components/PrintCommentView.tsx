@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Button, Checkbox, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   CommentOutlined, CheckOutlined, DeleteOutlined,
   FilePdfOutlined, MessageOutlined, CloseOutlined, LockOutlined,
@@ -1775,7 +1776,7 @@ const PrintCommentView: React.FC<Props> = ({
               <Button size="small" icon={<PlusOutlined />} onClick={() => addGuideline('v')}>Függőleges</Button>
               <Divider type="vertical" style={{ margin: '0 2px' }} />
               <span style={{ fontSize: 10, color: '#888' }}>Pontos pozíció (mm):</span>
-              <InputNumber
+              <NumInput
                 size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="X mm"
                 parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
                 onPressEnter={e => {
@@ -1783,7 +1784,7 @@ const PrintCommentView: React.FC<Props> = ({
                   if (!isNaN(v)) { addGuidelineAtMm('v', v); (e.target as HTMLInputElement).value = ''; }
                 }}
               />
-              <InputNumber
+              <NumInput
                 size="small" style={{ width: 70 }} min={0} step={0.5} placeholder="Y mm"
                 parser={v => parseFloat((v ?? '').replace(',', '.')) as any}
                 onPressEnter={e => {
@@ -1810,7 +1811,7 @@ const PrintCommentView: React.FC<Props> = ({
                       style={{ fontSize: 10, margin: 0, display: 'inline-flex', alignItems: 'center', gap: 2 }}
                     >
                       {g.orientation === 'h' ? 'V' : 'F'}
-                      <InputNumber
+                      <NumInput
                         size="small"
                         style={{ width: 58, marginLeft: 2 }}
                         value={mm}
@@ -1833,7 +1834,7 @@ const PrintCommentView: React.FC<Props> = ({
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, fontSize: 11, color: '#555', flexWrap: 'wrap' }}>
             <ScissorOutlined style={{ color: '#fa541c' }} />
             <span style={{ fontSize: 10, color: '#888' }}>X:</span>
-            <InputNumber
+            <NumInput
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.x * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="0"
@@ -1845,7 +1846,7 @@ const PrintCommentView: React.FC<Props> = ({
               }}
             />
             <span style={{ fontSize: 10, color: '#888' }}>Y:</span>
-            <InputNumber
+            <NumInput
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.y * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="0"
@@ -1857,7 +1858,7 @@ const PrintCommentView: React.FC<Props> = ({
               }}
             />
             <span style={{ fontSize: 10, color: '#888' }}>Sz:</span>
-            <InputNumber
+            <NumInput
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.w * curInfo.widthPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="W"
@@ -1869,7 +1870,7 @@ const PrintCommentView: React.FC<Props> = ({
               }}
             />
             <span style={{ fontSize: 10, color: '#888' }}>Ma:</span>
-            <InputNumber
+            <NumInput
               size="small" style={{ width: 65 }} min={0} step={0.5}
               value={cropRect && curInfo ? +(cropRect.h * curInfo.heightPt * PT_TO_MM).toFixed(1) : undefined}
               placeholder="H"
@@ -1908,7 +1909,7 @@ const PrintCommentView: React.FC<Props> = ({
                   </Button>
                 </Tooltip>
                 <span style={{ fontSize: 10, color: '#888' }}>Kifutó:</span>
-                <InputNumber
+                <NumInput
                   size="small" style={{ width: 70 }} min={0} max={50} step={1}
                   value={trimBoxBleed}
                   parser={v => parseFloat((v ?? '').replace(',', '.')) as any}

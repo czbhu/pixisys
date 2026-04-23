@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Card, Form, InputNumber, Button, Upload, Typography, message, Select } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { UploadOutlined } from '@ant-design/icons';
 import { settingsService } from '../../../services/settingsService';
 import AttendanceKiosk from '../AttendanceKiosk'; 
@@ -101,7 +102,7 @@ const AttendanceKioskSettingsPage: React.FC = () => {
                     name="qr_validity_seconds"
                     rules={[{ required: true, message: 'Kötelező mező' }]}
                 >
-                    <InputNumber min={5} max={60} style={{ width: '100%' }} />
+                    <NumInput min={5} max={60} style={{ width: '100%' }} />
                 </Form.Item>
 
                 <Form.Item label="Kioszk Logó">

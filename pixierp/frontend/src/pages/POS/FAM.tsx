@@ -17,6 +17,7 @@ import {
   Tabs,
   Divider,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   ApiOutlined,
   ReloadOutlined,
@@ -429,12 +430,12 @@ const FAM: React.FC = () => {
 
                         <Col xs={24} md={6}>
                           <Form.Item name="timeout_sec" label="Timeout (sec)" initialValue={20}>
-                            <InputNumber min={3} max={120} style={{ width: '100%' }} />
+                            <NumInput min={3} max={120} style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
                         <Col xs={24} md={6}>
                           <Form.Item name="retry_limit" label="Retry limit" initialValue={3}>
-                            <InputNumber min={0} max={20} style={{ width: '100%' }} />
+                            <NumInput min={0} max={20} style={{ width: '100%' }} />
                           </Form.Item>
                         </Col>
                         <Col xs={24} md={6}>
@@ -469,7 +470,7 @@ const FAM: React.FC = () => {
                             <Input placeholder="POS-20260214-0001" />
                           </Form.Item>
                           <Form.Item name="totalGross" label="Bruttó összeg">
-                            <InputNumber min={0} style={{ width: '100%' }} />
+                            <NumInput min={0} style={{ width: '100%' }} />
                           </Form.Item>
                           <Form.Item name="customerTaxNumber" label="Vevő adószám">
                             <Input placeholder="12345678-1-41" />
@@ -547,7 +548,7 @@ const FAM: React.FC = () => {
                             <Input placeholder="400" />
                           </Form.Item>
                           <Form.Item name="displayPrecision" label="Tizedes pontosság" initialValue={0}>
-                            <InputNumber min={0} max={8} style={{ width: '100%' }} />
+                            <NumInput min={0} max={8} style={{ width: '100%' }} />
                           </Form.Item>
                           <Form.Item name="symbol" label="Szimbólum" initialValue="">
                             <Input placeholder="€" />

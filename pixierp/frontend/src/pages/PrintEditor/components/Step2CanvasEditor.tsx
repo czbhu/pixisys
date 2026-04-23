@@ -3,6 +3,7 @@ import {
   Button, Space, Tooltip, Select, InputNumber, Popover, Divider, Popconfirm,
   Upload, message, Slider, Typography, Switch, Modal, Input, Segmented, Badge,
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   UndoOutlined, RedoOutlined, DeleteOutlined, BoldOutlined,
   ItalicOutlined, FontSizeOutlined, BgColorsOutlined, PictureOutlined,
@@ -2695,7 +2696,7 @@ window.addEventListener('resize',()=>{
             <Option value="x">X │</Option>
             <Option value="y">Y —</Option>
           </Select>
-          <InputNumber
+          <NumInput
             size="small" min={-BLEED_MM}
             max={newGuideAxis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
             step={0.5} addonAfter="mm" value={newGuideMm}
@@ -2709,7 +2710,7 @@ window.addEventListener('resize',()=>{
           {guides.map(g => (
             <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
               <Text style={{ fontSize: 11, width: 18, color: GUIDE_COLOR, fontWeight: 700 }}>{g.axis.toUpperCase()}</Text>
-              <InputNumber
+              <NumInput
                 size="small" value={g.mm} step={0.5} min={-BLEED_MM}
                 max={g.axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
                 onChange={v => v !== null && updateGuide(g.id, v)}
@@ -2728,7 +2729,7 @@ window.addEventListener('resize',()=>{
             <Option value="x">X │</Option>
             <Option value="y">Y —</Option>
           </Select>
-          <InputNumber
+          <NumInput
             size="small" min={-BLEED_MM}
             max={newFoldAxis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
             step={0.5} addonAfter="mm" value={newFoldMm}
@@ -2751,7 +2752,7 @@ window.addEventListener('resize',()=>{
           {foldLines.map(f => (
             <div key={f.id} style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
               <Text style={{ fontSize: 11, width: 18, color: FOLD_COLOR, fontWeight: 700 }}>{f.axis.toUpperCase()}</Text>
-              <InputNumber
+              <NumInput
                 size="small" value={f.mm} step={0.5} min={-BLEED_MM}
                 max={f.axis === 'x' ? params.width_mm + BLEED_MM : params.height_mm + BLEED_MM}
                 onChange={v => v !== null && updateFoldLine(f.id, v)}
@@ -2928,7 +2929,7 @@ window.addEventListener('resize',()=>{
                   );
                 })}
               </Select>
-              <InputNumber
+              <NumInput
                 size="small"
                 min={6} max={200}
                 value={(selectedObj as fabric.IText)?.fontSize ?? 16}

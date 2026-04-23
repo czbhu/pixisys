@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Row, Col, Card, List, Checkbox } from 'antd';
+import NumInput from '../../components/NumInput';
 import EnhancedTable from '../../components/EnhancedTable';
 import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined, SearchOutlined, SyncOutlined } from '@ant-design/icons';
 import api from '../../services/api';
@@ -464,7 +465,7 @@ const CalculatorTemplates: React.FC = () => {
             label="Alapértelmezett haszonkulcs (%)"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               max={1000}

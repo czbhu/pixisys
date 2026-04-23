@@ -12,6 +12,7 @@ import {
   Popconfirm,
   Empty
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import {
   ArrowLeftOutlined,
   DeleteOutlined,
@@ -100,7 +101,7 @@ const Cart: React.FC<Props> = ({ items, onUpdateItem, onRemoveItem, onCheckout, 
             onClick={() => handleQuantityChange(index, -1)}
             size="large"
           />
-          <InputNumber
+          <NumInput
             value={record.quantity}
             onChange={(value) => handleDirectQuantityChange(index, value)}
             min={1}

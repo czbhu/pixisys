@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Card, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox, Row, Col } from 'antd';
+import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
@@ -1956,7 +1957,7 @@ const Materials: React.FC = () => {
                         </span>
                       }
                     >
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={2}
@@ -1975,7 +1976,7 @@ const Materials: React.FC = () => {
                         </span>
                       }
                     >
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={2}
@@ -1994,7 +1995,7 @@ const Materials: React.FC = () => {
                         </span>
                       }
                     >
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={2}
@@ -2013,7 +2014,7 @@ const Materials: React.FC = () => {
                   
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <Form.Item name="specific_weight" label="Fajsúly">
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={2}
@@ -2031,7 +2032,7 @@ const Materials: React.FC = () => {
                   
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <Form.Item name="area_weight" label="Terület súly">
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={2}
@@ -2048,7 +2049,7 @@ const Materials: React.FC = () => {
 
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <Form.Item name="weight" label="Súly (számított)">
-                      <InputNumber 
+                      <NumInput 
                         style={{ width: '100%' }} 
                         min={0} 
                         precision={3}
@@ -2069,7 +2070,7 @@ const Materials: React.FC = () => {
               {selectedMaterialFormat === 'piece' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   <Form.Item name="weight" label="Súly (opcionális)">
-                    <InputNumber style={{ width: '100%' }} min={0} precision={3} />
+                    <NumInput style={{ width: '100%' }} min={0} precision={3} />
                   </Form.Item>
                   <Form.Item name="weight_unit" label="Súly egység">
                     <Select>
@@ -2084,7 +2085,7 @@ const Materials: React.FC = () => {
               {selectedMaterialFormat === 'weight' && (
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                   <Form.Item name="weight" label="Súly" rules={[{ required: true, message: 'Kötelező mező' }]}>
-                    <InputNumber style={{ width: '100%' }} min={0} precision={3} />
+                    <NumInput style={{ width: '100%' }} min={0} precision={3} />
                   </Form.Item>
                   <Form.Item name="weight_unit" label="Súly egység">
                     <Select>
@@ -2099,11 +2100,11 @@ const Materials: React.FC = () => {
               {selectedMaterialFormat === 'liter' && (
                 <>
                   <Form.Item name="volume_liter" label="Liter" rules={[{ required: true, message: 'Kötelező mező' }]}>
-                    <InputNumber style={{ width: '100%' }} min={0} precision={2} addonAfter="liter" />
+                    <NumInput style={{ width: '100%' }} min={0} precision={2} addonAfter="liter" />
                   </Form.Item>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                     <Form.Item name="specific_weight" label="Fajsúly">
-                      <InputNumber style={{ width: '100%' }} min={0} precision={2} />
+                      <NumInput style={{ width: '100%' }} min={0} precision={2} />
                     </Form.Item>
                     <Form.Item name="specific_weight_unit" label="Fajsúly egység">
                       <Select>
@@ -2132,7 +2133,7 @@ const Materials: React.FC = () => {
                 label="Egységár (régi, kompatibilitás)"
                 hidden
               >
-                <InputNumber style={{ width: '100%' }} />
+                <NumInput style={{ width: '100%' }} />
               </Form.Item>
 
               <Form.Item shouldUpdate noStyle>
@@ -2158,15 +2159,15 @@ const Materials: React.FC = () => {
               </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
               
               <Form.Item name="markup_percentage" hidden>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
               
               <Form.Item name="unit_selling_price" hidden>
-                <InputNumber />
+                <NumInput />
               </Form.Item>
 
               <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók</h4>
@@ -2348,7 +2349,7 @@ const Materials: React.FC = () => {
                 </Col>
                 <Col span={6}>
                   <Form.Item label="Nettó egységár">
-                    <InputNumber
+                    <NumInput
                       style={{ width: '100%' }}
                       value={netUnitPrice}
                       onChange={(value) => {
@@ -2370,7 +2371,7 @@ const Materials: React.FC = () => {
                 </Col>
                 <Col span={6}>
                   <Form.Item label="ÁFA">
-                    <InputNumber
+                    <NumInput
                       style={{ width: '100%' }}
                       value={calculatedVat}
                       disabled
@@ -2381,7 +2382,7 @@ const Materials: React.FC = () => {
                 </Col>
                 <Col span={6}>
                   <Form.Item label="Bruttó egységár">
-                    <InputNumber
+                    <NumInput
                       style={{ width: '100%' }}
                       value={calculatedGross}
                       onChange={(value) => {
@@ -2744,8 +2745,8 @@ const Materials: React.FC = () => {
         width={500}
       >
         <Form form={sizeForm} layout="vertical" onFinish={handleSizeSubmit}>
-          <Form.Item name="material" hidden><InputNumber /></Form.Item>
-          <Form.Item name="sort_order" hidden><InputNumber /></Form.Item>
+          <Form.Item name="material" hidden><NumInput /></Form.Item>
+          <Form.Item name="sort_order" hidden><NumInput /></Form.Item>
           <Form.Item name="is_active" hidden valuePropName="checked"><Checkbox /></Form.Item>
           <Form.Item name="name" label="Megnevezés (opcionális)">
             <Input placeholder="pl. A4, A3, Egyedi" />
@@ -2753,17 +2754,17 @@ const Materials: React.FC = () => {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="width" label="Szélesség" rules={[{ required: true, message: 'Kötelező' }]}>
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="length" label="Hosszúság" rules={[{ required: true, message: 'Kötelező' }]}>
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="height" label="Magasság">
-                <InputNumber style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} />
               </Form.Item>
             </Col>
           </Row>
@@ -2788,7 +2789,7 @@ const Materials: React.FC = () => {
               if (pType === 'custom') {
                 return (
                   <Form.Item name="custom_price" label="Egyedi ár (HUF)">
-                    <InputNumber style={{ width: '100%' }} min={0} />
+                    <NumInput style={{ width: '100%' }} min={0} />
                   </Form.Item>
                 );
               }
@@ -2820,15 +2821,15 @@ const Materials: React.FC = () => {
           onFinish={handleCostItemSubmit}
         >
           <Form.Item name="material" hidden>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
 
           <Form.Item name="supplier" hidden>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
 
           <Form.Item name="is_internal" hidden>
-            <InputNumber />
+            <NumInput />
           </Form.Item>
 
           <Form.Item
@@ -2878,7 +2879,7 @@ const Materials: React.FC = () => {
             label="Egységár (bekerülési)"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -2897,7 +2898,7 @@ const Materials: React.FC = () => {
             label="Haszon kulcs"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               max={1000}
@@ -2917,7 +2918,7 @@ const Materials: React.FC = () => {
             label="Eladási ár"
             rules={[{ required: true, message: 'Kötelező mező' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -2979,7 +2980,7 @@ const Materials: React.FC = () => {
             label="Mennyiség"
             rules={[{ required: true, message: 'Add meg a mennyiséget' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               max={selectedStock?.quantity}
@@ -3053,7 +3054,7 @@ const Materials: React.FC = () => {
             label="Számla érték"
             rules={[{ required: true, message: 'Add meg a számla értékét' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -3066,7 +3067,7 @@ const Materials: React.FC = () => {
             label="Mennyiség"
             rules={[{ required: true, message: 'Add meg a mennyiséget' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -3079,7 +3080,7 @@ const Materials: React.FC = () => {
             label="Egységár"
             rules={[{ required: true, message: 'Add meg az egységárat' }]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               precision={2}
@@ -3089,7 +3090,7 @@ const Materials: React.FC = () => {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
             <Form.Item name="width" label="Szélesség">
-              <InputNumber 
+              <NumInput 
                 style={{ width: '100%' }} 
                 min={0} 
                 precision={2} 
@@ -3098,7 +3099,7 @@ const Materials: React.FC = () => {
             </Form.Item>
 
             <Form.Item name="length" label="Hosszúság">
-              <InputNumber 
+              <NumInput 
                 style={{ width: '100%' }} 
                 min={0} 
                 precision={2} 
@@ -3107,7 +3108,7 @@ const Materials: React.FC = () => {
             </Form.Item>
 
             <Form.Item name="thickness" label="Vastagság">
-              <InputNumber 
+              <NumInput 
                 style={{ width: '100%' }} 
                 min={0} 
                 precision={2} 
@@ -3177,7 +3178,7 @@ const Materials: React.FC = () => {
               }
             ]}
           >
-            <InputNumber
+            <NumInput
               style={{ width: '100%' }}
               min={0}
               max={scrapStock?.quantity || 0}

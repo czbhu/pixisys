@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Modal, Button, InputNumber, Space, Typography, message } from 'antd';
+import NumInput from '../NumInput';
 import { DownloadOutlined } from '@ant-design/icons';
 import { QRCodeCanvas } from 'qrcode.react';
 import jsPDF from 'jspdf';
@@ -154,7 +155,7 @@ const QRLabelModal: React.FC<QRLabelModalProps> = ({ visible, onClose, data, zIn
 
                 <Space align="center">
                     <span>PDF Szélesség (cm):</span>
-                    <InputNumber
+                    <NumInput
                         min={2}
                         max={21}
                         step={0.1}

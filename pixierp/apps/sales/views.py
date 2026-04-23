@@ -1106,6 +1106,13 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                             print(f"[RFQs] Contact sync setup failed: {e}")
                 
                 qr.contacts.set(contacts_to_set)
+                # Auto-infer company from contacts when company is not explicitly provided
+                if qr.company is None and 'company_id' not in data:
+                    for c in contacts_to_set:
+                        if c.company:
+                            qr.company = c.company
+                            qr.save()
+                            break
             except Exception as e:
                 print(f"[RFQs] Contact set failed: {e}")
                 pass
@@ -1196,6 +1203,27 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             QuoteLog.objects.create(quote=dst, user=request.user if request.user.is_authenticated else None, action=f'Árajánlat másolva forrásból: {src.number or src.request_number}')
         except Exception:
             pass
+
+        # copy costs
+        from apps.sales.models import QuoteRequestCost
+        for cost in src.costs.all():
+            try:
+                QuoteRequestCost.objects.create(
+                    quote_request=dst,
+                    material=cost.material,
+                    code=cost.code,
+                    name=cost.name,
+                    quantity=cost.quantity,
+                    unit=cost.unit,
+                    net_unit_price=cost.net_unit_price,
+                    net_total=cost.net_total,
+                    supplier=cost.supplier,
+                    is_stock=cost.is_stock,
+                    currency_code=cost.currency_code,
+                )
+            except Exception:
+                pass
+
         return Response(QuoteRequestSerializer(dst, context={'request': request}).data, status=201)
 
     @action(detail=False, methods=['post'])
@@ -1549,13 +1577,30 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def _create_order_from_items(self, request, qr, items, set_status: str):
         from .models import CustomerOrder, CustomerOrderItem
         
-        # Generate order number in Oyyyymmddxxxx format
+        # Generate unique order number in Oyyyymmddxxxx format
         today = timezone.now()
         date_prefix = today.strftime('%Y%m%d')
-        today_orders_count = CustomerOrder.objects.filter(
-            created_at__date=today.date()
-        ).count()
-        order_number = f"O{date_prefix}{today_orders_count + 1:04d}"
+        prefix = f"O{date_prefix}"
+        # Find the highest existing suffix for today to avoid race conditions
+        existing = (
+            CustomerOrder.objects
+            .filter(order_number__startswith=prefix)
+            .order_by('-order_number')
+            .values_list('order_number', flat=True)
+            .first()
+        )
+        if existing:
+            try:
+                last_seq = int(existing[len(prefix):])
+            except ValueError:
+                last_seq = 0
+        else:
+            last_seq = 0
+        order_number = f"{prefix}{last_seq + 1:04d}"
+        # Extra safety: keep incrementing if still collides
+        while CustomerOrder.objects.filter(order_number=order_number).exists():
+            last_seq += 1
+            order_number = f"{prefix}{last_seq + 1:04d}"
         
         # Create CustomerOrder
         order = CustomerOrder.objects.create(
@@ -2049,6 +2094,17 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
         att.remark = remark
         att.save(update_fields=['remark'])
+        return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['post'])
+    def delete_attachment(self, request, pk=None):
+        item = self.get_object()
+        att_id = request.data.get('attachment_id')
+        if not att_id:
+            return Response({'error': 'attachment_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
+        att.file.delete(save=False)
+        att.delete()
         return Response({'status': 'ok'})
 
 class OrderViewSet(viewsets.ModelViewSet):

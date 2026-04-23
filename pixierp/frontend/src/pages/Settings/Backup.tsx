@@ -16,6 +16,7 @@ import {
   Alert,
   Upload,
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   DownloadOutlined,
   DeleteOutlined,
@@ -499,7 +500,7 @@ const BackupPage: React.FC = () => {
             rules={[{ required: true, message: 'Adja meg a megőrzési időt!' }]}
             help="Ennyi nap után törölhetők a régi backup-ok"
           >
-            <InputNumber min={1} max={365} style={{ width: '100%' }} />
+            <NumInput min={1} max={365} style={{ width: '100%' }} />
           </Form.Item>
 
           <Form.Item label="Aktív" name="is_active" valuePropName="checked">

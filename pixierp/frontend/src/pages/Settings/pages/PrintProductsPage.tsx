@@ -3,6 +3,7 @@ import {
   Card, Table, Button, Space, Modal, Form, Input, InputNumber,
   Divider, message, Popconfirm, Typography, Row, Col, Switch,
 } from 'antd';
+import NumInput from '../../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 
@@ -213,7 +214,7 @@ const PrintProductsPage: React.FC = () => {
             <Row gutter={16}>
               <Col span={8}>
                 <Form.Item name="paper_cost_per_m2" label="Papír ár (HUF/m²)">
-                  <InputNumber min={0} step={10} addonAfter="HUF/m²" style={{ width: '100%' }} />
+                  <NumInput min={0} step={10} addonAfter="HUF/m²" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
             </Row>
@@ -222,17 +223,17 @@ const PrintProductsPage: React.FC = () => {
             <Row gutter={16}>
               <Col span={8}>
                 <Form.Item name="print_color_cost" label="Színes">
-                  <InputNumber min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
+                  <NumInput min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item name="print_bw_cost" label="Fekete-fehér">
-                  <InputNumber min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
+                  <NumInput min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item name="print_color_white_cost" label="Színes + Fehér">
-                  <InputNumber min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
+                  <NumInput min={0} step={5} addonAfter="HUF" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
             </Row>
@@ -241,12 +242,12 @@ const PrintProductsPage: React.FC = () => {
             <Row gutter={16}>
               <Col span={8}>
                 <Form.Item name="cutting_cost" label="Vágási munkadíj (HUF/munka)">
-                  <InputNumber min={0} step={100} addonAfter="HUF" style={{ width: '100%' }} />
+                  <NumInput min={0} step={100} addonAfter="HUF" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
               <Col span={8}>
                 <Form.Item name="folding_cost_per_fold" label="Hajtás (HUF/hajtáspont)">
-                  <InputNumber min={0} step={100} addonAfter="HUF" style={{ width: '100%' }} />
+                  <NumInput min={0} step={100} addonAfter="HUF" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
             </Row>
@@ -255,7 +256,7 @@ const PrintProductsPage: React.FC = () => {
             <Row gutter={16}>
               <Col span={8}>
                 <Form.Item name="margin_pct" label="Fedezet (%)">
-                  <InputNumber min={0} max={300} step={5} addonAfter="%" style={{ width: '100%' }} />
+                  <NumInput min={0} max={300} step={5} addonAfter="%" style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
             </Row>
@@ -286,19 +287,19 @@ const PrintProductsPage: React.FC = () => {
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="width_mm" label="Szélesség (mm)" rules={[{ required: true }]}>
-                <InputNumber min={1} max={2000} addonAfter="mm" style={{ width: '100%' }} />
+                <NumInput min={1} max={2000} addonAfter="mm" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item name="height_mm" label="Magasság (mm)" rules={[{ required: true }]}>
-                <InputNumber min={1} max={2000} addonAfter="mm" style={{ width: '100%' }} />
+                <NumInput min={1} max={2000} addonAfter="mm" style={{ width: '100%' }} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={16}>
             <Col span={12}>
               <Form.Item name="sort_order" label="Sorrend">
-                <InputNumber min={0} style={{ width: '100%' }} />
+                <NumInput min={0} style={{ width: '100%' }} />
               </Form.Item>
             </Col>
             <Col span={12}>

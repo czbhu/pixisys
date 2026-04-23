@@ -4,6 +4,7 @@ import {
   Card, Form, InputNumber, Select, Button, Divider, Table, Space,
   message, Row, Col, Statistic, Radio, Tag, Input, Empty
 } from 'antd';
+import NumInput from '../../components/NumInput';
 import {
   CalculatorOutlined, SaveOutlined, PlusOutlined, DeleteOutlined, BuildOutlined, ArrowLeftOutlined, FileTextOutlined
 } from '@ant-design/icons';
@@ -1027,7 +1028,7 @@ const Calculator: React.FC = () => {
                    <Col span={1} style={{textAlign:'right', paddingRight:5}}>{index + 1}.</Col>
                    <Col span={7}>
                        <Form.Item label={index === 0 ? `Szélesség (${inputUnit})` : ''} style={{marginBottom:0}}>
-                           <InputNumber value={row.width} onChange={v => {
+                           <NumInput value={row.width} onChange={v => {
                                const newR = [...rows];
                                newR[index].width = v||0;
                                setRows(newR);
@@ -1036,7 +1037,7 @@ const Calculator: React.FC = () => {
                    </Col>
                    <Col span={7}>
                        <Form.Item label={index === 0 ? `Magasság (${inputUnit})` : ''} style={{marginBottom:0}}>
-                           <InputNumber value={row.height} onChange={v => {
+                           <NumInput value={row.height} onChange={v => {
                                const newR = [...rows];
                                newR[index].height = v||0;
                                setRows(newR);
@@ -1045,7 +1046,7 @@ const Calculator: React.FC = () => {
                    </Col>
                    <Col span={6}>
                        <Form.Item label={index === 0 ? `Darab` : ''} style={{marginBottom:0}}>
-                           <InputNumber value={row.quantity} onChange={v => {
+                           <NumInput value={row.quantity} onChange={v => {
                                const newR = [...rows];
                                newR[index].quantity = v||0;
                                setRows(newR);
@@ -1064,12 +1065,12 @@ const Calculator: React.FC = () => {
              <Row gutter={16} style={{ marginBottom: 16 }}>
                  <Col span={8}>
                      <Form.Item label="Köz X (mm)" style={{marginBottom:0}}>
-                         <InputNumber value={gapX} onChange={v => setGapX(v||0)} style={{width:'100%'}} />
+                         <NumInput value={gapX} onChange={v => setGapX(v||0)} style={{width:'100%'}} />
                      </Form.Item>
                  </Col>
                  <Col span={8}>
                      <Form.Item label="Köz Y (mm)" style={{marginBottom:0}}>
-                         <InputNumber value={gapY} onChange={v => setGapY(v||0)} style={{width:'100%'}} />
+                         <NumInput value={gapY} onChange={v => setGapY(v||0)} style={{width:'100%'}} />
                      </Form.Item>
                  </Col>
                  <Col span={8}>
@@ -1160,7 +1161,7 @@ const Calculator: React.FC = () => {
                                     </div>
                                     {batch.svg}
                                     <div style={{marginTop: 5, display:'flex', justifyContent:'center', gap: 5}}>
-                                        <InputNumber 
+                                        <NumInput 
                                             size="small" 
                                             min={1} 
                                             addonBefore="O" 
@@ -1191,7 +1192,7 @@ const Calculator: React.FC = () => {
                                                 }
                                             }}
                                         />
-                                        <InputNumber 
+                                        <NumInput 
                                             size="small" 
                                             min={1} 
                                             addonBefore="S" 
@@ -1267,7 +1268,7 @@ const Calculator: React.FC = () => {
                             <Statistic title="Költség" value={sm.totalCost} precision={0} suffix="Ft" groupSeparator=" " />
                             <Divider style={{margin:'10px 0'}} />
                              <Form.Item label="Haszonkulcs %" style={{marginBottom:0}}>
-                                 <InputNumber 
+                                 <NumInput 
                                     value={sm.markup_percentage} 
                                     onChange={v => {
                                         const newS = [...selectedMaterials];
@@ -1324,7 +1325,7 @@ const Calculator: React.FC = () => {
                     dataIndex: 'markup_percentage',
                     key: 'markup_percentage',
                     render: (markup: number, record: SelectedService, index: number) => (
-                        <InputNumber
+                        <NumInput
                         min={0}
                         max={1000}
                         value={Number(markup) || 0}

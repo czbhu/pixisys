@@ -2777,6 +2777,225 @@ class NfcTagViewSet(viewsets.ModelViewSet):
     def trigger(self, request, pk=None):
         """Public endpoint — NFC tag URL-be írva. Aktiválja a csatolt IoT eszköz csatornáját."""
 
+        def _slider_page(tag_name, csrf_token, trigger_url):
+            """Csúszka-megerősítő oldal — GET kérésnél jelenik meg, megelőzi a véletlen aktiválást."""
+            from django.http import HttpResponse
+            html = f'''<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Aktiválás – {tag_name}</title>
+<style>
+  *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    background: #0f172a;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+  }}
+  .card {{
+    background: #1e293b;
+    border-radius: 20px;
+    padding: 40px 32px 36px;
+    max-width: 360px;
+    width: 100%;
+    text-align: center;
+    box-shadow: 0 24px 48px rgba(0,0,0,.5);
+  }}
+  .icon {{
+    font-size: 56px;
+    margin-bottom: 16px;
+    user-select: none;
+  }}
+  h1 {{
+    color: #f1f5f9;
+    font-size: 20px;
+    font-weight: 700;
+    margin-bottom: 6px;
+  }}
+  .sub {{
+    color: #94a3b8;
+    font-size: 14px;
+    margin-bottom: 32px;
+  }}
+  /* ── Slider track ── */
+  .slider-wrap {{
+    position: relative;
+    background: #0f172a;
+    border-radius: 50px;
+    height: 64px;
+    overflow: hidden;
+    user-select: none;
+    touch-action: none;
+  }}
+  .slider-fill {{
+    position: absolute;
+    left: 0; top: 0; bottom: 0;
+    width: 64px;
+    background: linear-gradient(90deg, #1d4ed8, #2563eb);
+    border-radius: 50px;
+    transition: background .2s;
+  }}
+  .slider-fill.ready {{
+    background: linear-gradient(90deg, #15803d, #16a34a);
+  }}
+  .slider-label {{
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #475569;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: .04em;
+    pointer-events: none;
+    transition: opacity .2s;
+  }}
+  .slider-label.hidden {{ opacity: 0; }}
+  .slider-handle {{
+    position: absolute;
+    top: 6px; bottom: 6px;
+    left: 6px;
+    width: 52px;
+    background: #2563eb;
+    border-radius: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: grab;
+    box-shadow: 0 4px 16px rgba(37,99,235,.5);
+    transition: background .15s, box-shadow .15s;
+    will-change: transform;
+  }}
+  .slider-handle:active {{ cursor: grabbing; }}
+  .slider-handle.ready {{
+    background: #16a34a;
+    box-shadow: 0 4px 20px rgba(22,163,74,.6);
+  }}
+  .handle-arrow {{
+    color: #fff;
+    font-size: 22px;
+    font-weight: 700;
+    pointer-events: none;
+    transition: opacity .15s;
+  }}
+  .handle-arrow.hidden {{ opacity: 0; }}
+  .handle-check {{
+    color: #fff;
+    font-size: 26px;
+    position: absolute;
+    opacity: 0;
+    transition: opacity .15s;
+  }}
+  .handle-check.visible {{ opacity: 1; }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🔓</div>
+  <h1>{tag_name}</h1>
+  <p class="sub">Csúsztasd jobbra az aktiváláshoz</p>
+
+  <div class="slider-wrap" id="track">
+    <div class="slider-fill" id="fill"></div>
+    <div class="slider-label" id="label">Csúsztasd jobbra →</div>
+    <div class="slider-handle" id="handle">
+      <span class="handle-arrow" id="arrow">›</span>
+      <span class="handle-check" id="check">✓</span>
+    </div>
+  </div>
+</div>
+
+<form id="triggerForm" method="post" action="{trigger_url}">
+  <input type="hidden" name="csrfmiddlewaretoken" value="{csrf_token}">
+  <input type="hidden" name="confirmed" value="1">
+</form>
+
+<script>
+(function () {{
+  const track  = document.getElementById('track');
+  const handle = document.getElementById('handle');
+  const fill   = document.getElementById('fill');
+  const label  = document.getElementById('label');
+  const arrow  = document.getElementById('arrow');
+  const check  = document.getElementById('check');
+
+  const HANDLE_W = 52;
+  let dragging = false, startX = 0, startLeft = 0;
+
+  function getMax() {{
+    return track.offsetWidth - HANDLE_W - 12;  // 6px margin each side
+  }}
+
+  function setPos(x) {{
+    const max = getMax();
+    const clamped = Math.max(0, Math.min(x, max));
+    handle.style.transform = `translateX(${{clamped}}px)`;
+    fill.style.width = (HANDLE_W + 6 + clamped) + 'px';
+
+    const ratio = clamped / max;
+    const ready = ratio >= 0.92;
+
+    fill.classList.toggle('ready', ready);
+    handle.classList.toggle('ready', ready);
+    label.classList.toggle('hidden', ratio > 0.15);
+    arrow.classList.toggle('hidden', ready);
+    check.classList.toggle('visible', ready);
+
+    return {{ clamped, max, ready }};
+  }}
+
+  function onStart(e) {{
+    dragging = true;
+    startX = e.touches ? e.touches[0].clientX : e.clientX;
+    const mat = new DOMMatrix(getComputedStyle(handle).transform);
+    startLeft = mat.m41;
+    handle.style.transition = 'none';
+    fill.style.transition = 'none';
+    e.preventDefault();
+  }}
+
+  function onMove(e) {{
+    if (!dragging) return;
+    const cx = e.touches ? e.touches[0].clientX : e.clientX;
+    const {{ ready }} = setPos(startLeft + (cx - startX));
+    if (ready) onRelease(e);
+  }}
+
+  function onRelease(e) {{
+    if (!dragging) return;
+    dragging = false;
+    handle.style.transition = '';
+    fill.style.transition = '';
+    const max = getMax();
+    const mat = new DOMMatrix(getComputedStyle(handle).transform);
+    if ((mat.m41 / max) >= 0.92) {{
+      setPos(max);
+      setTimeout(function() {{
+        document.getElementById('triggerForm').submit();
+      }}, 250);
+    }} else {{
+      setPos(0);
+    }}
+  }}
+
+  handle.addEventListener('mousedown',  onStart);
+  handle.addEventListener('touchstart', onStart, {{ passive: false }});
+  window.addEventListener('mousemove',  onMove);
+  window.addEventListener('touchmove',  onMove, {{ passive: false }});
+  window.addEventListener('mouseup',    onRelease);
+  window.addEventListener('touchend',   onRelease);
+}})();
+</script>
+</body>
+</html>'''
+            return HttpResponse(html, content_type='text/html; charset=utf-8')
+
         def _resp(success, title, detail, status_code=200):
             """Böngészőből (telefon) HTML-t, API-ból JSON-t ad vissza."""
             if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
@@ -2836,6 +3055,15 @@ class NfcTagViewSet(viewsets.ModelViewSet):
             if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
                 return _redirect_to_login(trigger_url)
             return Response({'error': 'Bejelentkezés szükséges'}, status=401)
+
+        # GET kérés böngészőből → csúszka megerősítő oldal megjelenítése (ne aktiváljon azonnal)
+        if request.method == 'GET' and 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+            from django.middleware.csrf import get_token
+            csrf_token = get_token(request)
+            trigger_url = request.build_absolute_uri()
+            return _slider_page(tag.name, csrf_token, trigger_url)
+
+        # POST vagy API kérés esetén: jogosultság + aktiválás
 
         # HR osztály jogosultság ellenőrzése az IoT eszközön
         device_for_auth = tag.iot_device
