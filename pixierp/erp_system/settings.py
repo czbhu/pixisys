@@ -149,9 +149,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 STATIC_URL = '/static/'
 STATIC_ROOT = BASE_DIR / 'frontend' / 'build' / 'static'
-STATICFILES_DIRS = [
-    BASE_DIR / 'static',
-]
+_extra_static = BASE_DIR / 'static'
+STATICFILES_DIRS = [_extra_static] if _extra_static.exists() else []
 
 # Media files
 MEDIA_URL = '/media/'
