@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo, useRef } from 'react';
-import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag, Tooltip } from 'antd';
+import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag, Tooltip, Dropdown } from 'antd';
 import NumInput from '../NumInput';
 import { useNavigate } from 'react-router-dom';
 import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
@@ -88,6 +88,45 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
   const [calculatedTotalDims, setCalculatedTotalDims] = useState<{ width: number; length: number; height: number; unit: string } | null>(null);
   const [isFixedQuantity, setIsFixedQuantity] = useState(false);
     const [initialEditorSnapshot, setInitialEditorSnapshot] = useState('');
+
+  // Status long-press
+  const statusPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const statusLongTriggered = useRef(false);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const watchedStatus = Form.useWatch('status', form);
+
+  const STATUS_LABELS: Record<string, string> = {
+    quote_request_open: 'Ajánlatkérés nyitott',
+    quote_request_priced: 'Ajánlatkérés árazva',
+    quote_request_sent: 'Ajánlat elküldve',
+    ordered: 'Megrendelve',
+    design_in_progress: 'Tervezés folyamatban',
+    design_approved: 'Terv elfogadva',
+    production_in_progress: 'Gyártás folyamatban',
+    production_completed: 'Gyártás kész',
+    finished_goods_warehouse: 'Késztermék raktáron',
+    installation_in_progress: 'Telepítés folyamatban',
+    delivered: 'Leszállítva',
+    invoiced: 'Számlázva',
+    paid: 'Fizetve',
+    cancelled: 'Törölve',
+  };
+  const STATUS_COLORS: Record<string, string> = {
+    quote_request_open: 'blue',
+    quote_request_priced: 'cyan',
+    quote_request_sent: 'geekblue',
+    ordered: 'gold',
+    design_in_progress: 'orange',
+    design_approved: 'lime',
+    production_in_progress: 'processing',
+    production_completed: 'green',
+    finished_goods_warehouse: 'teal',
+    installation_in_progress: 'volcano',
+    delivered: 'success',
+    invoiced: 'purple',
+    paid: 'magenta',
+    cancelled: 'default',
+  };
     const [dataLoadedKey, setDataLoadedKey] = useState(0);
 
     const EMPTY_STRINGS = new Set(['', '<p><br></p>', '<p></p>', '<br>']);
@@ -134,26 +173,33 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       
       if (editingProduct) {
           setIsFixedQuantity(editingProduct.is_fixed_quantity || false);
-          // Fill form from editingProduct
-          
-          let selectedIds: string[] = [];
-          
-          if (editingProduct.allowed_companies_data) {
-              selectedIds.push(...editingProduct.allowed_companies_data.map((c: any) => `company_${c.id}`));
+
+          // Determine company_id and contact_ids for separate fields
+          let companyId: any = undefined;
+          let contactIds: string[] = [];
+
+          if (editingProduct.allowed_companies_data && editingProduct.allowed_companies_data.length > 0) {
+              companyId = editingProduct.allowed_companies_data[0].id;
+          } else if (editingProduct.allowed_companies && editingProduct.allowed_companies.length > 0) {
+              companyId = editingProduct.allowed_companies[0];
           }
-          
+
           if (editingProduct.allowed_contacts_data) {
-              selectedIds.push(...editingProduct.allowed_contacts_data.map((c: any) => `contact_${c.id}`));
+              contactIds = editingProduct.allowed_contacts_data.map((c: any) => String(c.id));
           }
-          
-          // Fallback if data fields are missing but legacy fields exist (unlikely with current serializer)
-          if (selectedIds.length === 0 && editingProduct.allowed_companies && Array.isArray(editingProduct.allowed_companies)) {
-               selectedIds.push(...editingProduct.allowed_companies.map((id: any) => `company_${id}`));
+
+          // Load contacts for the preloaded company
+          if (companyId) {
+              crmService.getContactsByCompany(companyId)
+                  .then((res: any) => setContacts((res.results ?? res) || []))
+                  .catch(() => {});
           }
-          
+
           form.setFieldsValue({
               ...editingProduct,
-              customer_ids: selectedIds,
+              company_id: companyId,
+              contact_ids: contactIds,
+              customer_ids: undefined,
               customer_id: undefined, // Deprecated
               project_id: editingProduct.project, // check field name in MP
               product_class_id: editingProduct.product_class, // check field name
@@ -181,7 +227,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
             quantity: 1,
             quantity_unit: 'db',
             dimension_unit: 'mm',
-            customer_ids: customer ? [`company_${customer.id}`] : [],
+            company_id: customer ? customer.id : undefined,
+            contact_ids: [],
         });
       }
 
@@ -452,7 +499,7 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
 
   const generateCode = () => {
     const name = form.getFieldValue('name') || '';
-    const custIds = form.getFieldValue('customer_ids');
+    const companyId = form.getFieldValue('company_id');
 
     // Név-Ügyfél(első 5 karakter)-001(növekvő sorszám)
     
@@ -461,8 +508,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
     if (!base) base = 'GEN';
 
     let custPart = '';
-    if (custIds && custIds.length > 0) {
-      const c = customers.find(x => x.id === custIds[0]);
+    if (companyId) {
+      const c = customers.find((x: any) => x.id === companyId);
       if (c && c.name) {
         custPart = c.name.normalize('NFD').replace(/[\u0300-\u036f]/g, '').substring(0, 5).toUpperCase().replace(/[^A-Z0-9]/g, '');
       }
@@ -787,37 +834,12 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
       const calculatedUnitSelling = productQty > 0 ? calculatedTotalSelling / productQty : 0;
 
       setSubmitting(true);
-      
-      let rawIds = form.getFieldValue('customer_ids');
-      if (!Array.isArray(rawIds)) {
-          if (rawIds) rawIds = [rawIds];
-          else rawIds = [];
-      }
-      
-      const allowedCompaniesPayload: any[] = [];
-      const allowedContactsPayload: any[] = [];
-      
-      rawIds.forEach((idVar: any) => {
-          let strVal = String(idVar);
-          // Handle potential labelInValue objects
-          if (typeof idVar === 'object' && idVar !== null && 'value' in idVar) {
-              strVal = String(idVar.value);
-          }
-          
-          if (strVal.startsWith('company_')) {
-              allowedCompaniesPayload.push(strVal.replace('company_', ''));
-          } else if (strVal.startsWith('contact_')) {
-              allowedContactsPayload.push(strVal.replace('contact_', ''));
-          } else {
-              // Legacy/Fallback
-              allowedCompaniesPayload.push(strVal);
-          }
-      });
 
-      // Force alert debugging
-      console.log('Final payload allowed_companies:', allowedCompaniesPayload);
-      console.log('Final payload allowed_contacts:', allowedContactsPayload);
-      console.log('Raw IDs:', rawIds);
+      const companyId = form.getFieldValue('company_id');
+      const contactIdList: any[] = form.getFieldValue('contact_ids') || [];
+
+      const allowedCompaniesPayload: any[] = companyId ? [String(companyId)] : [];
+      const allowedContactsPayload: any[] = contactIdList.map((id: any) => String(id));
       
       const payload = {
         ...v,
@@ -1122,71 +1144,153 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                             </Space>
                         </div>
                      )}
-                     <Form.Item label="Név" name="name" rules={[{ required: true }]}>
-                       <Input />
-                     </Form.Item>
-                     <div style={{ display: 'flex', gap: 8 }}>
-                        <Form.Item label="Cikkszám" name="code" rules={[{ required: true }]} style={{ flex: 1 }}>
-                            <Input onBlur={handleCodeBlur} />
-                        </Form.Item>
-                        <Button style={{ marginTop: 30 }} onClick={generateCode}>Generál</Button>
+                     {/* ── Alap adatok ─────────────────────────────────────── */}
+                     <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
+                       <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
+                       <Row gutter={[8, 4]}>
+                         <Col xs={24} md={16}>
+                           <Form.Item label="Név" name="name" rules={[{ required: true }]} style={{ marginBottom: 6 }}>
+                             <Input />
+                           </Form.Item>
+                         </Col>
+                         <Col xs={24} md={6}>
+                           <Form.Item label="Cikkszám" name="code" rules={[{ required: true }]} style={{ marginBottom: 6 }}>
+                             <Input onBlur={handleCodeBlur} />
+                           </Form.Item>
+                         </Col>
+                         <Col xs={24} md={2} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
+                           <Button onClick={generateCode} size="small">Generál</Button>
+                         </Col>
+                       </Row>
+                       <Row gutter={[8, 4]}>
+                         <Col xs={24} md={8}>
+                           <Form.Item label="Mennyiség" style={{ marginBottom: 6 }}>
+                             <Space.Compact style={{ width: '100%' }}>
+                               <Form.Item name="quantity" initialValue={1} noStyle>
+                                 <NumInput min={0.01} style={{ width: '100%' }} disabled={isFixedQuantity} />
+                               </Form.Item>
+                               <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8, border: '1px solid #d9d9d9', borderLeft: 0, backgroundColor: '#fafafa', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}>
+                                 <Checkbox checked={isFixedQuantity} onChange={e => setIsFixedQuantity(e.target.checked)} style={{ marginRight: 8 }}>fix</Checkbox>
+                               </div>
+                             </Space.Compact>
+                           </Form.Item>
+                         </Col>
+                         <Col xs={24} md={8}>
+                           <Form.Item label="Egység" name="quantity_unit" initialValue="db" style={{ marginBottom: 6 }}>
+                             <Input placeholder="pl. db" />
+                           </Form.Item>
+                         </Col>
+                       </Row>
                      </div>
-                     <Form.Item label="Ügyfél" name="customer_ids">
-                        <Select 
-                            mode="multiple"
-                            showSearch 
-                            placeholder="Válasszon ügyfeleket (üres = mindenki)"
-                            optionFilterProp="label"
-                            options={customerOptions}
-                            onChange={(val) => console.log('Customer Select Change:', val)}
-                        />
-                     </Form.Item>
-                     <Row gutter={16}>
-                        <Col span={8}>
-                             <Form.Item label="Mennyiség" style={{ marginBottom: 0 }}>
-                                <Space.Compact style={{ width: '100%' }}>
-                                     <Form.Item name="quantity" initialValue={1} noStyle>
-                                        <NumInput min={0.01} style={{ width: '100%' }} disabled={isFixedQuantity} />
-                                     </Form.Item>
-                                     <div style={{ display: 'flex', alignItems: 'center', paddingLeft: 8, border: '1px solid #d9d9d9', borderLeft: 0, backgroundColor: '#fafafa', borderTopRightRadius: 6, borderBottomRightRadius: 6 }}>
-                                         <Checkbox 
-                                            checked={isFixedQuantity} 
-                                            onChange={e => setIsFixedQuantity(e.target.checked)}
-                                            style={{ marginRight: 8 }}
-                                         >
-                                            fix
-                                         </Checkbox>
-                                     </div>
-                                </Space.Compact>
-                             </Form.Item>
-                        </Col>
-                        <Col span={8}>
-                             <Form.Item label="Egység" name="quantity_unit" initialValue="db"> 
-                               <Input placeholder="pl. db" />
-                             </Form.Item>
-                        </Col>
-                         <Col span={8}>
-                             <Form.Item label="Státusz" name="status" initialValue="quote_request_open"> 
-                               <Select>
-                                   <Select.Option value="quote_request_open">Aktív</Select.Option>
-                                   <Select.Option value="cancelled">Inaktív</Select.Option>
-                               </Select>
-                             </Form.Item>
-                        </Col>
-                     </Row>
 
-                     <Row gutter={16} style={{ marginTop: 16 }}>
-                        <Col span={12}>
-                            <Form.Item label="Leírás" name="description">
-                                <Input.TextArea rows={3} />
-                            </Form.Item>
-                        </Col>
-                        <Col span={12}>
-                            <Form.Item label="Belső leírás" name="internal_description">
-                                <Input.TextArea rows={3} />
-                            </Form.Item>
-                        </Col>
-                     </Row>
+                     {/* ── Státusz ──────────────────────────────────────────── */}
+                     <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
+                       <div style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Státusz</div>
+                       <Form.Item name="status" initialValue="quote_request_open" noStyle>
+                         <Input type="hidden" style={{ display: 'none' }} />
+                       </Form.Item>
+                       <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                         {(() => {
+                           const menuItems = Object.entries(STATUS_LABELS)
+                             .filter(([key]) => key !== watchedStatus)
+                             .map(([key, label]) => ({
+                               key,
+                               label: <Tag color={STATUS_COLORS[key] || 'default'}>{label}</Tag>,
+                               onClick: () => { form.setFieldValue('status', key); setStatusDropdownOpen(false); },
+                             }));
+                           return (
+                             <Dropdown
+                               menu={{ items: menuItems }}
+                               open={statusDropdownOpen}
+                               onOpenChange={(o) => { if (!o) setStatusDropdownOpen(false); }}
+                               trigger={[]}
+                             >
+                               <Tag
+                                 color={STATUS_COLORS[watchedStatus] || 'default'}
+                                 style={{ cursor: 'pointer', userSelect: 'none', fontSize: 14, padding: '4px 12px' }}
+                                 onMouseDown={(e) => {
+                                   e.stopPropagation();
+                                   statusLongTriggered.current = false;
+                                   statusPressTimer.current = setTimeout(() => {
+                                     statusLongTriggered.current = true;
+                                     setStatusDropdownOpen(true);
+                                   }, 600);
+                                 }}
+                                 onMouseUp={() => { if (statusPressTimer.current) clearTimeout(statusPressTimer.current); }}
+                                 onMouseLeave={() => { if (statusPressTimer.current) clearTimeout(statusPressTimer.current); }}
+                               >
+                                 {STATUS_LABELS[watchedStatus] || watchedStatus || '-'}
+                               </Tag>
+                             </Dropdown>
+                           );
+                         })()}
+                         <span style={{ fontSize: 12, color: '#888' }}>Hosszan nyomva a státusz megváltoztatható</span>
+                       </div>
+                     </div>
+
+                     {/* ── Ügyfél ───────────────────────────────────────────── */}
+                     <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+                       <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+                       <Row gutter={[8, 4]}>
+                         <Col xs={24} md={8}>
+                           <Form.Item label="Cég" name="company_id" style={{ marginBottom: 6 }}>
+                             <Select
+                               showSearch
+                               allowClear
+                               optionFilterProp="label"
+                               placeholder="Válassz céget"
+                               onChange={async (val) => {
+                                 form.setFieldValue('contact_ids', []);
+                                 if (val) {
+                                   try {
+                                     const res: any = await crmService.getContactsByCompany(val);
+                                     setContacts((res.results ?? res) || []);
+                                   } catch {}
+                                 } else {
+                                   setContacts([]);
+                                 }
+                               }}
+                             >
+                               {(customers || []).map((c: any) => (
+                                 <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                               ))}
+                             </Select>
+                           </Form.Item>
+                         </Col>
+                         <Col xs={24} md={16}>
+                           <Form.Item label="Kapcsolattartók" name="contact_ids" style={{ marginBottom: 6 }}>
+                             <Select
+                               mode="multiple"
+                               allowClear
+                               showSearch
+                               optionFilterProp="label"
+                               placeholder="Válassz kapcsolattartókat"
+                               options={(contacts || []).map((p: any, idx: number) => {
+                                 const name = [p.last_name, p.first_name].filter(Boolean).join(' ').trim() || p.name || p.email || String(idx);
+                                 return { value: String(p.id ?? idx), label: name };
+                               })}
+                             />
+                           </Form.Item>
+                         </Col>
+                       </Row>
+                     </div>
+
+                     {/* ── Leírás ───────────────────────────────────────────── */}
+                     <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+                       <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Leírás</div>
+                       <Row gutter={[8, 4]}>
+                         <Col span={12}>
+                           <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
+                             <Input.TextArea rows={3} />
+                           </Form.Item>
+                         </Col>
+                         <Col span={12}>
+                           <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
+                             <Input.TextArea rows={3} />
+                           </Form.Item>
+                         </Col>
+                       </Row>
+                     </div>
 
                      <Row gutter={16} style={{ marginBottom: 24, background: '#fafafa', padding: 12, borderRadius: 4 }}>
                          <Col span={8}>

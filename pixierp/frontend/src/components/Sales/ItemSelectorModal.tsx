@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch } from 'antd';
+import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -97,8 +97,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   // Inline manufacturing form state
   const [manuForm] = Form.useForm();
-  const [manuSearchDrawerOpen, setManuSearchDrawerOpen] = useState(false);
-  const [manuSearchQuery, setManuSearchQuery] = useState('');
   const [manuSubmitting, setManuSubmitting] = useState(false);
   const [manuExistingProducts, setManuExistingProducts] = useState<any[]>([]);
 
@@ -126,6 +124,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // Cost-side currency (prices in the cost panel are entered in this currency)
   const [manuCostCurrencyCode, setManuCostCurrencyCode] = useState<string>('HUF');
   const [manuCostCurrencyId, setManuCostCurrencyId] = useState<number | null>(null);
+
+  // Unit autocomplete suggestions
+  const [unitSuggestions, setUnitSuggestions] = useState<{ unit: string; count: number }[]>([]);
+
+  // Material / service search modal for cost items
+  const [costSearchModal, setCostSearchModal] = useState<{ open: boolean; type: 'material' | 'service' | null }>({ open: false, type: null });
+  const [costSearchQuery, setCostSearchQuery] = useState('');
+  const [costSearchEditId, setCostSearchEditId] = useState<number | null>(null); // if set, editing existing row
 
   const manuWatchQty = Form.useWatch('manu_quantity', manuForm);
   const manuWatchPrice = Form.useWatch('manu_net_unit_price', manuForm);
@@ -305,7 +311,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           });
           const items: CostItem[] = p._costItemsState || [];
           setManuCostItems(items);
-          setManuPriceFromCalc(items.length > 0);
+          if (typeof p.price_from_cost_calc === 'boolean') {
+            setManuPriceFromCalc(p.price_from_cost_calc);
+          } else {
+            setManuPriceFromCalc(items.length > 0);
+          }
           if (p._currency) {
             setManuSellCurrencyCode((p._currency.code || 'HUF').toUpperCase());
             setManuSellCurrencyId(p._currency.id ?? null);
@@ -368,9 +378,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           currency_id: c.currency_info?.id ?? null,
         }));
         setManuCostItems(items);
-        // In edit mode with a saved price, disable price-from-calc so the saved price isn't overwritten
-        // Otherwise enable it when there are cost items
-        setManuPriceFromCalc(savedPrice == null && items.length > 0);
+        // Restore saved checkbox state; fall back to heuristic for legacy records
+        if (typeof p.price_from_cost_calc === 'boolean') {
+          setManuPriceFromCalc(p.price_from_cost_calc);
+        } else {
+          setManuPriceFromCalc(savedPrice == null && items.length > 0);
+        }
         // Restore saved currency
         if (p.currency_info) {
           setManuSellCurrencyCode((p.currency_info.code || 'HUF').toUpperCase());
@@ -398,7 +411,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     try {
       setLoading(true);
       // Load warehouse materials with is_product=true filter for products
-      const [prodRes, manuRes, svcRes, topProd, topManu, topSvc, matsAllRes, manuSvcsRes, suppsRes, deptsRes, currencyRes] = await Promise.all([
+      const [prodRes, manuRes, svcRes, topProd, topManu, topSvc, matsAllRes, manuSvcsRes, suppsRes, deptsRes, currencyRes, unitSuggestionsRes] = await Promise.all([
         api.get('/warehouse/materials/?filter_type=products').then(r => r.data),
         manufacturingService.getProducts(),
         salesService.getServices(),
@@ -410,6 +423,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         api.get('/crm/companies/?is_supplier=true&page_size=1000').then(r => r.data).catch(() => ({})),
         hrService.getDepartments().catch(() => []),
         manufacturingService.getCurrencies().catch(() => []),
+        manufacturingService.getUnitSuggestions().catch(() => []),
       ]);
       
       let pList = prodRes.results ?? prodRes;
@@ -488,6 +502,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       // Currencies
       const currList: ManuCurrency[] = Array.isArray(currencyRes) ? currencyRes : [];
       setManuCurrencies(currList);
+      // Unit suggestions
+      setUnitSuggestions(Array.isArray(unitSuggestionsRes) ? unitSuggestionsRes : []);
       // Set default currency if not yet set
       const defCurr = currList.find(c => c.is_default);
       if (defCurr) {
@@ -860,6 +876,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           currency: (c.currency_code || 'HUF').toUpperCase(),
         })),
         is_fixed_quantity: false,
+        price_from_cost_calc: manuPriceFromCalc,
         date: new Date().toISOString().split('T')[0],
         deadline: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
         width: v.width || null,
@@ -1164,6 +1181,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       } else if (field === 'selling_unit_price') {
         if (cp > 0) updated.markup_percent = Math.max(0, ((sup / cp) - 1) * 100);
         updated.selling_price = Math.max(0, sup) * qty;
+      } else if (field === 'selling_price') {
+        // Editing total → back-calculate unit price and markup
+        const newTotal = Math.max(0, Number(value) || 0);
+        updated.selling_price = newTotal;
+        updated.selling_unit_price = qty > 0 ? newTotal / qty : newTotal;
+        if (cp > 0) updated.markup_percent = Math.max(0, ((updated.selling_unit_price / cp) - 1) * 100);
       } else if (field === 'quantity') {
         updated.selling_price = sup * qty;
       }
@@ -1224,39 +1247,42 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const manuCostColumns: any[] = [
     { title: 'Megnevezés', key: 'name', width: 220, render: (_: any, r: CostItem) => {
       if (r.type === 'other') return <Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />;
-      if (r.name && !r.ref_id) return <Tooltip title={r.name}><span style={{ display:'block', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', maxWidth:200 }}>{r.name}</span></Tooltip>;
-      const isMat = r.type === 'material';
-      const list = isMat ? manuMaterials : manuCostServices;
+      // material / service: clickable to open search modal
+      const displayName = r.name || '(nincs kiválasztva)';
       return (
-        <Select size="small" showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id}
-          onChange={(val, opt: any) => {
-            manuUpdateCostItem(r.id, 'ref_id', val);
-            manuUpdateCostItem(r.id, 'name', opt.label);
-            const found = list.find((x: any) => x.id === val);
-            if (found) {
-              const unit = found.unit || (isMat ? 'db' : 'alkalom');
-              const cp = isMat ? (Number(found.moving_average_cost) || Number(found.net_unit_price) || 0) : (Number(found.unit_cost_price) || Number(found.unit_price) || 0);
-              const mu = found.markup_percentage ? Number(found.markup_percentage) : 35;
-              const sellUnit = found.unit_selling_price ? Number(found.unit_selling_price) : (cp > 0 ? cp * (1 + mu / 100) : 0);
-              const qty = r.quantity || 1;
-              manuUpdateCostItem(r.id, 'unit', unit);
-              manuUpdateCostItem(r.id, 'unit_price', cp);
-              manuUpdateCostItem(r.id, 'cost_price', cp * qty);
-              manuUpdateCostItem(r.id, 'markup_percent', mu);
-              manuUpdateCostItem(r.id, 'selling_unit_price', sellUnit);
-              manuUpdateCostItem(r.id, 'selling_price', sellUnit * qty);
-            }
-          }}>
-          {list.map((m: any) => <Select.Option key={m.id} value={m.id} label={m.name}>{m.name}</Select.Option>)}
-        </Select>
+        <Tooltip title="Kattints az újraválasztáshoz">
+          <Button
+            type="link"
+            size="small"
+            style={{ padding: 0, height: 'auto', textAlign: 'left', maxWidth: 210, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block', color: r.name ? undefined : '#ff4d4f' }}
+            onClick={() => {
+              setCostSearchQuery('');
+              setCostSearchEditId(r.id);
+              setCostSearchModal({ open: true, type: r.type as 'material' | 'service' });
+            }}
+          >
+            {displayName}
+          </Button>
+        </Tooltip>
       );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
     { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 60 }} /> },
-    { title: 'Egység', key: 'unit', width: 65, render: (_: any, r: CostItem) => r.type === 'other' ? <Input size="small" value={r.unit} onChange={e => manuUpdateCostItem(r.id, 'unit', e.target.value)} style={{ width: 56 }} /> : <span>{r.unit}</span> },
-    { title: 'Bek.ár', key: 'cost_price', width: 80, render: (_: any, r: CostItem) => <NumInput size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 72 }} min={0} /> },
+    { title: 'Egység', key: 'unit', width: 75, render: (_: any, r: CostItem) => r.type === 'other'
+        ? <AutoComplete
+            size="small"
+            value={r.unit}
+            options={unitSuggestions.map(u => ({ value: u.unit, label: u.count > 0 ? `${u.unit} (${u.count}x)` : u.unit }))}
+            onChange={v => manuUpdateCostItem(r.id, 'unit', v)}
+            filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())}
+            style={{ width: 68 }}
+          />
+        : <span>{r.unit}</span>
+    },
+    { title: 'Bek. e.ár', key: 'cost_price', width: 85, render: (_: any, r: CostItem) => <NumInput size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 76 }} min={0} /> },
     { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
-    { title: 'El.e.ár', key: 'sell_up', width: 80, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 72 }} min={0} /> },
+    { title: 'El. egység ár', key: 'sell_up', width: 95, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 84 }} min={0} /> },
+    { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: 80 }} min={0} /> },
     { title: 'Pénznem', key: 'currency', width: 90, render: (_: any, r: CostItem) => (
       <Select
         size="small"
@@ -1449,7 +1475,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       }
       okButtonProps={{ loading: manuSubmitting }}
       title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
-      width={1100}
+      width="min(1400px, 96vw)"
+      styles={{ body: { padding: 10 } }}
     >
       <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
         <Tabs
@@ -1484,12 +1511,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <strong>{manuCreatedId ? 'Egyedi gyártás szerkesztése' : 'Új egyedi gyártás'}</strong>
-                  <Button
-                    icon={<SearchOutlined />}
-                    onClick={() => setManuSearchDrawerOpen(true)}
-                  >
-                    Korábbi gyártásból
-                  </Button>
                 </div>                <Form layout="vertical" form={manuForm}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
                     <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: 2, marginBottom: 8 }}>
@@ -1695,8 +1716,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           checkedChildren="aktív"
                           unCheckedChildren="ki"
                         />
-                        <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('material')}>Alapanyag/Termék</Button>
-                        <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('service')}>Szolgáltatás</Button>
+                        <Button size="small" icon={<PlusOutlined />} onClick={() => { setCostSearchQuery(''); setCostSearchModal({ open: true, type: 'material' }); }}>Alapanyag/Termék</Button>
+                        <Button size="small" icon={<PlusOutlined />} onClick={() => { setCostSearchQuery(''); setCostSearchModal({ open: true, type: 'service' }); }}>Szolgáltatás</Button>
                         <Button size="small" icon={<PlusOutlined />} onClick={() => manuHandleAddCost('other')}>Egyéb költség</Button>
                         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
                           <span style={{ fontSize: 12, color: '#888' }}>Pénznem:</span>
@@ -1852,60 +1873,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                 </Form>
               </div>
 
-            {/* Korábbi gyártás kereső drawer */}
-            <Drawer
-              title="Korábbi egyedi gyártás keresése"
-              open={manuSearchDrawerOpen}
-              onClose={() => setManuSearchDrawerOpen(false)}
-              width={600}
-            >
-              <Input.Search
-                placeholder="Keresés név, cikkszám alapján..."
-                allowClear
-                value={manuSearchQuery}
-                onChange={e => setManuSearchQuery(e.target.value)}
-                style={{ marginBottom: 12 }}
-              />
-              <Table
-                size="small"
-                loading={loading}
-                rowKey="id"
-                dataSource={manuProducts.filter(p => {
-                  const q = manuSearchQuery.trim().toLowerCase();
-                  if (!q) return true;
-                  return (p.name || '').toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q);
-                })}
-                columns={[
-                  { title: 'Cikkszám', dataIndex: 'code', key: 'code', render: (v: any) => v || '-', width: 120 },
-                  { title: 'Név', dataIndex: 'name', key: 'name' },
-                  { title: 'Egységár', dataIndex: 'net_unit_price', key: 'net_unit_price', width: 100, render: (v: any) => v ? `${Number(v).toLocaleString('hu-HU')} Ft` : '-' },
-                  {
-                    title: '',
-                    key: 'select',
-                    width: 80,
-                    render: (_: any, record: any) => (
-                      <Button
-                        size="small"
-                        type="primary"
-                        onClick={() => {
-                          const unit = translateUnit(record.quantity_unit || 'db');
-                          let price = record.net_unit_price || 0;
-                          if (Number(record.quantity) > 0 && Number(record.net_total_price) > 0) {
-                            price = Number(record.net_total_price) / Number(record.quantity);
-                          }
-                          form.setFieldsValue({ unit, net_unit_price: price, quantity: record.is_fixed_quantity ? Number(record.quantity) : 1 });
-                          setSelected({ ...record, __type: 'manufacturing' });
-                          setManuSearchDrawerOpen(false);
-                        }}
-                      >
-                        Kiválaszt
-                      </Button>
-                    ),
-                  },
-                ]}
-                pagination={{ pageSize: 10 }}
-              />
-            </Drawer>
           </div>
         )}
 
@@ -1986,6 +1953,131 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setManuEditorOpen(false);
         }}
       />
+
+      {/* ── Cost item material / service search modal ─────────────────── */}
+      <Modal
+        title={costSearchModal.type === 'material' ? 'Alapanyag / Termék keresése' : 'Szolgáltatás keresése'}
+        open={costSearchModal.open}
+        onCancel={() => { setCostSearchModal({ open: false, type: null }); setCostSearchEditId(null); }}
+        footer={null}
+        width={860}
+        destroyOnClose
+      >
+        {(() => {
+          const isMat = costSearchModal.type === 'material';
+          const list: any[] = isMat ? manuMaterials : manuCostServices;
+          const normQ = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+          const q = normQ(costSearchQuery);
+          const filtered = q
+            ? list.filter(r => normQ([r.code || '', r.name || '', r.description || '', r.unit || ''].join(' ')).includes(q))
+            : list;
+
+          const matColumns = [
+            { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 110 },
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+            { title: 'Átl. bek. ár', key: 'cost', width: 100, render: (r: any) => {
+              const v = Number(r.moving_average_cost) || Number(r.net_unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+          ];
+          const svcColumns = [
+            { title: 'Kód', dataIndex: 'code', key: 'code', width: 100 },
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+            { title: 'Ár', key: 'price', width: 100, render: (r: any) => {
+              const v = Number(r.unit_cost_price) || Number(r.unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+          ];
+
+          const handleSelect = (record: any) => {
+            const type = costSearchModal.type!;
+            const unit = record.unit || (type === 'material' ? 'db' : 'alkalom');
+            const cp = type === 'material'
+              ? (Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
+              : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
+            const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
+            const sellUnit = record.unit_selling_price ? Number(record.unit_selling_price) : (cp > 0 ? cp * (1 + mu / 100) : 0);
+            const defaultSupplierId = (() => {
+              const ds = manuSuppliers.find((s: any) =>
+                (s.name || '').toLowerCase().includes('belső gyártás') ||
+                (s.name || '').toLowerCase().includes('belső márka') ||
+                (s.name || '').toLowerCase().includes('internal')
+              );
+              return ds ? ds.id : null;
+            })();
+            const newItem: CostItem = {
+              id: Date.now() + Math.random(),
+              type,
+              ref_id: record.id,
+              name: record.name,
+              unit,
+              quantity: 1,
+              unit_price: cp,
+              cost_price: cp,
+              markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : mu,
+              selling_unit_price: sellUnit,
+              selling_price: sellUnit,
+              supplier_id: defaultSupplierId,
+              is_per_unit: false,
+              is_internal: false,
+              department_id: null,
+              currency_code: manuCostCurrencyCode,
+              currency_id: manuCostCurrencyId,
+            };
+            if (costSearchEditId !== null) {
+              // Update existing row, keep quantity
+              setManuCostItems(prev => prev.map(ci => {
+                if (ci.id !== costSearchEditId) return ci;
+                const qty = ci.quantity || 1;
+                return {
+                  ...ci,
+                  ref_id: record.id,
+                  name: record.name,
+                  unit,
+                  unit_price: cp,
+                  cost_price: cp * qty,
+                  markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : mu,
+                  selling_unit_price: sellUnit,
+                  selling_price: sellUnit * qty,
+                };
+              }));
+              setCostSearchEditId(null);
+            } else {
+              setManuCostItems(prev => [...prev, newItem]);
+            }
+            setCostSearchModal({ open: false, type: null });
+          };
+
+          return (
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input.Search
+                placeholder="Keresés cikkszám, megnevezés, leírás szerint..."
+                allowClear
+                value={costSearchQuery}
+                onChange={e => setCostSearchQuery(e.target.value)}
+                style={{ marginBottom: 8 }}
+                autoFocus
+              />
+              <Table
+                size="small"
+                dataSource={filtered}
+                columns={isMat ? matColumns : svcColumns}
+                rowKey="id"
+                pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (t, r) => `${r[0]}-${r[1]} / ${t}` }}
+                onRow={(record) => ({
+                  onClick: () => handleSelect(record),
+                  style: { cursor: 'pointer' },
+                })}
+                scroll={{ x: 'max-content' }}
+              />
+            </Space>
+          );
+        })()}
+      </Modal>
     </Modal>
   );
 };

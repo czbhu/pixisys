@@ -2427,6 +2427,52 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             'is_html': is_html
         }
 
+    @action(detail=False, methods=['get'])
+    def manufacturing_items(self, request):
+        """Return all CustomerOrderItems with item_type='manufacturing', with order and product info."""
+        from .models import CustomerOrderItem
+        qs = CustomerOrderItem.objects.select_related(
+            'customer_order',
+            'customer_order__quote_request',
+            'customer_order__quote_request__company',
+            'customer_order__quote_request__customer',
+            'quote_item',
+            'quote_item__manufacturing_product',
+        ).filter(
+            quote_item__item_type='manufacturing',
+            quote_item__manufacturing_product__isnull=False,
+        ).order_by('-customer_order__order_date')
+
+        # Optional status filter
+        statuses = request.query_params.get('status')
+        if statuses:
+            qs = qs.filter(status__in=statuses.split(','))
+
+        data = []
+        for item in qs:
+            mp = item.quote_item.manufacturing_product
+            order = item.customer_order
+            qr = order.quote_request
+            company = qr.company or qr.customer
+            data.append({
+                'id': item.id,
+                'order_id': order.id,
+                'order_number': order.order_number,
+                'order_date': order.order_date.isoformat() if order.order_date else None,
+                'order_status': order.status,
+                'status': item.status,
+                'customer_name': company.name if company else '',
+                'manufacturing_product_id': mp.id,
+                'name': mp.name,
+                'code': mp.code or '',
+                'description': item.description or mp.description or '',
+                'internal_description': mp.internal_description or '',
+                'quantity': float(item.quantity),
+                'unit': item.unit,
+                'net_unit_price': float(item.net_unit_price),
+            })
+        return Response(data)
+
     @action(detail=True, methods=['post'])
     def render_confirmation_email(self, request, pk=None):
         order = self.get_object()

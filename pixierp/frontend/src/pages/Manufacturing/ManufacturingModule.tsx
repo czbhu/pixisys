@@ -15,6 +15,7 @@ import {
     FileOutlined,
 } from '@ant-design/icons';
 import Products from './Products';
+import ProductDetail from './ProductDetail';
 import ProductEditor from './ProductEditor';
 import OrderedProducts from './OrderedProducts';
 import ProductClasses from './ProductClasses';
@@ -41,6 +42,7 @@ const ManufacturingModule: React.FC = () => {
         <Routes>
             <Route path="/" element={<ModuleDashboard title="Gyártás" items={dashboardItems} />} />
             <Route path="/products" element={<Products />} />
+            <Route path="/products/:id" element={<ProductDetail />} />
             <Route path="/product-editor" element={<ProductEditor />} />
             <Route path="/ordered-products" element={<OrderedProducts />} />
             <Route path="/product-classes" element={<ProductClasses />} />

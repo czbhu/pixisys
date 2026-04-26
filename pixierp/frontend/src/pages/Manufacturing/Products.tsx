@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
@@ -17,7 +17,8 @@ import {
     Popconfirm,
     Row,
     Col,
-    Spin
+    Spin,
+    Dropdown,
 } from 'antd';
 import {
     PlusOutlined,
@@ -55,6 +56,22 @@ const STATUS_COLORS: { [key: string]: string } = {
     'paid': 'success',
 };
 
+const STATUS_LABELS: { [key: string]: string } = {
+    'quote_request_open': 'Árajánlat nyitott',
+    'quote_request_priced': 'Árajánlat beárazva',
+    'quote_request_sent': 'Árajánlat elküldve',
+    'ordered': 'Megrendelve',
+    'design_in_progress': 'Tervezés alatt',
+    'design_approved': 'Tervezés jóváhagyva',
+    'production_in_progress': 'Gyártás alatt',
+    'production_completed': 'Gyártás kész',
+    'finished_goods_warehouse': 'Késztermék raktáron',
+    'installation_in_progress': 'Telepítés alatt',
+    'delivered': 'Szállítva',
+    'invoiced': 'Számlázva',
+    'paid': 'Fizetve',
+};
+
 const Products: React.FC = () => {
     const [searchParams] = useSearchParams();
     const location = useLocation();
@@ -75,6 +92,19 @@ const Products: React.FC = () => {
     const [query, setQuery] = useState('');
     const [form] = Form.useForm();
     const [createModalOpen, setCreateModalOpen] = useState(false);
+    const statusPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const statusLongTriggered = useRef(false);
+    const [statusDropdownState, setStatusDropdownState] = useState<{ open: boolean; record: any }>({ open: false, record: null });
+
+    const handleStatusChange = async (record: any, newStatus: string) => {
+        setStatusDropdownState({ open: false, record: null });
+        try {
+            await manufacturingService.updateProduct(record.id, { status: newStatus });
+            setProducts(prev => prev.map(p => p.id === record.id ? { ...p, status: newStatus } : p));
+        } catch {
+            message.error('Nem sikerült a státuszt módosítani');
+        }
+    };
 
     useEffect(() => {
         loadProducts();
@@ -149,16 +179,7 @@ const Products: React.FC = () => {
                 showModal();
             }
         } else if (editId) {
-            setLoading(true);
-            manufacturingService.getProduct(Number(editId)).then(prod => {
-                if (prod) {
-                    setEditingProduct(prod);
-                    setCreateModalOpen(true);
-                }
-            }).catch(err => {
-                console.error(err);
-                message.error('Hiba a termék betöltésekor');
-            }).finally(() => setLoading(false));
+            navigate(`/manufacturing/products/${editId}`, { replace: true });
         }
     }, [searchParams]);
 
@@ -398,9 +419,50 @@ const Products: React.FC = () => {
             title: 'Leírás',
             dataIndex: 'description',
             key: 'description',
-            width: 250, 
-            ellipsis: true,
-            render: (text: string) => <Tooltip title={text}><span>{text}</span></Tooltip>
+            width: 250,
+            render: (text: string) => <Tooltip title={text}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{text}</span></Tooltip>
+        },
+        {
+            title: 'Státusz',
+            dataIndex: 'status',
+            key: 'status',
+            width: 160,
+            sorter: (a: ManufacturingProduct, b: ManufacturingProduct) => (a.status || '').localeCompare(b.status || ''),
+            render: (status: string, record: ManufacturingProduct) => {
+                const menuItems = Object.entries(STATUS_LABELS)
+                    .filter(([key]) => key !== status)
+                    .map(([key, label]) => ({
+                        key,
+                        label: <Tag color={STATUS_COLORS[key] || 'default'}>{label}</Tag>,
+                        onClick: () => handleStatusChange(record, key),
+                    }));
+                const isOpen = statusDropdownState.open && statusDropdownState.record?.id === record.id;
+                return (
+                    <Dropdown
+                        menu={{ items: menuItems }}
+                        open={isOpen}
+                        onOpenChange={(o) => { if (!o) setStatusDropdownState({ open: false, record: null }); }}
+                        trigger={[]}
+                    >
+                        <Tag
+                            color={STATUS_COLORS[status] || 'default'}
+                            style={{ cursor: 'pointer', userSelect: 'none' }}
+                            onMouseDown={(e) => {
+                                e.stopPropagation();
+                                statusLongTriggered.current = false;
+                                statusPressTimer.current = setTimeout(() => {
+                                    statusLongTriggered.current = true;
+                                    setStatusDropdownState({ open: true, record });
+                                }, 600);
+                            }}
+                            onMouseUp={() => { if (statusPressTimer.current) clearTimeout(statusPressTimer.current); }}
+                            onMouseLeave={() => { if (statusPressTimer.current) clearTimeout(statusPressTimer.current); }}
+                        >
+                            {STATUS_LABELS[status] || status || '-'}
+                        </Tag>
+                    </Dropdown>
+                );
+            },
         },
         {
             title: 'Mennyiség',
@@ -576,7 +638,7 @@ const Products: React.FC = () => {
                     size="small"
                     loading={loading}
                     onRow={(record) => ({
-                        onDoubleClick: () => showModal(record),
+                        onDoubleClick: () => navigate(`/manufacturing/products/${record.id}`),
                         style: { cursor: 'pointer' }
                     })}
                 />

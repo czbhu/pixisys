@@ -1,13 +1,33 @@
 import React, { useEffect, useState } from 'react';
-import { Table, Button, Collapse, Statistic, Row, Col, Modal, Form, Input, InputNumber, Select, Checkbox, message, Space, Popconfirm, Card, Typography, Tag } from 'antd';
-import NumInput from '../NumInput';
-import { PlusOutlined, EditOutlined, DeleteOutlined, CalculatorOutlined } from '@ant-design/icons';
-import { salesService } from '../../services/salesService';
-import { crmService } from '../../services/crmService';
+import { Table, Collapse, Statistic, Row, Col, Card, Typography, Tag, Select, Space, Tooltip, Spin } from 'antd';
+import { CalculatorOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { manufacturingService } from '../../services/manufacturingService';
 
 const { Panel } = Collapse;
 const { Text } = Typography;
+
+interface CurrencyItem {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string;
+  exchange_rate: number;
+  is_default: boolean;
+}
+
+interface AutoRow {
+  _autoId: string;
+  _label: string;
+  _color: string;
+  _sourceCurrency: string;
+  code: string;
+  name: string;
+  quantity: number;
+  unit: string;
+  net_unit_price_orig: number;
+  net_total_orig: number;
+  supplier_name: string;
+}
 
 interface RFQCostsTableProps {
   rfqId?: number;
@@ -19,277 +39,310 @@ interface RFQCostsTableProps {
   rfqItems?: any[];
 }
 
-export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({ rfqId, totalRevenue, currency, draftMode, value, onChange, rfqItems }) => {
-  const [costs, setCosts] = useState<any[]>([]);
-  const [manuCostItems, setManuCostItems] = useState<{ productName: string; items: any[] }[]>([]);
+export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
+  totalRevenue,
+  currency,
+  rfqItems,
+}) => {
+  const [autoRows, setAutoRows] = useState<AutoRow[]>([]);
+  const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
+  const [displayCurrency, setDisplayCurrency] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState<any | null>(null);
-  const [form] = Form.useForm();
-  const [suppliers, setSuppliers] = useState<any[]>([]);
-  const [activeKey, setActiveKey] = useState<string | string[]>('1');
 
   useEffect(() => {
-    if (!draftMode && rfqId) {
-      loadCosts();
-    } else if (draftMode && value) {
-        setCosts(value);
-    }
-  }, [rfqId, draftMode, value, rfqItems]);
-
-  useEffect(() => {
-    loadSuppliers();
+    manufacturingService.getCurrencies().then((list: any) => {
+      const arr: CurrencyItem[] = Array.isArray(list) ? list : [];
+      setCurrencies(arr);
+      const def = arr.find(c => c.is_default);
+      setDisplayCurrency(prev => prev || (def ? def.code.toUpperCase() : (arr[0]?.code.toUpperCase() ?? 'HUF')));
+    }).catch(() => {});
   }, []);
 
+  const convert = (amount: number, fromCode: string, toCode: string): number => {
+    const from = (fromCode || 'HUF').toUpperCase();
+    const to = (toCode || 'HUF').toUpperCase();
+    if (from === to || !currencies.length) return amount;
+    const rateMap: Record<string, number> = {};
+    currencies.forEach(c => { rateMap[c.code.toUpperCase()] = Number(c.exchange_rate); });
+    const rFrom = rateMap[from] ?? 1;
+    const rTo = rateMap[to] ?? 1;
+    return (amount * rFrom) / rTo;
+  };
+
   useEffect(() => {
-    const manuItems = (rfqItems || []).filter((it: any) => it.item_type === 'manufacturing' && it.manufacturing_product);
-    if (manuItems.length === 0) {
-      setManuCostItems([]);
-      return;
-    }
-    Promise.all(
-      manuItems.map(async (it: any) => {
-        try {
-          const pid = typeof it.manufacturing_product === 'object' ? it.manufacturing_product.id : it.manufacturing_product;
-          const product = await manufacturingService.getProduct(pid);
-          return { productName: product.name || `#${pid}`, items: product.cost_items || [] };
-        } catch {
-          return null;
-        }
-      })
-    ).then(results => {
-      setManuCostItems(results.filter(Boolean) as any);
-    });
-  }, [rfqItems]);
+    const items = rfqItems || [];
+    const rows: AutoRow[] = [];
+    let counter = 0;
+    const promises: Promise<void>[] = [];
+    const defaultCurrencyCode = (currencies.find(c => c.is_default)?.code ?? 'HUF').toUpperCase();
 
-  const loadCosts = async () => {
-    if (!rfqId) return;
-    setLoading(true);
-    try {
-      const data = await salesService.getQuoteRequestCosts(rfqId);
-      setCosts(data || []);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
-  };
+    items.forEach((item: any) => {
+      const qty = Number(item.quantity) || 1;
 
-  const loadSuppliers = async () => {
-    try {
-      const res = await crmService.getCompanies();
-      setSuppliers((res as any).results ?? res);
-    } catch (e) {}
-  };
-
-  const handleCreate = () => {
-    setEditingItem(null);
-    form.resetFields();
-    setModalOpen(true);
-  };
-
-  const handleEdit = (item: any) => {
-    setEditingItem(item);
-    form.setFieldsValue({
-      ...item,
-      supplier_id: item.supplier
-    });
-    setModalOpen(true);
-  };
-
-  const handleDelete = async (id: number) => {
-    if (draftMode) {
-      const newCosts = costs.filter(c => c.id !== id);
-      setCosts(newCosts);
-      onChange?.(newCosts);
-      message.success('Költség eltávolítva (draft)');
-      return;
-    }
-    try {
-      await salesService.deleteQuoteRequestCost(id);
-      message.success('Költség törölve');
-      loadCosts();
-    } catch (e) {
-      message.error('Hiba törléskor');
-    }
-  };
-
-  const handleOk = async () => {
-    try {
-      const values = await form.validateFields();
-      
-      const supplierName = suppliers.find(s => s.id === values.supplier_id)?.name;
-      const netTotal = (Number(values.quantity) || 0) * (Number(values.net_unit_price) || 0);
-
-      const payload = {
-        ...values,
-        quote_request: rfqId,
-        supplier: values.supplier_id,
-        supplier_name: supplierName,
-        net_total: netTotal
-      };
-      
-      if (draftMode) {
-         if (editingItem) {
-            const newCosts = costs.map(c => c.id === editingItem.id ? { ...c, ...payload, id: c.id } : c);
-            setCosts(newCosts);
-            onChange?.(newCosts);
-         } else {
-            const newId = (costs.length > 0 ? Math.max(...costs.map(c => c.id)) : 0) + 1;
-            const newCosts = [...costs, { ...payload, id: newId }];
-            setCosts(newCosts);
-            onChange?.(newCosts);
-         }
-         message.success('Költség rögzítve (draft)');
-         setModalOpen(false);
-         return;
+      if (item.item_type === 'service' && item.service) {
+        const cp = Number(item.service_unit_cost_price) || 0;
+        rows.push({
+          _autoId: `svc_${counter++}`,
+          _label: 'Szolgáltatás',
+          _color: 'blue',
+          _sourceCurrency: defaultCurrencyCode,
+          code: item.service_code || '',
+          name: item.service_name || '-',
+          quantity: qty,
+          unit: item.unit || 'alkalom',
+          net_unit_price_orig: cp,
+          net_total_orig: cp * qty,
+          supplier_name: '',
+        });
+      } else if (item.item_type === 'product' && item.material) {
+        const cp = Number(item.material_unit_cost_price) || 0;
+        rows.push({
+          _autoId: `mat_${counter++}`,
+          _label: 'Termék',
+          _color: 'green',
+          _sourceCurrency: defaultCurrencyCode,
+          code: item.material_code || '',
+          name: item.material_name || '-',
+          quantity: qty,
+          unit: item.unit || 'db',
+          net_unit_price_orig: cp,
+          net_total_orig: cp * qty,
+          supplier_name: '',
+        });
+      } else if (item.item_type === 'manufacturing' && item.manufacturing_product) {
+        const pid = typeof item.manufacturing_product === 'object'
+          ? item.manufacturing_product.id
+          : item.manufacturing_product;
+        const productName = item.manufacturing_product_name || `#${pid}`;
+        promises.push(
+          manufacturingService.getProduct(pid).then((product: any) => {
+            (product.cost_items || []).forEach((ci: any) => {
+              const ciQty = Number(ci.quantity) || 1;
+              // cost_price is the unit cost; multiply by quantity for total
+              const ciUnitCp = Number(ci.cost_price) || 0;
+              const ciTotalCp = ciUnitCp * ciQty;
+              const ciCurrency = (ci.currency || defaultCurrencyCode).toUpperCase();
+              rows.push({
+                _autoId: `manu_${pid}_${ci.id ?? counter++}`,
+                _label: productName,
+                _color: 'purple',
+                _sourceCurrency: ciCurrency,
+                code: '',
+                name: ci.name || '-',
+                quantity: ciQty,
+                unit: ci.unit || 'db',
+                net_unit_price_orig: ciUnitCp,
+                net_total_orig: ciTotalCp,
+                supplier_name: ci.supplier_name || '',
+              });
+            });
+          }).catch(() => {})
+        );
       }
+    });
 
-      if (editingItem) {
-        await salesService.updateQuoteRequestCost(editingItem.id, payload);
-        message.success('Frissítve');
-      } else {
-        await salesService.createQuoteRequestCost(payload);
-        message.success('Létrehozva');
-      }
-      setModalOpen(false);
-      loadCosts();
-    } catch (e) {
-      console.error(e);
+    if (promises.length > 0) {
+      setLoading(true);
+      Promise.all(promises).then(() => {
+        setAutoRows([...rows]);
+        setLoading(false);
+      });
+    } else {
+      setAutoRows([...rows]);
     }
-  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rfqItems, currencies]);
 
-  const totalCosts = costs.reduce((sum, item) => sum + (Number(item.net_total) || 0), 0);
-  const profit = totalRevenue - totalCosts;
+  const displayCode = displayCurrency || 'HUF';
+  const displaySymbol = currencies.find(c => c.code.toUpperCase() === displayCode)?.symbol || displayCode;
 
-  const columns = [
-    { title: 'ID', dataIndex: 'id', width: 60 },
-    { title: 'Cikkszám', dataIndex: 'code' },
-    { title: 'Megnevezés', dataIndex: 'name' },
-    { title: 'Mennyiség', dataIndex: 'quantity', width: 100 },
-    { title: 'Egység', dataIndex: 'unit', width: 80 },
-    { title: 'Nettó ár', dataIndex: 'net_unit_price', width: 120, render: (v: number) => `${v?.toLocaleString()} ${currency}` },
-    { title: 'Nettó összesen', dataIndex: 'net_total', width: 120, render: (v: number) => `${v?.toLocaleString()} ${currency}` },
-    { title: 'Beszállító', dataIndex: 'supplier_name' },
-    { title: 'Raktári', dataIndex: 'is_stock', render: (v: boolean) => (v ? 'Igen' : 'Nem') },
+  const fmt = (v: number) =>
+    `${v.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${displaySymbol}`;
+
+  const totalAutoCosts = autoRows.reduce(
+    (sum, r) => sum + convert(r.net_total_orig, r._sourceCurrency, displayCode),
+    0
+  );
+  const totalRevenueConverted = convert(totalRevenue, currency, displayCode);
+  const profit = totalRevenueConverted - totalAutoCosts;
+
+  const autoColumns: any[] = [
     {
-      title: 'Műveletek',
-      key: 'actions',
-      width: 100,
-      render: (_: any, r: any) => {
-        if (r.is_implicit || r._rfqItemRef !== undefined) {
-          return <Text type="secondary" style={{ fontSize: '12px' }}>Auto</Text>;
-        }
+      title: 'Típus / Termék',
+      key: 'label',
+      width: 160,
+      render: (_: any, r: AutoRow) => <Tag color={r._color}>{r._label}</Tag>,
+    },
+    { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 100 },
+    { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+    { title: 'Menny.', dataIndex: 'quantity', key: 'qty', width: 70 },
+    { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 65 },
+    {
+      title: (
+        <span>
+          Nettó e.ár{' '}
+          <Tooltip title="Átváltva a kiválasztott devizanembe">
+            <InfoCircleOutlined style={{ color: '#aaa', fontSize: 12 }} />
+          </Tooltip>
+        </span>
+      ),
+      key: 'nup',
+      width: 130,
+      render: (_: any, r: AutoRow) => {
+        const conv = convert(r.net_unit_price_orig, r._sourceCurrency, displayCode);
+        const origLabel = r._sourceCurrency !== displayCode
+          ? `Eredeti: ${r.net_unit_price_orig.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r._sourceCurrency}`
+          : undefined;
         return (
-          <Space>
-            <Button icon={<EditOutlined />} size="small" onClick={() => handleEdit(r)} />
-            <Popconfirm title="Törlés?" onConfirm={() => handleDelete(r.id)}>
-              <Button icon={<DeleteOutlined />} size="small" danger />
-            </Popconfirm>
-          </Space>
+          <Tooltip title={origLabel}>
+            <span>{conv.toLocaleString('hu-HU', { maximumFractionDigits: 2 })}</span>
+          </Tooltip>
         );
       },
     },
+    {
+      title: 'Nettó összesen',
+      key: 'nt',
+      width: 140,
+      render: (_: any, r: AutoRow) => {
+        const conv = convert(r.net_total_orig, r._sourceCurrency, displayCode);
+        const origLabel = r._sourceCurrency !== displayCode
+          ? `Eredeti: ${r.net_total_orig.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r._sourceCurrency}`
+          : undefined;
+        return (
+          <Tooltip title={origLabel}>
+            <span style={{ fontWeight: 500 }}>{fmt(conv)}</span>
+          </Tooltip>
+        );
+      },
+    },
+    {
+      title: 'Forrás deviza',
+      key: 'cur',
+      width: 90,
+      render: (_: any, r: AutoRow) => (
+        <Tag color={r._sourceCurrency !== displayCode ? 'orange' : 'default'}>{r._sourceCurrency}</Tag>
+      ),
+    },
+    { title: 'Beszállító', dataIndex: 'supplier_name', key: 'supp' },
   ];
 
   return (
     <Card size="small" style={{ marginTop: 16 }}>
-       <Collapse ghost>
-         <Panel header={<Space><CalculatorOutlined /> <Text strong>Költség Kalkuláció</Text></Space>} key="1">
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate} style={{ marginBottom: 16 }}>
-              Új költség tétel
-            </Button>
-            <Table
-              dataSource={costs}
-              columns={columns}
-              rowKey="id"
-              pagination={false}
+      <Collapse ghost defaultActiveKey={['1']}>
+        <Panel
+          header={
+            <Space>
+              <CalculatorOutlined />
+              <Text strong>Költség Kalkuláció</Text>
+            </Space>
+          }
+          key="1"
+        >
+          {/* Currency selector */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+            <Text type="secondary" style={{ fontSize: 12 }}>Megjelenítési deviza:</Text>
+            <Select
               size="small"
-              loading={loading}
-              summary={(pageData) => {
-                  return (
-                    <Table.Summary fixed>
-                      <Table.Summary.Row>
-                        <Table.Summary.Cell index={0} colSpan={6}><Text strong>Összesen</Text></Table.Summary.Cell>
-                        <Table.Summary.Cell index={1} colSpan={4}>
-                            <Text strong>{totalCosts.toLocaleString()} {currency}</Text>
-                        </Table.Summary.Cell>
-                      </Table.Summary.Row>
-                    </Table.Summary>
-                  );
-              }}
+              style={{ width: 150 }}
+              value={displayCurrency || undefined}
+              onChange={v => setDisplayCurrency(v)}
+              placeholder="Deviza"
+              options={currencies.map(c => ({
+                value: c.code.toUpperCase(),
+                label: `${c.code.toUpperCase()} – ${c.name}`,
+              }))}
             />
-
-            {manuCostItems.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <Text type="secondary" style={{ fontSize: 12 }}>Egyedi gyártások kalkulációi (referencia)</Text>
-                {manuCostItems.map((group, gi) => (
-                  <div key={gi} style={{ marginTop: 4 }}>
-                    <Tag color="blue" style={{ marginBottom: 4 }}>{group.productName}</Tag>
-                  </div>
-                ))}
-              </div>
+            {currencies.length > 1 && displayCode && (
+              <Text type="secondary" style={{ fontSize: 11, color: '#888' }}>
+                {currencies
+                  .filter(c => c.code.toUpperCase() !== displayCode)
+                  .slice(0, 4)
+                  .map(c => {
+                    const rate = convert(1, c.code.toUpperCase(), displayCode);
+                    return `1 ${c.code.toUpperCase()} = ${rate.toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${displayCode}`;
+                  })
+                  .join(' · ')}
+              </Text>
             )}
-            
-            <div style={{ marginTop: 24, padding: 16, background: '#f5f5f5', borderRadius: 8 }}>
-              <Row gutter={16}>
-                <Col span={8}>
-                  <Statistic title="Költségek összesen" value={totalCosts} precision={0} suffix={currency} />
-                </Col>
-                <Col span={8}>
-                   <Statistic title="Bevétel összesen" value={totalRevenue} precision={0} suffix={currency} valueStyle={{ color: '#3f8600' }} />
-                </Col>
-                <Col span={8}>
-                   <Statistic 
-                     title="Haszon" 
-                     value={profit} 
-                     precision={0} 
-                     suffix={currency} 
-                     valueStyle={{ color: profit >= 0 ? '#3f8600' : '#cf1322' }} 
-                   />
-                </Col>
-              </Row>
-            </div>
-         </Panel>
-       </Collapse>
+          </div>
 
-       <Modal
-         title={editingItem ? 'Költség szerkesztése' : 'Új költség'}
-         open={modalOpen}
-         onCancel={() => setModalOpen(false)}
-         onOk={handleOk}
-       >
-         <Form form={form} layout="vertical">
-             <Form.Item name="code" label="Cikkszám">
-               <Input />
-             </Form.Item>
-             <Form.Item name="name" label="Megnevezés" rules={[{ required: true }]}>
-               <Input />
-             </Form.Item>
-             <Space>
-               <Form.Item name="quantity" label="Mennyiség" initialValue={1} rules={[{ required: true }]}>
-                 <NumInput min={0} />
-               </Form.Item>
-               <Form.Item name="unit" label="Egység" initialValue="db">
-                 <Input />
-               </Form.Item>
-             </Space>
-             <Form.Item name="net_unit_price" label="Nettó egységár" initialValue={0} rules={[{ required: true }]}>
-               <NumInput min={0} style={{ width: '100%' }} />
-             </Form.Item>
-             <Form.Item name="supplier_id" label="Beszállító">
-               <Select 
-                 showSearch 
-                 optionFilterProp="children"
-                 filterOption={(input, option) => (option?.label ?? '').toLowerCase().includes(input.toLowerCase())}
-                 options={suppliers.map(s => ({ label: s.name, value: s.id }))} 
-               />
-             </Form.Item>
-             <Form.Item name="is_stock" valuePropName="checked">
-               <Checkbox>Raktári tétel</Checkbox>
-             </Form.Item>
-         </Form>
-       </Modal>
+          {/* Auto rows table */}
+          <Spin spinning={loading}>
+            {autoRows.length === 0 && !loading ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                Nincs automatikusan betölthető költségtétel. (Adj hozzá alapanyagot, szolgáltatást vagy egyedi gyártást a tételek közé.)
+              </Text>
+            ) : (
+              <Table
+                dataSource={autoRows}
+                columns={autoColumns}
+                rowKey="_autoId"
+                pagination={false}
+                size="small"
+                scroll={{ x: 'max-content' }}
+                summary={() => (
+                  <Table.Summary fixed>
+                    <Table.Summary.Row style={{ background: '#fafafa' }}>
+                      <Table.Summary.Cell index={0} colSpan={6}>
+                        <Text strong>Összes költség ({displayCode})</Text>
+                      </Table.Summary.Cell>
+                      <Table.Summary.Cell index={1} colSpan={3}>
+                        <Text strong style={{ color: '#cf1322' }}>{fmt(totalAutoCosts)}</Text>
+                      </Table.Summary.Cell>
+                    </Table.Summary.Row>
+                  </Table.Summary>
+                )}
+              />
+            )}
+          </Spin>
+
+          {/* Summary */}
+          <div style={{ marginTop: 20, padding: 14, background: '#f5f5f5', borderRadius: 8 }}>
+            <Row gutter={16}>
+              <Col span={8}>
+                <Statistic
+                  title={`Összes költség (${displayCode})`}
+                  value={totalAutoCosts}
+                  precision={2}
+                  suffix={displaySymbol}
+                  valueStyle={{ color: '#cf1322' }}
+                />
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title={`Bevétel összesen (${displayCode})`}
+                  value={totalRevenueConverted}
+                  precision={2}
+                  suffix={displaySymbol}
+                  valueStyle={{ color: '#3f8600' }}
+                />
+                {currency.toUpperCase() !== displayCode && (
+                  <Text type="secondary" style={{ fontSize: 11 }}>
+                    Eredeti: {totalRevenue.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {currency.toUpperCase()}
+                  </Text>
+                )}
+              </Col>
+              <Col span={8}>
+                <Statistic
+                  title="Haszon (bevétel − összes költ.)"
+                  value={profit}
+                  precision={2}
+                  suffix={displaySymbol}
+                  valueStyle={{ color: profit >= 0 ? '#3f8600' : '#cf1322' }}
+                />
+                {totalRevenueConverted > 0 && (
+                  <div>
+                    <Text type="secondary" style={{ fontSize: 11 }}>
+                      {((profit / totalRevenueConverted) * 100).toFixed(1)}% margin
+                    </Text>
+                  </div>
+                )}
+              </Col>
+            </Row>
+          </div>
+        </Panel>
+      </Collapse>
     </Card>
   );
 };

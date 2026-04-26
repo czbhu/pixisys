@@ -3056,8 +3056,11 @@ class NfcTagViewSet(viewsets.ModelViewSet):
                 return _redirect_to_login(trigger_url)
             return Response({'error': 'Bejelentkezés szükséges'}, status=401)
 
-        # GET kérés böngészőből → csúszka megerősítő oldal megjelenítése (ne aktiváljon azonnal)
+        # GET kérés böngészőból → csúszka megerősítő oldal vagy sikeres aktiválás visszajelzés
         if request.method == 'GET' and 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+            # ?done=1 → PRG visszatérés — ne aktiváljon újra frissítéskor
+            if request.query_params.get('done') == '1':
+                return _resp(True, 'Aktiválva', f'A relé sikeresen aktiválva ({tag.name}).', 200)
             from django.middleware.csrf import get_token
             csrf_token = get_token(request)
             trigger_url = request.build_absolute_uri()
@@ -3111,6 +3114,11 @@ class NfcTagViewSet(viewsets.ModelViewSet):
                     auth = (device.shelly_auth_user, device.shelly_auth_pass)
                 r = req.post(url, json=payload, auth=auth, timeout=5)
                 r.raise_for_status()
+                # HTML kérés: PRG — redirect ?done=1-re, hogy frissítéskor ne aktiváljon újra
+                if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
+                    from django.http import HttpResponseRedirect
+                    base_url = request.build_absolute_uri().split('?')[0]
+                    return HttpResponseRedirect(f'{base_url}?done=1')
                 return _resp(True, 'Aktiválva', f'A relé sikeresen aktiválva ({tag.name}).', 200)
             except Exception as e:
                 return _resp(False, 'Eszköz hiba', f'Az IoT eszköz nem elérhető: {e}', 400)

@@ -21,6 +21,12 @@ import { getCountries } from '../../services/countryService';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 
+const normAccents = (s: string) =>
+  (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+const filterOptionAccents = (input: string, option: any) =>
+  normAccents(option?.label?.toString() || '').includes(normAccents(input));
+
 const { TextArea } = Input;
 
 const RFQDetail: React.FC = () => {
@@ -564,7 +570,7 @@ const RFQDetail: React.FC = () => {
                     <Form.Item name="company_id" noStyle>
                       <Select
                         showSearch
-                        optionFilterProp="label"
+                        filterOption={filterOptionAccents}
                         placeholder="Válassz céget"
                         style={{ width: 'calc(100% - 32px)' }}
                         onFocus={async () => {
@@ -622,7 +628,7 @@ const RFQDetail: React.FC = () => {
                         mode="multiple"
                         allowClear
                         showSearch
-                        optionFilterProp="label"
+                        filterOption={filterOptionAccents}
                         optionLabelProp="label"
                         placeholder="Válassz kapcsolattartókat"
                         style={{ width: 'calc(100% - 127px)' }}

@@ -555,6 +555,11 @@ export const salesService = {
     async getItemWorkSheet(orderId: number, itemId: number) {
         const response = await api.get(`/sales/customer-orders/${orderId}/item_work_sheet/?item_id=${itemId}`, { responseType: 'blob' });
         return response;
-    }
+    },
+    async getOrderedManufacturingItems(statuses?: string[]): Promise<any[]> {
+        const params = statuses && statuses.length ? { status: statuses.join(',') } : {};
+        const response = await api.get('/sales/customer-orders/manufacturing_items/', { params });
+        return response.data;
+    },
 };
 

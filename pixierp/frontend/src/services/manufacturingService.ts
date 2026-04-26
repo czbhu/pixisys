@@ -227,6 +227,40 @@ class ManufacturingService {
         const response = await api.post('/manufacturing/currencies/update_rates/');
         return response.data;
     }
+
+    // Product attachments
+    async getProductAttachments(productId: number): Promise<any[]> {
+        const response = await api.get(`/manufacturing/products/${productId}/attachments/`);
+        return response.data;
+    }
+
+    async uploadProductAttachment(productId: number, file: File, remark?: string): Promise<any> {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (remark) formData.append('remark', remark);
+        const response = await api.post(`/manufacturing/products/${productId}/attachments/`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return response.data;
+    }
+
+    async updateProductAttachmentRemark(productId: number, attachmentId: number, remark: string): Promise<void> {
+        await api.post(`/manufacturing/products/${productId}/update_attachment_remark/`, { attachment_id: attachmentId, remark });
+    }
+
+    async deleteProductAttachment(productId: number, attachmentId: number): Promise<void> {
+        await api.post(`/manufacturing/products/${productId}/delete_attachment/`, { attachment_id: attachmentId });
+    }
+
+    async duplicateProduct(id: number): Promise<any> {
+        const response = await api.post(`/manufacturing/products/${id}/duplicate/`);
+        return response.data;
+    }
+
+    async getUnitSuggestions(): Promise<{ unit: string; count: number }[]> {
+        const response = await api.get('/manufacturing/products/unit_suggestions/');
+        return response.data;
+    }
 }
 
 export const manufacturingService = new ManufacturingService();

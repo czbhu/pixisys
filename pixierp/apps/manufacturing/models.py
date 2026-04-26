@@ -319,6 +319,7 @@ class ManufacturingProduct(models.Model):
     allowed_contacts = models.ManyToManyField('crm.Contact', blank=True, related_name='allowed_products', verbose_name="Engedélyezett kapcsolattartók")
     net_unit_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Nettó egység ár")
     net_total_price = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Nettó ár")
+    price_from_cost_calc = models.BooleanField(default=True, verbose_name="Ár az árkalkulációból")
     currency = models.ForeignKey(Currency, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Valuta")
     status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='quote_request_open', verbose_name="Állapot")
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Ügyfél")
@@ -1426,3 +1427,19 @@ class ProductTemplateQuantityDiscount(models.Model):
 
     def __str__(self):
         return f"{self.product.name} – {self.min_amount} Ft felett {self.discount_value} {'%' if self.discount_type == 'percent' else 'Ft'}"
+
+
+class ManufacturingProductAttachment(models.Model):
+    """Gyártási termék csatolmány"""
+    product = models.ForeignKey(ManufacturingProduct, on_delete=models.CASCADE, related_name='attachments', verbose_name="Termék")
+    file = models.FileField(upload_to='manufacturing_products/%Y/%m/%d/', verbose_name="Fájl")
+    remark = models.CharField(max_length=255, blank=True, verbose_name="Megjegyzés")
+    uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Feltöltötte")
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name="Feltöltve")
+
+    class Meta:
+        verbose_name = "Gyártási termék csatolmány"
+        verbose_name_plural = "Gyártási termék csatolmányok"
+
+    def __str__(self):
+        return f"Attachment for product {self.product_id}: {self.file.name}"

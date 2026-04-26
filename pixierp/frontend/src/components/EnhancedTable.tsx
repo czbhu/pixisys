@@ -51,47 +51,61 @@ const DraggableHeaderCell: React.FC<any> = ({ id, colWidth, onResizeMove, onResi
     isDragging,
   } = useSortable({ id: id || 'noop' });
 
+  // Extract dnd-kit's style (touchAction: none, userSelect: none) and merge it
+  // BEFORE our overrides so our styles always win. Spreading {...attributes} after
+  // style={style} in JSX would otherwise overwrite our style entirely.
+  const { style: attrStyle, ...otherAttributes } = (attributes as any);
+
   const style: React.CSSProperties = {
     ...props.style,
+    ...(attrStyle || {}),           // dnd-kit: touchAction:'none', userSelect:'none'
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
     cursor: isDragging ? 'grabbing' : 'default',
     userSelect: 'none',
     position: 'relative',
+    overflow: 'visible',            // always visible so resize handle can straddle border
     ...(colWidth ? { width: colWidth, minWidth: colWidth } : {}),
   };
 
-  const handleResizeMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+  const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     e.stopPropagation();
-    e.preventDefault();
+    e.nativeEvent.stopImmediatePropagation();
     const startX = e.clientX;
-    const th = (e.currentTarget as HTMLElement).parentElement as HTMLElement;
-    const startWidth = colWidth || th?.offsetWidth || 100;
-    const onMouseMove = (ev: MouseEvent) => {
+    // Use actual rendered th width, not the prop (which may be stale)
+    const th = (e.currentTarget as HTMLElement).closest('th') as HTMLElement;
+    const startWidth = th ? th.offsetWidth : (colWidth || 100);
+    const onMove = (ev: PointerEvent) => {
       const newWidth = Math.max(40, startWidth + ev.clientX - startX);
       onResizeMove?.(id, newWidth);
     };
-    const onMouseUp = (ev: MouseEvent) => {
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
+    const onUp = (ev: PointerEvent) => {
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
       const newWidth = Math.max(40, startWidth + ev.clientX - startX);
       onResizeEnd?.(id, newWidth);
     };
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  };
+
+  const handleResizePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    // noop – cleanup is in document pointerup listener above
   };
 
   if (!id) return <th {...props}>{children}</th>;
   return (
-    <th {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
+    <th {...props} ref={setNodeRef} style={style} {...otherAttributes} {...listeners}>
       {children}
       {onResizeMove && (
         <div
-          onMouseDown={handleResizeMouseDown}
+          onPointerDown={handleResizePointerDown}
+          onPointerUp={handleResizePointerUp}
+          onPointerCancel={handleResizePointerUp}
           style={{
-            position: 'absolute', top: 0, right: 0, width: 6, height: '100%',
-            cursor: 'col-resize', zIndex: 2,
+            position: 'absolute', top: 0, right: -4, width: 8, height: '100%',
+            cursor: 'col-resize', zIndex: 10,
           }}
         />
       )}
@@ -337,13 +351,25 @@ function EnhancedTable<T extends object = any>({
       .filter(Boolean)
       .map((c) => {
         const key = String((c as any).key ?? (c as any).dataIndex ?? '');
-        const savedWidth = mergedWidths[key];
+        const isActions = key === 'actions';
+        const savedWidth = !isActions ? mergedWidths[key] : undefined;
+        // Always give every column an explicit width so tableLayout="fixed"
+        // respects each column independently — no redistribution of space.
+        const effectiveWidth = savedWidth || (c as any).width || 150;
+        if (isActions) {
+          // Actions column: fixed width, not resizable, not draggable
+          return {
+            ...c,
+            width: (c as any).width || 120,
+            onHeaderCell: () => ({ id: key }),
+          };
+        }
         return {
           ...c,
-          ...(savedWidth ? { width: savedWidth } : {}),
+          width: effectiveWidth,
           onHeaderCell: () => ({
             id: key,
-            colWidth: savedWidth || (c as any).width,
+            colWidth: effectiveWidth,
             onResizeMove: handleResizeMove,
             onResizeEnd: handleResizeEnd,
           }),
@@ -541,7 +567,8 @@ function EnhancedTable<T extends object = any>({
             <Table<T>
               key={tableResetKey}
               {...tableProps}
-              scroll={{ x: 'max-content', ...((tableProps as any).scroll || {}) }}
+              tableLayout="fixed"
+              scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}
               pagination={topPag}
               footer={footerFn}
               columns={processedColumns as TableColumnType<T>[]}

@@ -3,7 +3,7 @@ from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
     ManufacturingCostItem, ProductTemplate, ProductTemplateSize,
-    ProductTemplateQuantityDiscount,
+    ProductTemplateQuantityDiscount, ManufacturingProductAttachment,
 )
 from apps.crm.models import Contact, Company as CRMCompany
 from apps.crm.utils import sync_company_to_local_db
@@ -11,6 +11,24 @@ from apps.finance.views import PixinvoiceClient
 from apps.hr.models import Department, Employee
 from apps.core.models import Currency
 from apps.warehouse.models import Material
+
+
+class ManufacturingProductAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ManufacturingProductAttachment
+        fields = ['id', 'file', 'file_url', 'remark', 'uploaded_by', 'created_at']
+        read_only_fields = ['file_url', 'uploaded_by', 'created_at']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and hasattr(obj.file, 'url'):
+            url = obj.file.url
+            if request is not None:
+                return request.build_absolute_uri(url)
+            return url
+        return None
 
 
 class ProductClassSerializer(serializers.ModelSerializer):
@@ -95,12 +113,18 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_allowed_companies_data(self, obj):
-        # Return existing allowed companies for frontend (using external_id if available)
-        return [{"id": c.external_id or c.id, "name": c.name} for c in obj.allowed_companies.all()]
+        # Return internal integer id so the frontend Select can match options
+        return [{'id': c.id, 'name': c.name} for c in obj.allowed_companies.all()]
 
     def get_allowed_contacts_data(self, obj):
-        # Return existing allowed contacts for frontend
-        return [{"id": c.external_id or c.id, "name": c.name} for c in obj.allowed_contacts.all()]
+        # Return internal integer id so the frontend Select can match options
+        result = []
+        for c in obj.allowed_contacts.all():
+            last = getattr(c, 'last_name', '') or ''
+            first = getattr(c, 'first_name', '') or ''
+            name = f"{last} {first}".strip() or getattr(c, 'name', '') or str(c.id)
+            result.append({'id': c.id, 'name': name})
+        return result
 
     def _resolve_companies(self, company_ids):
         """

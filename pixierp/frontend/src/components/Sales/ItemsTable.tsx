@@ -1,14 +1,31 @@
 import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
-import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image } from 'antd';
-import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined } from '@ant-design/icons';
+import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag } from 'antd';
+import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
+import { manufacturingService } from '../../services/manufacturingService';
+
+const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  new: { label: 'Új', color: 'default' },
+  confirmed: { label: 'Megerősítve', color: 'blue' },
+  in_production: { label: 'Gyártásban', color: 'orange' },
+  ready: { label: 'Kész', color: 'green' },
+  in_delivery: { label: 'Szállítás alatt', color: 'cyan' },
+  delivered: { label: 'Kiszállítva', color: 'geekblue' },
+  cancelled: { label: 'Törölve', color: 'red' },
+};
 
 interface Item {
   id: number;
   item_type: 'product' | 'manufacturing' | 'service';
+  status?: string;
+  product?: number | null;
+  manufacturing_product?: number | null;
+  service?: number | null;
+  quote_item?: { product?: number | null; manufacturing_product?: number | null; service?: number | null } | null;
   product_code?: string;
   product_name?: string;
   material_code?: string;
@@ -191,7 +208,20 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     saveOrder(newData);
   };
   
+  const navigate = useNavigate();
+
+  const getDetailUrl = (record: any): string | null => {
+    const manuId = record.manufacturing_product || record.quote_item?.manufacturing_product;
+    const productId = record.product || record.quote_item?.product;
+    const serviceId = record.service || record.quote_item?.service;
+    if (record.item_type === 'manufacturing' && manuId) return `/manufacturing/products/${manuId}`;
+    if (record.item_type === 'product' && productId) return `/warehouse/materials?id=${productId}`;
+    if (record.item_type === 'service' && serviceId) return `/manufacturing/services?id=${serviceId}`;
+    return null;
+  };
+
   const deleteItem = async (record: any) => {
+    const savedScroll = window.scrollY;
     try {
       if (onDeleteItem) {
         onDeleteItem(record);
@@ -200,6 +230,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         await salesService.deleteQuoteRequestItem(record.id, quoteRequestId);
         message.success('Tétel törölve');
         onRefresh && onRefresh();
+        setTimeout(() => window.scrollTo(0, savedScroll), 120);
       }
     } catch (e) {
       message.error('Nem sikerült törölni a tételt');
@@ -207,6 +238,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
   };
 
   const copyItem = async (record: any) => {
+    const savedScroll = window.scrollY;
     try {
       if (onCopyItem) {
         onCopyItem(record);
@@ -226,7 +258,9 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       if (record.item_type === 'product' && record.product) {
         await salesService.addRfqProductItem(quoteRequestId, Number(record.product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else if (record.item_type === 'manufacturing' && record.manufacturing_product) {
-        await salesService.addRfqManufacturingItem(quoteRequestId, Number(record.manufacturing_product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        // Duplicate the manufacturing product so the copy is fully independent
+        const dup = await manufacturingService.duplicateProduct(Number(record.manufacturing_product));
+        await salesService.addRfqManufacturingItem(quoteRequestId, dup.id, common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else if (record.item_type === 'service' && record.service) {
         await salesService.addRfqServiceItem(quoteRequestId, Number(record.service), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else {
@@ -235,6 +269,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       }
       message.success('Tétel másolva');
       onRefresh && onRefresh();
+      setTimeout(() => window.scrollTo(0, savedScroll), 120);
     } catch (e) {
       message.error('Nem sikerült másolni a tételt');
     }
@@ -264,7 +299,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       }
     },
     { 
-        title: 'Leírás', 
+      title: 'Leírás', 
         dataIndex: 'description', 
         key: 'description', 
         responsive: ['md'],
@@ -294,6 +329,16 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               </Tooltip>
             ) : content;
         }
+    },
+    { 
+      title: 'Státusz',
+      key: 'status',
+      width: 120,
+      render: (r: any) => {
+        const s = r.status || 'new';
+        const cfg = ITEM_STATUS_MAP[s] || { label: s, color: 'default' };
+        return <Tag color={cfg.color}>{cfg.label}</Tag>;
+      }
     },
     { 
       title: 'Menny.', 
@@ -342,7 +387,11 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             <Tooltip title="Szint növelés (alárendel)">
                 <Button size="small" icon={<RightOutlined />} onClick={() => onIndent(record)} />
             </Tooltip>
-          
+          {(() => { const url = getDetailUrl(record); return url ? (
+            <Tooltip title="Adatlap megnyitása">
+              <Button size="small" icon={<LinkOutlined />} onClick={() => navigate(url)} />
+            </Tooltip>
+          ) : null; })()}
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
