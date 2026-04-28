@@ -4613,6 +4613,7 @@ const InvoiceForm = () => {
                           container: base => ({ ...base, minWidth: 0, width: '100%' }),
                           menuPortal: base => ({ ...base, zIndex: 9999 }),
                         }}
+                        components={{ DropdownIndicator: () => null, ClearIndicator: () => null, IndicatorSeparator: () => null }}
                         menuPortalTarget={document.body}
                         menuPosition="fixed"
                         isDisabled={isReadOnly || isStornoCreation || isAutoAdvance}
@@ -4679,6 +4680,7 @@ const InvoiceForm = () => {
                               setValue(`items.${index}.gross_total_str`, '', { shouldValidate: false, shouldDirty: true });
                             }}
                             styles={{ container: (base) => ({ ...base, minWidth: 0, width: '100%' }), menuPortal: base => ({ ...base, zIndex: 9999 }) }}
+                            components={{ DropdownIndicator: () => null, ClearIndicator: () => null, IndicatorSeparator: () => null }}
                             menuPortalTarget={document.body}
                             isClearable
                             isSearchable
