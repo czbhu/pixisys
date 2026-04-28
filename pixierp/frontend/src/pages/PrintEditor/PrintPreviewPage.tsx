@@ -128,6 +128,7 @@ const PrintPreviewPage: React.FC = () => {
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
   useEffect(() => {
+    if (!standaloneShareToken) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
