@@ -4534,8 +4534,8 @@ const InvoiceForm = () => {
                 <TableHeaderCell>Név</TableHeaderCell>
                 {isSimplified && <TableHeaderCell>Cikkszám</TableHeaderCell>}
                 <TableHeaderCell>Mennyiség</TableHeaderCell>
-                <TableHeaderCell>Me. egység</TableHeaderCell>
-                <TableHeaderCell>
+                <TableHeaderCell style={{ minWidth: 120 }}>Me. egység</TableHeaderCell>
+                <TableHeaderCell style={{ minWidth: 150 }}>
                   <InlineGroup>
                     <span>ÁFA %</span>
                     <IconGhostButton type="button" onClick={() => setShowVatHelp(true)} title="ÁFA típus súgó">
@@ -4609,7 +4609,12 @@ const InvoiceForm = () => {
                       ) : (
                       <CreatableSelect
                         inputId={`uom_${index}`}
-                        styles={{ container: base => ({ ...base, minWidth: 0, width: '100%' }) }}
+                        styles={{
+                          container: base => ({ ...base, minWidth: 0, width: '100%' }),
+                          menuPortal: base => ({ ...base, zIndex: 9999 }),
+                        }}
+                        menuPortalTarget={document.body}
+                        menuPosition="fixed"
                         isDisabled={isReadOnly || isStornoCreation || isAutoAdvance}
                         options={[
                           { value: 'db', label: 'db' },
