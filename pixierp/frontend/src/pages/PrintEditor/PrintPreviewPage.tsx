@@ -58,11 +58,8 @@ const PrintPreviewPage: React.FC = () => {
   const [latestVersionNumber, setLatestVersionNumber] = useState<number | null>(null);
   const [currentPreviewTitle, setCurrentPreviewTitle] = useState<string | null>(null);
   const [currentPreviewFolder, setCurrentPreviewFolder] = useState<number | null>(null);
-  // Munkafelület visszaállítás
+  // Munkafelület visszaállítás (csak startup flag szükséges)
   const startupCheckedRef = useRef(false);
-  const [startModalOpen, setStartModalOpen] = useState(false);
-  const [lastToken, setLastToken] = useState<string | null>(null);
-  const [lastTokenTitle, setLastTokenTitle] = useState<string | null>(null);
   const [startupDecided, setStartupDecided] = useState(false);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
@@ -98,13 +95,12 @@ const PrintPreviewPage: React.FC = () => {
     ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
     : 'Ügyfél';
 
-  // ── Munkafelület mentése / visszaállítása ─────────────────────────────────
-  // Save token whenever active – both localStorage (cross-tab) and sessionStorage (this tab only)
+  // ── Munkafelület mentése ─────────────────────────────────────────────────
+  // (Only localStorage – sessionStorage is NOT used because child tabs inherit it)
   useEffect(() => {
     if (!standaloneShareToken) return;
     try {
       localStorage.setItem('lastPrintPreviewToken', standaloneShareToken);
-      sessionStorage.setItem('currentSessionPreviewToken', standaloneShareToken);
     } catch { /* ignore */ }
   }, [standaloneShareToken]);
 
@@ -116,25 +112,17 @@ const PrintPreviewPage: React.FC = () => {
   }, [standaloneShareToken, currentPreviewTitle]);
 
   // Check on first load (no params, admin):
-  //   - same tab (sessionStorage token present) → auto-restore silently
-  //   - new tab → open empty workspace directly, no modal
+  //   - URL has ?shareToken=TOKEN → startup check is skipped (standaloneShareToken guard above)
+  //   - No params → open empty workspace directly
+  //   F5 preserves the URL, so ?shareToken=TOKEN survives reload without sessionStorage.
+  //   Browser Back from other pages also returns to the URL with the token.
   useEffect(() => {
     if (startupCheckedRef.current) return;
     if (!user) return;
     if (publicToken || orderId || itemId || standaloneShareToken) return;
     if (!isAdmin) return;
     startupCheckedRef.current = true;
-    try {
-      const rawSession = sessionStorage.getItem('currentSessionPreviewToken');
-      const sessionToken = rawSession && rawSession !== 'null' && rawSession !== 'undefined' ? rawSession : null;
-      if (sessionToken) {
-        // Same tab had an open workspace – restore silently
-        window.location.replace(`/print-preview?shareToken=${sessionToken}`);
-        return;
-      }
-      // New tab or no previous session – open empty workspace directly
-      setStartupDecided(true);
-    } catch { /* ignore */ }
+    setStartupDecided(true);
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
   useEffect(() => {
@@ -283,7 +271,7 @@ const PrintPreviewPage: React.FC = () => {
           const newShareToken = response.data?.token;
           if (newShareToken && newShareToken !== 'null' && typeof window !== 'undefined') {
             window.history.replaceState({}, '', `/print-preview?shareToken=${newShareToken}`);
-            try { sessionStorage.setItem('currentSessionPreviewToken', newShareToken); localStorage.setItem('lastPrintPreviewToken', newShareToken); } catch { /* ignore */ }
+          try { localStorage.setItem('lastPrintPreviewToken', newShareToken); } catch { /* ignore */ }
           }
           setShareConfig({
             pdf_url: response.data?.pdf_url,
@@ -325,8 +313,6 @@ const PrintPreviewPage: React.FC = () => {
     await clearPdfFromIDB();
     try {
       sessionStorage.removeItem('printStorageReturnUrl');
-      sessionStorage.removeItem('currentSessionPreviewToken');
-      sessionStorage.setItem('printPreviewStartupDone', '1');
       localStorage.removeItem('lastPrintPreviewToken');
       localStorage.removeItem('lastPrintPreviewTitle');
     } catch {
@@ -421,7 +407,7 @@ const PrintPreviewPage: React.FC = () => {
         const newToken = response.data?.token;
         if (newToken && newToken !== 'null' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', `/print-preview?shareToken=${newToken}`);
-          try { sessionStorage.setItem('currentSessionPreviewToken', newToken); localStorage.setItem('lastPrintPreviewToken', newToken); } catch { /* ignore */ }
+          try { localStorage.setItem('lastPrintPreviewToken', newToken); } catch { /* ignore */ }
         }
         setShareConfig({
           pdf_url: response.data?.pdf_url,
@@ -542,7 +528,7 @@ const PrintPreviewPage: React.FC = () => {
         const shareAutoToken = response.data?.token;
         if (shareAutoToken && shareAutoToken !== 'null' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', `/print-preview?shareToken=${shareAutoToken}`);
-          try { sessionStorage.setItem('currentSessionPreviewToken', shareAutoToken); localStorage.setItem('lastPrintPreviewToken', shareAutoToken); } catch { /* ignore */ }
+          try { localStorage.setItem('lastPrintPreviewToken', shareAutoToken); } catch { /* ignore */ }
         }
         setShareConfig({
           pdf_url: response.data?.pdf_url,
@@ -863,69 +849,6 @@ const PrintPreviewPage: React.FC = () => {
           onPressEnter={handleSaveCreateFolder}
           autoFocus
         />
-      </Modal>
-
-      {/* ── Munkafelület visszaállítás ── */}
-      <Modal
-        title="Munkafelület megnyitása"
-        open={startModalOpen}
-        onCancel={async () => {
-          await clearPdfFromIDB();
-          try {
-            sessionStorage.removeItem('currentSessionPreviewToken');
-            sessionStorage.setItem('printPreviewStartupDone', '1');
-            // Note: localStorage is intentionally kept – other/future tabs can still restore from history
-          } catch { /* ignore */ }
-          setStartModalOpen(false);
-          setStartupDecided(true);
-        }}
-        footer={null}
-        closable
-        maskClosable={false}
-        width={480}
-      >
-        <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
-          <Text>{lastToken ? 'Volt egy korábbi munkafelületed. Mit szeretnél tenni?' : 'Hogyan szeretnéd kezdeni?'}</Text>
-          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            {lastToken && (
-              <Button
-                type="primary"
-                size="large"
-                icon={<ReloadOutlined />}
-                style={{ flex: 1 }}
-                onClick={() => {
-                  setStartModalOpen(false);
-                  window.location.replace(`/print-preview?shareToken=${lastToken}`);
-                }}
-              >
-                <span>
-                  Legutóbbi betöltése
-                  {lastTokenTitle && (
-                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
-                  )}
-                </span>
-              </Button>
-            )}
-            <Button
-              size="large"
-              icon={<PlusOutlined />}
-              style={{ flex: 1 }}
-              onClick={async () => {
-                await clearPdfFromIDB();
-                try {
-                  sessionStorage.removeItem('currentSessionPreviewToken');
-                  sessionStorage.setItem('printPreviewStartupDone', '1');
-                  localStorage.removeItem('lastPrintPreviewToken');
-                  localStorage.removeItem('lastPrintPreviewTitle');
-                } catch { /* ignore */ }
-                setStartModalOpen(false);
-                setStartupDecided(true);
-              }}
-            >
-              Új munkafelület
-            </Button>
-          </div>
-        </Space>
       </Modal>
     </>
   );
