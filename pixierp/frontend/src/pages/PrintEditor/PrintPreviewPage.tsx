@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button, Input, List, Modal, Popconfirm, Select, Space, Spin, Switch, Tag, Tooltip, Typography, message } from 'antd';
 import {
   BranchesOutlined, CopyOutlined, DeleteOutlined, FolderAddOutlined, FolderOpenOutlined,
@@ -58,6 +58,11 @@ const PrintPreviewPage: React.FC = () => {
   const [latestVersionNumber, setLatestVersionNumber] = useState<number | null>(null);
   const [currentPreviewTitle, setCurrentPreviewTitle] = useState<string | null>(null);
   const [currentPreviewFolder, setCurrentPreviewFolder] = useState<number | null>(null);
+  // Munkafelület visszaállítás
+  const startupCheckedRef = useRef(false);
+  const [startModalOpen, setStartModalOpen] = useState(false);
+  const [lastToken, setLastToken] = useState<string | null>(null);
+  const [lastTokenTitle, setLastTokenTitle] = useState<string | null>(null);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -88,8 +93,41 @@ const PrintPreviewPage: React.FC = () => {
     ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
     : 'Ügyfél';
 
+  // ── Munkafelület mentése / visszaállítása ─────────────────────────────────
+  // Save token whenever active
   useEffect(() => {
-    if (!standaloneShareToken || publicToken) return;
+    if (!standaloneShareToken) return;
+    try {
+      localStorage.setItem('lastPrintPreviewToken', standaloneShareToken);
+    } catch { /* ignore */ }
+  }, [standaloneShareToken]);
+
+  useEffect(() => {
+    if (!standaloneShareToken || !currentPreviewTitle) return;
+    try {
+      localStorage.setItem('lastPrintPreviewTitle', currentPreviewTitle);
+    } catch { /* ignore */ }
+  }, [standaloneShareToken, currentPreviewTitle]);
+
+  // Check on first load (no params, admin) whether there is a last session
+  useEffect(() => {
+    if (startupCheckedRef.current) return;
+    if (!user) return;
+    if (publicToken || orderId || itemId || standaloneShareToken) return;
+    if (!isAdmin) return;
+    startupCheckedRef.current = true;
+    try {
+      const token = localStorage.getItem('lastPrintPreviewToken');
+      const title = localStorage.getItem('lastPrintPreviewTitle');
+      if (token) {
+        setLastToken(token);
+        setLastTokenTitle(title);
+        setStartModalOpen(true);
+      }
+    } catch { /* ignore */ }
+  }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
+
+  useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
@@ -275,6 +313,9 @@ const PrintPreviewPage: React.FC = () => {
     await clearPdfFromIDB();
     try {
       sessionStorage.removeItem('printStorageReturnUrl');
+      // Clear last session so next fresh open doesn't ask
+      localStorage.removeItem('lastPrintPreviewToken');
+      localStorage.removeItem('lastPrintPreviewTitle');
     } catch {
       // ignore
     }
@@ -786,7 +827,7 @@ const PrintPreviewPage: React.FC = () => {
       </Modal>
 
       <Modal
-        title="Új mappa létrehozása"
+        title="Mappa létrehozása"
         open={saveCreateFolderOpen}
         onCancel={() => { setSaveCreateFolderOpen(false); setSaveNewFolderName(''); }}
         onOk={handleSaveCreateFolder}
@@ -800,6 +841,54 @@ const PrintPreviewPage: React.FC = () => {
           onPressEnter={handleSaveCreateFolder}
           autoFocus
         />
+      </Modal>
+
+      {/* ── Munkafelület visszaállítás ── */}
+      <Modal
+        title="Munkafelület megnyitása"
+        open={startModalOpen}
+        onCancel={() => setStartModalOpen(false)}
+        footer={null}
+        closable
+        maskClosable={false}
+        width={480}
+      >
+        <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
+          <Text>Volt egy korábbi munkafelületed. Mit szeretnél tenni?</Text>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            <Button
+              type="primary"
+              size="large"
+              icon={<ReloadOutlined />}
+              style={{ flex: 1 }}
+              onClick={() => {
+                setStartModalOpen(false);
+                window.location.replace(`/print-preview?shareToken=${lastToken}`);
+              }}
+            >
+              <span>
+                Legutóbbi betöltése
+                {lastTokenTitle && (
+                  <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
+                )}
+              </span>
+            </Button>
+            <Button
+              size="large"
+              icon={<PlusOutlined />}
+              style={{ flex: 1 }}
+              onClick={() => {
+                try {
+                  localStorage.removeItem('lastPrintPreviewToken');
+                  localStorage.removeItem('lastPrintPreviewTitle');
+                } catch { /* ignore */ }
+                setStartModalOpen(false);
+              }}
+            >
+              Új munkafelület
+            </Button>
+          </div>
+        </Space>
       </Modal>
     </>
   );

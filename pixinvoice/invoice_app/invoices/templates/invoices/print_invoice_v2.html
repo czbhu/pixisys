@@ -407,9 +407,9 @@
                                         {% endif %}
                                         {% if invoice.customer.group_tax_number or invoice.customer.vat_group_id %}
                                             <div>Csoport adószám: {{ invoice.customer.group_tax_number|default:invoice.customer.vat_group_id|tax_number_full }}</div>
-                                        {% endif %}
-                                        {% if invoice.customer.vat_group_member_tax_number %}
-                                            <div>Csoport tag adószám: {{ invoice.customer.vat_group_member_tax_number|tax_number_full }}</div>
+                                            {% if invoice.customer.vat_group_member_tax_number %}
+                                                <div>Csoport tag adószám: {{ invoice.customer.vat_group_member_tax_number|tax_number_full }}</div>
+                                            {% endif %}
                                         {% endif %}
                                         {% if invoice.customer.postal_code or invoice.customer.city %}
                                             <div>{{ invoice.customer.postal_code }} {{ invoice.customer.city }}</div>

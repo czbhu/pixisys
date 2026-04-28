@@ -5130,9 +5130,11 @@ const InvoiceForm = () => {
                             )}
                             {selectedCustomer?.eu_tax_number && (<div>EU adószám: {selectedCustomer.eu_tax_number}</div>)}
                             {(selectedCustomer?.group_tax_number || selectedCustomer?.vat_group_id) && (
-                              <div>Csoport adószám: {formatTaxDisplay(selectedCustomer?.group_tax_number || selectedCustomer?.vat_group_id)}</div>
+                              <>
+                                <div>Csoport adószám: {formatTaxDisplay(selectedCustomer?.group_tax_number || selectedCustomer?.vat_group_id)}</div>
+                                {selectedCustomer?.vat_group_member_tax_number && (<div>Csoport tag adószám: {formatTaxDisplay(selectedCustomer.vat_group_member_tax_number)}</div>)}
+                              </>
                             )}
-                            {selectedCustomer?.vat_group_member_tax_number && (<div>Csoport tag adószám: {formatTaxDisplay(selectedCustomer.vat_group_member_tax_number)}</div>)}
                             {(selectedCustomer?.postal_code || selectedCustomer?.city) && (
                               <div>{(selectedCustomer?.postal_code || '')} {selectedCustomer?.city || ''}</div>
                             )}

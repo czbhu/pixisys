@@ -517,7 +517,7 @@ const DataImport = () => {
 
         // Create URL with file upload via fetch for SSE
         const baseURL = process.env.REACT_APP_API_URL || 
-          (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+          '';
         
         // Use fetch to upload and stream
         const response = await fetch(`${baseURL}/api/import/customers/streaming/`, {
@@ -571,7 +571,7 @@ const DataImport = () => {
         formData.append('file', file);
         
         const baseURL = process.env.REACT_APP_API_URL || 
-          (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+          '';
         
         const response = await fetch(`${baseURL}/api/import/contacts/streaming/`, {
           method: 'POST',
@@ -640,7 +640,7 @@ const DataImport = () => {
 
     try {
       const baseURL = process.env.REACT_APP_API_URL || 
-        (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:4001');
+        '';
       
       const response = await fetch(`${baseURL}/api/import/missing-customers/export/`, {
         method: 'POST',
