@@ -60,6 +60,9 @@ const PrintPreviewPage: React.FC = () => {
   const [currentPreviewFolder, setCurrentPreviewFolder] = useState<number | null>(null);
   // Munkafelület visszaállítás
   const startupCheckedRef = useRef(false);
+  const [startModalOpen, setStartModalOpen] = useState(false);
+  const [lastToken, setLastToken] = useState<string | null>(null);
+  const [lastTokenTitle, setLastTokenTitle] = useState<string | null>(null);
   const [startupDecided, setStartupDecided] = useState(false);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
@@ -113,8 +116,8 @@ const PrintPreviewPage: React.FC = () => {
   }, [standaloneShareToken, currentPreviewTitle]);
 
   // Check on first load (no params, admin):
-  //   - same tab (sessionStorage) → auto-restore without asking
-  //   - new tab (no sessionStorage) → just open empty workspace
+  //   - same tab (sessionStorage token present) → auto-restore silently
+  //   - new tab → open empty workspace directly, no modal
   useEffect(() => {
     if (startupCheckedRef.current) return;
     if (!user) return;
@@ -129,8 +132,9 @@ const PrintPreviewPage: React.FC = () => {
         window.location.replace(`/print-preview?shareToken=${sessionToken}`);
         return;
       }
+      // New tab or no previous session – open empty workspace directly
+      setStartupDecided(true);
     } catch { /* ignore */ }
-    setStartupDecided(true);
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
   useEffect(() => {
@@ -861,6 +865,68 @@ const PrintPreviewPage: React.FC = () => {
         />
       </Modal>
 
+      {/* ── Munkafelület visszaállítás ── */}
+      <Modal
+        title="Munkafelület megnyitása"
+        open={startModalOpen}
+        onCancel={async () => {
+          await clearPdfFromIDB();
+          try {
+            sessionStorage.removeItem('currentSessionPreviewToken');
+            sessionStorage.setItem('printPreviewStartupDone', '1');
+            // Note: localStorage is intentionally kept – other/future tabs can still restore from history
+          } catch { /* ignore */ }
+          setStartModalOpen(false);
+          setStartupDecided(true);
+        }}
+        footer={null}
+        closable
+        maskClosable={false}
+        width={480}
+      >
+        <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
+          <Text>{lastToken ? 'Volt egy korábbi munkafelületed. Mit szeretnél tenni?' : 'Hogyan szeretnéd kezdeni?'}</Text>
+          <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
+            {lastToken && (
+              <Button
+                type="primary"
+                size="large"
+                icon={<ReloadOutlined />}
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setStartModalOpen(false);
+                  window.location.replace(`/print-preview?shareToken=${lastToken}`);
+                }}
+              >
+                <span>
+                  Legutóbbi betöltése
+                  {lastTokenTitle && (
+                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
+                  )}
+                </span>
+              </Button>
+            )}
+            <Button
+              size="large"
+              icon={<PlusOutlined />}
+              style={{ flex: 1 }}
+              onClick={async () => {
+                await clearPdfFromIDB();
+                try {
+                  sessionStorage.removeItem('currentSessionPreviewToken');
+                  sessionStorage.setItem('printPreviewStartupDone', '1');
+                  localStorage.removeItem('lastPrintPreviewToken');
+                  localStorage.removeItem('lastPrintPreviewTitle');
+                } catch { /* ignore */ }
+                setStartModalOpen(false);
+                setStartupDecided(true);
+              }}
+            >
+              Új munkafelület
+            </Button>
+          </div>
+        </Space>
+      </Modal>
     </>
   );
 };
