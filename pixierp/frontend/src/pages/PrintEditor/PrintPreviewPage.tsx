@@ -132,6 +132,11 @@ const PrintPreviewPage: React.FC = () => {
         window.location.replace(`/print-preview?shareToken=${sessionToken}`);
         return;
       }
+      // If user already made a startup choice this session, don't show the modal again
+      if (sessionStorage.getItem('printPreviewStartupDone') === '1') {
+        setStartupDecided(true);
+        return;
+      }
       // New tab – always ask, whether or not there is previous history
       const rawLocal = localStorage.getItem('lastPrintPreviewToken');
       const token = rawLocal && rawLocal !== 'null' && rawLocal !== 'undefined' ? rawLocal : null;
@@ -288,6 +293,7 @@ const PrintPreviewPage: React.FC = () => {
           const newShareToken = response.data?.token;
           if (newShareToken && newShareToken !== 'null' && typeof window !== 'undefined') {
             window.history.replaceState({}, '', `/print-preview?shareToken=${newShareToken}`);
+            try { sessionStorage.setItem('currentSessionPreviewToken', newShareToken); localStorage.setItem('lastPrintPreviewToken', newShareToken); } catch { /* ignore */ }
           }
           setShareConfig({
             pdf_url: response.data?.pdf_url,
@@ -330,6 +336,7 @@ const PrintPreviewPage: React.FC = () => {
     try {
       sessionStorage.removeItem('printStorageReturnUrl');
       sessionStorage.removeItem('currentSessionPreviewToken');
+      sessionStorage.setItem('printPreviewStartupDone', '1');
       localStorage.removeItem('lastPrintPreviewToken');
       localStorage.removeItem('lastPrintPreviewTitle');
     } catch {
@@ -424,6 +431,7 @@ const PrintPreviewPage: React.FC = () => {
         const newToken = response.data?.token;
         if (newToken && newToken !== 'null' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', `/print-preview?shareToken=${newToken}`);
+          try { sessionStorage.setItem('currentSessionPreviewToken', newToken); localStorage.setItem('lastPrintPreviewToken', newToken); } catch { /* ignore */ }
         }
         setShareConfig({
           pdf_url: response.data?.pdf_url,
@@ -544,6 +552,7 @@ const PrintPreviewPage: React.FC = () => {
         const shareAutoToken = response.data?.token;
         if (shareAutoToken && shareAutoToken !== 'null' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', `/print-preview?shareToken=${shareAutoToken}`);
+          try { sessionStorage.setItem('currentSessionPreviewToken', shareAutoToken); localStorage.setItem('lastPrintPreviewToken', shareAutoToken); } catch { /* ignore */ }
         }
         setShareConfig({
           pdf_url: response.data?.pdf_url,
@@ -874,8 +883,8 @@ const PrintPreviewPage: React.FC = () => {
           await clearPdfFromIDB();
           try {
             sessionStorage.removeItem('currentSessionPreviewToken');
-            localStorage.removeItem('lastPrintPreviewToken');
-            localStorage.removeItem('lastPrintPreviewTitle');
+            sessionStorage.setItem('printPreviewStartupDone', '1');
+            // Note: localStorage is intentionally kept – other/future tabs can still restore from history
           } catch { /* ignore */ }
           setStartModalOpen(false);
           setStartupDecided(true);
@@ -915,6 +924,7 @@ const PrintPreviewPage: React.FC = () => {
                 await clearPdfFromIDB();
                 try {
                   sessionStorage.removeItem('currentSessionPreviewToken');
+                  sessionStorage.setItem('printPreviewStartupDone', '1');
                   localStorage.removeItem('lastPrintPreviewToken');
                   localStorage.removeItem('lastPrintPreviewTitle');
                 } catch { /* ignore */ }
