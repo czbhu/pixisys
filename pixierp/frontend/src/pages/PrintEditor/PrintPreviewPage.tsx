@@ -95,11 +95,12 @@ const PrintPreviewPage: React.FC = () => {
     : 'Ügyfél';
 
   // ── Munkafelület mentése / visszaállítása ─────────────────────────────────
-  // Save token whenever active
+  // Save token whenever active – both localStorage (cross-tab) and sessionStorage (this tab only)
   useEffect(() => {
     if (!standaloneShareToken) return;
     try {
       localStorage.setItem('lastPrintPreviewToken', standaloneShareToken);
+      sessionStorage.setItem('currentSessionPreviewToken', standaloneShareToken);
     } catch { /* ignore */ }
   }, [standaloneShareToken]);
 
@@ -110,7 +111,10 @@ const PrintPreviewPage: React.FC = () => {
     } catch { /* ignore */ }
   }, [standaloneShareToken, currentPreviewTitle]);
 
-  // Check on first load (no params, admin) whether there is a last session
+  // Check on first load (no params, admin):
+  //   - same tab (sessionStorage) → auto-restore without asking
+  //   - new tab with history (localStorage) → ask modal
+  //   - new tab no history → proceed directly
   useEffect(() => {
     if (startupCheckedRef.current) return;
     if (!user) return;
@@ -118,11 +122,23 @@ const PrintPreviewPage: React.FC = () => {
     if (!isAdmin) return;
     startupCheckedRef.current = true;
     try {
+      const sessionToken = sessionStorage.getItem('currentSessionPreviewToken');
+      if (sessionToken) {
+        // Same tab had an open workspace – restore silently
+        window.location.replace(`/print-preview?shareToken=${sessionToken}`);
+        return;
+      }
       const token = localStorage.getItem('lastPrintPreviewToken');
       const title = localStorage.getItem('lastPrintPreviewTitle');
-      setLastToken(token);
-      setLastTokenTitle(title);
-      setStartModalOpen(true);
+      if (token) {
+        // New tab but has previous session – ask
+        setLastToken(token);
+        setLastTokenTitle(title);
+        setStartModalOpen(true);
+      } else {
+        // Brand new, no history – proceed directly
+        setStartupDecided(true);
+      }
     } catch { /* ignore */ }
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
@@ -313,7 +329,7 @@ const PrintPreviewPage: React.FC = () => {
     await clearPdfFromIDB();
     try {
       sessionStorage.removeItem('printStorageReturnUrl');
-      // Clear last session so next fresh open doesn't ask
+      sessionStorage.removeItem('currentSessionPreviewToken');
       localStorage.removeItem('lastPrintPreviewToken');
       localStorage.removeItem('lastPrintPreviewTitle');
     } catch {
@@ -854,6 +870,7 @@ const PrintPreviewPage: React.FC = () => {
         onCancel={async () => {
           await clearPdfFromIDB();
           try {
+            sessionStorage.removeItem('currentSessionPreviewToken');
             localStorage.removeItem('lastPrintPreviewToken');
             localStorage.removeItem('lastPrintPreviewTitle');
           } catch { /* ignore */ }
@@ -866,27 +883,25 @@ const PrintPreviewPage: React.FC = () => {
         width={480}
       >
         <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
-          <Text>{lastToken ? 'Volt egy korábbi munkafelületed. Mit szeretnél tenni?' : 'Hogyan szeretnéd kezdeni?'}</Text>
+          <Text>Volt egy korábbi munkafelületed. Mit szeretnél tenni?</Text>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            {lastToken && (
-              <Button
-                type="primary"
-                size="large"
-                icon={<ReloadOutlined />}
-                style={{ flex: 1 }}
-                onClick={() => {
-                  setStartModalOpen(false);
-                  window.location.replace(`/print-preview?shareToken=${lastToken}`);
-                }}
-              >
-                <span>
-                  Legutóbbi betöltése
-                  {lastTokenTitle && (
-                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
-                  )}
-                </span>
-              </Button>
-            )}
+            <Button
+              type="primary"
+              size="large"
+              icon={<ReloadOutlined />}
+              style={{ flex: 1 }}
+              onClick={() => {
+                setStartModalOpen(false);
+                window.location.replace(`/print-preview?shareToken=${lastToken}`);
+              }}
+            >
+              <span>
+                Legutóbbi betöltése
+                {lastTokenTitle && (
+                  <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
+                )}
+              </span>
+            </Button>
             <Button
               size="large"
               icon={<PlusOutlined />}
@@ -894,6 +909,7 @@ const PrintPreviewPage: React.FC = () => {
               onClick={async () => {
                 await clearPdfFromIDB();
                 try {
+                  sessionStorage.removeItem('currentSessionPreviewToken');
                   localStorage.removeItem('lastPrintPreviewToken');
                   localStorage.removeItem('lastPrintPreviewTitle');
                 } catch { /* ignore */ }
