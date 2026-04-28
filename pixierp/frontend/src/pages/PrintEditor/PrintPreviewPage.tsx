@@ -113,8 +113,7 @@ const PrintPreviewPage: React.FC = () => {
 
   // Check on first load (no params, admin):
   //   - same tab (sessionStorage) → auto-restore without asking
-  //   - new tab with history (localStorage) → ask modal
-  //   - new tab no history → proceed directly
+  //   - new tab (no sessionStorage) → always ask modal (regardless of localStorage history)
   useEffect(() => {
     if (startupCheckedRef.current) return;
     if (!user) return;
@@ -128,17 +127,12 @@ const PrintPreviewPage: React.FC = () => {
         window.location.replace(`/print-preview?shareToken=${sessionToken}`);
         return;
       }
+      // New tab – always ask, whether or not there is previous history
       const token = localStorage.getItem('lastPrintPreviewToken');
       const title = localStorage.getItem('lastPrintPreviewTitle');
-      if (token) {
-        // New tab but has previous session – ask
-        setLastToken(token);
-        setLastTokenTitle(title);
-        setStartModalOpen(true);
-      } else {
-        // Brand new, no history – proceed directly
-        setStartupDecided(true);
-      }
+      setLastToken(token);
+      setLastTokenTitle(title);
+      setStartModalOpen(true);
     } catch { /* ignore */ }
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
@@ -883,25 +877,27 @@ const PrintPreviewPage: React.FC = () => {
         width={480}
       >
         <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
-          <Text>Volt egy korábbi munkafelületed. Mit szeretnél tenni?</Text>
+          <Text>{lastToken ? 'Volt egy korábbi munkafelületed. Mit szeretnél tenni?' : 'Hogyan szeretnéd kezdeni?'}</Text>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <Button
-              type="primary"
-              size="large"
-              icon={<ReloadOutlined />}
-              style={{ flex: 1 }}
-              onClick={() => {
-                setStartModalOpen(false);
-                window.location.replace(`/print-preview?shareToken=${lastToken}`);
-              }}
-            >
-              <span>
-                Legutóbbi betöltése
-                {lastTokenTitle && (
-                  <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
-                )}
-              </span>
-            </Button>
+            {lastToken && (
+              <Button
+                type="primary"
+                size="large"
+                icon={<ReloadOutlined />}
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setStartModalOpen(false);
+                  window.location.replace(`/print-preview?shareToken=${lastToken}`);
+                }}
+              >
+                <span>
+                  Legutóbbi betöltése
+                  {lastTokenTitle && (
+                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
+                  )}
+                </span>
+              </Button>
+            )}
             <Button
               size="large"
               icon={<PlusOutlined />}
