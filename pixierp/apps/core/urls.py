@@ -28,6 +28,9 @@ router.register(r'client-portal-users', views.ClientPortalUserViewSet, basename=
 router.register(r'site-features', views.SiteFeatureViewSet, basename='site-feature')
 router.register(r'sales-sites', views.SalesSiteViewSet, basename='sales-site')
 router.register(r'tickets', views.TicketViewSet, basename='ticket')
+router.register(r'storage/folders', views.StorageFolderViewSet, basename='storage-folder')
+router.register(r'storage/files', views.StorageFileViewSet, basename='storage-file')
+router.register(r'storage/shares', views.StorageShareViewSet, basename='storage-share')
 
 urlpatterns = [
     path('health/', views.HealthCheckView.as_view(), name='health_check'),

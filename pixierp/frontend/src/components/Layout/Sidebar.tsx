@@ -16,6 +16,7 @@ import {
   GlobalOutlined,
   PrinterOutlined,
   SwapOutlined,
+  CloudServerOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
@@ -556,6 +557,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       label: 'Weboldalak',
     },
     {
+      key: '/storage',
+      icon: <CloudServerOutlined />,
+      label: 'Tárhely',
+    },
+    {
       key: '/print-editor',
       icon: <PrinterOutlined />,
       label: 'Termékszerkesztők',
@@ -703,7 +709,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     }
 
     // 1. Always allow Dashboard and Personal
-    if (['/dashboard', '/personal', '/tickets'].some(k => itemKey.startsWith(k))) {
+    if (['/dashboard', '/personal', '/tickets', '/storage'].some(k => itemKey.startsWith(k))) {
         return true;
     }
 

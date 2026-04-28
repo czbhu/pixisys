@@ -385,6 +385,8 @@ class Permission(models.Model):
         ('orders', 'Megrendelések'),
         ('pos', 'POS'),
         ('settings', 'Beállítások'),
+        ('printshop', 'Nyomda'),
+        ('storage', 'Tárhely'),
     ]
     
     # Almodulok/Erőforrások modulonként
@@ -441,6 +443,12 @@ class Permission(models.Model):
         ('settings.company', 'Beállítások - Cégadatok'),
         ('settings.email', 'Beállítások - E-mail'),
         ('settings.integrations', 'Beállítások - Integrációk'),
+        
+        # Printshop
+        ('printshop.preview', 'Nyomda - Preview'),
+
+        # Storage
+        ('storage.manage', 'Tárhely - Teljes hozzáférés (admin)'),
     ]
     
     ACTION_CHOICES = [
@@ -954,3 +962,138 @@ class SalesSite(models.Model):
 
     def __str__(self):
         return self.name
+
+
+import os
+
+def storage_upload_path(instance, filename):
+    return f'user_storage/{instance.owner_id}/{filename}'
+
+
+class StorageFolder(models.Model):
+    name = models.CharField(max_length=255, verbose_name='Mappa neve')
+    parent = models.ForeignKey(
+        'self', null=True, blank=True,
+        related_name='children', on_delete=models.CASCADE,
+        verbose_name='Szülő mappa'
+    )
+    owner = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE,
+        related_name='storage_folders', verbose_name='Tulajdonos'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Tároló mappa'
+        verbose_name_plural = 'Tároló mappák'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def get_ancestor_ids(self):
+        """Return list of ancestor folder IDs (root first)."""
+        ids = []
+        folder = self
+        while folder.parent_id:
+            folder = folder.parent
+            ids.insert(0, folder.id)
+        return ids
+
+
+class StorageFile(models.Model):
+    name = models.CharField(max_length=255, verbose_name='Fájl neve')
+    folder = models.ForeignKey(
+        StorageFolder, null=True, blank=True,
+        related_name='files', on_delete=models.SET_NULL,
+        verbose_name='Mappa'
+    )
+    file = models.FileField(upload_to=storage_upload_path, verbose_name='Fájl')
+    size = models.BigIntegerField(default=0, verbose_name='Méret (byte)')
+    content_type = models.CharField(max_length=255, blank=True, verbose_name='MIME típus')
+    owner = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE,
+        related_name='storage_files', verbose_name='Tulajdonos'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Tárolt fájl'
+        verbose_name_plural = 'Tárolt fájlok'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def delete(self, *args, **kwargs):
+        # Remove physical file on delete
+        if self.file and hasattr(self.file, 'path'):
+            try:
+                if os.path.isfile(self.file.path):
+                    os.remove(self.file.path)
+            except Exception:
+                pass
+        super().delete(*args, **kwargs)
+
+
+class StorageShare(models.Model):
+    folder = models.ForeignKey(
+        StorageFolder, null=True, blank=True,
+        related_name='shares', on_delete=models.CASCADE,
+        verbose_name='Mappa'
+    )
+    file = models.ForeignKey(
+        StorageFile, null=True, blank=True,
+        related_name='shares', on_delete=models.CASCADE,
+        verbose_name='Fájl'
+    )
+    shared_with = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='storage_shared_with_me',
+        verbose_name='Megosztva ezzel (felhasználó)'
+    )
+    shared_with_department = models.ForeignKey(
+        'hr.Department', on_delete=models.CASCADE, null=True, blank=True,
+        related_name='storage_shared_with_dept',
+        verbose_name='Megosztva ezzel (osztály)'
+    )
+    shared_by = models.ForeignKey(
+        'auth.User', on_delete=models.CASCADE,
+        related_name='storage_shared_by_me',
+        verbose_name='Megosztotta'
+    )
+    can_delete = models.BooleanField(default=False, verbose_name='Törölhet')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Tárhely megosztás'
+        verbose_name_plural = 'Tárhely megosztások'
+        constraints = [
+            models.UniqueConstraint(
+                fields=['folder', 'shared_with'],
+                condition=models.Q(shared_with__isnull=False),
+                name='unique_folder_user_share',
+            ),
+            models.UniqueConstraint(
+                fields=['file', 'shared_with'],
+                condition=models.Q(shared_with__isnull=False),
+                name='unique_file_user_share',
+            ),
+            models.UniqueConstraint(
+                fields=['folder', 'shared_with_department'],
+                condition=models.Q(shared_with_department__isnull=False),
+                name='unique_folder_dept_share',
+            ),
+            models.UniqueConstraint(
+                fields=['file', 'shared_with_department'],
+                condition=models.Q(shared_with_department__isnull=False),
+                name='unique_file_dept_share',
+            ),
+        ]
+
+    def __str__(self):
+        target = self.folder or self.file
+        recipient = self.shared_with or self.shared_with_department
+        return f'{target} → {recipient}'

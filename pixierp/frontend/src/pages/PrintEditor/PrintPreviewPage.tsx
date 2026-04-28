@@ -79,7 +79,11 @@ const PrintPreviewPage: React.FC = () => {
     return value ? Number(value) : null;
   }, [queryParams]);
   const standaloneShareToken = useMemo(() => queryParams.get('shareToken'), [queryParams]);
-  const isAdmin = user?.is_superuser || user?.is_staff || false;
+  const hasPrintPreviewPerm = Array.isArray(user?.permissions) && user.permissions.some(
+    (p: { module?: string; resource?: string; action?: string; allowed?: boolean }) =>
+      p.resource === 'printshop.preview' && p.allowed !== false
+  );
+  const isAdmin = user?.is_superuser || user?.is_staff || hasPrintPreviewPerm || false;
   const userAuthorName = user
     ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username
     : 'Ügyfél';
@@ -514,16 +518,8 @@ const PrintPreviewPage: React.FC = () => {
   }
 
   if (!publicToken && (!orderId || !itemId) && !isAdmin) {
-    return (
-      <div style={{ maxWidth: 900, margin: '40px auto', padding: 16 }}>
-        <Alert
-          type="info"
-          showIcon
-          message="Preview link szükséges"
-          description="Nyisd meg ezt az oldalt egy konkrét preview linkkel, például orderId és itemId paraméterekkel."
-        />
-      </div>
-    );
+    window.location.replace('/print-storage');
+    return null;
   }
 
   return (

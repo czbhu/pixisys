@@ -7,7 +7,8 @@ from .models import (
     BackupFile, UserPreference, Role, Permission, UserRole, Notification,
     ActivityLog, TicketTopic, TicketType, Ticket, TicketMessage, TicketAttachment,
     PublicSiteConfig, ClientPortalUser, ClientPortalSession, SiteFeature, SalesSite,
-    IoTDevice, NfcTag
+    IoTDevice, NfcTag,
+    StorageFolder, StorageFile, StorageShare
 )
 from apps.manufacturing.models import ProductClass, CalculatorTemplate
 from apps.hr.models import Department
@@ -614,3 +615,61 @@ class NfcTagSerializer(serializers.ModelSerializer):
 
     def get_iot_device_type(self, obj):
         return obj.iot_device.device_type if obj.iot_device else None
+
+
+class StorageFolderSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source='owner.username', read_only=True)
+    children_count = serializers.SerializerMethodField()
+    files_count = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StorageFolder
+        fields = [
+            'id', 'name', 'parent', 'owner', 'owner_username',
+            'children_count', 'files_count', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['owner', 'created_at', 'updated_at']
+
+    def get_children_count(self, obj):
+        return obj.children.count()
+
+    def get_files_count(self, obj):
+        return obj.files.count()
+
+
+class StorageFileSerializer(serializers.ModelSerializer):
+    owner_username = serializers.CharField(source='owner.username', read_only=True)
+    url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = StorageFile
+        fields = [
+            'id', 'name', 'folder', 'file', 'url', 'size',
+            'content_type', 'owner', 'owner_username', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['owner', 'size', 'content_type', 'created_at', 'updated_at']
+
+    def get_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        return None
+
+
+class StorageShareSerializer(serializers.ModelSerializer):
+    shared_with_username = serializers.CharField(source='shared_with.username', read_only=True, default=None)
+    shared_by_username = serializers.CharField(source='shared_by.username', read_only=True)
+    shared_with_department_name = serializers.CharField(source='shared_with_department.name', read_only=True, default=None)
+    folder_name = serializers.CharField(source='folder.name', read_only=True)
+    file_name = serializers.CharField(source='file.name', read_only=True)
+
+    class Meta:
+        model = StorageShare
+        fields = [
+            'id', 'folder', 'folder_name', 'file', 'file_name',
+            'shared_with', 'shared_with_username',
+            'shared_with_department', 'shared_with_department_name',
+            'shared_by', 'shared_by_username',
+            'can_delete', 'created_at',
+        ]
+        read_only_fields = ['shared_by', 'created_at']

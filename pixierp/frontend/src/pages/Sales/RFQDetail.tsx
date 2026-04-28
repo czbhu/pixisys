@@ -456,7 +456,7 @@ const RFQDetail: React.FC = () => {
         <div style={{ marginBottom: 8 }}>
           <Space>
             <Button icon={<DeleteOutlined />} danger onClick={async () => {
-              try { await salesService.softDeleteQuoteRequest(Number(id)); message.success('Megjelölve töröltként'); navigate('/sales/demands'); }
+              try { await salesService.softDeleteQuoteRequest(Number(id)); message.success('Megjelölve töröltként'); navigate('/sales/rfqs'); }
               catch { message.error('Nem sikerült törölni'); }
             }}>Törlés</Button>
             {rfq?.assignee_names ? (<span style={{ color: '#888' }}><TeamOutlined /> {rfq.assignee_names}</span>) : null}

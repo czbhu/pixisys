@@ -3452,3 +3452,294 @@ class ClientPortalTicketCreateView(APIView, ClientPortalSessionMixin):
         )
 
         return Response(TicketSerializer(ticket, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Storage Views
+# ─────────────────────────────────────────────────────────────────────────────
+from .models import StorageFolder, StorageFile, StorageShare
+from .serializers import StorageFolderSerializer, StorageFileSerializer, StorageShareSerializer
+from rest_framework.parsers import MultiPartParser, FormParser as DRFFormParser, JSONParser as DRFJSONParser
+from django.http import FileResponse
+
+
+def _has_storage_admin(user):
+    """True if user is superuser/staff OR has storage.manage permission."""
+    if not user or not user.is_authenticated:
+        return False
+    if user.is_superuser or user.is_staff:
+        return True
+    from apps.hr.models import Employee
+    try:
+        employee = Employee.objects.get(user=user)
+        for dept in employee.departments.all():
+            for role in dept.roles.all():
+                if role.permissions.filter(resource='storage.manage', allowed=True).exists():
+                    return True
+    except Employee.DoesNotExist:
+        pass
+    return False
+
+
+def _get_user_dept_ids(user):
+    """Return list of department IDs the user belongs to."""
+    try:
+        from apps.hr.models import Employee
+        emp = Employee.objects.get(user=user)
+        return list(emp.departments.values_list('id', flat=True))
+    except Exception:
+        return []
+
+
+def _folder_accessible_ids(user):
+    """Return list of folder IDs accessible to user (own + user-shared + dept-shared)."""
+    owned = StorageFolder.objects.filter(owner=user).values_list('id', flat=True)
+    shared = StorageShare.objects.filter(shared_with=user, folder__isnull=False).values_list('folder_id', flat=True)
+    dept_ids = _get_user_dept_ids(user)
+    dept_shared = StorageShare.objects.filter(
+        shared_with_department_id__in=dept_ids, folder__isnull=False
+    ).values_list('folder_id', flat=True)
+    return list(set(list(owned) + list(shared) + list(dept_shared)))
+
+
+def _file_accessible_ids(user):
+    """Return list of file IDs accessible to user (own + shared directly + via shared folders)."""
+    owned = StorageFile.objects.filter(owner=user).values_list('id', flat=True)
+    dept_ids = _get_user_dept_ids(user)
+    # directly shared files (user)
+    shared_files = StorageShare.objects.filter(shared_with=user, file__isnull=False).values_list('file_id', flat=True)
+    # directly shared files (dept)
+    dept_shared_files = StorageShare.objects.filter(
+        shared_with_department_id__in=dept_ids, file__isnull=False
+    ).values_list('file_id', flat=True)
+    # shared folders (user + dept)
+    shared_folder_ids = list(
+        StorageShare.objects.filter(shared_with=user, folder__isnull=False).values_list('folder_id', flat=True)
+    ) + list(
+        StorageShare.objects.filter(shared_with_department_id__in=dept_ids, folder__isnull=False).values_list('folder_id', flat=True)
+    )
+    # Collect all descendant folder ids
+    all_folder_ids = set(shared_folder_ids)
+    stack = list(shared_folder_ids)
+    while stack:
+        children = list(StorageFolder.objects.filter(parent_id__in=stack).values_list('id', flat=True))
+        new = [c for c in children if c not in all_folder_ids]
+        all_folder_ids.update(new)
+        stack = new
+    files_in_shared_folders = StorageFile.objects.filter(folder_id__in=all_folder_ids).values_list('id', flat=True)
+    return list(set(list(owned) + list(shared_files) + list(dept_shared_files) + list(files_in_shared_folders)))
+
+
+class StorageFolderViewSet(viewsets.ModelViewSet):
+    serializer_class = StorageFolderSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [DRFJSONParser]
+
+    def get_queryset(self):
+        user = self.request.user
+        if _has_storage_admin(user):
+            qs = StorageFolder.objects.select_related('owner').all()
+        else:
+            ids = _folder_accessible_ids(user)
+            qs = StorageFolder.objects.select_related('owner').filter(id__in=ids)
+        parent = self.request.query_params.get('parent')
+        if parent == 'root':
+            qs = qs.filter(parent__isnull=True)
+        elif parent:
+            qs = qs.filter(parent_id=parent)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(owner=self.request.user)
+
+    def destroy(self, request, *args, **kwargs):
+        folder = self.get_object()
+        if not _has_storage_admin(request.user) and folder.owner != request.user:
+            # check if user has can_delete share (user-direct or via dept)
+            dept_ids = _get_user_dept_ids(request.user)
+            has_perm = (
+                StorageShare.objects.filter(folder=folder, shared_with=request.user, can_delete=True).exists()
+                or StorageShare.objects.filter(folder=folder, shared_with_department_id__in=dept_ids, can_delete=True).exists()
+            )
+            if not has_perm:
+                return Response({'error': 'Nincs jogosultságod törölni ezt a mappát.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=False, methods=['get'])
+    def tree(self, request):
+        """Return the full folder tree the user can see."""
+        user = request.user
+        if _has_storage_admin(user):
+            folders = StorageFolder.objects.select_related('owner').order_by('name')
+        else:
+            ids = _folder_accessible_ids(user)
+            folders = StorageFolder.objects.select_related('owner').filter(id__in=ids).order_by('name')
+
+        def build_node(folder):
+            children_qs = folders.filter(parent=folder)
+            return {
+                'id': folder.id,
+                'name': folder.name,
+                'owner': folder.owner.username,
+                'owner_id': folder.owner_id,
+                'children': [build_node(c) for c in children_qs],
+            }
+
+        roots = [f for f in folders if f.parent_id is None]
+        return Response([build_node(r) for r in roots])
+
+
+class StorageFileViewSet(viewsets.ModelViewSet):
+    serializer_class = StorageFileSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, DRFFormParser, DRFJSONParser]
+
+    def get_queryset(self):
+        user = self.request.user
+        if _has_storage_admin(user):
+            qs = StorageFile.objects.select_related('owner').all()
+        else:
+            ids = _file_accessible_ids(user)
+            qs = StorageFile.objects.select_related('owner').filter(id__in=ids)
+        folder = self.request.query_params.get('folder')
+        if folder == 'root':
+            qs = qs.filter(folder__isnull=True)
+        elif folder:
+            qs = qs.filter(folder_id=folder)
+        return qs
+
+    def perform_create(self, serializer):
+        uploaded = self.request.FILES.get('file')
+        size = uploaded.size if uploaded else 0
+        mime = uploaded.content_type if uploaded else ''
+        name = self.request.data.get('name') or (uploaded.name if uploaded else 'file')
+        serializer.save(owner=self.request.user, size=size, content_type=mime, name=name)
+
+    def destroy(self, request, *args, **kwargs):
+        obj = self.get_object()
+        if not _has_storage_admin(request.user) and obj.owner != request.user:
+            dept_ids = _get_user_dept_ids(request.user)
+            has_perm = (
+                StorageShare.objects.filter(file=obj, shared_with=request.user, can_delete=True).exists()
+                or StorageShare.objects.filter(file=obj, shared_with_department_id__in=dept_ids, can_delete=True).exists()
+            )
+            if not has_perm:
+                return Response({'error': 'Nincs jogosultságod törölni ezt a fájlt.'}, status=status.HTTP_403_FORBIDDEN)
+        return super().destroy(request, *args, **kwargs)
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        obj = self.get_object()
+        try:
+            response = FileResponse(open(obj.file.path, 'rb'), as_attachment=True, filename=obj.name)
+            return response
+        except FileNotFoundError:
+            return Response({'error': 'A fájl nem található a szerveren.'}, status=status.HTTP_404_NOT_FOUND)
+
+
+class StorageShareViewSet(viewsets.ModelViewSet):
+    serializer_class = StorageShareSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if _has_storage_admin(user):
+            return StorageShare.objects.select_related('shared_with', 'shared_by', 'shared_with_department', 'folder', 'file').all()
+        dept_ids = _get_user_dept_ids(user)
+        return StorageShare.objects.select_related('shared_with', 'shared_by', 'shared_with_department', 'folder', 'file').filter(
+            Q(shared_by=user) | Q(shared_with=user) | Q(shared_with_department_id__in=dept_ids)
+        )
+
+    def perform_create(self, serializer):
+        serializer.save(shared_by=self.request.user)
+
+    @action(detail=False, methods=['post'])
+    def share_folder(self, request):
+        """Share a folder with a user or department."""
+        folder_id = request.data.get('folder_id')
+        user_id = request.data.get('user_id')
+        department_id = request.data.get('department_id')
+        can_delete = request.data.get('can_delete', False)
+        if not user_id and not department_id:
+            return Response({'error': 'Adja meg a felhasználót vagy az osztályt.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            folder = StorageFolder.objects.get(id=folder_id)
+        except StorageFolder.DoesNotExist:
+            return Response({'error': 'Mappa nem található.'}, status=status.HTTP_404_NOT_FOUND)
+        if not _has_storage_admin(request.user) and folder.owner != request.user:
+            return Response({'error': 'Csak a saját mappádat oszthatod meg.'}, status=status.HTTP_403_FORBIDDEN)
+        if user_id:
+            from django.contrib.auth import get_user_model
+            UserModel = get_user_model()
+            try:
+                target_user = UserModel.objects.get(id=user_id)
+            except UserModel.DoesNotExist:
+                return Response({'error': 'Felhasználó nem található.'}, status=status.HTTP_404_NOT_FOUND)
+            share, _ = StorageShare.objects.update_or_create(
+                folder=folder, shared_with=target_user, shared_with_department=None,
+                defaults={'shared_by': request.user, 'can_delete': can_delete, 'file': None}
+            )
+        else:
+            from apps.hr.models import Department
+            try:
+                dept = Department.objects.get(id=department_id)
+            except Department.DoesNotExist:
+                return Response({'error': 'Osztály nem található.'}, status=status.HTTP_404_NOT_FOUND)
+            share, _ = StorageShare.objects.update_or_create(
+                folder=folder, shared_with_department=dept, shared_with=None,
+                defaults={'shared_by': request.user, 'can_delete': can_delete, 'file': None}
+            )
+        return Response(StorageShareSerializer(share, context={'request': request}).data)
+
+    @action(detail=False, methods=['post'])
+    def share_file(self, request):
+        """Share a single file with a user or department."""
+        file_id = request.data.get('file_id')
+        user_id = request.data.get('user_id')
+        department_id = request.data.get('department_id')
+        can_delete = request.data.get('can_delete', False)
+        if not user_id and not department_id:
+            return Response({'error': 'Adja meg a felhasználót vagy az osztályt.'}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            file_obj = StorageFile.objects.get(id=file_id)
+        except StorageFile.DoesNotExist:
+            return Response({'error': 'Fájl nem található.'}, status=status.HTTP_404_NOT_FOUND)
+        if not _has_storage_admin(request.user) and file_obj.owner != request.user:
+            return Response({'error': 'Csak a saját fájlodat oszthatod meg.'}, status=status.HTTP_403_FORBIDDEN)
+        if user_id:
+            from django.contrib.auth import get_user_model
+            UserModel = get_user_model()
+            try:
+                target_user = UserModel.objects.get(id=user_id)
+            except UserModel.DoesNotExist:
+                return Response({'error': 'Felhasználó nem található.'}, status=status.HTTP_404_NOT_FOUND)
+            share, _ = StorageShare.objects.update_or_create(
+                file=file_obj, shared_with=target_user, shared_with_department=None,
+                defaults={'shared_by': request.user, 'can_delete': can_delete, 'folder': None}
+            )
+        else:
+            from apps.hr.models import Department
+            try:
+                dept = Department.objects.get(id=department_id)
+            except Department.DoesNotExist:
+                return Response({'error': 'Osztály nem található.'}, status=status.HTTP_404_NOT_FOUND)
+            share, _ = StorageShare.objects.update_or_create(
+                file=file_obj, shared_with_department=dept, shared_with=None,
+                defaults={'shared_by': request.user, 'can_delete': can_delete, 'folder': None}
+            )
+        return Response(StorageShareSerializer(share, context={'request': request}).data)
+
+    @action(detail=False, methods=['get'])
+    def users_list(self, request):
+        """Return list of users to share with."""
+        from django.contrib.auth import get_user_model
+        UserModel = get_user_model()
+        users = UserModel.objects.filter(is_active=True).values('id', 'username', 'first_name', 'last_name', 'email')
+        return Response(list(users))
+
+    @action(detail=False, methods=['get'])
+    def departments_list(self, request):
+        """Return list of HR departments to share with."""
+        from apps.hr.models import Department
+        depts = Department.objects.order_by('name').values('id', 'name')
+        return Response(list(depts))

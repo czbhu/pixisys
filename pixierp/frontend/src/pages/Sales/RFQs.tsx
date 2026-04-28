@@ -19,6 +19,7 @@ import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/I
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
+import Demands from './Demands';
 import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { TextArea } = Input;
@@ -67,6 +68,7 @@ const RFQs: React.FC = () => {
   const [csvMode, setCsvMode] = useState(false);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
+  const isDemandView = searchParams.get('view') === 'demands';
 
   const exportCsv = () => {
     if (isItemsView) {
@@ -1042,6 +1044,29 @@ const RFQs: React.FC = () => {
     );
   }
 
+  if (isDemandView) {
+    return (
+      <div>
+        <div style={{ marginBottom: 12, paddingLeft: 4 }}>
+          <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
+            <div
+              onClick={() => { setIsItemsView(false); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
+              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
+            >Árajánlatok</div>
+            <div
+              onClick={() => { setIsItemsView(true); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'items'); return p; }, { replace: true }); }}
+              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
+            >Tételek</div>
+            <div
+              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: '#1677ff', color: '#fff', boxShadow: '0 1px 4px rgba(22,119,255,0.25)', userSelect: 'none' }}
+            >Igények</div>
+          </div>
+        </div>
+        <Demands />
+      </div>
+    );
+  }
+
   return (
     <div>
       <Card
@@ -1057,6 +1082,10 @@ const RFQs: React.FC = () => {
                   onClick={() => { setIsItemsView(true); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'items'); return p; }, { replace: true }); }}
                   style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: isItemsView ? '#1677ff' : 'transparent', color: isItemsView ? '#ffffff' : '#666', boxShadow: isItemsView ? '0 1px 4px rgba(22,119,255,0.25)' : 'none', userSelect: 'none' }}
                 >Tételek</div>
+                <div
+                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'demands'); return p; }, { replace: true }); }}
+                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
+                >Igények</div>
               </div>
               {csvMode ? (
                 <Space size="small">

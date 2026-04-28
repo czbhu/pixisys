@@ -34,6 +34,7 @@ import PrintPreviewPage from './pages/PrintEditor/PrintPreviewPage';
 import PrintStoragePage from './pages/PrintEditor/PrintStoragePage';
 import PrintShopPage from './pages/PrintEditor/PrintShopPage';
 import PrintTemplatesPage from './pages/PrintEditor/PrintTemplatesPage';
+import StoragePage from './pages/Storage/StoragePage';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
@@ -306,6 +307,7 @@ function AppContent() {
             <Route path="/print-editor/*" element={<PrintEditorPage />} />
             <Route path="/print-shop/*" element={<PrintShopPage />} />
             <Route path="/manufacturing/print-templates" element={<PrintTemplatesPage />} />
+            <Route path="/storage" element={<StoragePage />} />
           </Routes>
         </Content>
 
