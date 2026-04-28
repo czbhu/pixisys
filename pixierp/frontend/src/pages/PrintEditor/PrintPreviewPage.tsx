@@ -63,6 +63,7 @@ const PrintPreviewPage: React.FC = () => {
   const [startModalOpen, setStartModalOpen] = useState(false);
   const [lastToken, setLastToken] = useState<string | null>(null);
   const [lastTokenTitle, setLastTokenTitle] = useState<string | null>(null);
+  const [startupDecided, setStartupDecided] = useState(false);
 
   const path = typeof window !== 'undefined' ? window.location.pathname : '';
   const search = typeof window !== 'undefined' ? window.location.search : '';
@@ -119,11 +120,9 @@ const PrintPreviewPage: React.FC = () => {
     try {
       const token = localStorage.getItem('lastPrintPreviewToken');
       const title = localStorage.getItem('lastPrintPreviewTitle');
-      if (token) {
-        setLastToken(token);
-        setLastTokenTitle(title);
-        setStartModalOpen(true);
-      }
+      setLastToken(token);
+      setLastTokenTitle(title);
+      setStartModalOpen(true);
     } catch { /* ignore */ }
   }, [user, isAdmin, publicToken, orderId, itemId, standaloneShareToken]);
 
@@ -564,6 +563,8 @@ const PrintPreviewPage: React.FC = () => {
     return null;
   }
 
+  const showPrintCommentView = startupDecided || !!publicToken || !!orderId || !!itemId || !!standaloneShareToken;
+
   return (
     <>
       {!publicToken && isAdmin && (
@@ -628,20 +629,22 @@ const PrintPreviewPage: React.FC = () => {
         </div>
       )}
 
-      <PrintCommentView
-        orderId={orderId}
-        itemId={itemId}
-        isAdmin={isAdmin}
-        authorName={authorName}
-        shareToken={publicToken ?? standaloneShareToken ?? undefined}
-        canEdit={publicToken ? !!shareConfig?.editable : isAdmin}
-        canComment={publicToken ? !!shareConfig?.commentable : true}
-        canExport={publicToken ? !!shareConfig?.exportable : true}
-        initialPdfUrl={publicToken || standaloneShareToken ? (shareConfig?.pdf_url ?? null) : (itemConfig?.generated_pdf_url ?? null)}
-        hideUpload={!!publicToken && !shareConfig?.editable}
-        onPdfFileChange={setLocalPdfFile}
-        onAnnotationsChange={setLocalAnnotations}
-      />
+      {showPrintCommentView && (
+        <PrintCommentView
+          orderId={orderId}
+          itemId={itemId}
+          isAdmin={isAdmin}
+          authorName={authorName}
+          shareToken={publicToken ?? standaloneShareToken ?? undefined}
+          canEdit={publicToken ? !!shareConfig?.editable : isAdmin}
+          canComment={publicToken ? !!shareConfig?.commentable : true}
+          canExport={publicToken ? !!shareConfig?.exportable : true}
+          initialPdfUrl={publicToken || standaloneShareToken ? (shareConfig?.pdf_url ?? null) : (itemConfig?.generated_pdf_url ?? null)}
+          hideUpload={!!publicToken && !shareConfig?.editable}
+          onPdfFileChange={setLocalPdfFile}
+          onAnnotationsChange={setLocalAnnotations}
+        />
+      )}
 
       <Modal
         title="Preview megosztás"
@@ -848,42 +851,54 @@ const PrintPreviewPage: React.FC = () => {
       <Modal
         title="Munkafelület megnyitása"
         open={startModalOpen}
-        onCancel={() => setStartModalOpen(false)}
+        onCancel={async () => {
+          await clearPdfFromIDB();
+          try {
+            localStorage.removeItem('lastPrintPreviewToken');
+            localStorage.removeItem('lastPrintPreviewTitle');
+          } catch { /* ignore */ }
+          setStartModalOpen(false);
+          setStartupDecided(true);
+        }}
         footer={null}
         closable
         maskClosable={false}
         width={480}
       >
         <Space direction="vertical" style={{ width: '100%', padding: '8px 0 4px' }} size="large">
-          <Text>Volt egy korábbi munkafelületed. Mit szeretnél tenni?</Text>
+          <Text>{lastToken ? 'Volt egy korábbi munkafelületed. Mit szeretnél tenni?' : 'Hogyan szeretnéd kezdeni?'}</Text>
           <div style={{ display: 'flex', gap: 12, justifyContent: 'center' }}>
-            <Button
-              type="primary"
-              size="large"
-              icon={<ReloadOutlined />}
-              style={{ flex: 1 }}
-              onClick={() => {
-                setStartModalOpen(false);
-                window.location.replace(`/print-preview?shareToken=${lastToken}`);
-              }}
-            >
-              <span>
-                Legutóbbi betöltése
-                {lastTokenTitle && (
-                  <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
-                )}
-              </span>
-            </Button>
+            {lastToken && (
+              <Button
+                type="primary"
+                size="large"
+                icon={<ReloadOutlined />}
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setStartModalOpen(false);
+                  window.location.replace(`/print-preview?shareToken=${lastToken}`);
+                }}
+              >
+                <span>
+                  Legutóbbi betöltése
+                  {lastTokenTitle && (
+                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.85, marginTop: 2 }}>{lastTokenTitle}</div>
+                  )}
+                </span>
+              </Button>
+            )}
             <Button
               size="large"
               icon={<PlusOutlined />}
               style={{ flex: 1 }}
-              onClick={() => {
+              onClick={async () => {
+                await clearPdfFromIDB();
                 try {
                   localStorage.removeItem('lastPrintPreviewToken');
                   localStorage.removeItem('lastPrintPreviewTitle');
                 } catch { /* ignore */ }
                 setStartModalOpen(false);
+                setStartupDecided(true);
               }}
             >
               Új munkafelület
