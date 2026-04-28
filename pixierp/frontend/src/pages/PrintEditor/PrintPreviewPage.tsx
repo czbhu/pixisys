@@ -84,7 +84,11 @@ const PrintPreviewPage: React.FC = () => {
     const value = queryParams.get('itemId');
     return value ? Number(value) : null;
   }, [queryParams]);
-  const standaloneShareToken = useMemo(() => queryParams.get('shareToken'), [queryParams]);
+  // Sanitize: reject 'null'/'undefined' strings that can be written by template literals
+  const standaloneShareToken = useMemo(() => {
+    const v = queryParams.get('shareToken');
+    return v && v !== 'null' && v !== 'undefined' ? v : null;
+  }, [queryParams]);
   const hasPrintPreviewPerm = Array.isArray(user?.permissions) && user.permissions.some(
     (p: { module?: string; resource?: string; action?: string; allowed?: boolean }) =>
       p.resource === 'printshop.preview' && p.allowed !== false
@@ -121,14 +125,16 @@ const PrintPreviewPage: React.FC = () => {
     if (!isAdmin) return;
     startupCheckedRef.current = true;
     try {
-      const sessionToken = sessionStorage.getItem('currentSessionPreviewToken');
+      const rawSession = sessionStorage.getItem('currentSessionPreviewToken');
+      const sessionToken = rawSession && rawSession !== 'null' && rawSession !== 'undefined' ? rawSession : null;
       if (sessionToken) {
         // Same tab had an open workspace – restore silently
         window.location.replace(`/print-preview?shareToken=${sessionToken}`);
         return;
       }
       // New tab – always ask, whether or not there is previous history
-      const token = localStorage.getItem('lastPrintPreviewToken');
+      const rawLocal = localStorage.getItem('lastPrintPreviewToken');
+      const token = rawLocal && rawLocal !== 'null' && rawLocal !== 'undefined' ? rawLocal : null;
       const title = localStorage.getItem('lastPrintPreviewTitle');
       setLastToken(token);
       setLastTokenTitle(title);
@@ -279,9 +285,9 @@ const PrintPreviewPage: React.FC = () => {
           response = await api.post('/printshop/shared-preview/', formData, {
             headers: { 'Content-Type': 'multipart/form-data' },
           });
-          const nextUrl = buildStandalonePreviewUrl(null, null, response.data?.token);
-          if (nextUrl && typeof window !== 'undefined') {
-            window.history.replaceState({}, '', `/print-preview?shareToken=${response.data?.token}`);
+          const newShareToken = response.data?.token;
+          if (newShareToken && newShareToken !== 'null' && typeof window !== 'undefined') {
+            window.history.replaceState({}, '', `/print-preview?shareToken=${newShareToken}`);
           }
           setShareConfig({
             pdf_url: response.data?.pdf_url,
@@ -416,7 +422,7 @@ const PrintPreviewPage: React.FC = () => {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
         const newToken = response.data?.token;
-        if (newToken && typeof window !== 'undefined') {
+        if (newToken && newToken !== 'null' && typeof window !== 'undefined') {
           window.history.replaceState({}, '', `/print-preview?shareToken=${newToken}`);
         }
         setShareConfig({
@@ -535,7 +541,10 @@ const PrintPreviewPage: React.FC = () => {
           headers: { 'Content-Type': 'multipart/form-data' },
         });
         if (cancelled) return;
-        window.history.replaceState({}, '', `/print-preview?shareToken=${response.data?.token}`);
+        const shareAutoToken = response.data?.token;
+        if (shareAutoToken && shareAutoToken !== 'null' && typeof window !== 'undefined') {
+          window.history.replaceState({}, '', `/print-preview?shareToken=${shareAutoToken}`);
+        }
         setShareConfig({
           pdf_url: response.data?.pdf_url,
           editable: response.data?.editable,
