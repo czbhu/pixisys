@@ -2046,8 +2046,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 110 },
             { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
             { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
-            { title: 'Átl. bek. ár', key: 'cost', width: 100, render: (r: any) => {
-              const v = Number(r.moving_average_cost) || Number(r.net_unit_price) || 0;
+            { title: 'Bek. egys. ár', key: 'cost', width: 100, render: (r: any) => {
+              const v = Number(r.unit_cost_price) || Number(r.moving_average_cost) || Number(r.net_unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'El. egys. ár', key: 'sell', width: 100, render: (r: any) => {
+              const v = Number(r.unit_selling_price) || 0;
               return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
             }},
             { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
@@ -2056,8 +2060,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             { title: 'Kód', dataIndex: 'code', key: 'code', width: 100 },
             { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
             { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
-            { title: 'Ár', key: 'price', width: 100, render: (r: any) => {
+            { title: 'Bek. egys. ár', key: 'cost', width: 100, render: (r: any) => {
               const v = Number(r.unit_cost_price) || Number(r.unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'El. egys. ár', key: 'sell', width: 100, render: (r: any) => {
+              const v = Number(r.unit_selling_price) || 0;
               return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
             }},
             { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
@@ -2067,7 +2075,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             const type = costSearchModal.type!;
             const unit = record.unit || (type === 'material' ? 'db' : 'alkalom');
             const cp = type === 'material'
-              ? (Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
+              ? (Number(record.unit_cost_price) || Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
               : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
             const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
             const sellUnit = record.unit_selling_price ? Number(record.unit_selling_price) : (cp > 0 ? cp * (1 + mu / 100) : 0);
