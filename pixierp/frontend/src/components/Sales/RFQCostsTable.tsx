@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Table, Collapse, Statistic, Row, Col, Card, Typography, Tag, Select, Space, Tooltip, Spin } from 'antd';
 import { CalculatorOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { manufacturingService } from '../../services/manufacturingService';
@@ -46,17 +46,28 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
 }) => {
   const [autoRows, setAutoRows] = useState<AutoRow[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
-  const [displayCurrency, setDisplayCurrency] = useState<string>('');
+  const [displayCurrency, setDisplayCurrency] = useState<string>(() => (currency || '').toUpperCase());
   const [loading, setLoading] = useState(false);
+  const userChangedDisplay = useRef(false);
 
   useEffect(() => {
     manufacturingService.getCurrencies().then((list: any) => {
       const arr: CurrencyItem[] = Array.isArray(list) ? list : [];
       setCurrencies(arr);
-      const def = arr.find(c => c.is_default);
-      setDisplayCurrency(prev => prev || (def ? def.code.toUpperCase() : (arr[0]?.code.toUpperCase() ?? 'HUF')));
+      if (!userChangedDisplay.current) {
+        const def = arr.find(c => c.is_default);
+        const fallback = def ? def.code.toUpperCase() : (arr[0]?.code.toUpperCase() ?? 'HUF');
+        setDisplayCurrency(prev => prev || fallback);
+      }
     }).catch(() => {});
   }, []);
+
+  // When RFQ currency prop changes (user edits the quote), follow it unless user manually chose display currency
+  useEffect(() => {
+    if (currency && !userChangedDisplay.current) {
+      setDisplayCurrency(currency.toUpperCase());
+    }
+  }, [currency]);
 
   const convert = (amount: number, fromCode: string, toCode: string): number => {
     const from = (fromCode || 'HUF').toUpperCase();
@@ -85,7 +96,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
           _autoId: `svc_${counter++}`,
           _label: 'Szolgáltatás',
           _color: 'blue',
-          _sourceCurrency: defaultCurrencyCode,
+          _sourceCurrency: (item.service_currency || defaultCurrencyCode).toUpperCase(),
           code: item.service_code || '',
           name: item.service_name || '-',
           quantity: qty,
@@ -100,7 +111,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
           _autoId: `mat_${counter++}`,
           _label: 'Termék',
           _color: 'green',
-          _sourceCurrency: defaultCurrencyCode,
+          _sourceCurrency: (item.material_currency || defaultCurrencyCode).toUpperCase(),
           code: item.material_code || '',
           name: item.material_name || '-',
           quantity: qty,
@@ -246,7 +257,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
               size="small"
               style={{ width: 150 }}
               value={displayCurrency || undefined}
-              onChange={v => setDisplayCurrency(v)}
+              onChange={v => { userChangedDisplay.current = true; setDisplayCurrency(v); }}
               placeholder="Deviza"
               options={currencies.map(c => ({
                 value: c.code.toUpperCase(),
