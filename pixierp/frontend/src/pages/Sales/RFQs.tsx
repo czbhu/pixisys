@@ -1817,13 +1817,23 @@ const RFQs: React.FC = () => {
              <RFQCostsTable
                 totalRevenue={newItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.net_unit_price || 0)), 0)}
                 currency={currency}
-                rfqItems={newItems.map(it => ({
-                  ...it,
-                  // Ensure manufacturing_product is set so RFQCostsTable can fetch cost items
-                  manufacturing_product: it.item_type === 'manufacturing'
-                    ? ((it as any).manufacturing_product || it.ref_id)
-                    : undefined,
-                }))}
+                rfqItems={newItems.map(it => {
+                  // For manufacturing items still pending (not yet API-saved),
+                  // pull cost items from the inline payload so they appear in the cost table.
+                  const pending = (it as any).pendingManuPayload;
+                  const inlineCostItems = pending?._costItemsState
+                    ?? pending?.cost_items
+                    ?? (it as any).manuCostItems
+                    ?? undefined;
+                  return {
+                    ...it,
+                    manufacturing_product_name: it.name,
+                    manufacturing_product: it.item_type === 'manufacturing'
+                      ? ((it as any).manufacturing_product || it.ref_id)
+                      : undefined,
+                    _inlineCostItems: it.item_type === 'manufacturing' ? inlineCostItems : undefined,
+                  };
+                })}
              />
           </div>
           </div>

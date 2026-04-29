@@ -123,35 +123,63 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
           net_total_orig: cp * qty,
           supplier_name: '',
         });
-      } else if (item.item_type === 'manufacturing' && item.manufacturing_product) {
+      } else if (item.item_type === 'manufacturing' && (item.manufacturing_product || item._inlineCostItems)) {
         const pid = typeof item.manufacturing_product === 'object'
-          ? item.manufacturing_product.id
+          ? item.manufacturing_product?.id
           : item.manufacturing_product;
-        const productName = item.manufacturing_product_name || `#${pid}`;
-        promises.push(
-          manufacturingService.getProduct(pid).then((product: any) => {
-            (product.cost_items || []).forEach((ci: any) => {
-              const ciQty = Number(ci.quantity) || 1;
-              // cost_price is the unit cost; multiply by quantity for total
-              const ciUnitCp = Number(ci.cost_price) || 0;
-              const ciTotalCp = ciUnitCp * ciQty;
-              const ciCurrency = (ci.currency || defaultCurrencyCode).toUpperCase();
-              rows.push({
-                _autoId: `manu_${pid}_${ci.id ?? counter++}`,
-                _label: productName,
-                _color: 'purple',
-                _sourceCurrency: ciCurrency,
-                code: '',
-                name: ci.name || '-',
-                quantity: ciQty,
-                unit: ci.unit || 'db',
-                net_unit_price_orig: ciUnitCp,
-                net_total_orig: ciTotalCp,
-                supplier_name: ci.supplier_name || '',
-              });
+        const productName = item.manufacturing_product_name || item.name || (pid ? `#${pid}` : 'Egyedi gyártás');
+
+        // ── Inline cost items (used in NEW-RFQ creation modal where the
+        //    manufacturing product hasn't been saved to API yet) ───────────
+        const inlineCostItems = item._inlineCostItems
+          ?? (typeof item.manufacturing_product === 'object' ? item.manufacturing_product?.cost_items : undefined);
+
+        if (Array.isArray(inlineCostItems) && inlineCostItems.length > 0) {
+          inlineCostItems.forEach((ci: any) => {
+            const ciQty = Number(ci.quantity) || 1;
+            const ciUnitCp = Number(ci.cost_price) || 0;
+            const ciTotalCp = ciUnitCp * ciQty;
+            const ciCurrency = (ci.currency || ci.currency_code || defaultCurrencyCode).toUpperCase();
+            rows.push({
+              _autoId: `manu_inline_${pid ?? 'new'}_${ci.id ?? counter++}`,
+              _label: productName,
+              _color: 'purple',
+              _sourceCurrency: ciCurrency,
+              code: '',
+              name: ci.name || '-',
+              quantity: ciQty,
+              unit: ci.unit || 'db',
+              net_unit_price_orig: ciUnitCp,
+              net_total_orig: ciTotalCp,
+              supplier_name: ci.supplier_name || '',
             });
-          }).catch(() => {})
-        );
+          });
+        } else if (pid && pid > 0) {
+          // ── Saved product: fetch from API ──────────────────────────────
+          promises.push(
+            manufacturingService.getProduct(pid).then((product: any) => {
+              (product.cost_items || []).forEach((ci: any) => {
+                const ciQty = Number(ci.quantity) || 1;
+                const ciUnitCp = Number(ci.cost_price) || 0;
+                const ciTotalCp = ciUnitCp * ciQty;
+                const ciCurrency = (ci.currency || defaultCurrencyCode).toUpperCase();
+                rows.push({
+                  _autoId: `manu_${pid}_${ci.id ?? counter++}`,
+                  _label: productName,
+                  _color: 'purple',
+                  _sourceCurrency: ciCurrency,
+                  code: '',
+                  name: ci.name || '-',
+                  quantity: ciQty,
+                  unit: ci.unit || 'db',
+                  net_unit_price_orig: ciUnitCp,
+                  net_total_orig: ciTotalCp,
+                  supplier_name: ci.supplier_name || '',
+                });
+              });
+            }).catch(() => {})
+          );
+        }
       }
     });
 
