@@ -132,6 +132,8 @@ export const invoiceAPI = {
   // Overdue receivables workflow
   getArrearsList: (params = {}) => api.get('/api/invoices/arrears-list/', { params }),
   advanceArrearsStatus: (payload) => api.post('/api/invoices/arrears-advance-status/', payload),
+  getArrearsEmailCompose: (params = {}) => api.get('/api/invoices/arrears-email-compose/', { params }),
+  sendArrearsSingleEmail: (payload) => api.post('/api/invoices/arrears-send-single/', payload),
   // Scheduled invoices workflow
   createScheduledInvoice: (payload) => api.post('/api/invoices/scheduled-invoices/create/', payload),
   listScheduledInvoices: (params = {}) => api.get('/api/invoices/scheduled-invoices/list/', { params }),

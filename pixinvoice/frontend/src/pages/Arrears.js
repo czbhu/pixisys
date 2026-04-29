@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { invoiceAPI } from '../services/api';
+import EmailModal from '../components/EmailModal';
 
 const Container = styled.div`
   background: white;
@@ -70,6 +71,29 @@ const Th = styled.th`
   font-weight: 600;
   color: #2c3e50;
   border-bottom: 1px solid #ecf0f1;
+  position: relative;
+  user-select: none;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+  &:hover { background: #eef1f5; }
+`;
+
+const ThResizeHandle = styled.span`
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  background: transparent;
+  &:hover { background: #3498db55; }
+`;
+
+const SortArrow = styled.span`
+  font-size: 10px;
+  margin-left: 4px;
+  color: #3498db;
 `;
 
 const Tr = styled.tr`
@@ -151,6 +175,20 @@ export default function Arrears() {
   const [sending, setSending] = useState(false);
   const headerSelectRef = useRef(null);
 
+  // Sort state
+  const [sortKey, setSortKey] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
+
+  // Column widths (px)
+  const DEFAULT_WIDTHS = { num: 140, customer: 180, issue: 100, delivery: 100, due: 100, payment: 110, amount: 130, status: 160, actions: 180 };
+  const [colWidths, setColWidths] = useState(DEFAULT_WIDTHS);
+  const resizingRef = useRef(null); // { key, startX, startW }
+
+  // Email modal
+  const [emailModalOpen, setEmailModalOpen] = useState(false);
+  const [emailModalData, setEmailModalData] = useState(null); // { from, to, subject, body, customerId, invoiceId, advanceStatus }
+  const [emailSending, setEmailSending] = useState(false);
+
   const loadRows = async () => {
     if (!companyId) return;
     setLoading(true);
@@ -188,9 +226,62 @@ export default function Arrears() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [companyId, statusFilter]);
 
+  // Column resize mouse handlers
+  const startResize = useCallback((e, key) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { key, startX: e.clientX, startW: colWidths[key] || 120 };
+    const onMove = (ev) => {
+      const { key: k, startX, startW } = resizingRef.current;
+      const newW = Math.max(60, startW + ev.clientX - startX);
+      setColWidths((prev) => ({ ...prev, [k]: newW }));
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }, [colWidths]);
+
+  // Sort click handler
+  const handleSort = (key) => {
+    setSortKey((prev) => {
+      if (prev === key) {
+        setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+        return key;
+      }
+      setSortDir('asc');
+      return key;
+    });
+  };
+
+  // Sorted rows
+  const sortedRows = useMemo(() => {
+    if (!sortKey) return rows;
+    const dir = sortDir === 'asc' ? 1 : -1;
+    return [...rows].sort((a, b) => {
+      let av, bv;
+      switch (sortKey) {
+        case 'num': av = a.invoice_number || ''; bv = b.invoice_number || ''; break;
+        case 'customer': av = a.customer?.name || ''; bv = b.customer?.name || ''; break;
+        case 'issue': av = a.issue_date || ''; bv = b.issue_date || ''; break;
+        case 'delivery': av = a.delivery_date || ''; bv = b.delivery_date || ''; break;
+        case 'due': av = a.due_date || ''; bv = b.due_date || ''; break;
+        case 'payment': av = a.payment_method || ''; bv = b.payment_method || ''; break;
+        case 'amount': av = Number(a.total_gross_amount || 0); bv = Number(b.total_gross_amount || 0); break;
+        case 'status': av = a.arrears_status || ''; bv = b.arrears_status || ''; break;
+        default: return 0;
+      }
+      if (typeof av === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), 'hu') * dir;
+    });
+  }, [rows, sortKey, sortDir]);
+
   const selectedCount = selectedIds.size;
-  const selectedVisibleCount = rows.filter((r) => selectedIds.has(String(r.id))).length;
-  const allVisibleSelected = rows.length > 0 && selectedVisibleCount === rows.length;
+  const selectedVisibleCount = sortedRows.filter((r) => selectedIds.has(String(r.id))).length;
+  const allVisibleSelected = sortedRows.length > 0 && selectedVisibleCount === sortedRows.length;
 
   useEffect(() => {
     if (!headerSelectRef.current) return;
@@ -203,7 +294,7 @@ export default function Arrears() {
       return;
     }
     const next = new Set();
-    rows.forEach((r) => next.add(String(r.id)));
+    sortedRows.forEach((r) => next.add(String(r.id)));
     setSelectedIds(next);
   };
 
@@ -237,6 +328,54 @@ export default function Arrears() {
     }
   };
 
+  // Open email modal for individual row
+  const openRowEmail = async (row, targetStatus) => {
+    try {
+      const params = { company_id: companyId, invoice_id: row.id };
+      if (targetStatus) params.target_status = targetStatus;
+      const res = await invoiceAPI.getArrearsEmailCompose(params);
+      const d = res.data;
+      setEmailModalData({
+        from: d.from || '',
+        to: d.to || [],
+        cc: [],
+        bcc: [],
+        subject: d.subject || '',
+        body: d.body || '',
+        customerId: d.customer_id,
+        invoiceId: String(row.id),
+        advanceStatus: targetStatus || '',
+      });
+      setEmailModalOpen(true);
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail előkészítés sikertelen');
+    }
+  };
+
+  const sendEmailFromModal = async (payload) => {
+    setEmailSending(true);
+    try {
+      await invoiceAPI.sendArrearsSingleEmail({
+        company_id: companyId,
+        invoice_id: emailModalData.invoiceId,
+        from: payload.from,
+        to: payload.to,
+        cc: payload.cc || [],
+        bcc: payload.bcc || [],
+        subject: payload.subject,
+        body: payload.body,
+        advance_status: emailModalData.advanceStatus || '',
+      });
+      toast.success('E-mail elküldve');
+      setEmailModalOpen(false);
+      await loadRows();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'E-mail küldési hiba');
+    } finally {
+      setEmailSending(false);
+    }
+  };
+
   const statusAction = (() => {
     if (!statusFilter) return null;
     if (statusFilter === 'litigation') {
@@ -260,6 +399,15 @@ export default function Arrears() {
     );
   })();
 
+  // Column header helper
+  const renderTh = (key, label, style = {}) => (
+    <Th style={{ width: colWidths[key], minWidth: 60, ...style }} onClick={() => handleSort(key)}>
+      {label}
+      {sortKey === key && <SortArrow>{sortDir === 'asc' ? '▲' : '▼'}</SortArrow>}
+      <ThResizeHandle onMouseDown={(e) => startResize(e, key)} onClick={(e) => e.stopPropagation()} />
+    </Th>
+  );
+
   return (
     <Container>
       <Header>
@@ -280,58 +428,103 @@ export default function Arrears() {
         <Table>
           <Thead>
             <tr>
-              <Th>
+              <Th style={{ width: 36, minWidth: 36 }}>
                 <input ref={headerSelectRef} type="checkbox" checked={allVisibleSelected} onChange={toggleHeaderSelection} />
               </Th>
-              <Th>Számlaszám</Th>
-              <Th>Ügyfél</Th>
-              <Th>Kelt</Th>
-              <Th>Teljesítés</Th>
-              <Th>Esedékesség</Th>
-              <Th>Fizetési mód</Th>
-              <Th>Összeg</Th>
-              <Th>Státusz</Th>
-              <Th>Műveletek</Th>
+              {renderTh('num', 'Számlaszám')}
+              {renderTh('customer', 'Ügyfél')}
+              {renderTh('issue', 'Kelt')}
+              {renderTh('delivery', 'Teljesítés')}
+              {renderTh('due', 'Esedékesség')}
+              {renderTh('payment', 'Fizetési mód')}
+              {renderTh('amount', 'Összeg')}
+              {renderTh('status', 'Státusz')}
+              <Th style={{ width: colWidths.actions, minWidth: 60 }}>
+                Műveletek
+                <ThResizeHandle onMouseDown={(e) => startResize(e, 'actions')} onClick={(e) => e.stopPropagation()} />
+              </Th>
             </tr>
           </Thead>
           <tbody>
-            {rows.map((row) => (
-              <Tr key={row.id}>
-                <Td>
-                  <input
-                    type="checkbox"
-                    checked={selectedIds.has(String(row.id))}
-                    onChange={(e) => {
-                      const next = new Set(selectedIds);
-                      if (e.target.checked) next.add(String(row.id)); else next.delete(String(row.id));
-                      setSelectedIds(next);
-                    }}
-                  />
-                </Td>
-                <Td>{row.invoice_number}</Td>
-                <Td>{row.customer?.name || '-'}</Td>
-                <Td>{formatDate(row.issue_date)}</Td>
-                <Td>{formatDate(row.delivery_date)}</Td>
-                <Td>{formatDate(row.due_date)}</Td>
-                <Td>{paymentMethodLabel(row.payment_method)}</Td>
-                <Td>{formatAmount(row.total_gross_amount, row.currency)}</Td>
-                <Td>
-                  <StatusTag>{row.arrears_status_label || '-'}</StatusTag>
-                  <Muted>{row.arrears_status_label || ''}: {Number(row.days_in_status || 0)} nap</Muted>
-                </Td>
-                <Td>
-                  <Button onClick={() => navigate(`/invoices/${row.id}/edit`)}>Megnyitás</Button>
-                </Td>
-              </Tr>
-            ))}
+            {sortedRows.map((row) => {
+              const rowNextStatus = row.next_status || NEXT_STATUS[row.arrears_status] || null;
+              const currentStatus = row.arrears_status;
+              const hasCurrent = !!NEXT_STATUS[currentStatus] || currentStatus === 'overdue';
+              return (
+                <Tr key={row.id}>
+                  <Td>
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(String(row.id))}
+                      onChange={(e) => {
+                        const next = new Set(selectedIds);
+                        if (e.target.checked) next.add(String(row.id)); else next.delete(String(row.id));
+                        setSelectedIds(next);
+                      }}
+                    />
+                  </Td>
+                  <Td>{row.invoice_number}</Td>
+                  <Td>{row.customer?.name || '-'}</Td>
+                  <Td>{formatDate(row.issue_date)}</Td>
+                  <Td>{formatDate(row.delivery_date)}</Td>
+                  <Td>{formatDate(row.due_date)}</Td>
+                  <Td>{paymentMethodLabel(row.payment_method)}</Td>
+                  <Td>{formatAmount(row.total_gross_amount, row.currency)}</Td>
+                  <Td>
+                    <StatusTag>{row.arrears_status_label || '-'}</StatusTag>
+                    <Muted>{Number(row.days_in_status || 0)} nap</Muted>
+                  </Td>
+                  <Td>
+                    <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                      <Button onClick={() => navigate(`/invoices/${row.id}/edit`)}>Megnyitás</Button>
+                      {hasCurrent && (
+                        <Button
+                          title={`Újraküldés (${STATUS_LABEL[currentStatus] || currentStatus})`}
+                          onClick={() => openRowEmail(row, '')}
+                          style={{ fontSize: 12, padding: '4px 8px' }}
+                        >
+                          📧 Újra
+                        </Button>
+                      )}
+                      {rowNextStatus && (
+                        <Button
+                          title={`Következő: ${STATUS_LABEL[rowNextStatus] || rowNextStatus}`}
+                          onClick={() => openRowEmail(row, rowNextStatus)}
+                          style={{ fontSize: 12, padding: '4px 8px', background: '#eaf4ff', borderColor: '#3498db', color: '#1a6ea8' }}
+                        >
+                          📧 {STATUS_LABEL[rowNextStatus] || rowNextStatus}
+                        </Button>
+                      )}
+                    </div>
+                  </Td>
+                </Tr>
+              );
+            })}
           </tbody>
         </Table>
       </TableWrap>
 
-      {!loading && rows.length === 0 && (
+      {!loading && sortedRows.length === 0 && (
         <div style={{ padding: 16 }}>Nincs megjeleníthető lejárt számla.</div>
       )}
       <div style={{ padding: '12px 16px', color: '#6c757d' }}>{selectedCount} kiválasztva</div>
+
+      {emailModalOpen && emailModalData && (
+        <EmailModal
+          isOpen={emailModalOpen}
+          onClose={() => setEmailModalOpen(false)}
+          onSend={sendEmailFromModal}
+          defaultFrom={emailModalData.from}
+          defaultTo={emailModalData.to}
+          defaultCc={emailModalData.cc}
+          defaultBcc={emailModalData.bcc}
+          defaultSubject={emailModalData.subject}
+          defaultBody={emailModalData.body}
+          customerId={emailModalData.customerId}
+          invoiceId={emailModalData.invoiceId}
+        />
+      )}
     </Container>
   );
 }
+

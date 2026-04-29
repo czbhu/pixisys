@@ -3146,6 +3146,45 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             changed += 1
         return changed
 
+    def _arrears_imap_append(self, company, ces, msg_bytes):
+        """Upload sent message to IMAP Sent folder. Silently ignores errors."""
+        import imaplib, ssl, os, datetime
+        try:
+            imap_host = (getattr(ces, 'imap_host', None) if ces else None) or os.environ.get('IMAP_HOST')
+            smtp_user = (getattr(ces, 'smtp_user', None) if ces else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+            smtp_pwd = (getattr(ces, 'smtp_password', None) if ces else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+            imap_user = (getattr(ces, 'imap_user', None) if ces else None) or os.environ.get('IMAP_USER') or smtp_user
+            imap_pwd = (getattr(ces, 'imap_password', None) if ces else None) or os.environ.get('IMAP_PASSWORD') or smtp_pwd
+            imap_port = int((getattr(ces, 'imap_port', None) if ces else None) or os.environ.get('IMAP_PORT') or 993)
+            sent_folder = (getattr(ces, 'imap_sent_folder', None) if ces else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
+            if not imap_host or not imap_user or not imap_pwd:
+                return
+            try:
+                M = imaplib.IMAP4_SSL(imap_host, imap_port)
+            except Exception:
+                try:
+                    M = imaplib.IMAP4(imap_host, 143)
+                    M.starttls(ssl_context=ssl.create_default_context())
+                except Exception:
+                    M = imaplib.IMAP4(imap_host)
+            M.login(imap_user, imap_pwd)
+            used_folder = sent_folder
+            try:
+                typ_chk, _ = M.select(used_folder, readonly=True)
+                ok = (typ_chk == 'OK')
+            except Exception:
+                ok = False
+            if not ok:
+                used_folder = 'Sent'
+                try:
+                    M.select(used_folder)
+                except Exception:
+                    pass
+            M.append(used_folder, '(\\Seen)', imaplib.Time2Internaldate(datetime.datetime.now()), msg_bytes)
+            M.logout()
+        except Exception:
+            pass  # IMAP failures are non-fatal
+
     def _send_arrears_emails_by_template(self, company, entries, template_type):
         import smtplib
         import ssl
@@ -3267,6 +3306,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     with smtplib.SMTP(host, port) as server:
                         server.login(user, pwd)
                         server.send_message(msg)
+                self._arrears_imap_append(company, ces, msg.as_bytes())
                 sent_count += 1
                 details.append({'customer_id': str(customer.id), 'customer_name': customer.name, 'to': recipient, 'status': 'sent', 'invoice_count': len(items)})
             except Exception as e:
@@ -3438,6 +3478,199 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             }
         })
 
+    @action(detail=False, methods=['get'], url_path='arrears-email-compose')
+    def arrears_email_compose(self, request):
+        """Render email fields for single invoice arrears email (preview before sending).
+        Params: company_id, invoice_id, target_status
+        """
+        import decimal
+        company_id = request.query_params.get('company_id')
+        invoice_id = request.query_params.get('invoice_id')
+        target_status = (request.query_params.get('target_status') or '').strip()
+
+        company = getattr(request, 'company', None)
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not invoice_id:
+            return Response({'error': 'invoice_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
+        if not entries:
+            return Response({'error': 'Számla nem található vagy nem lejárt'}, status=status.HTTP_404_NOT_FOUND)
+
+        entry = entries[0]
+        if target_status:
+            template_type = self._arrears_template_for_target_status(target_status)
+        else:
+            current = entry['arrears_status']
+            template_type = self._arrears_template_for_target_status(current)
+        if not template_type:
+            template_type = EmailTemplate.TEMPLATE_ARREARS
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+        from_addr = (
+            (getattr(ces, 'smtp_from', None) if ces else None)
+            or os.environ.get('SMTP_FROM')
+            or (getattr(ces, 'smtp_user', None) if ces else None)
+            or os.environ.get('SMTP_USER') or ''
+        )
+
+        inv = entry['invoice']
+        customer = inv.customer
+        recipient = (getattr(customer, 'email', None) or '').strip()
+
+        def fmt_money(amount, currency):
+            try:
+                d = decimal.Decimal(str(amount or 0))
+            except Exception:
+                d = decimal.Decimal('0')
+            if (currency or '').upper() == 'HUF':
+                return f"{int(d):,}".replace(',', ' ') + ' Ft'
+            return f"{d:.2f} {currency}"
+
+        def render_tpl(tpl, ctx):
+            out = str(tpl or '')
+            for k, v in ctx.items():
+                out = out.replace('{' + k + '}', str(v if v is not None else ''))
+            return out
+
+        today = timezone.localdate()
+        city = (getattr(company, 'city', None) or '').strip()
+        today_city_date = f"{city}, {today.strftime('%Y.%m.%d')}" if city else today.strftime('%Y.%m.%d')
+        tpl_data = get_company_email_template(company, template_type)
+        default_signature_html = get_default_signature_html(company)
+        subject_tpl = tpl_data.get('subject_template') or 'Kintlévőség értesítő - lejárt számlák'
+        body_tpl = tpl_data.get('body_template') or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint lejárt tartozásuk van.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>'
+
+        currency = (inv.currency or 'HUF').upper()
+        table_rows = [
+            f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td>{inv.due_date or ''}</td><td style='text-align:right'>{fmt_money(entry['remaining'], currency)}</td></tr>"
+        ]
+        invoices_table = (
+            "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
+            "<thead><tr><th>Számla sorszám</th><th>Kelt</th><th>Esedékesség</th><th>Tartozás</th></tr></thead>"
+            f"<tbody>{''.join(table_rows)}</tbody></table>"
+        )
+        ctx = {
+            'customer_name': customer.name,
+            'company_name': company.name,
+            'as_of_date': today.isoformat(),
+            'today_date': today.strftime('%Y.%m.%d'),
+            'today_city_date': today_city_date,
+            'company_city': city,
+            'total_outstanding': fmt_money(entry['remaining'], currency),
+            'invoice_count': 1,
+            'currency': currency,
+            'invoices_table': invoices_table,
+            'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
+            'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
+            'signature_html': default_signature_html,
+        }
+        return Response({
+            'from': from_addr,
+            'to': [recipient] if recipient else [],
+            'subject': render_tpl(subject_tpl, ctx),
+            'body': render_tpl(body_tpl, ctx),
+            'customer_id': str(customer.id),
+            'customer_name': customer.name,
+            'invoice_number': inv.invoice_number,
+            'arrears_status': entry['arrears_status'],
+            'target_status': target_status or '',
+        })
+
+    @action(detail=False, methods=['post'], url_path='arrears-send-single')
+    def arrears_send_single(self, request):
+        """Send arrears email for a single invoice with user-editable fields.
+        Body: { company_id, invoice_id, from, to, cc, bcc, subject, body, advance_status }
+        """
+        import smtplib, ssl
+        from email.message import EmailMessage
+
+        data = request.data or {}
+        company = getattr(request, 'company', None)
+        company_id = data.get('company_id')
+        if not company and company_id:
+            company = Company.objects.filter(id=company_id).first()
+        if not company:
+            return Response({'error': 'company_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        invoice_id = data.get('invoice_id')
+        if not invoice_id:
+            return Response({'error': 'invoice_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from_addr = (data.get('from') or '').strip()
+        to_raw = data.get('to') or []
+        to_list = [t.strip() for t in (to_raw if isinstance(to_raw, list) else str(to_raw).split(',')) if str(t).strip()]
+        cc_raw = data.get('cc') or []
+        cc_list = [t.strip() for t in (cc_raw if isinstance(cc_raw, list) else str(cc_raw).split(',')) if str(t).strip()]
+        bcc_raw = data.get('bcc') or []
+        bcc_list = [t.strip() for t in (bcc_raw if isinstance(bcc_raw, list) else str(bcc_raw).split(',')) if str(t).strip()]
+        subject = (data.get('subject') or '').strip()
+        body = (data.get('body') or '').strip()
+        advance_to_status = (data.get('advance_status') or '').strip()
+
+        if not from_addr:
+            return Response({'error': 'Feladó e-mail cím kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not to_list:
+            return Response({'error': 'Legalább egy címzett szükséges'}, status=status.HTTP_400_BAD_REQUEST)
+        if not subject:
+            return Response({'error': 'Tárgy kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        ces = CompanyEmailSettings.objects.filter(company=company).first()
+        host = (getattr(ces, 'smtp_host', None) if ces else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
+        port = int((getattr(ces, 'smtp_port', None) if ces else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
+        user = (getattr(ces, 'smtp_user', None) if ces else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+        pwd = (getattr(ces, 'smtp_password', None) if ces else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+        use_tls = bool(getattr(ces, 'smtp_use_tls', True)) if ces else (os.environ.get('SMTP_USE_TLS', '1') == '1')
+
+        if not host or not user or not pwd:
+            return Response({'error': 'SMTP beállítások hiányoznak (host/user/password)'}, status=status.HTTP_400_BAD_REQUEST)
+
+        msg = EmailMessage()
+        msg['Subject'] = subject
+        msg['From'] = from_addr
+        msg['To'] = ', '.join(to_list)
+        if cc_list:
+            msg['Cc'] = ', '.join(cc_list)
+        if bcc_list:
+            msg['Bcc'] = ', '.join(bcc_list)
+        if '<' in body and '>' in body:
+            msg.set_content('HTML levél')
+            msg.add_alternative(body, subtype='html')
+        else:
+            msg.set_content(body)
+
+        try:
+            if port == 465:
+                context = ssl.create_default_context()
+                with smtplib.SMTP_SSL(host, port, context=context) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            elif use_tls:
+                context = ssl.create_default_context()
+                with smtplib.SMTP(host, port) as server:
+                    server.starttls(context=context)
+                    server.login(user, pwd)
+                    server.send_message(msg)
+            else:
+                with smtplib.SMTP(host, port) as server:
+                    server.login(user, pwd)
+                    server.send_message(msg)
+        except Exception as e:
+            return Response({'error': f'E-mail küldési hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        self._arrears_imap_append(company, ces, msg.as_bytes())
+
+        changed = 0
+        if advance_to_status:
+            entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
+            if entries:
+                changed = self._set_arrears_status([entries[0]['invoice']], advance_to_status)
+
+        return Response({'success': True, 'sent': 1, 'changed': changed})
+
     @action(detail=False, methods=['post'])
     def send_arrears_emails(self, request):
         import smtplib
@@ -3578,6 +3811,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         server.login(user, pwd)
                         server.send_message(msg)
 
+                self._arrears_imap_append(company, ces, msg.as_bytes())
                 sent_count += 1
                 sent_customer_ids.add(str(customer.id))
                 details.append({
