@@ -63,6 +63,7 @@ const RFQs: React.FC = () => {
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatures, setSignatures] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string | undefined>(undefined);
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
@@ -193,6 +194,11 @@ const RFQs: React.FC = () => {
       filtered = filtered.filter(r => r.status === statusFilter);
     }
 
+    // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
+    if (orderStatusFilter) {
+      filtered = filtered.filter(r => r.status === 'ordered' && r.effective_status === orderStatusFilter);
+    }
+
     // Creator filter
     if (creatorFilter) {
       filtered = filtered.filter(r => r.created_by_name === creatorFilter);
@@ -204,7 +210,7 @@ const RFQs: React.FC = () => {
     }
     
     setFiltered(filtered);
-  }, [query, rfqs, statusFilter, creatorFilter]);
+  }, [query, rfqs, statusFilter, creatorFilter, orderStatusFilter]);
 
   const statusTag = (status: string) => {
     const color = {
@@ -320,7 +326,22 @@ const RFQs: React.FC = () => {
       sorter: (a: any, b: any) => (a.total_net_amount || 0) - (b.total_net_amount || 0),
       align: 'right' as const
     },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 120, render: statusTag, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
+    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 140, render: (_: any, r: any) => {
+        // When the RFQ is 'ordered', show the aggregated order-item status with optional '(részben)'.
+        if (r.status === 'ordered' && r.effective_status && r.effective_status !== 'ordered') {
+          const orderColors: Record<string, string> = {
+            new: 'default',
+            confirmed: 'purple',
+            in_production: 'orange',
+            ready: 'green',
+            in_delivery: 'cyan',
+            delivered: 'geekblue',
+            cancelled: 'red',
+          };
+          return <Tag color={orderColors[r.effective_status] || 'purple'}>{r.effective_status_label || r.effective_status}</Tag>;
+        }
+        return statusTag(r.status);
+      }, sorter: (a: any, b: any) => ((a.effective_status || a.status) || '').localeCompare(b.effective_status || b.status || '') },
     { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', width: 100, responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
       title: 'Műveletek', key: 'actions', width: 270, render: (record: any): React.ReactNode => (
@@ -1109,7 +1130,23 @@ const RFQs: React.FC = () => {
                 <Select.Option value="quoted">Árazva</Select.Option>
                 <Select.Option value="rejected">Elutasítva</Select.Option>
                 <Select.Option value="accepted">Elfogadva</Select.Option>
+                <Select.Option value="ordered">Megrendelve</Select.Option>
                 <Select.Option value="archived">Archív</Select.Option>
+              </Select>
+              <Select
+                placeholder="Megrendelési státusz"
+                allowClear
+                style={{ width: 180 }}
+                value={orderStatusFilter}
+                onChange={(v) => setOrderStatusFilter(v)}
+                popupMatchSelectWidth={false}
+              >
+                <Select.Option value="new">Új</Select.Option>
+                <Select.Option value="confirmed">Megerősítve</Select.Option>
+                <Select.Option value="in_production">Gyártásban</Select.Option>
+                <Select.Option value="ready">Kész</Select.Option>
+                <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                <Select.Option value="delivered">Kiszállítva</Select.Option>
               </Select>
               <Select
                 className="rfqs-creator-select"

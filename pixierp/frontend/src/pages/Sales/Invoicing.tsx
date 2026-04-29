@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Table, Button, Checkbox, message, Card, Select, Tag } from 'antd';
-import { FileTextOutlined, EyeOutlined } from '@ant-design/icons';
+import { Table, Button, Checkbox, message, Card, Select, Tag, Modal, Form, Input, Space, Statistic } from 'antd';
+import { FileTextOutlined, EyeOutlined, DollarOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import type { ColumnsType } from 'antd/es/table';
@@ -65,8 +65,74 @@ const Invoicing: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<InvoiceStatus>('to_invoice');
   const [searchText, setSearchText] = useState('');
 
+  // ── Handover (Átadás) ─────────────────────────────────────────────────
+  const [handoverOpen, setHandoverOpen] = useState(false);
+  const [handoverLoading, setHandoverLoading] = useState(false);
+  const [handoverForm] = Form.useForm();
+  const [cashRegisters, setCashRegisters] = useState<any[]>([]);
+
   const calculateNetTotal = (order: InvoiceableOrder): number => {
     return Number(order.net_total || 0);
+  };
+
+  const selectedNetTotal = useMemo(() => {
+    return orders
+      .filter(o => selectedRowKeys.includes(o.id))
+      .reduce((sum, o) => sum + calculateNetTotal(o), 0);
+  }, [orders, selectedRowKeys]);
+
+  const selectedAreAllInvoiced = useMemo(() => {
+    if (selectedRowKeys.length === 0) return false;
+    return orders
+      .filter(o => selectedRowKeys.includes(o.id))
+      .every(o => !!o.invoice_number);
+  }, [orders, selectedRowKeys]);
+
+  const selectedAreAllUninvoiced = useMemo(() => {
+    if (selectedRowKeys.length === 0) return false;
+    return orders
+      .filter(o => selectedRowKeys.includes(o.id))
+      .every(o => !o.invoice_number);
+  }, [orders, selectedRowKeys]);
+
+  const openHandover = async () => {
+    try {
+      const [serialRes, regsRes] = await Promise.all([
+        api.get('/sales/customer-orders/handover_serial_suggest/'),
+        api.get('/finance/cash-registers/?can_deposit_for_me=1'),
+      ]);
+      setCashRegisters(regsRes.data?.results || regsRes.data || []);
+      handoverForm.setFieldsValue({
+        serial: serialRes.data?.serial || '',
+        cash_register: undefined,
+        note: '',
+      });
+      setHandoverOpen(true);
+    } catch (e: any) {
+      message.error('Nem sikerült megnyitni az átadás ablakot: ' + (e?.response?.data?.error || e.message));
+    }
+  };
+
+  const submitHandover = async () => {
+    try {
+      const values = await handoverForm.validateFields();
+      setHandoverLoading(true);
+      const res = await api.post('/sales/customer-orders/handover/', {
+        order_ids: selectedRowKeys,
+        serial: values.serial,
+        cash_register: values.cash_register,
+        note: values.note || '',
+      });
+      message.success(`Átadás rögzítve: ${res.data?.serial}`);
+      setHandoverOpen(false);
+      setSelectedRowKeys([]);
+      fetchOrders(statusFilter);
+    } catch (e: any) {
+      if (e?.errorFields) return; // form validation
+      message.error('Átadás sikertelen: ' + (e?.response?.data?.error || e.message));
+    } finally {
+      setHandoverLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -88,11 +154,6 @@ const Invoicing: React.FC = () => {
   };
 
   const handleRowClick = (record: InvoiceableOrder, index: number, event: React.MouseEvent) => {
-    // Don't allow selection of invoiced orders
-    if (record.invoice_number) {
-      return;
-    }
-    
     const recordId = record.id;
     
     if (event.shiftKey && lastSelectedIndex !== null) {
@@ -265,7 +326,6 @@ const Invoicing: React.FC = () => {
       render: (_, record, index) => (
         <Checkbox
           checked={selectedRowKeys.includes(record.id)}
-          disabled={!!record.invoice_number}
           onChange={(e) => {
             e.stopPropagation();
             handleRowClick(record, index, e.nativeEvent as any);
@@ -341,7 +401,13 @@ const Invoicing: React.FC = () => {
       <Card
         title="Számlázás"
         extra={
-          <div className="pixi-unified-card-actions" style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div className="pixi-unified-card-actions" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            {selectedRowKeys.length > 0 && (
+              <Tag color="blue" style={{ fontSize: 13, padding: '4px 10px' }}>
+                Kijelölve: <b>{selectedRowKeys.length}</b> &nbsp;|&nbsp; Nettó összesen:{' '}
+                <b>{selectedNetTotal.toLocaleString('hu-HU', { maximumFractionDigits: 0 })} Ft</b>
+              </Tag>
+            )}
             <Select
               value={statusFilter}
               onChange={(value) => {
@@ -358,9 +424,18 @@ const Invoicing: React.FC = () => {
               type="primary"
               icon={<FileTextOutlined />}
               onClick={handleInvoice}
-              disabled={selectedRowKeys.length === 0}
+              disabled={!selectedAreAllUninvoiced}
             >
               Számlázás ({selectedRowKeys.length})
+            </Button>
+            <Button
+              type="default"
+              icon={<DollarOutlined />}
+              onClick={openHandover}
+              disabled={!selectedAreAllInvoiced}
+              title={!selectedAreAllInvoiced ? 'Csak már kiszámlázott sorokat lehet átadni' : ''}
+            >
+              Átadás ({selectedRowKeys.length})
             </Button>
           </div>
         }
@@ -380,12 +455,61 @@ const Invoicing: React.FC = () => {
           onRow={(record, index) => ({
             onClick: (event) => handleRowClick(record, index!, event),
             style: {
-              cursor: record.invoice_number ? 'default' : 'pointer',
-              opacity: record.invoice_number ? 0.7 : 1,
+              cursor: 'pointer',
+              opacity: record.invoice_number ? 0.85 : 1,
             },
           })}
         />
       </Card>
+
+      <Modal
+        title="Átadás"
+        open={handoverOpen}
+        onCancel={() => setHandoverOpen(false)}
+        onOk={submitHandover}
+        confirmLoading={handoverLoading}
+        okText="Átadás rögzítése"
+        cancelText="Mégse"
+        width={520}
+        destroyOnClose
+      >
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Statistic
+            title="Átadandó nettó összeg"
+            value={selectedNetTotal}
+            suffix="Ft"
+            precision={0}
+            groupSeparator=" "
+          />
+          <div style={{ color: '#666', fontSize: 12 }}>
+            {selectedRowKeys.length} kiszámlázott megrendelés kerül átadásra. Az összeg a kiválasztott
+            kasszába betétként kerül, a sorszám a számla mellé jegyzésre kerül.
+          </div>
+          <Form form={handoverForm} layout="vertical">
+            <Form.Item
+              name="serial"
+              label="Sorszám"
+              rules={[{ required: true, message: 'Sorszám kötelező' }]}
+            >
+              <Input placeholder="username20260101_00" />
+            </Form.Item>
+            <Form.Item
+              name="cash_register"
+              label="Kassza"
+              rules={[{ required: true, message: 'Válassz kasszát' }]}
+            >
+              <Select
+                placeholder="Válassz kasszát…"
+                options={cashRegisters.map((r: any) => ({ value: r.id, label: r.name }))}
+                notFoundContent="Nincs olyan kassza, amibe betehetsz"
+              />
+            </Form.Item>
+            <Form.Item name="note" label="Megjegyzés (opcionális)">
+              <Input.TextArea rows={2} />
+            </Form.Item>
+          </Form>
+        </Space>
+      </Modal>
     </div>
   );
 };

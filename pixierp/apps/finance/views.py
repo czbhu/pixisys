@@ -685,6 +685,25 @@ class CashRegisterViewSet(viewsets.ModelViewSet):
 	ordering_fields = ['name', 'created_at']
 	ordering = ['name']
 
+	def get_queryset(self):
+		qs = super().get_queryset()
+		# Optional filter: only registers the current user is allowed to
+		# deposit into (used by the invoice handover dialog).
+		if self.request.query_params.get('can_deposit_for_me') in ('1', 'true', 'True'):
+			user = self.request.user
+			if not user.is_authenticated:
+				return qs.none()
+			try:
+				employee = user.employee_profile
+			except Exception:
+				return qs.none()
+			qs = qs.filter(
+				is_active=True,
+				employee_permissions__employee=employee,
+				employee_permissions__can_deposit=True,
+			).distinct()
+		return qs
+
 	@action(detail=True, methods=['post'])
 	def set_pos_default(self, request, pk=None):
 		"""Set selected cash register as POS default (single selection)."""

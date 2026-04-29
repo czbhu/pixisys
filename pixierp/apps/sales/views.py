@@ -110,8 +110,24 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).exclude(
             status__in=['archived', 'ordered']
         ).update(status='archived')
-        
-        return super().list(request, *args, **kwargs)
+
+        # Optional ?order_status=... filter — applied AFTER computing
+        # effective_status (in Python). Accepts comma-separated values.
+        order_status_param = request.query_params.get('order_status')
+        if not order_status_param:
+            return super().list(request, *args, **kwargs)
+
+        wanted = {s.strip() for s in order_status_param.split(',') if s.strip()}
+        # We must compute effective_status, so apply on serialized data.
+        queryset = self.filter_queryset(self.get_queryset()).filter(status='ordered')
+        page = self.paginate_queryset(queryset)
+        target = page if page is not None else queryset
+        serializer = self.get_serializer(target, many=True)
+        data = [d for d in serializer.data if d.get('effective_status') in wanted]
+        if page is not None:
+            return self.get_paginated_response(data)
+        from rest_framework.response import Response
+        return Response(data)
 
     def perform_create(self, serializer):
         # Új ajánlat száma: yyyymmdd + növekvő sorszám
@@ -3448,6 +3464,126 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order.invoice_number = invoice_number
         order.save()
         return Response(self.get_serializer(order).data)
+
+    @action(detail=False, methods=['get'])
+    def handover_serial_suggest(self, request):
+        """Suggest the next handover serial number for the current user.
+        Format: <username><YYYYMMDD>_<NN> where NN is a 2-digit per-user
+        per-day counter starting from 00."""
+        from django.utils import timezone
+        from apps.finance.models import CashRegisterTransaction
+        user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            return Response({'error': 'Bejelentkezés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        username = (user.username or '').lower()
+        today = timezone.now().strftime('%Y%m%d')
+        prefix = f"{username}{today}_"
+        # Count existing handover transactions today by this user (note starts with prefix)
+        count = CashRegisterTransaction.objects.filter(
+            employee__user=user,
+            note__startswith=prefix,
+        ).count()
+        serial = f"{prefix}{count:02d}"
+        return Response({'serial': serial, 'prefix': prefix, 'count': count})
+
+    @action(detail=False, methods=['post'])
+    def handover(self, request):
+        """Hand over (átadás) of one or more invoiced orders.
+        Body: { order_ids: [...], serial: str, cash_register: int, note?: str }
+        - All selected orders MUST already be invoiced (have invoice_number).
+        - Appends ` | Átadás: <serial>` to each order.invoice_number.
+        - Creates a single CashRegisterTransaction (deposit) for the sum of
+          the selected orders' net totals, with the serial recorded in note.
+        """
+        from decimal import Decimal
+        from django.db import transaction as db_tx
+        from apps.finance.models import CashRegister, CashRegisterEmployee, CashRegisterTransaction
+
+        user = request.user
+        if not getattr(user, 'is_authenticated', False):
+            return Response({'error': 'Bejelentkezés szükséges'}, status=status.HTTP_401_UNAUTHORIZED)
+        try:
+            employee = user.employee_profile
+        except Exception:
+            return Response({'error': 'Nincs alkalmazotti profil'}, status=status.HTTP_400_BAD_REQUEST)
+
+        order_ids = request.data.get('order_ids') or []
+        serial = (request.data.get('serial') or '').strip()
+        cash_register_id = request.data.get('cash_register')
+        extra_note = (request.data.get('note') or '').strip()
+
+        if not order_ids:
+            return Response({'error': 'order_ids kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not serial:
+            return Response({'error': 'serial kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if not cash_register_id:
+            return Response({'error': 'cash_register kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            cash_register = CashRegister.objects.get(id=cash_register_id, is_active=True)
+        except CashRegister.DoesNotExist:
+            return Response({'error': 'Kassza nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        # Permission check: user must have can_deposit on this register
+        if not CashRegisterEmployee.objects.filter(
+            cash_register=cash_register, employee=employee, can_deposit=True
+        ).exists():
+            return Response({'error': 'Nincs jogosultság a kasszába betenni'}, status=status.HTTP_403_FORBIDDEN)
+
+        orders = list(CustomerOrder.objects.filter(id__in=order_ids))
+        if len(orders) != len(set(order_ids)):
+            return Response({'error': 'Egy vagy több megrendelés nem található'}, status=status.HTTP_404_NOT_FOUND)
+
+        # All must already be invoiced
+        not_invoiced = [o.order_number for o in orders if not o.invoice_number]
+        if not_invoiced:
+            return Response(
+                {'error': f'Az alábbi megrendelések még nincsenek kiszámlázva: {", ".join(not_invoiced)}'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Compute total via the serializer's net_total logic
+        from .serializers import InvoiceableOrderSerializer
+        ser = InvoiceableOrderSerializer(orders, many=True)
+        total = sum((Decimal(str(d.get('net_total') or 0)) for d in ser.data), Decimal('0'))
+
+        with db_tx.atomic():
+            # Append serial to each invoice_number
+            for o in orders:
+                marker = f" | Átadás: {serial}"
+                if marker not in (o.invoice_number or ''):
+                    o.invoice_number = f"{o.invoice_number}{marker}"
+                    o.save(update_fields=['invoice_number'])
+
+            # Create the cash register deposit transaction
+            note_lines = [serial]
+            note_lines.append('Számlák: ' + ', '.join(o.invoice_number.split(' | Átadás:')[0] for o in orders))
+            if extra_note:
+                note_lines.append(extra_note)
+            tx_note = '\n'.join(note_lines)
+
+            balance_before = cash_register.current_balance
+            balance_after = balance_before + total
+            tx = CashRegisterTransaction.objects.create(
+                cash_register=cash_register,
+                employee=employee,
+                amount=total,
+                reason=None,
+                note=tx_note,
+                balance_before=balance_before,
+                balance_after=balance_after,
+            )
+            cash_register.current_balance = balance_after
+            cash_register.save(update_fields=['current_balance'])
+
+        return Response({
+            'serial': serial,
+            'cash_register_id': cash_register.id,
+            'cash_register_name': cash_register.name,
+            'transaction_id': tx.id,
+            'amount': str(total),
+            'order_ids': [o.id for o in orders],
+        }, status=status.HTTP_200_OK)
     
     @action(detail=True, methods=['get'])
     def activity_logs(self, request, pk=None):

@@ -109,6 +109,9 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
     invitations_pending = serializers.SerializerMethodField()
     total_amount = serializers.SerializerMethodField()
     total_net_amount = serializers.SerializerMethodField()
+    effective_status = serializers.SerializerMethodField()
+    effective_status_label = serializers.SerializerMethodField()
+    is_partial_order = serializers.SerializerMethodField()
     
     class Meta:
         model = QuoteRequest
@@ -199,6 +202,74 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return float(total)
         except Exception:
             return 0.00
+
+    # ── Effective status (mirrors order item status when RFQ is 'ordered') ──
+    # Status rank: lower = "earlier" in the workflow, so the "lowest" status wins.
+    _ORDER_STATUS_RANK = {
+        'new': 0,
+        'confirmed': 1,
+        'in_production': 2,
+        'ready': 3,
+        'in_delivery': 4,
+        'delivered': 5,
+        'cancelled': 99,  # ignored unless it's the only one
+    }
+    _ORDER_STATUS_LABELS = {
+        'new': 'Új',
+        'confirmed': 'Megerősítve',
+        'in_production': 'Gyártásban',
+        'ready': 'Kész',
+        'in_delivery': 'Szállítás alatt',
+        'delivered': 'Kiszállítva',
+        'cancelled': 'Törölve',
+    }
+
+    def _aggregate_order_status(self, obj):
+        """Returns (min_status, is_partial) where min_status is the lowest-ranked
+        non-cancelled CustomerOrderItem status across all order items linked to
+        this RFQ's items, and is_partial is True when not every RFQ item has at
+        least one (non-cancelled) order item.
+        Returns (None, None) if RFQ status is not 'ordered'."""
+        if obj.status != 'ordered':
+            return None, None
+        try:
+            rfq_items = list(obj.items.all())
+            if not rfq_items:
+                return None, None
+            rfq_item_ids = [i.id for i in rfq_items]
+            order_items = CustomerOrderItem.objects.filter(
+                quote_item_id__in=rfq_item_ids,
+            ).exclude(customer_order__status='cancelled')
+            statuses = [oi.status for oi in order_items if oi.status != 'cancelled']
+            if not statuses:
+                return None, None
+            min_status = min(statuses, key=lambda s: self._ORDER_STATUS_RANK.get(s, 50))
+            ordered_rfq_item_ids = {oi.quote_item_id for oi in order_items}
+            is_partial = len(ordered_rfq_item_ids) < len(rfq_item_ids)
+            return min_status, is_partial
+        except Exception:
+            return None, None
+
+    def get_effective_status(self, obj):
+        min_status, _ = self._aggregate_order_status(obj)
+        return min_status or obj.status
+
+    def get_effective_status_label(self, obj):
+        min_status, is_partial = self._aggregate_order_status(obj)
+        if min_status is None:
+            # Fall back to RFQ's own label
+            return obj.get_status_display() if hasattr(obj, 'get_status_display') else obj.status
+        label = self._ORDER_STATUS_LABELS.get(min_status, min_status)
+        # Suffix "(részben)" only when status is still 'confirmed' (= just ordered)
+        # AND not every RFQ item has been ordered yet.
+        if is_partial and min_status in ('new', 'confirmed'):
+            label = f"Megrendelve (részben)"
+        return label
+
+    def get_is_partial_order(self, obj):
+        _, is_partial = self._aggregate_order_status(obj)
+        return bool(is_partial)
+
 
 class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     invitee_name = serializers.SerializerMethodField()
