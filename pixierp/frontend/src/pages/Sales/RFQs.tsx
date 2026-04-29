@@ -1814,12 +1814,16 @@ const RFQs: React.FC = () => {
           <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
           <div style={{ marginBottom: 8 }}>
-             <RFQCostsTable 
+             <RFQCostsTable
                 totalRevenue={newItems.reduce((sum, item) => sum + (Number(item.quantity || 0) * Number(item.net_unit_price || 0)), 0)}
                 currency={currency}
-                draftMode={true}
-                value={newCosts}
-                onChange={setNewCosts}
+                rfqItems={newItems.map(it => ({
+                  ...it,
+                  // Ensure manufacturing_product is set so RFQCostsTable can fetch cost items
+                  manufacturing_product: it.item_type === 'manufacturing'
+                    ? ((it as any).manufacturing_product || it.ref_id)
+                    : undefined,
+                }))}
              />
           </div>
           </div>
