@@ -149,6 +149,35 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     return map[unit] || unit;
   };
 
+  // Extract per-unit cost price from a product/service master record (for displaying
+  // bekerülési költség / haszon / haszonkulcs on the RFQ line).
+  const getRecordCostPrice = (rec: any): number => {
+    if (!rec) return 0;
+    return Number(rec.unit_cost_price) || Number(rec.moving_average_cost) || Number(rec.cost_price) || 0;
+  };
+
+  // Sync cost_price ↔ markup_percent ↔ net_unit_price in the line-item form.
+  const handleLineFormValuesChange = (changed: any, all: any) => {
+    const cost = Number(all.cost_price) || 0;
+    if (cost <= 0) return;
+    if ('markup_percent' in changed) {
+      const mu = Math.max(0, Number(changed.markup_percent) || 0);
+      const newPrice = cost * (1 + mu / 100);
+      form.setFieldValue('net_unit_price', parseFloat(newPrice.toFixed(4)));
+    } else if ('net_unit_price' in changed) {
+      const price = Math.max(0, Number(changed.net_unit_price) || 0);
+      const mu = ((price / cost) - 1) * 100;
+      form.setFieldValue('markup_percent', parseFloat(mu.toFixed(2)));
+    } else if ('cost_price' in changed) {
+      // If user edits cost manually (rare), recompute markup from current price
+      const price = Number(all.net_unit_price) || 0;
+      if (price > 0) {
+        const mu = ((price / cost) - 1) * 100;
+        form.setFieldValue('markup_percent', parseFloat(mu.toFixed(2)));
+      }
+    }
+  };
+
   useEffect(() => {
     const channel = new BroadcastChannel('pixi_rfq_item_creation');
     channel.onmessage = (event) => {
@@ -167,7 +196,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
          let unit = item.unit || item.quantity_unit || (itemType === 'service' ? 'óra' : 'db');
          unit = translateUnit(unit);
          const price = item.base_price ?? item.net_unit_price ?? item.unit_selling_price ?? 0;
-         form.setFieldsValue({ unit, net_unit_price: price });
+         const cost = getRecordCostPrice(item);
+         const markup = (price > 0 && cost > 0) ? parseFloat((((price / cost) - 1) * 100).toFixed(2)) : 0;
+         form.setFieldsValue({ unit, net_unit_price: price, cost_price: cost, markup_percent: markup });
       }
     };
     return () => channel.close();
@@ -271,7 +302,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         let unit = rec.unit || rec.quantity_unit || (initialSelection.item_type === 'service' ? 'óra' : 'db');
         unit = translateUnit(unit);
         const price = rec.base_price ?? rec.net_unit_price ?? rec.unit_selling_price ?? form.getFieldValue('net_unit_price');
-        form.setFieldsValue({ unit, net_unit_price: price });
+        const cost = getRecordCostPrice(rec);
+        const priceNum = Number(price) || 0;
+        const markup = (priceNum > 0 && cost > 0) ? parseFloat((((priceNum / cost) - 1) * 100).toFixed(2)) : 0;
+        form.setFieldsValue({ unit, net_unit_price: price, cost_price: cost, markup_percent: markup });
       } else {
         setSelected({ id: initialSelection.ref_id, name: initialSelection.name, code: initialSelection.code });
       }
@@ -589,6 +623,29 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         <Form.Item label="Nettó egységár" name="net_unit_price" style={{ marginBottom: 8 }}> 
           <NumInput formula min={0} step={1} style={{ width: 160 }} />
         </Form.Item>
+        {(() => {
+          const currentType = (activeKey === 'all' ? (selected?.__type as any) : activeKey);
+          if (currentType !== 'product' && currentType !== 'service') return null;
+          return (
+            <>
+              <Form.Item label="Bek. egységár" name="cost_price" style={{ marginBottom: 8 }}>
+                <NumInput formula min={0} step={1} style={{ width: 140 }} />
+              </Form.Item>
+              <Form.Item label="Haszon%" name="markup_percent" style={{ marginBottom: 8 }}>
+                <NumInput formula min={0} step={1} precision={2} style={{ width: 100 }} />
+              </Form.Item>
+              <Form.Item label="Haszon" shouldUpdate style={{ marginBottom: 8 }}>
+                {() => {
+                  const qty = Number(form.getFieldValue('quantity') || 0);
+                  const price = Number(form.getFieldValue('net_unit_price') || 0);
+                  const cost = Number(form.getFieldValue('cost_price') || 0);
+                  const profit = (price - cost) * qty;
+                  return <Input value={profit.toFixed(2)} readOnly style={{ width: 140 }} />;
+                }}
+              </Form.Item>
+            </>
+          );
+        })()}
         <Form.Item label="ÁFA %" name="vat_rate" initialValue={defaultVat} style={{ marginBottom: 8 }}> 
           <NumInput formula min={0} step={1} style={{ width: 120 }} />
         </Form.Item>
@@ -720,7 +777,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         }
     }
 
-    form.setFieldsValue({ unit, net_unit_price: price, quantity: qty });
+    const cost = getRecordCostPrice(record);
+    const priceNum = Number(price) || 0;
+    const markup = (priceNum > 0 && cost > 0) ? parseFloat((((priceNum / cost) - 1) * 100).toFixed(2)) : 0;
+    form.setFieldsValue({ unit, net_unit_price: price, quantity: qty, cost_price: cost, markup_percent: markup });
   };
 
   const confirmAdd = async () => {
@@ -1922,7 +1982,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             so we hide this simplified line-item form.
             Also hide when the item was created/edited via the inline form (manuCreatedId is set). */}
         {(activeKey !== 'manufacturing' || selected) && !(mode === 'edit' && activeKey === 'manufacturing') && !(activeKey === 'manufacturing' && manuCreatedId !== null) && (
-          <Form layout="vertical" form={form}>
+          <Form layout="vertical" form={form} onValuesChange={handleLineFormValuesChange}>
             {commonFields}
           </Form>
         )}
