@@ -360,9 +360,17 @@ class ManufacturingCostItem(models.Model):
     currency = models.CharField(max_length=3, default='HUF', verbose_name="Pénznem")
     is_per_unit = models.BooleanField(default=False, verbose_name="Egységre vetített")
 
+    # Sorrend & alá-felérendelés
+    sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
+    parent = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.SET_NULL,
+        related_name='children', verbose_name="Szülő költség"
+    )
+
     class Meta:
         verbose_name = "Gyártási költség elem"
         verbose_name_plural = "Gyártási költség elemek"
+        ordering = ['sort_order', 'id']
 
     def __str__(self):
         return f"{self.name} ({self.product.name})"

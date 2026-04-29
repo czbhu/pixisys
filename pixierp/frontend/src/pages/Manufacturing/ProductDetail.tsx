@@ -4,7 +4,7 @@ import {
   Button, Card, Checkbox, Col, Dropdown, Form, Input, message, Popconfirm,
   Row, Select, Space, Spin, Table, Tag, Tooltip, Upload,
 } from 'antd';
-import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, RightOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { manufacturingService, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -31,6 +31,9 @@ interface CostItem {
   is_internal?: boolean;
   is_per_unit?: boolean;
   currency?: string;
+  // Sorrend / alá-felérendelés (mint a tételnél)
+  sort_order?: number;
+  parent_local_id?: number | null;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -143,20 +146,39 @@ const ManufacturingProductDetail: React.FC = () => {
           .catch(() => {});
       }
 
-      // Cost items
-      const rawCosts = p.cost_items || [];
-      setCostItems(rawCosts.map((c: any) => ({
-        ...c,
-        id: c.id || Date.now() + Math.random(),
-        supplier_id: c.supplier || c.supplier_id,
-        department_id: c.department || c.department_id,
-        is_internal: c.is_internal || false,
-        unit_price: Number(c.unit_price) || 0,
-        cost_price: Number(c.cost_price) || 0,
-        selling_unit_price: Number(c.selling_unit_price) || 0,
-        selling_price: Number(c.selling_price) || 0,
-        currency: c.currency || 'HUF',
-      })));
+      // Cost items – preserve sort + parent relations from API
+      const rawCosts = (p.cost_items || []) as any[];
+      // First pass: assign stable local ids; remember backend id → local id
+      const backendIdToLocal = new Map<number, number>();
+      const mapped: CostItem[] = rawCosts.map((c: any) => {
+        const localId = c.id || Date.now() + Math.random();
+        if (typeof c.id === 'number') backendIdToLocal.set(c.id, localId);
+        return {
+          ...c,
+          id: localId,
+          supplier_id: c.supplier || c.supplier_id,
+          department_id: c.department || c.department_id,
+          is_internal: c.is_internal || false,
+          unit_price: Number(c.unit_price) || 0,
+          cost_price: Number(c.cost_price) || 0,
+          selling_unit_price: Number(c.selling_unit_price) || 0,
+          selling_price: Number(c.selling_price) || 0,
+          currency: c.currency || 'HUF',
+          sort_order: typeof c.sort_order === 'number' ? c.sort_order : 0,
+          parent_local_id: null as number | null,
+        } as CostItem;
+      });
+      // Second pass: resolve parent local ids
+      mapped.forEach((m, idx) => {
+        const raw = rawCosts[idx];
+        const pid = raw?.parent;
+        if (typeof pid === 'number' && backendIdToLocal.has(pid)) {
+          m.parent_local_id = backendIdToLocal.get(pid)!;
+        }
+      });
+      // Sort by sort_order
+      mapped.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
+      setCostItems(mapped);
 
       // Load attachments
       manufacturingService.getProductAttachments(Number(id))
@@ -359,6 +381,69 @@ const ManufacturingProductDetail: React.FC = () => {
     }));
   };
 
+  // ── Cost items ordering & nesting helpers ────────────────────────────────
+  const moveCostItem = (itemId: number, dir: -1 | 1) => {
+    setCostItems(prev => {
+      const idx = prev.findIndex(i => i.id === itemId);
+      if (idx < 0) return prev;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      const [it] = next.splice(idx, 1);
+      next.splice(newIdx, 0, it);
+      return next.map((it2, i) => ({ ...it2, sort_order: i }));
+    });
+  };
+
+  const indentCostItem = (itemId: number) => {
+    setCostItems(prev => {
+      const idx = prev.findIndex(i => i.id === itemId);
+      if (idx <= 0) return prev;
+      const prevItem = prev[idx - 1];
+      // Prevent circular: previous item must not descend from this row
+      let cur: CostItem | undefined = prevItem;
+      const seen = new Set<number>();
+      while (cur && cur.parent_local_id) {
+        if (seen.has(cur.id)) break;
+        seen.add(cur.id);
+        if (cur.parent_local_id === itemId) {
+          message.warning('Nem lehet alárendelni (körhivatkozás)');
+          return prev;
+        }
+        cur = prev.find(i => i.id === cur!.parent_local_id);
+      }
+      return prev.map(i => i.id === itemId ? { ...i, parent_local_id: prevItem.id } : i);
+    });
+  };
+
+  const outdentCostItem = (itemId: number) => {
+    setCostItems(prev => {
+      const it = prev.find(i => i.id === itemId);
+      if (!it || !it.parent_local_id) return prev;
+      const par = prev.find(i => i.id === it.parent_local_id);
+      const newParent = par ? (par.parent_local_id ?? null) : null;
+      return prev.map(i => i.id === itemId ? { ...i, parent_local_id: newParent } : i);
+    });
+  };
+
+  // Compute depth per cost item id
+  const costDepthMap = useMemo(() => {
+    const map = new Map<number, number>();
+    const getDepth = (id: number | null | undefined, visited = new Set<number>()): number => {
+      if (!id) return 0;
+      if (visited.has(id)) return 0;
+      visited.add(id);
+      if (map.has(id)) return map.get(id)!;
+      const it = costItems.find(i => i.id === id);
+      if (!it || !it.parent_local_id) { map.set(id, 0); return 0; }
+      const d = 1 + getDepth(it.parent_local_id, visited);
+      map.set(id, d);
+      return d;
+    };
+    costItems.forEach(i => getDepth(i.id));
+    return map;
+  }, [costItems]);
+
   const handleSave = async () => {
     try {
       const v = await form.validateFields();
@@ -375,20 +460,29 @@ const ManufacturingProductDetail: React.FC = () => {
         net_total_price: Number(totalSelling.toFixed(2)),
         net_unit_price: Number((productQty > 0 ? totalSelling / productQty : 0).toFixed(2)),
         is_fixed_quantity: false,
-        cost_items: costItems.map(c => ({
-          type: c.type || 'other',
-          ref_id: c.ref_id || null,
-          name: c.name,
-          quantity: Number(Number(c.quantity).toFixed(4)) || 0,
-          unit: c.unit || 'db',
-          unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
-          selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
-          cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
-          markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
-          selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
-          supplier: c.supplier_id || null,
-          department: c.department_id || null,
-          is_internal: c.is_internal || false,          currency: c.currency || 'HUF',        })),
+        cost_items: costItems.map((c, idx) => {
+          const parentIdx = c.parent_local_id != null
+            ? costItems.findIndex(x => x.id === c.parent_local_id)
+            : -1;
+          return ({
+            type: c.type || 'other',
+            ref_id: c.ref_id || null,
+            name: c.name,
+            quantity: Number(Number(c.quantity).toFixed(4)) || 0,
+            unit: c.unit || 'db',
+            unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
+            markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
+            selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
+            supplier: c.supplier_id || null,
+            department: c.department_id || null,
+            is_internal: c.is_internal || false,
+            currency: c.currency || 'HUF',
+            sort_order: idx,
+            parent_index: parentIdx >= 0 ? parentIdx : null,
+          });
+        }),
         allowed_companies: companyId ? [String(companyId)] : [],
         allowed_contacts: contactIdList.map(cid => String(cid)),
         contact: null,
@@ -434,11 +528,15 @@ const ManufacturingProductDetail: React.FC = () => {
     {
       title: 'Megnevezés', key: 'name', width: 250,
       render: (_: any, r: CostItem) => {
-        if (r.type === 'other') return <Input value={r.name} onChange={e => updateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />;
-        if (r.name && !r.ref_id) return <Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{r.name}</span></Tooltip>;
+        const depth = costDepthMap.get(r.id) || 0;
+        const wrap = (content: React.ReactNode) => (
+          <div style={{ paddingLeft: depth * 16 }}>{content}</div>
+        );
+        if (r.type === 'other') return wrap(<Input value={r.name} onChange={e => updateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />);
+        if (r.name && !r.ref_id) return wrap(<Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{r.name}</span></Tooltip>);
         const isMat = r.type === 'material';
         const list = isMat ? materials : services;
-        return (
+        return wrap(
           <Select showSearch optionFilterProp="label" style={{ width: '100%' }} value={r.ref_id}
             onChange={(val, opt: any) => {
               updateCostItem(r.id, 'ref_id', val);
@@ -510,8 +608,22 @@ const ManufacturingProductDetail: React.FC = () => {
       next.splice(idx + 1, 0, copy);
       return next;
     })} /> },
+    {
+      title: 'Sorrend', key: 'order', width: 130,
+      render: (_: any, r: CostItem) => {
+        const idx = costItems.findIndex(i => i.id === r.id);
+        return (
+          <Space size={2}>
+            <Tooltip title="Feljebb"><Button size="small" icon={<UpOutlined />} disabled={idx <= 0} onClick={() => moveCostItem(r.id, -1)} /></Tooltip>
+            <Tooltip title="Lejjebb"><Button size="small" icon={<DownOutlined />} disabled={idx < 0 || idx >= costItems.length - 1} onClick={() => moveCostItem(r.id, 1)} /></Tooltip>
+            <Tooltip title="Szint csökkenés (kifelé)"><Button size="small" icon={<LeftOutlined />} disabled={!r.parent_local_id} onClick={() => outdentCostItem(r.id)} /></Tooltip>
+            <Tooltip title="Szint növelés (alárendel)"><Button size="small" icon={<RightOutlined />} disabled={idx <= 0} onClick={() => indentCostItem(r.id)} /></Tooltip>
+          </Space>
+        );
+      },
+    },
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
-  ], [materials, services, suppliers, departments, currencies]);
+  ], [materials, services, suppliers, departments, currencies, costItems, costDepthMap]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 

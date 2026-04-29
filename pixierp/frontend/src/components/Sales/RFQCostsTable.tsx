@@ -22,6 +22,7 @@ interface AutoRow {
   _label: string;
   _color: string;
   _sourceCurrency: string;
+  _depth: number;
   code: string;
   name: string;
   quantity: number;
@@ -98,23 +99,95 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
   };
 
   useEffect(() => {
-    const items = rfqItems || [];
-    const rows: AutoRow[] = [];
-    let counter = 0;
-    const promises: Promise<void>[] = [];
+    const itemsRaw = rfqItems || [];
     const defaultCurrencyCode = (currencies.find(c => c.is_default)?.code ?? 'HUF').toUpperCase();
 
-    items.forEach((item: any) => {
+    // Sort RFQ items by sort_order (matches the Tételek table order)
+    const items = [...itemsRaw].sort(
+      (a: any, b: any) => (Number(a?.sort_order) || 0) - (Number(b?.sort_order) || 0)
+    );
+
+    // Compute item depth from parent chain (mirrors ItemsTable nesting)
+    const depthMap = new Map<number, number>();
+    const getItemDepth = (id: number | null | undefined, visited = new Set<number>()): number => {
+      if (!id) return 0;
+      if (visited.has(id)) return 0;
+      visited.add(id);
+      if (depthMap.has(id)) return depthMap.get(id)!;
+      const it: any = items.find((i: any) => i.id === id);
+      if (!it || !it.parent) { depthMap.set(id, 0); return 0; }
+      const d = 1 + getItemDepth(it.parent, visited);
+      depthMap.set(id, d);
+      return d;
+    };
+    items.forEach((i: any) => { if (i?.id) getItemDepth(i.id); });
+
+    // Each item gets a "block" of rows; we fill the block (sync or via promise)
+    // and at the end flatten in item order to preserve hierarchy ordering.
+    const blocks: AutoRow[][] = items.map(() => []);
+    const promises: Promise<void>[] = [];
+
+    // Helper: given an array of cost items, sort by sort_order and return
+    // rows enriched with per-cost-item depth (relative to itemDepth).
+    const buildCostRows = (
+      ciList: any[],
+      pid: number | string | null,
+      productName: string,
+      itemDepth: number,
+    ): AutoRow[] => {
+      const ciSorted = [...(ciList || [])].sort(
+        (a, b) => (Number(a?.sort_order) || 0) - (Number(b?.sort_order) || 0)
+      );
+      const ciDepth = new Map<number, number>();
+      const getCiDepth = (id: number | null | undefined, visited = new Set<number>()): number => {
+        if (!id) return 0;
+        if (visited.has(id)) return 0;
+        visited.add(id);
+        if (ciDepth.has(id)) return ciDepth.get(id)!;
+        const it: any = ciSorted.find((i: any) => i.id === id);
+        if (!it || !it.parent) { ciDepth.set(id, 0); return 0; }
+        const d = 1 + getCiDepth(it.parent, visited);
+        ciDepth.set(id, d);
+        return d;
+      };
+      ciSorted.forEach((c: any) => { if (c?.id) getCiDepth(c.id); });
+
+      return ciSorted.map((ci: any, idx: number) => {
+        const ciQty = Number(ci.quantity) || 1;
+        const ciUnitCp = Number(ci.cost_price) || 0;
+        const ciTotalCp = ciUnitCp * ciQty;
+        const ciCurrency = (ci.currency || ci.currency_code || defaultCurrencyCode).toUpperCase();
+        const cd = ci?.id ? (ciDepth.get(ci.id) || 0) : 0;
+        return {
+          _autoId: `manu_${pid ?? 'new'}_${ci.id ?? `i${idx}`}`,
+          _label: productName,
+          _color: 'purple',
+          _sourceCurrency: ciCurrency,
+          _depth: itemDepth + cd,
+          code: ci.code || '',
+          name: ci.name || '-',
+          quantity: ciQty,
+          unit: ci.unit || 'db',
+          net_unit_price_orig: ciUnitCp,
+          net_total_orig: ciTotalCp,
+          supplier_name: formatSupplier(ci),
+        };
+      });
+    };
+
+    items.forEach((item: any, blockIdx: number) => {
       const qty = Number(item.quantity) || 1;
+      const itemDepth = item?.id ? (depthMap.get(item.id) || 0) : 0;
 
       if (item.item_type === 'service') {
         if (item.service) {
           const cp = Number(item.service_unit_cost_price) || 0;
-          rows.push({
-            _autoId: `svc_${counter++}`,
+          blocks[blockIdx].push({
+            _autoId: `svc_${item.id ?? blockIdx}`,
             _label: 'Szolgáltatás',
             _color: 'blue',
             _sourceCurrency: (item.service_currency || defaultCurrencyCode).toUpperCase(),
+            _depth: itemDepth,
             code: item.service_code || '',
             name: item.service_name || '-',
             quantity: qty,
@@ -124,17 +197,16 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
             supplier_name: '',
           });
         } else if (item.ref_id) {
-          // New-RFQ mode: fetch service to get cost price
           const sid = item.ref_id;
-          const sIdx = counter++;
           promises.push(
             salesService.getService(sid).then((svc: any) => {
               const cp = Number(svc?.unit_cost_price) || 0;
-              rows.push({
-                _autoId: `svc_new_${sid}_${sIdx}`,
+              blocks[blockIdx].push({
+                _autoId: `svc_new_${sid}_${blockIdx}`,
                 _label: 'Szolgáltatás',
                 _color: 'blue',
                 _sourceCurrency: (svc?.currency || defaultCurrencyCode).toUpperCase(),
+                _depth: itemDepth,
                 code: svc?.code || item.code || '',
                 name: svc?.name || item.name || '-',
                 quantity: qty,
@@ -149,11 +221,12 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
       } else if (item.item_type === 'product') {
         if (item.material) {
           const cp = Number(item.material_unit_cost_price) || 0;
-          rows.push({
-            _autoId: `mat_${counter++}`,
+          blocks[blockIdx].push({
+            _autoId: `mat_${item.id ?? blockIdx}`,
             _label: 'Termék',
             _color: 'green',
             _sourceCurrency: (item.material_currency || defaultCurrencyCode).toUpperCase(),
+            _depth: itemDepth,
             code: item.material_code || '',
             name: item.material_name || '-',
             quantity: qty,
@@ -163,17 +236,16 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
             supplier_name: '',
           });
         } else if (item.ref_id) {
-          // New-RFQ mode: fetch material to get cost price
           const mid = item.ref_id;
-          const mIdx = counter++;
           promises.push(
             warehouseService.getMaterial(mid).then((mat: any) => {
               const cp = Number(mat?.unit_cost_price) || 0;
-              rows.push({
-                _autoId: `mat_new_${mid}_${mIdx}`,
+              blocks[blockIdx].push({
+                _autoId: `mat_new_${mid}_${blockIdx}`,
                 _label: 'Termék',
                 _color: 'green',
                 _sourceCurrency: (mat?.currency || defaultCurrencyCode).toUpperCase(),
+                _depth: itemDepth,
                 code: mat?.code || item.code || '',
                 name: mat?.name || item.name || '-',
                 quantity: qty,
@@ -191,68 +263,32 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
           : item.manufacturing_product;
         const productName = item.manufacturing_product_name || item.name || (pid ? `#${pid}` : 'Egyedi gyártás');
 
-        // ── Inline cost items (used in NEW-RFQ creation modal where the
-        //    manufacturing product hasn't been saved to API yet) ───────────
         const inlineCostItems = item._inlineCostItems
           ?? (typeof item.manufacturing_product === 'object' ? item.manufacturing_product?.cost_items : undefined);
 
         if (Array.isArray(inlineCostItems) && inlineCostItems.length > 0) {
-          inlineCostItems.forEach((ci: any) => {
-            const ciQty = Number(ci.quantity) || 1;
-            const ciUnitCp = Number(ci.cost_price) || 0;
-            const ciTotalCp = ciUnitCp * ciQty;
-            const ciCurrency = (ci.currency || ci.currency_code || defaultCurrencyCode).toUpperCase();
-            rows.push({
-              _autoId: `manu_inline_${pid ?? 'new'}_${ci.id ?? counter++}`,
-              _label: productName,
-              _color: 'purple',
-              _sourceCurrency: ciCurrency,
-              code: ci.code || '',
-              name: ci.name || '-',
-              quantity: ciQty,
-              unit: ci.unit || 'db',
-              net_unit_price_orig: ciUnitCp,
-              net_total_orig: ciTotalCp,
-              supplier_name: formatSupplier(ci),
-            });
-          });
+          blocks[blockIdx].push(...buildCostRows(inlineCostItems, pid, productName, itemDepth));
         } else if (pid && pid > 0) {
-          // ── Saved product: fetch from API ──────────────────────────────
           promises.push(
             manufacturingService.getProduct(pid).then((product: any) => {
-              (product.cost_items || []).forEach((ci: any) => {
-                const ciQty = Number(ci.quantity) || 1;
-                const ciUnitCp = Number(ci.cost_price) || 0;
-                const ciTotalCp = ciUnitCp * ciQty;
-                const ciCurrency = (ci.currency || defaultCurrencyCode).toUpperCase();
-                rows.push({
-                  _autoId: `manu_${pid}_${ci.id ?? counter++}`,
-                  _label: productName,
-                  _color: 'purple',
-                  _sourceCurrency: ciCurrency,
-                  code: ci.code || '',
-                  name: ci.name || '-',
-                  quantity: ciQty,
-                  unit: ci.unit || 'db',
-                  net_unit_price_orig: ciUnitCp,
-                  net_total_orig: ciTotalCp,
-                  supplier_name: formatSupplier(ci),
-                });
-              });
+              blocks[blockIdx].push(...buildCostRows(product.cost_items || [], pid, productName, itemDepth));
             }).catch(() => {})
           );
         }
       }
     });
 
+    const flush = () => {
+      const flat: AutoRow[] = [];
+      blocks.forEach(b => b.forEach(r => flat.push(r)));
+      setAutoRows(flat);
+    };
+
     if (promises.length > 0) {
       setLoading(true);
-      Promise.all(promises).then(() => {
-        setAutoRows([...rows]);
-        setLoading(false);
-      });
+      Promise.all(promises).then(() => { flush(); setLoading(false); });
     } else {
-      setAutoRows([...rows]);
+      flush();
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rfqItems, currencies, refreshKey]);
@@ -278,7 +314,12 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
       render: (_: any, r: AutoRow) => <Tag color={r._color}>{r._label}</Tag>,
     },
     { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 100 },
-    { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+    {
+      title: 'Megnevezés', dataIndex: 'name', key: 'name',
+      render: (_: any, r: AutoRow) => (
+        <div style={{ paddingLeft: (r._depth || 0) * 16 }}>{r.name}</div>
+      ),
+    },
     { title: 'Menny.', dataIndex: 'quantity', key: 'qty', width: 70 },
     { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 65 },
     {

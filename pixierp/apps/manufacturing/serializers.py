@@ -79,6 +79,11 @@ class ManufacturingCostItemSerializer(serializers.ModelSerializer):
     )
     department_name = serializers.CharField(source='department.name', read_only=True)
     code = serializers.SerializerMethodField()
+    # Client-supplied index (within the cost_items array of the request)
+    # of this item's parent cost item. Used because parent FK refers to
+    # other rows that may not exist yet at create-time.
+    parent_index = serializers.IntegerField(write_only=True, required=False, allow_null=True)
+    parent = serializers.PrimaryKeyRelatedField(read_only=True)
 
     def get_code(self, obj):
         """Resolve cost item's source code (material or service)."""
@@ -142,6 +147,24 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
             name = f"{last} {first}".strip() or getattr(c, 'name', '') or str(c.id)
             result.append({'id': c.id, 'name': name})
         return result
+
+    @staticmethod
+    def _link_cost_parents(created_items, parent_indexes):
+        """Second pass: assign parent FK based on client-supplied index in the
+        cost_items array. ``parent_indexes[i]`` is the index of the parent of
+        ``created_items[i]`` (or None for root)."""
+        for i, parent_idx in enumerate(parent_indexes or []):
+            if parent_idx is None:
+                continue
+            try:
+                pi = int(parent_idx)
+            except (TypeError, ValueError):
+                continue
+            if pi == i or pi < 0 or pi >= len(created_items):
+                continue
+            child = created_items[i]
+            child.parent = created_items[pi]
+            child.save(update_fields=['parent'])
 
     def _resolve_companies(self, company_ids):
         """
@@ -284,8 +307,12 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
             contacts = self._resolve_contacts(allowed_contacts_ids)
             product.allowed_contacts.set(contacts)
 
+        parent_indexes = [item.pop('parent_index', None) for item in cost_items_data]
+        created = []
         for item_data in cost_items_data:
-            ManufacturingCostItem.objects.create(product=product, **item_data)
+            created.append(ManufacturingCostItem.objects.create(product=product, **item_data))
+        # Second pass: link parents by index
+        self._link_cost_parents(created, parent_indexes)
         return product
 
     def update(self, instance, validated_data):
@@ -315,8 +342,11 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
         if cost_items_data is not None:
              # Full replacement strategy
              instance.cost_items.all().delete()
+             parent_indexes = [item.pop('parent_index', None) for item in cost_items_data]
+             created = []
              for item_data in cost_items_data:
-                 ManufacturingCostItem.objects.create(product=instance, **item_data)
+                 created.append(ManufacturingCostItem.objects.create(product=instance, **item_data))
+             self._link_cost_parents(created, parent_indexes)
 
         return instance
     
