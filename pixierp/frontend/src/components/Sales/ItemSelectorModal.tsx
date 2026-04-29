@@ -559,10 +559,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       <Space style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Form.Item label="Mennyiség" name="quantity" initialValue={1} rules={[{ required: true }]} style={{ marginBottom: 8 }}> 
           <NumInput 
+            formula
             min={0.01} 
             step={1} 
             style={{ width: 120 }} 
-            parser={(value) => value?.replace(',', '.') as unknown as number} 
             onBlur={(e) => {
                  const value = parseFloat(e.target.value.replace(',', '.'));
                  const currentType = (activeKey === 'all' ? (selected?.__type as any) : activeKey);
@@ -585,10 +585,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           <Input disabled style={{ width: 100 }} />
         </Form.Item>
         <Form.Item label="Nettó egységár" name="net_unit_price" style={{ marginBottom: 8 }}> 
-          <NumInput min={0} step={1} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+          <NumInput formula min={0} step={1} style={{ width: 160 }} />
         </Form.Item>
         <Form.Item label="ÁFA %" name="vat_rate" initialValue={defaultVat} style={{ marginBottom: 8 }}> 
-          <NumInput min={0} step={1} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+          <NumInput formula min={0} step={1} style={{ width: 120 }} />
         </Form.Item>
         <Form.Item label="Nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
           {() => {
@@ -666,10 +666,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         )}
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
           <Form.Item label="Kedvezmény %" name="discount_percent" style={{ marginBottom: 8 }}>
-            <NumInput min={0} max={100} style={{ width: 120 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+            <NumInput formula min={0} max={100} style={{ width: 120 }} />
           </Form.Item>
           <Form.Item label="Kedvezmény (fix)" name="discount_amount" style={{ marginBottom: 8 }}>
-            <NumInput min={0} style={{ width: 160 }} parser={(value) => value?.replace(',', '.') as unknown as number} />
+            <NumInput formula min={0} style={{ width: 160 }} />
           </Form.Item>
           <Form.Item label="Kedvezményes nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
             {() => {
@@ -1267,7 +1267,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 60 }} /> },
+    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 60 }} /> },
     { title: 'Egység', key: 'unit', width: 75, render: (_: any, r: CostItem) => r.type === 'other'
         ? <AutoComplete
             size="small"
@@ -1279,10 +1279,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           />
         : <span>{r.unit}</span>
     },
-    { title: 'Bek. e.ár', key: 'cost_price', width: 85, render: (_: any, r: CostItem) => <NumInput size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 76 }} min={0} /> },
-    { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
-    { title: 'El. egység ár', key: 'sell_up', width: 95, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 84 }} min={0} /> },
-    { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CostItem) => <NumInput size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: 80 }} min={0} /> },
+    { title: 'Bek. e.ár', key: 'cost_price', width: 85, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 76 }} min={0} /> },
+    { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
+    { title: 'El. egység ár', key: 'sell_up', width: 95, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 84 }} min={0} /> },
+    { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: 80 }} min={0} /> },
     { title: 'Pénznem', key: 'currency', width: 90, render: (_: any, r: CostItem) => (
       <Select
         size="small"
@@ -1706,7 +1706,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                     <Collapse.Panel header="Beszállítók és árkalkuláció" key="costs">
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 13 }}>Alap haszonkulcs:</span>
-                        <NumInput size="small" value={manuDefaultMarkup} min={0} style={{ width: 80 }} onChange={v => {
+                        <NumInput formula size="small" value={manuDefaultMarkup} min={0} style={{ width: 100 }} onChange={v => {
                           setManuDefaultMarkup(Math.max(0, Number(v) || 0));
                         }} addonAfter="%" />
                         <Switch

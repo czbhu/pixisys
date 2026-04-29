@@ -91,6 +91,16 @@ const RFQDetail: React.FC = () => {
     );
   };
 
+  /** Refresh only the items list without showing the full-page spinner.
+   *  Used after item add/edit/delete/reorder so the cost table updates in place. */
+  const refreshItems = useCallback(async () => {
+    if (!id) return;
+    try {
+      const rfqRes = await salesService.getQuoteRequest(Number(id));
+      setRfq((prev: any) => prev ? { ...prev, items: rfqRes.items } : rfqRes);
+    } catch {}
+  }, [id]);
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -326,7 +336,7 @@ const RFQDetail: React.FC = () => {
     if (!(payload as any).keepOpen) {
       setSelectorOpen(false);
     }
-    load();
+    refreshItems();
   };
 
   const onEditSelected = async (payload: SelectedItemPayload) => {
@@ -374,7 +384,7 @@ const RFQDetail: React.FC = () => {
       message.success('Tétel frissítve');
       setSelectorOpen(false);
       setEditContext(null);
-      load();
+      refreshItems();
     } catch (e) {
       message.error('Nem sikerült frissíteni a tételt');
     }
@@ -952,7 +962,7 @@ const RFQDetail: React.FC = () => {
           <div style={{ marginTop: 6 }}>
             <ItemsTable
               items={rfq.items || []}
-              onRefresh={load}
+              onRefresh={refreshItems}
               quoteRequestId={Number(id)}
               currency={activeCurrency}
               onEditItem={(item) => {

@@ -735,13 +735,14 @@ const ManufacturingProductDetail: React.FC = () => {
               <Col>
                 <span style={{ fontSize: 12, color: '#555' }}>Alap haszonkulcs %:</span>
                 <NumInput
+                  formula
                   value={defaultMarkup}
                   onChange={v => setDefaultMarkup(Number(v) || 0)}
                   min={0}
                   max={9999}
                   controls={false}
                   size="small"
-                  style={{ width: 70, marginLeft: 6 }}
+                  style={{ width: 90, marginLeft: 6 }}
                 />
               </Col>
               <Col flex="auto" />
