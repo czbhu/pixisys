@@ -58,6 +58,7 @@ interface CostItem {
   id: number;
   type: 'material' | 'service' | 'other';
   ref_id?: number;
+  code?: string;
   name: string;
   unit: string;
   quantity: number;
@@ -359,6 +360,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           id: c.id ?? Date.now() + idx,
           type: (c.type as any) || 'other',
           ref_id: c.ref_id || undefined,
+          code: c.code || '',
           name: c.name || '',
           unit: c.unit || 'db',
           quantity: Number(c.quantity) || 0,
@@ -2013,6 +2015,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               id: Date.now() + Math.random(),
               type,
               ref_id: record.id,
+              code: record.code || '',
               name: record.name,
               unit,
               quantity: 1,
@@ -2036,6 +2039,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                 return {
                   ...ci,
                   ref_id: record.id,
+                  code: record.code || '',
                   name: record.name,
                   unit,
                   unit_price: cp,

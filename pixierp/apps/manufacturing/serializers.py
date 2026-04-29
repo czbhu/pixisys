@@ -77,7 +77,23 @@ class ManufacturingCostItemSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
-    
+    code = serializers.SerializerMethodField()
+
+    def get_code(self, obj):
+        """Resolve cost item's source code (material or service)."""
+        try:
+            if obj.type == 'material' and obj.ref_id:
+                from apps.warehouse.models import Material
+                m = Material.objects.filter(id=obj.ref_id).only('code').first()
+                return m.code if m else ''
+            if obj.type == 'service' and obj.ref_id:
+                from apps.manufacturing.models import Service
+                s = Service.objects.filter(id=obj.ref_id).only('code').first()
+                return s.code if s else ''
+        except Exception:
+            pass
+        return ''
+
     class Meta:
         model = ManufacturingCostItem
         exclude = ['product']
