@@ -81,20 +81,12 @@ const Invoicing: React.FC = () => {
       .reduce((sum, o) => sum + calculateNetTotal(o), 0);
   }, [orders, selectedRowKeys]);
 
-  const selectedAreAllInvoiced = useMemo(() => {
-    if (selectedRowKeys.length === 0) return false;
-    return orders
-      .filter(o => selectedRowKeys.includes(o.id))
-      .every(o => !!o.invoice_number);
-  }, [orders, selectedRowKeys]);
-
   const selectedAreAllUninvoiced = useMemo(() => {
     if (selectedRowKeys.length === 0) return false;
     return orders
       .filter(o => selectedRowKeys.includes(o.id))
       .every(o => !o.invoice_number);
   }, [orders, selectedRowKeys]);
-
   const openHandover = async () => {
     try {
       const [serialRes, regsRes] = await Promise.all([
@@ -432,8 +424,7 @@ const Invoicing: React.FC = () => {
               type="default"
               icon={<DollarOutlined />}
               onClick={openHandover}
-              disabled={!selectedAreAllInvoiced}
-              title={!selectedAreAllInvoiced ? 'Csak már kiszámlázott sorokat lehet átadni' : ''}
+              disabled={selectedRowKeys.length === 0}
             >
               Átadás ({selectedRowKeys.length})
             </Button>
@@ -482,8 +473,8 @@ const Invoicing: React.FC = () => {
             groupSeparator=" "
           />
           <div style={{ color: '#666', fontSize: 12 }}>
-            {selectedRowKeys.length} kiszámlázott megrendelés kerül átadásra. Az összeg a kiválasztott
-            kasszába betétként kerül, a sorszám a számla mellé jegyzésre kerül.
+            {selectedRowKeys.length} megrendelés kerül átadásra. Az összeg a kiválasztott
+            kasszába betétként kerül, a sorszám a számla mező mellé jegyzésre kerül.
           </div>
           <Form form={handoverForm} layout="vertical">
             <Form.Item

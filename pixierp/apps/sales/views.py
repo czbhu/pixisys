@@ -3534,30 +3534,33 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         if len(orders) != len(set(order_ids)):
             return Response({'error': 'Egy vagy több megrendelés nem található'}, status=status.HTTP_404_NOT_FOUND)
 
-        # All must already be invoiced
-        not_invoiced = [o.order_number for o in orders if not o.invoice_number]
-        if not_invoiced:
-            return Response(
-                {'error': f'Az alábbi megrendelések még nincsenek kiszámlázva: {", ".join(not_invoiced)}'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
         # Compute total via the serializer's net_total logic
         from .serializers import InvoiceableOrderSerializer
         ser = InvoiceableOrderSerializer(orders, many=True)
         total = sum((Decimal(str(d.get('net_total') or 0)) for d in ser.data), Decimal('0'))
 
         with db_tx.atomic():
-            # Append serial to each invoice_number
+            # Append serial to each invoice_number (or set to serial if empty)
             for o in orders:
-                marker = f" | Átadás: {serial}"
-                if marker not in (o.invoice_number or ''):
-                    o.invoice_number = f"{o.invoice_number}{marker}"
-                    o.save(update_fields=['invoice_number'])
+                marker = f"Átadás: {serial}"
+                current = (o.invoice_number or '').strip()
+                if not current:
+                    o.invoice_number = marker
+                elif marker not in current:
+                    o.invoice_number = f"{current} | {marker}"
+                else:
+                    continue
+                o.save(update_fields=['invoice_number'])
 
             # Create the cash register deposit transaction
             note_lines = [serial]
-            note_lines.append('Számlák: ' + ', '.join(o.invoice_number.split(' | Átadás:')[0] for o in orders))
+            order_refs = []
+            for o in orders:
+                ref = (o.invoice_number or '').split(' | Átadás:')[0].strip()
+                if not ref or ref.startswith('Átadás:'):
+                    ref = o.order_number
+                order_refs.append(ref)
+            note_lines.append('Megrendelések: ' + ', '.join(order_refs))
             if extra_note:
                 note_lines.append(extra_note)
             tx_note = '\n'.join(note_lines)
