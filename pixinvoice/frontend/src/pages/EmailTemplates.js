@@ -385,7 +385,7 @@ export default function EmailTemplates() {
               <ReactQuill
                 theme="snow"
                 value={form.hu_body_template || ''}
-                onChange={(value) => setForm({ ...form, hu_body_template: value })}
+                onChange={(value) => setForm(prev => ({ ...prev, hu_body_template: value }))}
               />
             </EditorWrapper>
 
@@ -397,7 +397,7 @@ export default function EmailTemplates() {
               <ReactQuill
                 theme="snow"
                 value={form.en_body_template || ''}
-                onChange={(value) => setForm({ ...form, en_body_template: value })}
+                onChange={(value) => setForm(prev => ({ ...prev, en_body_template: value }))}
               />
             </EditorWrapper>
 
