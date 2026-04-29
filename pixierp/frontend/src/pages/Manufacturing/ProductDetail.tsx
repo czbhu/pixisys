@@ -7,7 +7,7 @@ import {
 import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, RightOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CostDragHandle, CostDraggableRow, applyCostDnd } from '../../components/Manufacturing/CostDnd';
+import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../../components/Manufacturing/CostDnd';
 import dayjs from 'dayjs';
 import { manufacturingService, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -447,6 +447,8 @@ const ManufacturingProductDetail: React.FC = () => {
     return map;
   }, [costItems]);
 
+  const costTreeMeta = useMemo(() => buildCostTreeMeta(costItems), [costItems]);
+
   const handleSave = async () => {
     try {
       const v = await form.validateFields();
@@ -545,9 +547,9 @@ const ManufacturingProductDetail: React.FC = () => {
     {
       title: 'Megnevezés', key: 'name', width: 250,
       render: (_: any, r: CostItem) => {
-        const depth = costDepthMap.get(r.id) || 0;
+        const meta = costTreeMeta.get(r.id);
         const wrap = (content: React.ReactNode) => (
-          <div style={{ paddingLeft: depth * 16 }}>{content}</div>
+          <CostTreeGuide meta={meta}>{content}</CostTreeGuide>
         );
         if (r.type === 'other') return wrap(<Input value={r.name} onChange={e => updateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />);
         if (r.name && !r.ref_id) return wrap(<Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{r.name}</span></Tooltip>);
@@ -625,22 +627,8 @@ const ManufacturingProductDetail: React.FC = () => {
       next.splice(idx + 1, 0, copy);
       return next;
     })} /> },
-    {
-      title: 'Sorrend', key: 'order', width: 130,
-      render: (_: any, r: CostItem) => {
-        const idx = costItems.findIndex(i => i.id === r.id);
-        return (
-          <Space size={2}>
-            <Tooltip title="Feljebb"><Button size="small" icon={<UpOutlined />} disabled={idx <= 0} onClick={() => moveCostItem(r.id, -1)} /></Tooltip>
-            <Tooltip title="Lejjebb"><Button size="small" icon={<DownOutlined />} disabled={idx < 0 || idx >= costItems.length - 1} onClick={() => moveCostItem(r.id, 1)} /></Tooltip>
-            <Tooltip title="Szint csökkenés (kifelé)"><Button size="small" icon={<LeftOutlined />} disabled={!r.parent_local_id} onClick={() => outdentCostItem(r.id)} /></Tooltip>
-            <Tooltip title="Szint növelés (alárendel)"><Button size="small" icon={<RightOutlined />} disabled={idx <= 0} onClick={() => indentCostItem(r.id)} /></Tooltip>
-          </Space>
-        );
-      },
-    },
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
-  ], [materials, services, suppliers, departments, currencies, costItems, costDepthMap]);
+  ], [materials, services, suppliers, departments, currencies, costItems, costTreeMeta]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 

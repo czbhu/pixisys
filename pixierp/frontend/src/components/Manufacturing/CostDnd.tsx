@@ -59,6 +59,88 @@ export interface CostDndItem {
   parent_local_id?: number | null;
 }
 
+// ── Tree visualization helpers ─────────────────────────────────────────────
+export interface CostTreeMeta {
+  depth: number;
+  isLast: boolean;          // is this row the last child of its parent (or last root)?
+  ancestorIsLast: boolean[]; // for each ancestor level (root..parent), whether THAT ancestor was the last child
+}
+
+/** Compute depth + sibling-position metadata for a flat parent_local_id list. */
+export function buildCostTreeMeta<T extends CostDndItem>(items: T[]): Map<number, CostTreeMeta> {
+  const meta = new Map<number, CostTreeMeta>();
+  // depth
+  const depth = new Map<number, number>();
+  const getDepth = (id: number, seen = new Set<number>()): number => {
+    if (depth.has(id)) return depth.get(id)!;
+    if (seen.has(id)) return 0;
+    seen.add(id);
+    const it = items.find(x => x.id === id);
+    if (!it || !it.parent_local_id) { depth.set(id, 0); return 0; }
+    const d = 1 + getDepth(it.parent_local_id, seen);
+    depth.set(id, d);
+    return d;
+  };
+  items.forEach(i => getDepth(i.id));
+
+  // siblings grouped by parent (preserving array order)
+  const groups = new Map<number | 'root', T[]>();
+  items.forEach(it => {
+    const key: number | 'root' = it.parent_local_id ?? 'root';
+    const arr = groups.get(key) || [];
+    arr.push(it);
+    groups.set(key, arr);
+  });
+
+  const isLastMap = new Map<number, boolean>();
+  groups.forEach(arr => {
+    arr.forEach((it, i) => isLastMap.set(it.id, i === arr.length - 1));
+  });
+
+  // ancestor chain (root..parent) of "isLast" flags
+  const getAncestorChain = (id: number): boolean[] => {
+    const it = items.find(x => x.id === id);
+    if (!it || !it.parent_local_id) return [];
+    const parentChain = getAncestorChain(it.parent_local_id);
+    return [...parentChain, isLastMap.get(it.parent_local_id) ?? true];
+  };
+
+  items.forEach(it => {
+    meta.set(it.id, {
+      depth: depth.get(it.id) ?? 0,
+      isLast: isLastMap.get(it.id) ?? true,
+      ancestorIsLast: getAncestorChain(it.id),
+    });
+  });
+  return meta;
+}
+
+/** Render tree guides ( │ / ├ / └ ) in front of a node label. */
+export const CostTreeGuide: React.FC<{ meta?: CostTreeMeta; children?: React.ReactNode }> = ({ meta, children }) => {
+  if (!meta || meta.depth === 0) {
+    return <span style={{ display: 'inline-flex', alignItems: 'center' }}>{children}</span>;
+  }
+  const cellStyle: React.CSSProperties = {
+    display: 'inline-block',
+    width: 16,
+    textAlign: 'center',
+    color: '#bfbfbf',
+    fontFamily: 'monospace',
+    userSelect: 'none',
+    flex: '0 0 auto',
+  };
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', minWidth: 0 }}>
+      {meta.ancestorIsLast.map((isLast, i) => (
+        <span key={i} style={cellStyle}>{isLast ? '\u00A0' : '│'}</span>
+      ))}
+      <span style={cellStyle}>{meta.isLast ? '└' : '├'}</span>
+      <span style={{ minWidth: 0, flex: 1 }}>{children}</span>
+    </span>
+  );
+};
+
+
 /**
  * Apply a drag & drop result to a flat list with parent_local_id nesting.
  * - Reorders by moving `activeId` to `overId`'s index.

@@ -4,7 +4,7 @@ import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CostDragHandle, CostDraggableRow, applyCostDnd } from '../Manufacturing/CostDnd';
+import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../Manufacturing/CostDnd';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
@@ -1357,6 +1357,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     return map;
   }, [manuCostItems]);
 
+  const manuCostTreeMeta = useMemo(() => buildCostTreeMeta(manuCostItems), [manuCostItems]);
+
   const manuCostSensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
@@ -1413,10 +1415,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   const manuCostColumns: any[] = [
     { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
-    { title: 'Megnevezés', key: 'name', width: 220, render: (_: any, r: CostItem) => {
-      const depth = manuCostDepthMap.get(r.id) || 0;
+    { title: 'Megnevezés', key: 'name', width: 240, render: (_: any, r: CostItem) => {
+      const meta = manuCostTreeMeta.get(r.id);
       const wrap = (content: React.ReactNode) => (
-        <div style={{ paddingLeft: depth * 14 }}>{content}</div>
+        <CostTreeGuide meta={meta}>{content}</CostTreeGuide>
       );
       if (r.type === 'other') return wrap(<Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />);
       // material / service: clickable to open search modal
@@ -1492,17 +1494,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       next.splice(idx + 1, 0, copy);
       return next;
     })} /> },
-    { title: 'Sorrend', key: 'order', width: 130, render: (_: any, r: CostItem) => {
-      const idx = manuCostItems.findIndex(i => i.id === r.id);
-      return (
-        <Space size={2}>
-          <Tooltip title="Feljebb"><Button size="small" icon={<UpOutlined />} disabled={idx <= 0} onClick={() => manuMoveCostItem(r.id, -1)} /></Tooltip>
-          <Tooltip title="Lejjebb"><Button size="small" icon={<DownOutlined />} disabled={idx < 0 || idx >= manuCostItems.length - 1} onClick={() => manuMoveCostItem(r.id, 1)} /></Tooltip>
-          <Tooltip title="Szint csökkenés (kifelé)"><Button size="small" icon={<LeftOutlined />} disabled={!r.parent_local_id} onClick={() => manuOutdentCostItem(r.id)} /></Tooltip>
-          <Tooltip title="Szint növelés (alárendel)"><Button size="small" icon={<RightOutlined />} disabled={idx <= 0} onClick={() => manuIndentCostItem(r.id)} /></Tooltip>
-        </Space>
-      );
-    }},
     { title: '', key: 'del', width: 36, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
   ];
 
