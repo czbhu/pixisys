@@ -77,6 +77,7 @@ class ManufacturingCostItemSerializer(serializers.ModelSerializer):
         required=False,
         allow_null=True
     )
+    department_name = serializers.CharField(source='department.name', read_only=True)
     code = serializers.SerializerMethodField()
 
     def get_code(self, obj):

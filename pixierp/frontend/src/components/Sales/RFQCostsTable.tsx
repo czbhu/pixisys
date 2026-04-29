@@ -85,6 +85,18 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
     return (amount * rFrom) / rTo;
   };
 
+  // Display "Belső gyártás: <Department>" when a cost item is internal,
+  // otherwise the supplier's name.
+  const formatSupplier = (ci: any): string => {
+    if (ci?.is_internal) {
+      const dept = ci.department_name
+        || (typeof ci.department === 'object' ? ci.department?.name : '')
+        || '';
+      return dept ? `Belső gyártás: ${dept}` : 'Belső gyártás';
+    }
+    return ci?.supplier_name || '';
+  };
+
   useEffect(() => {
     const items = rfqItems || [];
     const rows: AutoRow[] = [];
@@ -201,7 +213,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
               unit: ci.unit || 'db',
               net_unit_price_orig: ciUnitCp,
               net_total_orig: ciTotalCp,
-              supplier_name: ci.supplier_name || '',
+              supplier_name: formatSupplier(ci),
             });
           });
         } else if (pid && pid > 0) {
@@ -224,7 +236,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
                   unit: ci.unit || 'db',
                   net_unit_price_orig: ciUnitCp,
                   net_total_orig: ciTotalCp,
-                  supplier_name: ci.supplier_name || '',
+                  supplier_name: formatSupplier(ci),
                 });
               });
             }).catch(() => {})
