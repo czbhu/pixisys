@@ -512,6 +512,13 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             return obj.quote_request.company.name
         elif obj.quote_request.customer:
             return obj.quote_request.customer.name
+        # Fallback: first contact's company name (legacy data without company FK)
+        try:
+            first_contact = obj.quote_request.contacts.first()
+            if first_contact and getattr(first_contact, 'company', None):
+                return first_contact.company.name or ''
+        except Exception:
+            pass
         return ''
 
     def get_is_private(self, obj):
@@ -521,8 +528,13 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             qr = obj.quote_request
             if qr.company:
                 return qr.company.vat_status == 'PRIVATE_PERSON'
-            # No company, no old customer → private person (contact only)
-            return not qr.customer_id
+            if qr.customer_id:
+                return False
+            # Fallback: if any contact has a linked company, treat as company order
+            if qr.contacts.filter(company__isnull=False).exists():
+                return False
+            # No company, no old customer, no contact-company → private person
+            return True
         except Exception:
             return False
 
@@ -709,6 +721,13 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
             return obj.quote_request.company.name
         if obj.quote_request.customer:
             return obj.quote_request.customer.name
+        # Fallback: first contact's company name (legacy data without company FK)
+        try:
+            first_contact = obj.quote_request.contacts.first()
+            if first_contact and getattr(first_contact, 'company', None):
+                return first_contact.company.name or ''
+        except Exception:
+            pass
         return ''
 
     def get_is_private(self, obj):
@@ -718,8 +737,13 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
             qr = obj.quote_request
             if qr.company:
                 return qr.company.vat_status == 'PRIVATE_PERSON'
-            # No company, no old customer → private person (contact only)
-            return not qr.customer_id
+            if qr.customer_id:
+                return False
+            # Fallback: if any contact has a linked company, treat as company order
+            if qr.contacts.filter(company__isnull=False).exists():
+                return False
+            # No company, no old customer, no contact-company → private person
+            return True
         except Exception:
             return False
 
