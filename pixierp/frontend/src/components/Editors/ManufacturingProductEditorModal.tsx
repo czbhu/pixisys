@@ -2,7 +2,7 @@ import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { Modal, Form, Input, InputNumber, Select, message, Tabs, Button, Space, Table, Popconfirm, Row, Col, Checkbox, Tag, Tooltip, Dropdown } from 'antd';
 import NumInput from '../NumInput';
 import { useNavigate } from 'react-router-dom';
-import { PlusOutlined, DeleteOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, CalculatorOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { manufacturingService, ProductClass, Project } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -1052,6 +1052,14 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
             </div>
         );
     }},
+    { title: '', key: 'dup', width: 40, render: (_: any, r: CostItem) => <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => setCostItems(prev => {
+      const idx = prev.findIndex(x => x.id === r.id);
+      if (idx < 0) return prev;
+      const copy = { ...prev[idx], id: Date.now() + Math.random() };
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    })} /> },
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> }
   ];
 

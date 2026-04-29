@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
@@ -1374,6 +1374,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         }
       </div>
     )},
+    { title: '', key: 'dup', width: 36, render: (_: any, r: CostItem) => <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => setManuCostItems(prev => {
+      const idx = prev.findIndex(x => x.id === r.id);
+      if (idx < 0) return prev;
+      const copy = { ...prev[idx], id: Date.now() + Math.random() };
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    })} /> },
     { title: '', key: 'del', width: 36, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
   ];
 

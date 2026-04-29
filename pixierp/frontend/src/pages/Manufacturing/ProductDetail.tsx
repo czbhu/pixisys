@@ -4,7 +4,7 @@ import {
   Button, Card, Checkbox, Col, Dropdown, Form, Input, message, Popconfirm,
   Row, Select, Space, Spin, Table, Tag, Tooltip, Upload,
 } from 'antd';
-import { DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { manufacturingService, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -502,6 +502,14 @@ const ManufacturingProductDetail: React.FC = () => {
         </div>
       ),
     },
+    { title: '', key: 'dup', width: 40, render: (_: any, r: CostItem) => <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => setCostItems(prev => {
+      const idx = prev.findIndex(x => x.id === r.id);
+      if (idx < 0) return prev;
+      const copy = { ...prev[idx], id: Date.now() + Math.random() };
+      const next = [...prev];
+      next.splice(idx + 1, 0, copy);
+      return next;
+    })} /> },
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
   ], [materials, services, suppliers, departments, currencies]);
 
