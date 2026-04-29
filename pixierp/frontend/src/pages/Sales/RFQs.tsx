@@ -336,6 +336,7 @@ const RFQs: React.FC = () => {
             ready: 'green',
             in_delivery: 'cyan',
             delivered: 'geekblue',
+            invoiced: 'gold',
             cancelled: 'red',
           };
           return <Tag color={orderColors[r.effective_status] || 'purple'}>{r.effective_status_label || r.effective_status}</Tag>;
@@ -1147,6 +1148,7 @@ const RFQs: React.FC = () => {
                 <Select.Option value="ready">Kész</Select.Option>
                 <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
                 <Select.Option value="delivered">Kiszállítva</Select.Option>
+                <Select.Option value="invoiced">Kiszámlázva</Select.Option>
               </Select>
               <Select
                 className="rfqs-creator-select"

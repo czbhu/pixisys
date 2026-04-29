@@ -30,6 +30,7 @@ interface DeliveryNoteItemRow {
   confirmed_by_user_name?: string;
   confirmed_at?: string;
   delivery_note_public_url?: string;
+  invoice_number?: string | null;
 }
 
 interface OrderItemForDelivery {
@@ -98,6 +99,7 @@ const DeliveryNotes: React.FC = () => {
   const [filterNoteNumber, setFilterNoteNumber] = useState<string>('');
   const [filterOrderNumber, setFilterOrderNumber] = useState<string>('');
   const [filterItemName, setFilterItemName] = useState<string>('');
+  const [filterStatus, setFilterStatus] = useState<'all' | 'to_deliver' | 'delivered' | 'invoiced'>('all');
   
   // Creation modal state
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -511,6 +513,20 @@ const DeliveryNotes: React.FC = () => {
       sorter: (a: any, b: any) => (a.notes || '').localeCompare(b.notes || '', 'hu'),
     },
     {
+      title: 'Státusz',
+      key: 'row_status',
+      width: 130,
+      sorter: (a: any, b: any) => {
+        const rank = (r: DeliveryNoteItemRow) => r.invoice_number ? 2 : (r.is_confirmed ? 1 : 0);
+        return rank(a) - rank(b);
+      },
+      render: (_, record) => {
+        if (record.invoice_number) return <Tag color="gold">Kiszámlázott</Tag>;
+        if (record.is_confirmed) return <Tag color="green">Leszállított</Tag>;
+        return <Tag color="orange">Szállítandó</Tag>;
+      },
+    },
+    {
       title: 'Visszaigazolta',
       key: 'confirmed',
       sorter: (a: any, b: any) => (a.is_confirmed === b.is_confirmed ? 0 : a.is_confirmed ? -1 : 1),
@@ -655,6 +671,16 @@ const DeliveryNotes: React.FC = () => {
 
   const totalValue = availableItems.reduce((acc, curr) => acc + (curr.to_deliver * curr.unit_price), 0);
 
+  const filteredData = React.useMemo(() => {
+    if (filterStatus === 'all') return data;
+    return data.filter(r => {
+      if (filterStatus === 'invoiced') return !!r.invoice_number;
+      if (filterStatus === 'delivered') return !r.invoice_number && r.is_confirmed;
+      // to_deliver
+      return !r.invoice_number && !r.is_confirmed;
+    });
+  }, [data, filterStatus]);
+
   return (
     <div style={{ padding: 24 }}>
             <div style={{ marginBottom: 16 }}>
@@ -674,7 +700,19 @@ const DeliveryNotes: React.FC = () => {
                      setFilterNoteNumber('');
                      setFilterOrderNumber('');
                      setFilterItemName('');
+                     setFilterStatus('all');
                  }}>Szűrők törlése</Button>
+                 <Select
+                     value={filterStatus}
+                     onChange={(v) => setFilterStatus(v)}
+                     style={{ width: 150 }}
+                     options={[
+                       { value: 'all', label: 'Mind' },
+                       { value: 'to_deliver', label: 'Szállítandó' },
+                       { value: 'delivered', label: 'Leszállított' },
+                       { value: 'invoiced', label: 'Kiszámlázott' },
+                     ]}
+                 />
             <Button type="primary" icon={<PlusOutlined />} onClick={startCreate}>
             Új szállítólevél
             </Button>
@@ -688,7 +726,7 @@ const DeliveryNotes: React.FC = () => {
         onSearchChange={handleSearch}
         searchPlaceholder="Keresés..."
         columns={columns}
-        dataSource={data}
+        dataSource={filteredData}
         rowKey="id"
         loading={loading}
         size="small"

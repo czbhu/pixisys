@@ -212,6 +212,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         'ready': 3,
         'in_delivery': 4,
         'delivered': 5,
+        'invoiced': 6,
         'cancelled': 99,  # ignored unless it's the only one
     }
     _ORDER_STATUS_LABELS = {
@@ -221,6 +222,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         'ready': 'Kész',
         'in_delivery': 'Szállítás alatt',
         'delivered': 'Kiszállítva',
+        'invoiced': 'Kiszámlázva',
         'cancelled': 'Törölve',
     }
 
@@ -246,6 +248,18 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             min_status = min(statuses, key=lambda s: self._ORDER_STATUS_RANK.get(s, 50))
             ordered_rfq_item_ids = {oi.quote_item_id for oi in order_items}
             is_partial = len(ordered_rfq_item_ids) < len(rfq_item_ids)
+            # Promote to 'invoiced' if every linked (non-cancelled) CustomerOrder has invoice_number set
+            try:
+                order_ids = {oi.customer_order_id for oi in order_items}
+                if order_ids:
+                    from .models import CustomerOrder
+                    orders_qs = CustomerOrder.objects.filter(id__in=order_ids).exclude(status='cancelled')
+                    total_orders = orders_qs.count()
+                    invoiced_orders = orders_qs.exclude(invoice_number__isnull=True).exclude(invoice_number='').count()
+                    if total_orders > 0 and invoiced_orders == total_orders:
+                        return 'invoiced', is_partial
+            except Exception:
+                pass
             return min_status, is_partial
         except Exception:
             return None, None
@@ -1060,6 +1074,7 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     confirmed_by_user_name = serializers.CharField(source='delivery_note.confirmed_by_user.get_full_name', read_only=True)
     delivery_note_public_url = serializers.SerializerMethodField()
     item_code = serializers.SerializerMethodField()
+    invoice_number = serializers.CharField(source='customer_order_item.customer_order.invoice_number', read_only=True)
 
     class Meta:
         model = DeliveryNoteItem
