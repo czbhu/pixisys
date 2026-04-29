@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
@@ -73,6 +73,9 @@ interface CostItem {
   department_id?: number | null;
   currency_code?: string;
   currency_id?: number | null;
+  // Sorrend & alá-felérendelés (mint a tételnél)
+  sort_order?: number;
+  parent_local_id?: number | null;
 }
 
 const { Search } = Input;
@@ -390,29 +393,46 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           specific_weight: p.specific_weight ?? null,
           specific_weight_unit: p.specific_weight_unit || 'kg/m3',
         });
-        const items: CostItem[] = ((p.cost_items as any[]) || []).map((c: any, idx: number) => ({
-          id: c.id ?? Date.now() + idx,
-          type: (c.type as any) || 'other',
-          ref_id: c.ref_id || undefined,
-          code: c.code || '',
-          name: c.name || '',
-          unit: c.unit || 'db',
-          quantity: Number(c.quantity) || 0,
-          unit_price: Number(c.unit_price) || 0,
-          cost_price: Number(c.cost_price) || 0,
-          markup_percent: Number(c.markup_percent) || 0,
-          selling_unit_price: Number(c.selling_unit_price) || 0,
-          selling_price: Number(c.selling_price) || 0,
-          supplier_id: c.supplier ?? null,
-          department_id: c.department ?? null,
-          is_internal: !!c.is_internal,
-          is_per_unit: !!c.is_per_unit,
-          currency_code: c.currency_info?.code
-            ? (c.currency_info.code as string).toUpperCase()
-            : (c.currency ? (c.currency as string).toUpperCase()
-              : (c.currency_code ? (c.currency_code as string).toUpperCase() : 'HUF')),
-          currency_id: c.currency_info?.id ?? null,
-        }));
+        const rawCi = ((p.cost_items as any[]) || []);
+        const backendIdToLocal = new Map<number, number>();
+        const items: CostItem[] = rawCi.map((c: any, idx: number) => {
+          const localId = c.id ?? Date.now() + idx;
+          if (typeof c.id === 'number') backendIdToLocal.set(c.id, localId);
+          return {
+            id: localId,
+            type: (c.type as any) || 'other',
+            ref_id: c.ref_id || undefined,
+            code: c.code || '',
+            name: c.name || '',
+            unit: c.unit || 'db',
+            quantity: Number(c.quantity) || 0,
+            unit_price: Number(c.unit_price) || 0,
+            cost_price: Number(c.cost_price) || 0,
+            markup_percent: Number(c.markup_percent) || 0,
+            selling_unit_price: Number(c.selling_unit_price) || 0,
+            selling_price: Number(c.selling_price) || 0,
+            supplier_id: c.supplier ?? null,
+            department_id: c.department ?? null,
+            is_internal: !!c.is_internal,
+            is_per_unit: !!c.is_per_unit,
+            currency_code: c.currency_info?.code
+              ? (c.currency_info.code as string).toUpperCase()
+              : (c.currency ? (c.currency as string).toUpperCase()
+                : (c.currency_code ? (c.currency_code as string).toUpperCase() : 'HUF')),
+            currency_id: c.currency_info?.id ?? null,
+            sort_order: typeof c.sort_order === 'number' ? c.sort_order : idx,
+            parent_local_id: null as number | null,
+          };
+        });
+        // Resolve parent local ids (second pass)
+        items.forEach((m, idx) => {
+          const raw = rawCi[idx];
+          const pid = raw?.parent;
+          if (typeof pid === 'number' && backendIdToLocal.has(pid)) {
+            m.parent_local_id = backendIdToLocal.get(pid)!;
+          }
+        });
+        items.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setManuCostItems(items);
         // Restore saved checkbox state; fall back to heuristic for legacy records
         if (typeof p.price_from_cost_calc === 'boolean') {
@@ -920,23 +940,30 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         status: 'quote_request_priced',
         allowed_companies: customer ? [customer.id] : [],
         allowed_contacts: [],
-        cost_items: manuCostItems.map(c => ({
-          type: c.type || 'other',
-          ref_id: c.ref_id || null,
-          name: c.name,
-          quantity: Number(Number(c.quantity).toFixed(4)) || 0,
-          unit: c.unit || 'db',
-          unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
-          selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
-          cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
-          markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
-          selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
-          supplier: c.supplier_id || null,
-          department: c.department_id || null,
-          is_internal: c.is_internal || false,
-          is_per_unit: c.is_per_unit || false,
-          currency: (c.currency_code || 'HUF').toUpperCase(),
-        })),
+        cost_items: manuCostItems.map((c, idx) => {
+          const parentIdx = c.parent_local_id != null
+            ? manuCostItems.findIndex(x => x.id === c.parent_local_id)
+            : -1;
+          return ({
+            type: c.type || 'other',
+            ref_id: c.ref_id || null,
+            name: c.name,
+            quantity: Number(Number(c.quantity).toFixed(4)) || 0,
+            unit: c.unit || 'db',
+            unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            selling_unit_price: Number((Number(c.selling_unit_price) || 0).toFixed(4)),
+            cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
+            markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
+            selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
+            supplier: c.supplier_id || null,
+            department: c.department_id || null,
+            is_internal: c.is_internal || false,
+            is_per_unit: c.is_per_unit || false,
+            currency: (c.currency_code || 'HUF').toUpperCase(),
+            sort_order: idx,
+            parent_index: parentIdx >= 0 ? parentIdx : null,
+          });
+        }),
         is_fixed_quantity: false,
         price_from_cost_calc: manuPriceFromCalc,
         date: new Date().toISOString().split('T')[0],
@@ -1265,6 +1292,68 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     }));
   };
 
+  // ── Cost items ordering & nesting helpers (alá-felé rendelés) ──────────
+  const manuMoveCostItem = (itemId: number, dir: -1 | 1) => {
+    setManuCostItems(prev => {
+      const idx = prev.findIndex(i => i.id === itemId);
+      if (idx < 0) return prev;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= prev.length) return prev;
+      const next = [...prev];
+      const [it] = next.splice(idx, 1);
+      next.splice(newIdx, 0, it);
+      return next.map((it2, i) => ({ ...it2, sort_order: i }));
+    });
+  };
+
+  const manuIndentCostItem = (itemId: number) => {
+    setManuCostItems(prev => {
+      const idx = prev.findIndex(i => i.id === itemId);
+      if (idx <= 0) return prev;
+      const prevItem = prev[idx - 1];
+      // Prevent circular: previous item must not descend from this row
+      let cur: CostItem | undefined = prevItem;
+      const seen = new Set<number>();
+      while (cur && cur.parent_local_id) {
+        if (seen.has(cur.id)) break;
+        seen.add(cur.id);
+        if (cur.parent_local_id === itemId) {
+          message.warning('Nem lehet alárendelni (körhivatkozás)');
+          return prev;
+        }
+        cur = prev.find(i => i.id === cur!.parent_local_id);
+      }
+      return prev.map(i => i.id === itemId ? { ...i, parent_local_id: prevItem.id } : i);
+    });
+  };
+
+  const manuOutdentCostItem = (itemId: number) => {
+    setManuCostItems(prev => {
+      const it = prev.find(i => i.id === itemId);
+      if (!it || !it.parent_local_id) return prev;
+      const par = prev.find(i => i.id === it.parent_local_id);
+      const newParent = par ? (par.parent_local_id ?? null) : null;
+      return prev.map(i => i.id === itemId ? { ...i, parent_local_id: newParent } : i);
+    });
+  };
+
+  const manuCostDepthMap = useMemo(() => {
+    const map = new Map<number, number>();
+    const getDepth = (id: number | null | undefined, visited = new Set<number>()): number => {
+      if (!id) return 0;
+      if (visited.has(id)) return 0;
+      visited.add(id);
+      if (map.has(id)) return map.get(id)!;
+      const it = manuCostItems.find(i => i.id === id);
+      if (!it || !it.parent_local_id) { map.set(id, 0); return 0; }
+      const d = 1 + getDepth(it.parent_local_id, visited);
+      map.set(id, d);
+      return d;
+    };
+    manuCostItems.forEach(i => getDepth(i.id));
+    return map;
+  }, [manuCostItems]);
+
   const manuHandleAddCost = (type: 'material' | 'service' | 'other') => {
     let defaultSupplierId: number | null = null;
     let defaultIsInternal = false;
@@ -1308,10 +1397,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   const manuCostColumns: any[] = [
     { title: 'Megnevezés', key: 'name', width: 220, render: (_: any, r: CostItem) => {
-      if (r.type === 'other') return <Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />;
+      const depth = manuCostDepthMap.get(r.id) || 0;
+      const wrap = (content: React.ReactNode) => (
+        <div style={{ paddingLeft: depth * 14 }}>{content}</div>
+      );
+      if (r.type === 'other') return wrap(<Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />);
       // material / service: clickable to open search modal
       const displayName = r.name || '(nincs kiválasztva)';
-      return (
+      return wrap(
         <Tooltip title="Kattints az újraválasztáshoz">
           <Button
             type="link"
@@ -1382,6 +1475,17 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       next.splice(idx + 1, 0, copy);
       return next;
     })} /> },
+    { title: 'Sorrend', key: 'order', width: 130, render: (_: any, r: CostItem) => {
+      const idx = manuCostItems.findIndex(i => i.id === r.id);
+      return (
+        <Space size={2}>
+          <Tooltip title="Feljebb"><Button size="small" icon={<UpOutlined />} disabled={idx <= 0} onClick={() => manuMoveCostItem(r.id, -1)} /></Tooltip>
+          <Tooltip title="Lejjebb"><Button size="small" icon={<DownOutlined />} disabled={idx < 0 || idx >= manuCostItems.length - 1} onClick={() => manuMoveCostItem(r.id, 1)} /></Tooltip>
+          <Tooltip title="Szint csökkenés (kifelé)"><Button size="small" icon={<LeftOutlined />} disabled={!r.parent_local_id} onClick={() => manuOutdentCostItem(r.id)} /></Tooltip>
+          <Tooltip title="Szint növelés (alárendel)"><Button size="small" icon={<RightOutlined />} disabled={idx <= 0} onClick={() => manuIndentCostItem(r.id)} /></Tooltip>
+        </Space>
+      );
+    }},
     { title: '', key: 'del', width: 36, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
   ];
 
