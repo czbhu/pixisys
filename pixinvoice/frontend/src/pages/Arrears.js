@@ -476,7 +476,7 @@ export default function Arrears() {
                   </Td>
                   <Td>
                     <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                      <Button onClick={() => navigate(`/invoices/${row.id}/edit`)}>Megnyitás</Button>
+                      <Button onClick={() => window.open(`/invoices/${row.id}/edit`, '_blank')}>Megnyitás</Button>
                       {hasCurrent && (
                         <Button
                           title={`Újraküldés (${STATUS_LABEL[currentStatus] || currentStatus})`}
