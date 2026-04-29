@@ -4,6 +4,7 @@ import { CalculatorOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { manufacturingService } from '../../services/manufacturingService';
 import { warehouseService } from '../../services/warehouseService';
 import { salesService } from '../../services/salesService';
+import { buildTreeMetaFromDepths, CostTreeGuide } from '../Manufacturing/CostDnd';
 
 const { Panel } = Collapse;
 const { Text } = Typography;
@@ -306,6 +307,11 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
   const totalRevenueConverted = convert(totalRevenue, currency, displayCode);
   const profit = totalRevenueConverted - totalAutoCosts;
 
+  const treeMetaList = React.useMemo(
+    () => buildTreeMetaFromDepths(autoRows.map(r => r._depth || 0)),
+    [autoRows]
+  );
+
   const autoColumns: any[] = [
     {
       title: 'Típus / Termék',
@@ -316,8 +322,8 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
     { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 100 },
     {
       title: 'Megnevezés', dataIndex: 'name', key: 'name',
-      render: (_: any, r: AutoRow) => (
-        <div style={{ paddingLeft: (r._depth || 0) * 16 }}>{r.name}</div>
+      render: (_: any, r: AutoRow, idx: number) => (
+        <CostTreeGuide meta={treeMetaList[idx]}>{r.name}</CostTreeGuide>
       ),
     },
     { title: 'Menny.', dataIndex: 'quantity', key: 'qty', width: 70 },

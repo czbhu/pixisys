@@ -7,6 +7,7 @@ import { CSS } from '@dnd-kit/utilities';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
+import { buildTreeMetaBy, CostTreeGuide } from '../Manufacturing/CostDnd';
 
 const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   new: { label: 'Új', color: 'default' },
@@ -148,6 +149,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     return map;
   }, [dataSource]);
 
+  const treeMeta = useMemo(() => buildTreeMetaBy(dataSource, (it: Item) => it.parent ?? null), [dataSource]);
+
   const saveOrder = async (newItems: Item[]) => {
     if (!quoteRequestId) return;
     try {
@@ -285,16 +288,18 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       title: 'Tétel', 
       key: 'item_info', 
       render: (r: any) => {
-        const depth = depthMap.get(r.id) || 0;
+        const meta = treeMeta.get(r.id);
         // Fix display logic for code and name, falling back correctly
         const code = r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || (r.item_type === 'manufacturing' ? 'EGYEDI' : '-');
         const name = r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.description || 'Névtelen';
-        
+
         return (
-            <div style={{ paddingLeft: depth * 24, transition: 'padding 0.3s' }}>
-            <div style={{ fontWeight: 600 }}>{code}</div>
-            <div>{name}</div>
-            </div>
+            <CostTreeGuide meta={meta}>
+              <div>
+                <div style={{ fontWeight: 600 }}>{code}</div>
+                <div>{name}</div>
+              </div>
+            </CostTreeGuide>
         );
       }
     },

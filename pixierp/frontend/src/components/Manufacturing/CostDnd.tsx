@@ -68,25 +68,38 @@ export interface CostTreeMeta {
 
 /** Compute depth + sibling-position metadata for a flat parent_local_id list. */
 export function buildCostTreeMeta<T extends CostDndItem>(items: T[]): Map<number, CostTreeMeta> {
+  return buildTreeMetaBy(items, it => it.parent_local_id ?? null);
+}
+
+/**
+ * Generic version of `buildCostTreeMeta` that lets the caller specify how
+ * to read the parent reference. Useful for lists that store the parent
+ * under a different key (e.g. `parent` or `parent_id`).
+ */
+export function buildTreeMetaBy<T extends { id: number }>(
+  items: T[],
+  getParent: (it: T) => number | null | undefined,
+): Map<number, CostTreeMeta> {
   const meta = new Map<number, CostTreeMeta>();
-  // depth
   const depth = new Map<number, number>();
   const getDepth = (id: number, seen = new Set<number>()): number => {
     if (depth.has(id)) return depth.get(id)!;
     if (seen.has(id)) return 0;
     seen.add(id);
     const it = items.find(x => x.id === id);
-    if (!it || !it.parent_local_id) { depth.set(id, 0); return 0; }
-    const d = 1 + getDepth(it.parent_local_id, seen);
+    if (!it) { depth.set(id, 0); return 0; }
+    const pid = getParent(it);
+    if (!pid) { depth.set(id, 0); return 0; }
+    const d = 1 + getDepth(pid, seen);
     depth.set(id, d);
     return d;
   };
   items.forEach(i => getDepth(i.id));
 
-  // siblings grouped by parent (preserving array order)
   const groups = new Map<number | 'root', T[]>();
   items.forEach(it => {
-    const key: number | 'root' = it.parent_local_id ?? 'root';
+    const pid = getParent(it);
+    const key: number | 'root' = pid ?? 'root';
     const arr = groups.get(key) || [];
     arr.push(it);
     groups.set(key, arr);
@@ -97,12 +110,13 @@ export function buildCostTreeMeta<T extends CostDndItem>(items: T[]): Map<number
     arr.forEach((it, i) => isLastMap.set(it.id, i === arr.length - 1));
   });
 
-  // ancestor chain (root..parent) of "isLast" flags
   const getAncestorChain = (id: number): boolean[] => {
     const it = items.find(x => x.id === id);
-    if (!it || !it.parent_local_id) return [];
-    const parentChain = getAncestorChain(it.parent_local_id);
-    return [...parentChain, isLastMap.get(it.parent_local_id) ?? true];
+    if (!it) return [];
+    const pid = getParent(it);
+    if (!pid) return [];
+    const parentChain = getAncestorChain(pid);
+    return [...parentChain, isLastMap.get(pid) ?? true];
   };
 
   items.forEach(it => {
@@ -113,6 +127,43 @@ export function buildCostTreeMeta<T extends CostDndItem>(items: T[]): Map<number
     });
   });
   return meta;
+}
+
+/**
+ * Build tree meta from a *flat* list whose ordering already encodes the
+ * tree (DFS pre-order) and whose depth is given per row. Useful for
+ * pre-flattened views like the RFQ cost calculation table.
+ */
+export function buildTreeMetaFromDepths(depths: number[]): CostTreeMeta[] {
+  const result: CostTreeMeta[] = depths.map(d => ({ depth: d, isLast: true, ancestorIsLast: [] }));
+  // For each row, find the next sibling (next row whose depth <= current).
+  // It is the "last" child of its parent if no next row at the same depth
+  // appears before a row with smaller depth.
+  for (let i = 0; i < depths.length; i++) {
+    const d = depths[i];
+    let isLast = true;
+    for (let j = i + 1; j < depths.length; j++) {
+      if (depths[j] < d) break;
+      if (depths[j] === d) { isLast = false; break; }
+    }
+    result[i].isLast = isLast;
+  }
+  // ancestorIsLast: walk back from i to find each ancestor (last row at depth k < d)
+  for (let i = 0; i < depths.length; i++) {
+    const d = depths[i];
+    const chain: boolean[] = [];
+    for (let lvl = 0; lvl < d; lvl++) {
+      // find nearest preceding row at depth = lvl
+      let parentIdx = -1;
+      for (let j = i - 1; j >= 0; j--) {
+        if (depths[j] === lvl) { parentIdx = j; break; }
+        if (depths[j] < lvl) break;
+      }
+      chain.push(parentIdx >= 0 ? result[parentIdx].isLast : true);
+    }
+    result[i].ancestorIsLast = chain;
+  }
+  return result;
 }
 
 /** Render tree guides ( │ / ├ / └ ) in front of a node label. */
