@@ -93,11 +93,13 @@ const RFQDetail: React.FC = () => {
 
   /** Refresh only the items list without showing the full-page spinner.
    *  Used after item add/edit/delete/reorder so the cost table updates in place. */
+  const [costsVersion, setCostsVersion] = useState(0);
   const refreshItems = useCallback(async () => {
     if (!id) return;
     try {
       const rfqRes = await salesService.getQuoteRequest(Number(id));
       setRfq((prev: any) => prev ? { ...prev, items: rfqRes.items } : rfqRes);
+      setCostsVersion(v => v + 1);
     } catch {}
   }, [id]);
 
@@ -996,6 +998,7 @@ const RFQDetail: React.FC = () => {
             totalRevenue={(rfq?.items || []).reduce((sum: number, item: any) => sum + (Number(item.discounted_net_total || item.net_total) || 0), 0)}
             currency={activeCurrency}
             rfqItems={rfq?.items || []}
+            refreshKey={costsVersion}
           />
         </div>
         </Form>

@@ -37,12 +37,15 @@ interface RFQCostsTableProps {
   value?: any[];
   onChange?: (val: any[]) => void;
   rfqItems?: any[];
+  /** Increment to force cost rows to re-compute (e.g. after adding/editing an item) */
+  refreshKey?: number;
 }
 
 export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
   totalRevenue,
   currency,
   rfqItems,
+  refreshKey,
 }) => {
   const [autoRows, setAutoRows] = useState<AutoRow[]>([]);
   const [currencies, setCurrencies] = useState<CurrencyItem[]>([]);
@@ -162,7 +165,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
       setAutoRows([...rows]);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rfqItems, currencies]);
+  }, [rfqItems, currencies, refreshKey]);
 
   const displayCode = displayCurrency || 'HUF';
   const displaySymbol = currencies.find(c => c.code.toUpperCase() === displayCode)?.symbol || displayCode;
