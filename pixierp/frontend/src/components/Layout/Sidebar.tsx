@@ -92,7 +92,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       '/sales/rfqs', '/sales/invitations', '/sales/customer-orders', '/sales/delivery-notes', '/sales/invoicing', '/sales/projects', '/sales/forecasts',
       '/manufacturing/projects', '/manufacturing/products', '/manufacturing/ordered-products', '/manufacturing/product-classes', '/manufacturing/product-editor', '/manufacturing/services', '/manufacturing/service-groups',
       '/manufacturing/print-templates',
-      '/finance/invoices', '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports',
+      '/finance/payments', '/finance/cash-registers', '/finance/cash-register-setup', '/finance/budgets', '/finance/reports',
       '/crm/companies', '/crm/contacts', '/crm/deals', '/crm/activities', '/crm/campaigns',
       '/orders/orders', '/orders/returns',
       '/warehouse/materials', '/warehouse/supplier-invoices', '/warehouse/material-groups',
@@ -399,10 +399,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       label: 'Pénzügy',
       children: [
         {
-          key: '/finance/invoices',
-          label: 'Számlák',
-        },
-        {
           key: '/finance/payments',
           label: 'Fizetések',
         },
@@ -628,7 +624,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/manufacturing/quality': 'manufacturing.products',
 
     // Finance
-    '/finance/invoices': 'finance.invoices',
     '/finance/payments': 'finance.payments',
     '/finance/cash-registers': 'finance.cash_registers',
     '/finance/cash-register-setup': 'finance.cash_registers',
