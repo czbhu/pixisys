@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Table, Collapse, Statistic, Row, Col, Card, Typography, Tag, Select, Space, Tooltip, Spin } from 'antd';
 import { CalculatorOutlined, InfoCircleOutlined } from '@ant-design/icons';
 import { manufacturingService } from '../../services/manufacturingService';
+import { warehouseService } from '../../services/warehouseService';
+import { salesService } from '../../services/salesService';
 
 const { Panel } = Collapse;
 const { Text } = Typography;
@@ -93,36 +95,84 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
     items.forEach((item: any) => {
       const qty = Number(item.quantity) || 1;
 
-      if (item.item_type === 'service' && item.service) {
-        const cp = Number(item.service_unit_cost_price) || 0;
-        rows.push({
-          _autoId: `svc_${counter++}`,
-          _label: 'Szolgáltatás',
-          _color: 'blue',
-          _sourceCurrency: (item.service_currency || defaultCurrencyCode).toUpperCase(),
-          code: item.service_code || '',
-          name: item.service_name || '-',
-          quantity: qty,
-          unit: item.unit || 'alkalom',
-          net_unit_price_orig: cp,
-          net_total_orig: cp * qty,
-          supplier_name: '',
-        });
-      } else if (item.item_type === 'product' && item.material) {
-        const cp = Number(item.material_unit_cost_price) || 0;
-        rows.push({
-          _autoId: `mat_${counter++}`,
-          _label: 'Termék',
-          _color: 'green',
-          _sourceCurrency: (item.material_currency || defaultCurrencyCode).toUpperCase(),
-          code: item.material_code || '',
-          name: item.material_name || '-',
-          quantity: qty,
-          unit: item.unit || 'db',
-          net_unit_price_orig: cp,
-          net_total_orig: cp * qty,
-          supplier_name: '',
-        });
+      if (item.item_type === 'service') {
+        if (item.service) {
+          const cp = Number(item.service_unit_cost_price) || 0;
+          rows.push({
+            _autoId: `svc_${counter++}`,
+            _label: 'Szolgáltatás',
+            _color: 'blue',
+            _sourceCurrency: (item.service_currency || defaultCurrencyCode).toUpperCase(),
+            code: item.service_code || '',
+            name: item.service_name || '-',
+            quantity: qty,
+            unit: item.unit || 'alkalom',
+            net_unit_price_orig: cp,
+            net_total_orig: cp * qty,
+            supplier_name: '',
+          });
+        } else if (item.ref_id) {
+          // New-RFQ mode: fetch service to get cost price
+          const sid = item.ref_id;
+          const sIdx = counter++;
+          promises.push(
+            salesService.getService(sid).then((svc: any) => {
+              const cp = Number(svc?.unit_cost_price) || 0;
+              rows.push({
+                _autoId: `svc_new_${sid}_${sIdx}`,
+                _label: 'Szolgáltatás',
+                _color: 'blue',
+                _sourceCurrency: (svc?.currency || defaultCurrencyCode).toUpperCase(),
+                code: svc?.code || item.code || '',
+                name: svc?.name || item.name || '-',
+                quantity: qty,
+                unit: item.unit || svc?.unit || 'alkalom',
+                net_unit_price_orig: cp,
+                net_total_orig: cp * qty,
+                supplier_name: '',
+              });
+            }).catch(() => {})
+          );
+        }
+      } else if (item.item_type === 'product') {
+        if (item.material) {
+          const cp = Number(item.material_unit_cost_price) || 0;
+          rows.push({
+            _autoId: `mat_${counter++}`,
+            _label: 'Termék',
+            _color: 'green',
+            _sourceCurrency: (item.material_currency || defaultCurrencyCode).toUpperCase(),
+            code: item.material_code || '',
+            name: item.material_name || '-',
+            quantity: qty,
+            unit: item.unit || 'db',
+            net_unit_price_orig: cp,
+            net_total_orig: cp * qty,
+            supplier_name: '',
+          });
+        } else if (item.ref_id) {
+          // New-RFQ mode: fetch material to get cost price
+          const mid = item.ref_id;
+          const mIdx = counter++;
+          promises.push(
+            warehouseService.getMaterial(mid).then((mat: any) => {
+              const cp = Number(mat?.unit_cost_price) || 0;
+              rows.push({
+                _autoId: `mat_new_${mid}_${mIdx}`,
+                _label: 'Termék',
+                _color: 'green',
+                _sourceCurrency: (mat?.currency || defaultCurrencyCode).toUpperCase(),
+                code: mat?.code || item.code || '',
+                name: mat?.name || item.name || '-',
+                quantity: qty,
+                unit: item.unit || mat?.unit || 'db',
+                net_unit_price_orig: cp,
+                net_total_orig: cp * qty,
+                supplier_name: '',
+              });
+            }).catch(() => {})
+          );
+        }
       } else if (item.item_type === 'manufacturing' && (item.manufacturing_product || item._inlineCostItems)) {
         const pid = typeof item.manufacturing_product === 'object'
           ? item.manufacturing_product?.id
