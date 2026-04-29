@@ -121,3 +121,43 @@ def log_customer_order_delete(sender, instance, **kwargs):
             obj=None,
             request=getattr(instance, '_log_request', None)
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Cascade-delete linked ManufacturingProducts when a QuoteRequest is removed
+# ──────────────────────────────────────────────────────────────────────────────
+from django.db.models.signals import pre_delete  # noqa: E402
+
+
+@receiver(pre_delete, sender=QuoteRequest)
+def delete_linked_manufacturing_products(sender, instance, **kwargs):
+    """When a QuoteRequest is deleted, also delete its linked
+    ManufacturingProduct records, but only if no OTHER QuoteRequestItem
+    references them.
+    """
+    try:
+        from .models import QuoteRequestItem
+        from apps.manufacturing.models import ManufacturingProduct
+    except Exception:
+        return
+
+    manu_ids = list(
+        QuoteRequestItem.objects
+        .filter(quote_request=instance, manufacturing_product__isnull=False)
+        .values_list('manufacturing_product_id', flat=True)
+        .distinct()
+    )
+    if not manu_ids:
+        return
+
+    # Keep manufacturing products still referenced by items in OTHER RFQs
+    still_used_ids = set(
+        QuoteRequestItem.objects
+        .filter(manufacturing_product_id__in=manu_ids)
+        .exclude(quote_request=instance)
+        .values_list('manufacturing_product_id', flat=True)
+    )
+
+    deletable_ids = [mid for mid in manu_ids if mid not in still_used_ids]
+    if deletable_ids:
+        ManufacturingProduct.objects.filter(id__in=deletable_ids).delete()
