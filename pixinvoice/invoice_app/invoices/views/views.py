@@ -3582,10 +3582,11 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['post'], url_path='arrears-send-single')
     def arrears_send_single(self, request):
-        """Send arrears email for a single invoice with user-editable fields.
-        Body: { company_id, invoice_id, from, to, cc, bcc, subject, body, advance_status }
+        """Send arrears email for a single invoice.
+        Body: { company_id, invoice_id, from, to, cc, bcc, subject, advance_status }
+        The email body is always regenerated server-side from the template to preserve HTML table structure.
         """
-        import smtplib, ssl
+        import smtplib, ssl, decimal
         from email.message import EmailMessage
 
         data = request.data or {}
@@ -3608,7 +3609,6 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         bcc_raw = data.get('bcc') or []
         bcc_list = [t.strip() for t in (bcc_raw if isinstance(bcc_raw, list) else str(bcc_raw).split(',')) if str(t).strip()]
         subject = (data.get('subject') or '').strip()
-        body = (data.get('body') or '').strip()
         advance_to_status = (data.get('advance_status') or '').strip()
 
         if not from_addr:
@@ -3618,7 +3618,75 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if not subject:
             return Response({'error': 'Tárgy kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
+        # Regenerate body server-side to preserve HTML table
+        entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
+        if not entries:
+            return Response({'error': 'Számla nem található vagy nem lejárt'}, status=status.HTTP_404_NOT_FOUND)
+        entry = entries[0]
+        inv = entry['invoice']
+
+        if advance_to_status:
+            template_type = self._arrears_template_for_target_status(advance_to_status)
+        else:
+            template_type = self._arrears_template_for_target_status(entry['arrears_status'])
+        if not template_type:
+            template_type = EmailTemplate.TEMPLATE_ARREARS
+
         ces = CompanyEmailSettings.objects.filter(company=company).first()
+
+        def fmt_money(amount, currency):
+            try:
+                d = decimal.Decimal(str(amount or 0))
+            except Exception:
+                d = decimal.Decimal('0')
+            if (currency or '').upper() == 'HUF':
+                return f"{int(d):,}".replace(',', ' ') + ' Ft'
+            return f"{d:.2f} {currency}"
+
+        def render_tpl(tpl, ctx):
+            out = str(tpl or '')
+            for k, v in ctx.items():
+                out = out.replace('{' + k + '}', str(v if v is not None else ''))
+            return out
+
+        today = timezone.localdate()
+        city = (getattr(company, 'city', None) or '').strip()
+        today_city_date = f"{city}, {today.strftime('%Y.%m.%d')}" if city else today.strftime('%Y.%m.%d')
+        tpl_data = get_company_email_template(company, template_type)
+        default_signature_html = get_default_signature_html(company)
+        subject_tpl = tpl_data.get('subject_template') or 'Kintlévőség értesítő - lejárt számlák'
+        body_tpl = tpl_data.get('body_template') or '<p>Tisztelt Ügyfél!</p><p>Nyilvántartásunk szerint lejárt tartozásuk van.</p>{invoices_table}<p>{today_city_date}</p><p>{signature_html}</p>'
+
+        currency = (inv.currency or 'HUF').upper()
+        table_rows = [
+            f"<tr><td>{inv.invoice_number}</td><td>{inv.issue_date or ''}</td><td>{inv.due_date or ''}</td><td style='text-align:right'>{fmt_money(entry['remaining'], currency)}</td></tr>"
+        ]
+        invoices_table = (
+            "<table border='1' cellpadding='6' cellspacing='0' style='border-collapse:collapse;width:100%'>"
+            "<thead><tr><th>Számla sorszám</th><th>Kelt</th><th>Esedékesség</th><th>Tartozás</th></tr></thead>"
+            f"<tbody>{''.join(table_rows)}</tbody></table>"
+        )
+        customer = inv.customer
+        ctx = {
+            'customer_name': customer.name,
+            'company_name': company.name,
+            'as_of_date': today.isoformat(),
+            'today_date': today.strftime('%Y.%m.%d'),
+            'today_city_date': today_city_date,
+            'company_city': city,
+            'total_outstanding': fmt_money(entry['remaining'], currency),
+            'invoice_count': 1,
+            'currency': currency,
+            'invoices_table': invoices_table,
+            'sender_name': (getattr(ces, 'default_sender_name', None) if ces else '') or '',
+            'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
+            'signature_html': default_signature_html,
+        }
+        # Use subject from request if provided, otherwise from template
+        body = render_tpl(body_tpl, ctx)
+        if not subject:
+            subject = render_tpl(subject_tpl, ctx)
+
         host = (getattr(ces, 'smtp_host', None) if ces else None) or os.environ.get('SMTP_HOST') or os.environ.get('EMAIL_HOST')
         port = int((getattr(ces, 'smtp_port', None) if ces else None) or os.environ.get('SMTP_PORT') or os.environ.get('EMAIL_PORT') or 587)
         user = (getattr(ces, 'smtp_user', None) if ces else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
@@ -3636,11 +3704,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             msg['Cc'] = ', '.join(cc_list)
         if bcc_list:
             msg['Bcc'] = ', '.join(bcc_list)
-        if '<' in body and '>' in body:
-            msg.set_content('HTML levél')
-            msg.add_alternative(body, subtype='html')
-        else:
-            msg.set_content(body)
+        msg.set_content('HTML levél')
+        msg.add_alternative(body, subtype='html')
 
         try:
             if port == 465:
@@ -3665,9 +3730,7 @@ class InvoiceViewSet(viewsets.ModelViewSet):
 
         changed = 0
         if advance_to_status:
-            entries = self._collect_overdue_entries(company, invoice_ids=[invoice_id])
-            if entries:
-                changed = self._set_arrears_status([entries[0]['invoice']], advance_to_status)
+            changed = self._set_arrears_status([inv], advance_to_status)
 
         return Response({'success': True, 'sent': 1, 'changed': changed})
 

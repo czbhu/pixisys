@@ -3,7 +3,6 @@ import styled from 'styled-components';
 import { useNavigate } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { invoiceAPI } from '../services/api';
-import EmailModal from '../components/EmailModal';
 
 const Container = styled.div`
   background: white;
@@ -162,6 +161,78 @@ const formatAmount = (amount, currency) => {
   const value = Number(amount || 0);
   return `${value.toLocaleString('hu-HU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${currency || ''}`.trim();
 };
+
+/* ── Arrears e-mail modal (inline, no ReactQuill – HTML preview) ── */
+const ModalOverlay = styled.div`
+  position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+  display: flex; align-items: center; justify-content: center; z-index: 2000;
+`;
+const ModalBox = styled.div`
+  background: #fff; border-radius: 8px; padding: 24px;
+  width: min(820px, 95vw); max-height: 90vh; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 10px;
+`;
+const MLabel = styled.label`font-weight: 600; font-size: 13px; color: #2c3e50;`;
+const MInput = styled.input`
+  width: 100%; padding: 8px 10px; border: 1px solid #d0d7de;
+  border-radius: 4px; font-size: 14px; box-sizing: border-box;
+`;
+const BodyPreview = styled.div`
+  border: 1px solid #d0d7de; border-radius: 4px;
+  padding: 12px; min-height: 180px; max-height: 320px;
+  overflow-y: auto; background: #fafafa; font-size: 13px;
+  table { border-collapse: collapse; width: 100%; }
+  td, th { border: 1px solid #ccc; padding: 5px 8px; }
+  thead tr { background: #f0f0f0; }
+`;
+const MModalTitle = styled.h3`margin: 0 0 4px 0; font-size: 17px; color: #2c3e50;`;
+const MRow = styled.div`display: flex; flex-direction: column; gap: 4px;`;
+const MActions = styled.div`display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px;`;
+
+function ArrearsEmailModal({ data, sending, onChange, onClose, onSend }) {
+  return (
+    <ModalOverlay onClick={onClose}>
+      <ModalBox onClick={(e) => e.stopPropagation()}>
+        <MModalTitle>📧 E-mail előnézet és küldés</MModalTitle>
+
+        <MRow>
+          <MLabel>Feladó</MLabel>
+          <MInput value={data.from || ''} onChange={(e) => onChange({ from: e.target.value })} />
+        </MRow>
+        <MRow>
+          <MLabel>Címzett(ek)</MLabel>
+          <MInput
+            value={Array.isArray(data.to) ? data.to.join(', ') : data.to || ''}
+            onChange={(e) => onChange({ to: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+            placeholder="email@domain.hu, másik@domain.hu"
+          />
+        </MRow>
+        <MRow>
+          <MLabel>CC</MLabel>
+          <MInput
+            value={Array.isArray(data.cc) ? data.cc.join(', ') : data.cc || ''}
+            onChange={(e) => onChange({ cc: e.target.value.split(',').map(s => s.trim()).filter(Boolean) })}
+          />
+        </MRow>
+        <MRow>
+          <MLabel>Tárgy</MLabel>
+          <MInput value={data.subject || ''} onChange={(e) => onChange({ subject: e.target.value })} />
+        </MRow>
+        <MRow>
+          <MLabel>Levél tartalma (előnézet)</MLabel>
+          <BodyPreview dangerouslySetInnerHTML={{ __html: data.body || '' }} />
+        </MRow>
+
+        <MActions>
+          <Button onClick={onClose} disabled={sending}>Mégse</Button>
+          <PrimaryButton onClick={onSend} disabled={sending}>
+            {sending ? 'Küldés...' : 'Küldés'}
+          </PrimaryButton>
+        </MActions>
+      </ModalBox>
+    </ModalOverlay>
+  );
+}
 
 export default function Arrears() {
   const navigate = useNavigate();
@@ -352,18 +423,17 @@ export default function Arrears() {
     }
   };
 
-  const sendEmailFromModal = async (payload) => {
+  const sendEmailFromModal = async () => {
     setEmailSending(true);
     try {
       await invoiceAPI.sendArrearsSingleEmail({
         company_id: companyId,
         invoice_id: emailModalData.invoiceId,
-        from: payload.from,
-        to: payload.to,
-        cc: payload.cc || [],
-        bcc: payload.bcc || [],
-        subject: payload.subject,
-        body: payload.body,
+        from: emailModalData.from,
+        to: emailModalData.to,
+        cc: emailModalData.cc || [],
+        bcc: emailModalData.bcc || [],
+        subject: emailModalData.subject,
         advance_status: emailModalData.advanceStatus || '',
       });
       toast.success('E-mail elküldve');
@@ -510,18 +580,12 @@ export default function Arrears() {
       <div style={{ padding: '12px 16px', color: '#6c757d' }}>{selectedCount} kiválasztva</div>
 
       {emailModalOpen && emailModalData && (
-        <EmailModal
-          isOpen={emailModalOpen}
+        <ArrearsEmailModal
+          data={emailModalData}
+          sending={emailSending}
+          onChange={(patch) => setEmailModalData((prev) => ({ ...prev, ...patch }))}
           onClose={() => setEmailModalOpen(false)}
           onSend={sendEmailFromModal}
-          defaultFrom={emailModalData.from}
-          defaultTo={emailModalData.to}
-          defaultCc={emailModalData.cc}
-          defaultBcc={emailModalData.bcc}
-          defaultSubject={emailModalData.subject}
-          defaultBody={emailModalData.body}
-          customerId={emailModalData.customerId}
-          invoiceId={emailModalData.invoiceId}
         />
       )}
     </Container>
