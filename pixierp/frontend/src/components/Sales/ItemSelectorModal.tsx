@@ -2071,7 +2071,15 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
             const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
             const sellUnit = record.unit_selling_price ? Number(record.unit_selling_price) : (cp > 0 ? cp * (1 + mu / 100) : 0);
-            const defaultSupplierId = (() => {
+            // Prefer the material/service's own default_supplier; fall back to the
+            // "internal" supplier so the field is never empty.
+            const recordSupplierId = (() => {
+              const ds = record.default_supplier;
+              if (ds == null) return null;
+              const id = typeof ds === 'object' ? ds.id : ds;
+              return Number.isFinite(Number(id)) ? Number(id) : null;
+            })();
+            const fallbackSupplierId = (() => {
               const ds = manuSuppliers.find((s: any) =>
                 (s.name || '').toLowerCase().includes('belső gyártás') ||
                 (s.name || '').toLowerCase().includes('belső márka') ||
@@ -2079,6 +2087,15 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               );
               return ds ? ds.id : null;
             })();
+            const defaultSupplierId = recordSupplierId ?? fallbackSupplierId;
+            // Ensure the supplier appears in the select options even if it
+            // wasn't in the initial filtered supplier list.
+            if (recordSupplierId && !manuSuppliers.find((s: any) => s.id === recordSupplierId)) {
+              const supObj = (typeof record.default_supplier === 'object' && record.default_supplier)
+                ? record.default_supplier
+                : { id: recordSupplierId, name: record.default_supplier_name || `#${recordSupplierId}` };
+              setManuSuppliers(prev => [supObj, ...prev]);
+            }
             const newItem: CostItem = {
               id: Date.now() + Math.random(),
               type,
@@ -2115,6 +2132,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : mu,
                   selling_unit_price: sellUnit,
                   selling_price: sellUnit * qty,
+                  // Replace supplier with the new record's default (if any)
+                  ...(defaultSupplierId ? { supplier_id: defaultSupplierId, is_internal: false, department_id: null } : {}),
                 };
               }));
               setCostSearchEditId(null);
