@@ -3147,43 +3147,56 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         return changed
 
     def _arrears_imap_append(self, company, ces, msg_bytes):
-        """Upload sent message to IMAP Sent folder. Silently ignores errors."""
-        import imaplib, ssl, os, datetime
+        """Upload sent message to IMAP Sent folder. Logs errors but does not raise."""
+        import imaplib, ssl, os, logging
+        logger = logging.getLogger(__name__)
         try:
-            imap_host = (getattr(ces, 'imap_host', None) if ces else None) or os.environ.get('IMAP_HOST')
-            smtp_user = (getattr(ces, 'smtp_user', None) if ces else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
-            smtp_pwd = (getattr(ces, 'smtp_password', None) if ces else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
-            imap_user = (getattr(ces, 'imap_user', None) if ces else None) or os.environ.get('IMAP_USER') or smtp_user
-            imap_pwd = (getattr(ces, 'imap_password', None) if ces else None) or os.environ.get('IMAP_PASSWORD') or smtp_pwd
-            imap_port = int((getattr(ces, 'imap_port', None) if ces else None) or os.environ.get('IMAP_PORT') or 993)
-            sent_folder = (getattr(ces, 'imap_sent_folder', None) if ces else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
+            smtp_user = (ces.smtp_user if ces and ces.smtp_user else None) or os.environ.get('SMTP_USER') or os.environ.get('EMAIL_HOST_USER')
+            smtp_pwd = (ces.smtp_password if ces and ces.smtp_password else None) or os.environ.get('SMTP_PASSWORD') or os.environ.get('EMAIL_HOST_PASSWORD')
+            imap_host = (ces.imap_host if ces and ces.imap_host else None) or os.environ.get('IMAP_HOST')
+            imap_user = (ces.imap_user if ces and ces.imap_user else None) or os.environ.get('IMAP_USER') or smtp_user
+            imap_pwd = (ces.imap_password if ces and ces.imap_password else None) or os.environ.get('IMAP_PASSWORD') or smtp_pwd
+            imap_port = int((ces.imap_port if ces and ces.imap_port else None) or os.environ.get('IMAP_PORT') or 993)
+            sent_folder = (ces.imap_sent_folder if ces and ces.imap_sent_folder else None) or os.environ.get('IMAP_SENT_FOLDER') or 'Sent'
             if not imap_host or not imap_user or not imap_pwd:
+                logger.warning('_arrears_imap_append: IMAP config missing (host/user/password), skipping.')
                 return
+            logger.info(f'_arrears_imap_append: connecting to {imap_host}:{imap_port}')
             try:
                 M = imaplib.IMAP4_SSL(imap_host, imap_port)
             except Exception:
                 try:
-                    M = imaplib.IMAP4(imap_host, 143)
-                    M.starttls(ssl_context=ssl.create_default_context())
+                    context = ssl.create_default_context()
+                    M = imaplib.IMAP4(imap_host)
+                    M.starttls(ssl_context=context)
                 except Exception:
                     M = imaplib.IMAP4(imap_host)
             M.login(imap_user, imap_pwd)
-            used_folder = sent_folder
+            # APPEND does not require SELECT; use None for date (server uses current time)
             try:
-                typ_chk, _ = M.select(used_folder, readonly=True)
-                ok = (typ_chk == 'OK')
+                M.append(sent_folder, '(\\Seen)', None, msg_bytes)
+                logger.info(f'_arrears_imap_append: appended to "{sent_folder}"')
+            except Exception as e1:
+                logger.warning(f'_arrears_imap_append: append to "{sent_folder}" failed ({e1}), trying fallbacks')
+                appended = False
+                for fallback in ['Sent', 'Sent Items', 'INBOX.Sent']:
+                    if fallback == sent_folder:
+                        continue
+                    try:
+                        M.append(fallback, '(\\Seen)', None, msg_bytes)
+                        logger.info(f'_arrears_imap_append: appended to fallback "{fallback}"')
+                        appended = True
+                        break
+                    except Exception:
+                        pass
+                if not appended:
+                    logger.error(f'_arrears_imap_append: all folder attempts failed for {imap_host}')
+            try:
+                M.logout()
             except Exception:
-                ok = False
-            if not ok:
-                used_folder = 'Sent'
-                try:
-                    M.select(used_folder)
-                except Exception:
-                    pass
-            M.append(used_folder, '(\\Seen)', imaplib.Time2Internaldate(datetime.datetime.now()), msg_bytes)
-            M.logout()
-        except Exception:
-            pass  # IMAP failures are non-fatal
+                pass
+        except Exception as e:
+            logger.error(f'_arrears_imap_append: unexpected error: {e}')
 
     def _send_arrears_emails_by_template(self, company, entries, template_type):
         import smtplib
