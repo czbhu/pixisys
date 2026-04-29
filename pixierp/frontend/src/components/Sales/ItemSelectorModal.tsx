@@ -2,6 +2,9 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CostDragHandle, CostDraggableRow, applyCostDnd } from '../Manufacturing/CostDnd';
 import { useNavigate } from 'react-router-dom';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
@@ -1354,6 +1357,19 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     return map;
   }, [manuCostItems]);
 
+  const manuCostSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onManuCostDragEnd = (e: DragEndEvent) => {
+    const { active, over, delta } = e;
+    if (!over) return;
+    const dx = delta?.x || 0;
+    if (active.id === over.id && Math.abs(dx) < 8) return;
+    setManuCostItems(prev => applyCostDnd(prev, Number(active.id), Number(over.id), dx, 14));
+  };
+
   const manuHandleAddCost = (type: 'material' | 'service' | 'other') => {
     let defaultSupplierId: number | null = null;
     let defaultIsInternal = false;
@@ -1396,6 +1412,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   };
 
   const manuCostColumns: any[] = [
+    { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
     { title: 'Megnevezés', key: 'name', width: 220, render: (_: any, r: CostItem) => {
       const depth = manuCostDepthMap.get(r.id) || 0;
       const wrap = (content: React.ReactNode) => (
@@ -1919,19 +1936,24 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           })()}
                         </div>
                       </div>
-                      <Table
-                        dataSource={manuCostItems}
-                        columns={[
-                          { title: '', key: 'is_per_unit', width: 36, render: (_: any, r: CostItem) => (
-                            <input type="checkbox" checked={!!r.is_per_unit} onChange={e => manuUpdateCostItem(r.id, 'is_per_unit', e.target.checked)} title="Egységre vonatkozik?" />
-                          )},
-                          ...manuCostColumns,
-                        ]}
-                        pagination={false}
-                        rowKey="id"
-                        scroll={{ x: 900 }}
-                        size="small"
-                      />
+                      <DndContext sensors={manuCostSensors} collisionDetection={closestCenter} onDragEnd={onManuCostDragEnd}>
+                        <SortableContext items={manuCostItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                          <Table
+                            dataSource={manuCostItems}
+                            columns={[
+                              { title: '', key: 'is_per_unit', width: 36, render: (_: any, r: CostItem) => (
+                                <input type="checkbox" checked={!!r.is_per_unit} onChange={e => manuUpdateCostItem(r.id, 'is_per_unit', e.target.checked)} title="Egységre vonatkozik?" />
+                              )},
+                              ...manuCostColumns,
+                            ]}
+                            pagination={false}
+                            rowKey="id"
+                            scroll={{ x: 900 }}
+                            size="small"
+                            components={{ body: { row: CostDraggableRow } }}
+                          />
+                        </SortableContext>
+                      </DndContext>
                       {manuCostItems.length > 0 && (() => {
                         const qty = manuWatchQty || 1;
                         const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);

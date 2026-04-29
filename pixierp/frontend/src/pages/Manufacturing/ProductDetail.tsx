@@ -5,6 +5,9 @@ import {
   Row, Select, Space, Spin, Table, Tag, Tooltip, Upload,
 } from 'antd';
 import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, RightOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import { CostDragHandle, CostDraggableRow, applyCostDnd } from '../../components/Manufacturing/CostDnd';
 import dayjs from 'dayjs';
 import { manufacturingService, Currency } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
@@ -516,7 +519,21 @@ const ManufacturingProductDetail: React.FC = () => {
 
   // ── Cost columns ───────────────────────────────────────────────────────────
 
+  const costSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const onCostDragEnd = (e: DragEndEvent) => {
+    const { active, over, delta } = e;
+    if (!over) return;
+    const dx = delta?.x || 0;
+    if (active.id === over.id && Math.abs(dx) < 8) return;
+    setCostItems(prev => applyCostDnd(prev, Number(active.id), Number(over.id), dx, 16));
+  };
+
   const costColumns = useMemo(() => [
+    { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
     {
       title: '', key: 'is_per_unit', width: 40,
       render: (_: any, r: CostItem) => (
@@ -874,14 +891,19 @@ const ManufacturingProductDetail: React.FC = () => {
                 </Space>
               </Col>
             </Row>
-            <Table
-              dataSource={costItems}
-              columns={costColumns}
-              pagination={false}
-              rowKey="id"
-              scroll={{ x: 1000 }}
-              size="small"
-            />
+            <DndContext sensors={costSensors} collisionDetection={closestCenter} onDragEnd={onCostDragEnd}>
+              <SortableContext items={costItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                <Table
+                  dataSource={costItems}
+                  columns={costColumns}
+                  pagination={false}
+                  rowKey="id"
+                  scroll={{ x: 1000 }}
+                  size="small"
+                  components={{ body: { row: CostDraggableRow } }}
+                />
+              </SortableContext>
+            </DndContext>
           </div>
 
           {/* ── Csatolmányok ──────────────────────────────────────────────── */}
