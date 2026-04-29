@@ -121,6 +121,44 @@ const Muted = styled.div`
   margin-top: 4px;
 `;
 
+const StatusPickerWrap = styled.div`
+  position: relative;
+  display: inline-block;
+`;
+
+const StatusPickerDropdown = styled.div`
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1200;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+  min-width: 210px;
+  overflow: hidden;
+`;
+
+const StatusPickerItem = styled.div`
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #2c3e50;
+  background: ${p => p.active ? '#e8f4fd' : 'transparent'};
+  font-weight: ${p => p.active ? '600' : 'normal'};
+  &:hover { background: #f0f7ff; }
+`;
+
+const StatusPickerTitle = styled.div`
+  padding: 6px 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #6c757d;
+  border-bottom: 1px solid #ecf0f1;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+`;
+
 const STATUS_ORDER = [
   { key: 'overdue', label: 'Lejárt' },
   { key: 'arrears_notice', label: 'Kintlévőségi értesítő kiküldése' },
@@ -259,6 +297,10 @@ export default function Arrears() {
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailModalData, setEmailModalData] = useState(null); // { from, to, subject, body, customerId, invoiceId, advanceStatus }
   const [emailSending, setEmailSending] = useState(false);
+
+  // Manual status picker (long press)
+  const [statusPickerRow, setStatusPickerRow] = useState(null); // row.id
+  const longPressTimerRef = useRef(null);
 
   const loadRows = async () => {
     if (!companyId) return;
@@ -423,6 +465,37 @@ export default function Arrears() {
     }
   };
 
+  // Long-press handlers for status tag
+  const handleStatusMouseDown = useCallback((e, rowId) => {
+    longPressTimerRef.current = setTimeout(() => {
+      setStatusPickerRow(rowId);
+      longPressTimerRef.current = null;
+    }, 600);
+  }, []);
+
+  const handleStatusMouseUp = useCallback(() => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
+
+  const changeStatusManual = async (rowId, targetStatus) => {
+    setStatusPickerRow(null);
+    try {
+      await invoiceAPI.advanceArrearsStatus({
+        company_id: companyId,
+        invoice_ids: [String(rowId)],
+        target_status: targetStatus,
+        send_email: false,
+      });
+      toast.success(`Státusz beállítva: ${STATUS_LABEL[targetStatus] || targetStatus}`);
+      await loadRows();
+    } catch (e) {
+      toast.error(e?.response?.data?.error || 'Státuszváltás sikertelen');
+    }
+  };
+
   const sendEmailFromModal = async () => {
     setEmailSending(true);
     try {
@@ -541,7 +614,38 @@ export default function Arrears() {
                   <Td>{paymentMethodLabel(row.payment_method)}</Td>
                   <Td>{formatAmount(row.total_gross_amount, row.currency)}</Td>
                   <Td>
-                    <StatusTag>{row.arrears_status_label || '-'}</StatusTag>
+                    <StatusPickerWrap>
+                      <StatusTag
+                        onMouseDown={(e) => handleStatusMouseDown(e, row.id)}
+                        onMouseUp={handleStatusMouseUp}
+                        onMouseLeave={handleStatusMouseUp}
+                        onContextMenu={(e) => e.preventDefault()}
+                        style={{ cursor: 'pointer', userSelect: 'none' }}
+                        title="Hosszan tartva a státuszt manuálisan állíthatod be"
+                      >
+                        {row.arrears_status_label || '-'}
+                      </StatusTag>
+                      {statusPickerRow === row.id && (
+                        <StatusPickerDropdown>
+                          <StatusPickerTitle>Státusz beállítása</StatusPickerTitle>
+                          {STATUS_ORDER.map((s) => (
+                            <StatusPickerItem
+                              key={s.key}
+                              active={s.key === row.arrears_status}
+                              onMouseDown={(e) => { e.preventDefault(); changeStatusManual(row.id, s.key); }}
+                            >
+                              {s.key === row.arrears_status ? '✓ ' : ''}{s.label}
+                            </StatusPickerItem>
+                          ))}
+                          <StatusPickerItem
+                            style={{ borderTop: '1px solid #ecf0f1', color: '#6c757d' }}
+                            onMouseDown={(e) => { e.preventDefault(); setStatusPickerRow(null); }}
+                          >
+                            Mégse
+                          </StatusPickerItem>
+                        </StatusPickerDropdown>
+                      )}
+                    </StatusPickerWrap>
                     <Muted>{Number(row.days_in_status || 0)} nap</Muted>
                   </Td>
                   <Td>
