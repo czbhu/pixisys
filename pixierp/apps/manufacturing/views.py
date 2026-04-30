@@ -1279,12 +1279,15 @@ class ManufacturingCostItemViewSet(
             y -= 0.4 * cm
 
             # Column layout differs between halves
-            col_x_box = left
-            col_x_name = left + 0.55 * cm
+            sig_w = 2.2 * cm  # signature line width before checkbox
+            col_x_sig = left
+            col_x_box = col_x_sig + sig_w + 0.2 * cm
+            col_x_name = col_x_box + 0.5 * cm
             col_x_qty = width - right_margin - (5.5 * cm if internal else 3 * cm)
             col_x_supp = width - right_margin - 3.5 * cm  # only on internal
 
             p.setFont(font_bold, 8)
+            p.drawString(col_x_sig, y, "Aláírás")
             p.drawString(col_x_name, y, "Tétel")
             p.drawString(col_x_qty, y, "Mennyiség")
             if internal:
@@ -1303,6 +1306,12 @@ class ManufacturingCostItemViewSet(
                     p.drawString(col_x_name, y, '… (a lista folytatódik)')
                     p.setFillGray(0)
                     break
+
+                # Signature line (writable underline)
+                p.setLineWidth(0.4)
+                p.setStrokeGray(0.5)
+                p.line(col_x_sig, y - 0.05 * cm, col_x_sig + sig_w, y - 0.05 * cm)
+                p.setStrokeGray(0)
 
                 box = 0.3 * cm
                 p.setLineWidth(0.6)
