@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message, Segmented, Switch } from 'antd';
 import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined } from '@ant-design/icons';
+import api from '../../services/api';
 
 const { Text } = Typography;
 
@@ -332,6 +333,158 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     { id: 1, name: 'Tekercs 1000mm', width: 1000, availableLength: null },
   ]);
   const [keepRollRows, setKeepRollRows] = useState<boolean>(true);
+
+  // ── Alapanyag betöltés (warehouse) ────────────────────────
+  type MaterialOpt = {
+    id: number; name: string; code: string;
+    material_format: string;
+    width: number | null; length: number | null; height: number | null;
+    dimension_unit: string; roll_width: number | null;
+  };
+  type MaterialSizeOpt = {
+    id: number; name: string;
+    width: number; length: number; height: number | null;
+    dimension_unit: string;
+  };
+  const [materials, setMaterials] = useState<MaterialOpt[]>([]);
+  const [materialsLoading, setMaterialsLoading] = useState<boolean>(false);
+
+  const loadMaterials = async () => {
+    if (materials.length > 0 || materialsLoading) return;
+    setMaterialsLoading(true);
+    try {
+      const res = await api.get('/warehouse/materials/?filter_type=materials&page_size=10000');
+      const data = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      setMaterials(data as MaterialOpt[]);
+    } catch (e) {
+      console.error(e);
+      message.error('Nem sikerült betölteni az alapanyagokat');
+    } finally {
+      setMaterialsLoading(false);
+    }
+  };
+
+  // mm-be konverzió
+  const toMm = (v: number | null | undefined, unit: string | undefined): number => {
+    const n = Number(v) || 0;
+    if (!n) return 0;
+    if (unit === 'cm') return n * 10;
+    if (unit === 'm') return n * 1000;
+    return n; // mm vagy ismeretlen
+  };
+
+  const fetchMaterialSizes = async (materialId: number): Promise<MaterialSizeOpt[]> => {
+    try {
+      const res = await api.get(`/warehouse/material-sizes/?material_id=${materialId}`);
+      const data = Array.isArray(res.data) ? res.data : (res.data.results || []);
+      return data as MaterialSizeOpt[];
+    } catch (e) {
+      console.error(e);
+      return [];
+    }
+  };
+
+  const loadMaterialIntoSheets = async (materialId: number) => {
+    const m = materials.find(x => x.id === materialId);
+    if (!m) return;
+    const sizes = await fetchMaterialSizes(materialId);
+    const rows: SheetRow[] = [];
+    let counter = Date.now();
+    // alap méret a material-ből
+    const baseW = toMm(m.width, m.dimension_unit);
+    const baseH = toMm(m.length, m.dimension_unit);
+    if (baseW > 0 && baseH > 0) {
+      rows.push({ id: counter++, name: `${m.name}`, width: baseW, height: baseH, available: null, rotate: 'auto' });
+    }
+    sizes.forEach(s => {
+      const w = toMm(s.width, s.dimension_unit);
+      const h = toMm(s.length, s.dimension_unit);
+      if (w > 0 && h > 0) {
+        const label = s.name ? `${m.name} – ${s.name}` : `${m.name} ${w}×${h}`;
+        rows.push({ id: counter++, name: label, width: w, height: h, available: null, rotate: 'auto' });
+      }
+    });
+    if (rows.length === 0) {
+      message.warning('Az alapanyaghoz nincs használható méret megadva.');
+      return;
+    }
+    setSheets(rows);
+    message.success(`${rows.length} méret betöltve a(z) "${m.name}" alapanyagból`);
+  };
+
+  const loadMaterialIntoBars = async (materialId: number) => {
+    const m = materials.find(x => x.id === materialId);
+    if (!m) return;
+    const sizes = await fetchMaterialSizes(materialId);
+    const rows: BarRow[] = [];
+    let counter = Date.now();
+    const baseLen = toMm(m.length, m.dimension_unit);
+    if (baseLen > 0) {
+      rows.push({ id: counter++, name: `${m.name}`, length: baseLen, available: null });
+    }
+    sizes.forEach(s => {
+      const len = toMm(s.length, s.dimension_unit);
+      if (len > 0) {
+        const label = s.name ? `${m.name} – ${s.name}` : `${m.name} ${len} mm`;
+        rows.push({ id: counter++, name: label, length: len, available: null });
+      }
+    });
+    if (rows.length === 0) {
+      message.warning('Az alapanyaghoz nincs használható hosszúság megadva.');
+      return;
+    }
+    setBars(rows);
+    message.success(`${rows.length} szálhossz betöltve a(z) "${m.name}" alapanyagból`);
+  };
+
+  const loadMaterialIntoRolls = async (materialId: number) => {
+    const m = materials.find(x => x.id === materialId);
+    if (!m) return;
+    const sizes = await fetchMaterialSizes(materialId);
+    const rows: RollRow[] = [];
+    let counter = Date.now();
+    const baseW = toMm(m.roll_width ?? m.width, m.dimension_unit);
+    // tekercs hossza fm-ben (m) — material.length-et m-be konvertáljuk
+    const baseLenM = m.length != null
+      ? (m.dimension_unit === 'mm' ? Number(m.length) / 1000
+         : m.dimension_unit === 'cm' ? Number(m.length) / 100
+         : Number(m.length))
+      : null;
+    if (baseW > 0) {
+      rows.push({
+        id: counter++,
+        name: `${m.name}${baseW ? ` ${baseW}mm` : ''}`,
+        width: baseW,
+        availableLength: baseLenM && baseLenM > 0 ? baseLenM : null,
+      });
+    }
+    sizes.forEach(s => {
+      const w = toMm(s.width, s.dimension_unit);
+      const lenM = s.length != null
+        ? (s.dimension_unit === 'mm' ? Number(s.length) / 1000
+           : s.dimension_unit === 'cm' ? Number(s.length) / 100
+           : Number(s.length))
+        : null;
+      if (w > 0) {
+        const label = s.name ? `${m.name} – ${s.name}` : `${m.name} ${w}mm`;
+        rows.push({ id: counter++, name: label, width: w, availableLength: lenM && lenM > 0 ? lenM : null });
+      }
+    });
+    if (rows.length === 0) {
+      message.warning('Az alapanyaghoz nincs használható tekercsszélesség megadva.');
+      return;
+    }
+    setRolls(rows);
+    message.success(`${rows.length} tekercs betöltve a(z) "${m.name}" alapanyagból`);
+  };
+
+  const materialOptionsByFormat = (formats: string[]) =>
+    materials
+      .filter(m => formats.includes(m.material_format))
+      .map(m => ({
+        value: m.id,
+        label: `${m.name}${m.code ? ` [${m.code}]` : ''}`,
+      }));
 
   // ── Presetek (localStorage) ────────────────────────────────────────────
   const STORAGE_KEY = 'pixisys_imposition_presets_v1';
@@ -944,6 +1097,21 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#0958d9' }}>Szálanyag (rendelkezésre álló)</Text>
               <Space>
+                <Tooltip title="Tölts be alapanyagot (Folyóméter alapú) — minden szálhossz bekerül">
+                  <Select
+                    size="small"
+                    showSearch
+                    allowClear
+                    placeholder="Anyag betöltése…"
+                    style={{ minWidth: 180 }}
+                    loading={materialsLoading}
+                    onDropdownVisibleChange={(v) => { if (v) loadMaterials(); }}
+                    optionFilterProp="label"
+                    options={materialOptionsByFormat(['linear'])}
+                    onChange={(v) => { if (v) loadMaterialIntoBars(Number(v)); }}
+                    value={null}
+                  />
+                </Tooltip>
                 <span style={{ fontSize: 12 }}>Darabolási vastagság:</span>
                 <Tooltip title="Vágásnál levesz anyag (kerf, mm)">
                   <InputNumber size="small" controls={false} min={0} value={kerf} onChange={v => setKerf(Number(v) || 0)} addonAfter="mm" style={{ width: 96 }} />
@@ -1136,6 +1304,21 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#0958d9' }}>Tekercsek</Text>
               <Space>
+                <Tooltip title="Tölts be alapanyagot (Tekercses) — minden méret bekerül">
+                  <Select
+                    size="small"
+                    showSearch
+                    allowClear
+                    placeholder="Anyag betöltése…"
+                    style={{ minWidth: 180 }}
+                    loading={materialsLoading}
+                    onDropdownVisibleChange={(v) => { if (v) loadMaterials(); }}
+                    optionFilterProp="label"
+                    options={materialOptionsByFormat(['roll'])}
+                    onChange={(v) => { if (v) loadMaterialIntoRolls(Number(v)); }}
+                    value={null}
+                  />
+                </Tooltip>
                 <span style={{ fontSize: 12 }}>Nyomatköz:</span>
                 <Tooltip title="Két nyomat közötti távolság (mm)">
                   <InputNumber size="small" controls={false} min={0} value={rollGap} onChange={v => setRollGap(Number(v) || 0)} addonAfter="mm" style={{ width: 90 }} />
@@ -1422,6 +1605,21 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#0958d9' }}>Ívek (rendelkezésre álló)</Text>
               <Space>
+                <Tooltip title="Tölts be alapanyagot (Táblás/Íves) — minden mérete bekerül">
+                  <Select
+                    size="small"
+                    showSearch
+                    allowClear
+                    placeholder="Anyag betöltése…"
+                    style={{ minWidth: 180 }}
+                    loading={materialsLoading}
+                    onDropdownVisibleChange={(v) => { if (v) loadMaterials(); }}
+                    optionFilterProp="label"
+                    options={materialOptionsByFormat(['sheet'])}
+                    onChange={(v) => { if (v) loadMaterialIntoSheets(Number(v)); }}
+                    value={null}
+                  />
+                </Tooltip>
                 <span style={{ fontSize: 12 }}>Nyomatköz:</span>
                 <Tooltip title="Két nyomat közötti távolság (mm)">
                   <InputNumber size="small" controls={false} min={0} value={bleed} onChange={v => setBleed(Number(v) || 0)} addonAfter="mm" style={{ width: 90 }} />
