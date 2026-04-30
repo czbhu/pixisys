@@ -1007,19 +1007,14 @@ class ManufacturingCostItemViewSet(
 
     @action(detail=True, methods=['get'], url_path='work_sheet')
     def work_sheet(self, request, pk=None):
-        """Per-item worksheet PDF.
+        """Per-item worksheet PDF — A4, két részes (külső + belső).
 
-        Renders ONE A4 page with:
-          • Customer-order header (order number, customer, deadline, project)
-          • The parent ManufacturingProduct (the queue row's `product`) as
-            the main item — name, code, quantity (taken from the related
-            CustomerOrderItem when available)
-          • The full breakdown of altételek (sibling cost items belonging
-            to the same product), each with a checkbox so the operator can
-            tick off completed lines. Sorted as in the queue table:
-            (sort_order, id) — i.e. the model's default ordering.
-          • Notes: the parent CustomerOrderItem.description (if any) PLUS
-            each cost item's `notes` field (if any).
+        Felül a KÜLSŐ rész: csak az alap információk + tételnév + leírás
+        + altételek lista (checkbox + név + mennyiség, beszállító nélkül).
+        Alul a BELSŐ rész: minden látszik (belső leírás, megjegyzés,
+        beszállító/részleg oszlop, altétel megjegyzések). A két részt
+        szaggatott vonal választja el, mint a sales/customer-orders
+        munkalapját.
         """
         from django.http import HttpResponse
         from io import BytesIO
@@ -1034,6 +1029,21 @@ class ManufacturingCostItemViewSet(
         except ImportError:
             return Response({'error': 'ReportLab not installed'}, status=500)
         from django.conf import settings as dj_settings
+        import re as _re
+        from html import unescape as _html_unescape
+
+        def strip_html(s):
+            if not s:
+                return ''
+            # Replace block-level tags with newlines so multi-paragraph text
+            # doesn't run together, then strip remaining tags.
+            s = _re.sub(r'(?i)<\s*(br|/p|/div|/li|/h[1-6])\s*[^>]*>', '\n', s)
+            s = _re.sub(r'<[^>]+>', '', s)
+            s = _html_unescape(s)
+            # Collapse excessive whitespace, keep paragraph breaks
+            s = _re.sub(r'[ \t]+', ' ', s)
+            s = _re.sub(r'\n\s*\n+', '\n', s)
+            return s.strip()
 
         ci = self.get_object()
         product = ci.product
@@ -1085,12 +1095,12 @@ class ManufacturingCostItemViewSet(
                     item_qty_str += f" {qi.unit}"
             except Exception:
                 pass
-            item_note = coi.description or (coi.quote_item.description if coi.quote_item else '') or ''
+            item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
 
         product_code = getattr(product, 'code', '') or ''
         product_name = product.name or ''
-        product_internal_desc = getattr(product, 'internal_description', '') or ''
-        product_desc = getattr(product, 'description', '') or ''
+        product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
+        product_desc = strip_html(getattr(product, 'description', '') or '')
 
         # QR (link back to the order page)
         base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
@@ -1121,205 +1131,240 @@ class ManufacturingCostItemViewSet(
             .order_by(F('queue_position').asc(nulls_last=True), 'id')
         )
 
-        # ── Drawing ─────────────────────────────────────────────────────
+        # ── Drawing helpers ─────────────────────────────────────────────
         from reportlab.pdfbase.pdfmetrics import stringWidth
-
-        def wrap_to_width(text, fname, fsize, max_w):
-            words = (text or '').split()
-            lines = []
-            cur = ''
-            for w in words:
-                cand = (cur + ' ' + w).strip()
-                if stringWidth(cand, fname, fsize) <= max_w:
-                    cur = cand
-                else:
-                    if cur:
-                        lines.append(cur)
-                    cur = w
-            if cur:
-                lines.append(cur)
-            return lines or ['']
-
-        y = height - 2 * cm
         left = 2 * cm
         right_margin = 2 * cm
-        qr_size = 3 * cm
 
-        # Title + QR top right
-        p.setFont(font_bold, 12)
-        p.drawString(left, y, f"MUNKALAP - {order_number}")
-        if qr_image:
-            p.drawImage(qr_image, width - right_margin - qr_size, y - qr_size + 0.4 * cm,
-                        width=qr_size, height=qr_size)
-        text_right_limit = width - right_margin - qr_size - 0.5 * cm
-        max_text_w = text_right_limit - left
+        def wrap_to_width(text, fname, fsize, max_w):
+            """Wrap text honoring explicit newlines AND word boundaries."""
+            out = []
+            for paragraph in (text or '').split('\n'):
+                words = paragraph.split()
+                if not words:
+                    out.append('')
+                    continue
+                cur = ''
+                for w in words:
+                    cand = (cur + ' ' + w).strip()
+                    if stringWidth(cand, fname, fsize) <= max_w:
+                        cur = cand
+                    else:
+                        if cur:
+                            out.append(cur)
+                        cur = w
+                if cur:
+                    out.append(cur)
+            return out or ['']
 
-        y -= 0.9 * cm
+        def draw_section(start_y, *, internal):
+            """Draw one half of the worksheet.
 
-        def header_row(label, value, bold_label=True):
-            nonlocal y
-            if not value:
-                return
-            p.setFont(font_bold, 10)
-            p.drawString(left, y, f"{label}:")
-            p.setFont(font_normal, 10)
-            label_offset = 3.2 * cm
-            value_max = max_text_w - label_offset
-            lines = wrap_to_width(str(value), font_normal, 10, value_max)
-            for i, line in enumerate(lines[:2]):
-                p.drawString(left + label_offset, y - i * 0.45 * cm, line)
-            y -= max(0.55 * cm, len(lines[:2]) * 0.45 * cm)
+            external (internal=False): only the basic info + product +
+                description + altételek (checkbox + név + mennyiség).
+            internal (internal=True): everything — including belső leírás,
+                megjegyzés, beszállító oszlop és altétel-megjegyzések.
+            Returns the final y coordinate.
+            """
+            y = start_y
+            qr_size = 2.5 * cm
 
-        header_row('Megrendelő', f"{customer_name}{(' - ' + contact_name) if contact_name else ''}")
-        header_row('Projekt', project_name)
-        header_row('Határidő', deadline)
-        # Reset y past QR area before drawing the wide product block
-        y = min(y, height - 2 * cm - qr_size - 0.4 * cm)
+            # Title + section tag + QR top right
+            p.setFont(font_bold, 12)
+            tag = 'BELSŐ' if internal else 'KÜLSŐ'
+            p.drawString(left, y, f"MUNKALAP - {order_number}  ({tag})")
+            if qr_image:
+                p.drawImage(qr_image, width - right_margin - qr_size,
+                            y - qr_size + 0.4 * cm, width=qr_size, height=qr_size)
+            text_right_limit = width - right_margin - qr_size - 0.5 * cm
+            max_text_w = text_right_limit - left
+            y -= 0.8 * cm
 
-        # Product block
-        p.setStrokeColorRGB(0.6, 0.6, 0.6)
-        p.setLineWidth(0.5)
-        p.line(left, y, width - right_margin, y)
-        y -= 0.6 * cm
-
-        p.setFont(font_bold, 12)
-        p.drawString(left, y, "TÉTEL")
-        y -= 0.6 * cm
-
-        p.setFont(font_bold, 10)
-        p.drawString(left, y, "Cikkszám:")
-        p.setFont(font_normal, 10)
-        p.drawString(left + 3.2 * cm, y, product_code or '-')
-        y -= 0.55 * cm
-
-        p.setFont(font_bold, 10)
-        p.drawString(left, y, "Megnevezés:")
-        p.setFont(font_normal, 10)
-        name_lines = wrap_to_width(product_name, font_normal, 10, width - left - right_margin - 3.2 * cm)
-        for i, line in enumerate(name_lines[:2]):
-            p.drawString(left + 3.2 * cm, y - i * 0.45 * cm, line)
-        y -= max(0.55 * cm, len(name_lines[:2]) * 0.45 * cm)
-
-        if item_qty_str:
-            p.setFont(font_bold, 10)
-            p.drawString(left, y, "Mennyiség:")
-            p.setFont(font_normal, 10)
-            p.drawString(left + 3.2 * cm, y, item_qty_str)
-            y -= 0.55 * cm
-
-        if product_desc:
-            p.setFont(font_bold, 10)
-            p.drawString(left, y, "Leírás:")
-            y -= 0.4 * cm
-            p.setFont(font_normal, 9)
-            for line in wrap_to_width(product_desc, font_normal, 9, width - left - right_margin)[:4]:
-                p.drawString(left, y, line)
-                y -= 0.4 * cm
-            y -= 0.1 * cm
-
-        if product_internal_desc:
-            p.setFont(font_bold, 10)
-            p.drawString(left, y, "Belső leírás:")
-            y -= 0.4 * cm
-            p.setFont(font_normal, 9)
-            for line in wrap_to_width(product_internal_desc, font_normal, 9, width - left - right_margin)[:4]:
-                p.drawString(left, y, line)
-                y -= 0.4 * cm
-            y -= 0.1 * cm
-
-        if item_note:
-            p.setFont(font_bold, 10)
-            p.drawString(left, y, "Megjegyzés:")
-            y -= 0.4 * cm
-            p.setFont(font_normal, 9)
-            for line in wrap_to_width(item_note, font_normal, 9, width - left - right_margin)[:6]:
-                p.drawString(left, y, line)
-                y -= 0.4 * cm
-            y -= 0.1 * cm
-
-        # Sub-items (altételek) section
-        y -= 0.3 * cm
-        p.setStrokeColorRGB(0.6, 0.6, 0.6)
-        p.line(left, y, width - right_margin, y)
-        y -= 0.6 * cm
-
-        p.setFont(font_bold, 12)
-        p.drawString(left, y, f"ALTÉTELEK ({len(sub_items)})")
-        y -= 0.6 * cm
-
-        # Column headers
-        col_x_box = left
-        col_x_name = left + 0.7 * cm
-        col_x_qty = width - right_margin - 5.5 * cm
-        col_x_supp = width - right_margin - 3.5 * cm
-
-        p.setFont(font_bold, 9)
-        p.drawString(col_x_name, y, "Tétel")
-        p.drawString(col_x_qty, y, "Mennyiség")
-        p.drawString(col_x_supp, y, "Beszállító / Részleg")
-        y -= 0.15 * cm
-        p.setLineWidth(0.3)
-        p.line(left, y, width - right_margin, y)
-        y -= 0.4 * cm
-
-        p.setFont(font_normal, 9)
-        for sub in sub_items:
-            # Page break if we run out of space
-            if y < 2.5 * cm:
-                p.showPage()
-                y = height - 2 * cm
-                p.setFont(font_normal, 9)
-
-            # Checkbox
-            box = 0.35 * cm
-            p.setLineWidth(0.7)
-            p.rect(col_x_box, y - box + 0.05 * cm, box, box, stroke=1, fill=0)
-
-            # Highlight the row this worksheet was triggered from
-            is_self = sub.id == ci.id
-            if is_self:
+            def header_row(label, value):
+                nonlocal y
+                if not value:
+                    return
                 p.setFont(font_bold, 9)
+                p.drawString(left, y, f"{label}:")
+                p.setFont(font_normal, 9)
+                lo = 2.6 * cm
+                lines = wrap_to_width(str(value), font_normal, 9, max_text_w - lo)
+                for i, line in enumerate(lines[:2]):
+                    p.drawString(left + lo, y - i * 0.4 * cm, line)
+                y -= max(0.45 * cm, len(lines[:2]) * 0.4 * cm)
 
-            name_max_w = col_x_qty - col_x_name - 0.2 * cm
-            name_lines = wrap_to_width(sub.name or '', font_normal, 9, name_max_w)
-            p.drawString(col_x_name, y, name_lines[0])
+            header_row('Megrendelő', f"{customer_name}{(' - ' + contact_name) if contact_name else ''}")
+            header_row('Projekt', project_name)
+            header_row('Határidő', deadline)
+            # Move below QR area before the wide content blocks
+            y = min(y, start_y - qr_size - 0.2 * cm)
 
-            try:
-                qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
-            except Exception:
-                qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
-            p.drawString(col_x_qty, y, qty_txt)
-
-            if sub.is_internal:
-                supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
-            elif sub.supplier:
-                supp_txt = sub.supplier.name
-            else:
-                supp_txt = '-'
-            supp_lines = wrap_to_width(supp_txt, font_normal, 9, width - right_margin - col_x_supp)
-            p.drawString(col_x_supp, y, supp_lines[0])
-
+            # Product block
+            p.setStrokeColorRGB(0.6, 0.6, 0.6)
+            p.setLineWidth(0.4)
+            p.line(left, y, width - right_margin, y)
             y -= 0.45 * cm
 
-            # Continuation lines for the name (rare)
-            for extra in name_lines[1:2]:
-                p.drawString(col_x_name, y, extra)
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, "TÉTEL")
+            y -= 0.45 * cm
+
+            p.setFont(font_bold, 9)
+            p.drawString(left, y, "Cikkszám:")
+            p.setFont(font_normal, 9)
+            p.drawString(left + 2.6 * cm, y, product_code or '-')
+            if item_qty_str:
+                p.setFont(font_bold, 9)
+                p.drawString(left + 8 * cm, y, "Mennyiség:")
+                p.setFont(font_normal, 9)
+                p.drawString(left + 10.4 * cm, y, item_qty_str)
+            y -= 0.45 * cm
+
+            p.setFont(font_bold, 9)
+            p.drawString(left, y, "Megnevezés:")
+            p.setFont(font_normal, 9)
+            for i, line in enumerate(wrap_to_width(product_name, font_normal, 9,
+                                                   width - left - right_margin - 2.6 * cm)[:2]):
+                p.drawString(left + 2.6 * cm, y - i * 0.4 * cm, line)
+            y -= 0.45 * cm
+
+            if product_desc:
+                p.setFont(font_bold, 9)
+                p.drawString(left, y, "Leírás:")
                 y -= 0.4 * cm
-
-            # Sub-item note (if any)
-            if sub.notes:
-                p.setFont(font_normal, 8)
-                p.setFillGray(0.35)
-                for line in wrap_to_width(f"↳ {sub.notes}", font_normal, 8, width - col_x_name - right_margin)[:3]:
-                    p.drawString(col_x_name, y, line)
-                    y -= 0.35 * cm
-                p.setFillGray(0)
                 p.setFont(font_normal, 9)
+                max_lines = 4 if internal else 6
+                for line in wrap_to_width(product_desc, font_normal, 9,
+                                          width - left - right_margin)[:max_lines]:
+                    p.drawString(left, y, line)
+                    y -= 0.38 * cm
+                y -= 0.05 * cm
 
-            if is_self:
+            # The following blocks are BELSŐ only.
+            if internal and product_internal_desc:
+                p.setFont(font_bold, 9)
+                p.drawString(left, y, "Belső leírás:")
+                y -= 0.4 * cm
                 p.setFont(font_normal, 9)
+                for line in wrap_to_width(product_internal_desc, font_normal, 9,
+                                          width - left - right_margin)[:4]:
+                    p.drawString(left, y, line)
+                    y -= 0.38 * cm
+                y -= 0.05 * cm
 
-            y -= 0.1 * cm
+            if internal and item_note:
+                p.setFont(font_bold, 9)
+                p.drawString(left, y, "Megjegyzés:")
+                y -= 0.4 * cm
+                p.setFont(font_normal, 9)
+                for line in wrap_to_width(item_note, font_normal, 9,
+                                          width - left - right_margin)[:5]:
+                    p.drawString(left, y, line)
+                    y -= 0.38 * cm
+                y -= 0.05 * cm
+
+            # ── Altételek ────────────────────────────────────────────
+            y -= 0.15 * cm
+            p.line(left, y, width - right_margin, y)
+            y -= 0.4 * cm
+
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, f"ALTÉTELEK ({len(sub_items)})")
+            y -= 0.4 * cm
+
+            # Column layout differs between halves
+            col_x_box = left
+            col_x_name = left + 0.55 * cm
+            col_x_qty = width - right_margin - (5.5 * cm if internal else 3 * cm)
+            col_x_supp = width - right_margin - 3.5 * cm  # only on internal
+
+            p.setFont(font_bold, 8)
+            p.drawString(col_x_name, y, "Tétel")
+            p.drawString(col_x_qty, y, "Mennyiség")
+            if internal:
+                p.drawString(col_x_supp, y, "Beszállító / Részleg")
+            y -= 0.12 * cm
+            p.setLineWidth(0.3)
+            p.line(left, y, width - right_margin, y)
+            y -= 0.32 * cm
+
+            p.setFont(font_normal, 8)
+            for sub in sub_items:
+                # Stop drawing when out of this section's space
+                if y < (height / 2 + 0.5 * cm if not internal else 1.5 * cm):
+                    p.setFont(font_normal, 7)
+                    p.setFillGray(0.4)
+                    p.drawString(col_x_name, y, '… (a lista folytatódik)')
+                    p.setFillGray(0)
+                    break
+
+                box = 0.3 * cm
+                p.setLineWidth(0.6)
+                p.rect(col_x_box, y - box + 0.05 * cm, box, box, stroke=1, fill=0)
+
+                is_self = sub.id == ci.id
+                if is_self:
+                    p.setFont(font_bold, 8)
+
+                name_max = (col_x_qty - col_x_name - 0.2 * cm)
+                name_lines = wrap_to_width(sub.name or '', font_normal, 8, name_max)
+                p.drawString(col_x_name, y, name_lines[0])
+
+                try:
+                    qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
+                except Exception:
+                    qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
+                p.drawString(col_x_qty, y, qty_txt)
+
+                if internal:
+                    if sub.is_internal:
+                        supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
+                    elif sub.supplier:
+                        supp_txt = sub.supplier.name
+                    else:
+                        supp_txt = '-'
+                    p.drawString(col_x_supp, y,
+                                 wrap_to_width(supp_txt, font_normal, 8,
+                                               width - right_margin - col_x_supp)[0])
+
+                y -= 0.38 * cm
+
+                # Continuation lines for very long names
+                for extra in name_lines[1:2]:
+                    p.drawString(col_x_name, y, extra)
+                    y -= 0.34 * cm
+
+                # Sub-item notes only on the internal half
+                if internal and sub.notes:
+                    p.setFont(font_normal, 7)
+                    p.setFillGray(0.4)
+                    notes_clean = strip_html(sub.notes)
+                    for line in wrap_to_width(f"↳ {notes_clean}", font_normal, 7,
+                                              width - col_x_name - right_margin)[:3]:
+                        p.drawString(col_x_name, y, line)
+                        y -= 0.3 * cm
+                    p.setFillGray(0)
+
+                if is_self:
+                    p.setFont(font_normal, 8)
+
+                y -= 0.05 * cm
+
+            return y
+
+        # Top half = KÜLSŐ
+        top_end = draw_section(height - 1.5 * cm, internal=False)
+
+        # Dashed separator at the page's vertical mid
+        sep_y = height / 2
+        p.setDash(6, 3)
+        p.setLineWidth(0.5)
+        p.line(2 * cm, sep_y, width - 2 * cm, sep_y)
+        p.setDash()
+
+        # Bottom half = BELSŐ
+        bottom_start = sep_y - 0.6 * cm
+        draw_section(bottom_start, internal=True)
 
         p.showPage()
         p.save()
