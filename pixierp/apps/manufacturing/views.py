@@ -1263,7 +1263,9 @@ class ManufacturingCostItemViewSet(
                     y -= 0.38 * cm
                 y -= 0.05 * cm
 
-            # ── Altételek ────────────────────────────────────────────
+            # ── Altételek ──────────────────────────────────────────── (csak BELSŐ)
+            if not internal:
+                return y
             y -= 0.15 * cm
             p.line(left, y, width - right_margin, y)
             y -= 0.4 * cm
