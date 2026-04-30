@@ -64,9 +64,10 @@ interface Props {
   initialProductWidth?: number;
   initialProductHeight?: number;
   initialProductQty?: number;
+  initialPresetId?: string | null;
 }
 
-const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty }) => {
+const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId }) => {
   const [bleed, setBleed] = useState<number>(3);
   const [products, setProducts] = useState<ProductRow[]>([
     { id: 1, name: 'Termék 1', width: initialProductWidth ?? 210, height: initialProductHeight ?? 297, quantity: initialProductQty ?? 100 },
@@ -88,6 +89,19 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       if (raw) setPresets(JSON.parse(raw));
     } catch {}
   }, []);
+
+  // Auto-load preset when opened with initialPresetId
+  useEffect(() => {
+    if (!open || !initialPresetId || !presets.length) return;
+    const p = presets.find(x => x.id === initialPresetId);
+    if (!p) return;
+    setBleed(p.bleed);
+    setProducts(p.products);
+    setSheets(p.sheets);
+    setActivePresetId(p.id);
+    setPresetNameInput(p.name);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialPresetId, presets.length]);
 
   const persist = (next: Preset[]) => {
     setPresets(next);

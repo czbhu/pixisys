@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
+import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../Manufacturing/CostDnd';
@@ -114,6 +114,47 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [savingClose, setSavingClose] = useState(false);
   const manuKeepOpenRef = useRef(false);
   const [impositionOpen, setImpositionOpen] = useState(false);
+  const [impositionInitialPresetId, setImpositionInitialPresetId] = useState<string | null>(null);
+  const [impositionPresets, setImpositionPresets] = useState<Array<{ id: string; name: string; updatedAt?: string }>>([]);
+  const [impositionPresetsVersion, setImpositionPresetsVersion] = useState(0);
+
+  const IMPOSITION_STORAGE_KEY = 'pixisys_imposition_presets_v1';
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(IMPOSITION_STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      setImpositionPresets(Array.isArray(list) ? list.map((p: any) => ({ id: p.id, name: p.name, updatedAt: p.updatedAt })) : []);
+    } catch { setImpositionPresets([]); }
+  }, [impositionPresetsVersion, impositionOpen]);
+
+  const renameImpositionPreset = (id: string, newName: string) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed) return;
+    try {
+      const raw = localStorage.getItem(IMPOSITION_STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      const next = list.map((p: any) => p.id === id ? { ...p, name: trimmed, updatedAt: new Date().toISOString() } : p);
+      localStorage.setItem(IMPOSITION_STORAGE_KEY, JSON.stringify(next));
+      setImpositionPresetsVersion(v => v + 1);
+    } catch {}
+  };
+
+  const deleteImpositionPreset = (id: string) => {
+    try {
+      const raw = localStorage.getItem(IMPOSITION_STORAGE_KEY);
+      const list = raw ? JSON.parse(raw) : [];
+      const next = list.filter((p: any) => p.id !== id);
+      localStorage.setItem(IMPOSITION_STORAGE_KEY, JSON.stringify(next));
+      setImpositionPresetsVersion(v => v + 1);
+      message.success('Törölve');
+    } catch {}
+  };
+
+  const openImpositionWithPreset = (id: string | null) => {
+    setImpositionInitialPresetId(id);
+    setImpositionOpen(true);
+  };
+
   const [manuExistingProducts, setManuExistingProducts] = useState<any[]>([]);
 
   // Manu inline — cost items and dimensions state
@@ -1844,8 +1885,52 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   </Row>
 
                   <Collapse ghost size="small" style={{ marginBottom: 8 }}>
-                    <Collapse.Panel header={<span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>} key="imposition" extra={<Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); setImpositionOpen(true); }}>Megnyitás</Button>}>
-                      <div style={{ fontSize: 12, color: '#666' }}>Számítsd ki a produkciós ív kihozatalt: több termékméret és több ívméret kombinációi, érhetőség (készlet) figyelembe vételével.</div>
+                    <Collapse.Panel header={<span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>} key="imposition" extra={<Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); openImpositionWithPreset(null); }}>Új megnyitása</Button>}>
+                      <div style={{ fontSize: 12, color: '#666', marginBottom: impositionPresets.length ? 8 : 0 }}>Számítsd ki a produkciós ív kihozatalt: több termékméret és több ívméret kombinációi, érhetőség (készlet) figyelembe vételével.</div>
+                      {impositionPresets.length > 0 && (
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, color: '#888', marginBottom: 4 }}>Mentett impozíciók ({impositionPresets.length}):</div>
+                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                            {impositionPresets.map(p => (
+                              <div
+                                key={p.id}
+                                style={{
+                                  display: 'flex', alignItems: 'center', gap: 4,
+                                  padding: '3px 8px',
+                                  background: '#fff',
+                                  border: '1px solid #d9d9d9',
+                                  borderRadius: 14,
+                                  fontSize: 12,
+                                }}
+                              >
+                                <Tooltip title="Megnyitás">
+                                  <Button
+                                    size="small"
+                                    type="link"
+                                    icon={<FolderOpenOutlined />}
+                                    onClick={() => openImpositionWithPreset(p.id)}
+                                    style={{ padding: 0, height: 'auto' }}
+                                  />
+                                </Tooltip>
+                                <Typography.Text
+                                  editable={{
+                                    icon: <EditOutlined style={{ fontSize: 11 }} />,
+                                    tooltip: 'Átnevezés',
+                                    onChange: (val) => renameImpositionPreset(p.id, val),
+                                  }}
+                                  style={{ margin: 0, cursor: 'pointer' }}
+                                  onClick={() => openImpositionWithPreset(p.id)}
+                                >
+                                  {p.name}
+                                </Typography.Text>
+                                <Popconfirm title="Törlés?" okText="Igen" cancelText="Mégse" onConfirm={() => deleteImpositionPreset(p.id)}>
+                                  <Button size="small" type="text" danger icon={<DeleteOutlined style={{ fontSize: 11 }} />} style={{ padding: 0, height: 'auto' }} />
+                                </Popconfirm>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                     </Collapse.Panel>
                     <Collapse.Panel header="Méret és súly" key="dims">
                       <Row gutter={8}>
@@ -2187,10 +2272,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
       <ImpositionHelperModal
         open={impositionOpen}
-        onClose={() => setImpositionOpen(false)}
+        onClose={() => { setImpositionOpen(false); setImpositionInitialPresetId(null); setImpositionPresetsVersion(v => v + 1); }}
         initialProductWidth={Number(manuForm.getFieldValue('width')) || undefined}
         initialProductHeight={Number(manuForm.getFieldValue('length')) || undefined}
         initialProductQty={Number(manuForm.getFieldValue('manu_quantity')) || undefined}
+        initialPresetId={impositionInitialPresetId}
       />
 
       {/* ── Cost item material / service search modal ─────────────────── */}
