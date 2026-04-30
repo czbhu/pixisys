@@ -99,9 +99,83 @@ const itemsPerSheet = (sw: number, sh: number, pw: number, ph: number, gap: numb
 type Piece = { productId: number; productName: string; w: number; h: number; rotateAllowed?: boolean };
 type Placed = Piece & { x: number; y: number; pw: number; ph: number; rotated: boolean };
 
+// MAXRECTS-BSSF (Best Short Side Fit) — szabadon bárhova helyez, üres zsebeket is feltölti
+const maxrectsPack = (
+  binW: number, binH: number, gap: number, pieces: Piece[],
+): { placed: Placed[]; leftover: Piece[] } => {
+  type Rect = { x: number; y: number; w: number; h: number };
+  const placed: Placed[] = [];
+  const leftover: Piece[] = [];
+  let freeRects: Rect[] = [{ x: 0, y: 0, w: binW, h: binH }];
+  const queue = [...pieces].sort((a, b) => (b.w * b.h) - (a.w * a.h));
+
+  for (const p of queue) {
+    const allowRot = p.rotateAllowed !== false;
+    let bestIdx = -1, bestW = 0, bestH = 0;
+    let bestRot = false;
+    let bestScore = Infinity; // best short-side fit
+    let bestY = Infinity;     // tiebreak: bottom-most (smallest y)
+    for (let i = 0; i < freeRects.length; i++) {
+      const fr = freeRects[i];
+      const tries: Array<[number, number, boolean]> = [[p.w, p.h, false]];
+      if (allowRot) tries.push([p.h, p.w, true]);
+      for (const [w, h, rot] of tries) {
+        if (w <= fr.w + 1e-6 && h <= fr.h + 1e-6) {
+          const shortLeft = Math.min(fr.w - w, fr.h - h);
+          if (shortLeft < bestScore - 1e-6 || (Math.abs(shortLeft - bestScore) < 1e-6 && fr.y < bestY)) {
+            bestScore = shortLeft; bestIdx = i; bestRot = rot; bestW = w; bestH = h; bestY = fr.y;
+          }
+        }
+      }
+    }
+    if (bestIdx === -1) { leftover.push(p); continue; }
+    const fr = freeRects[bestIdx];
+    const px = fr.x, py = fr.y;
+    placed.push({ ...p, x: px, y: py, pw: bestW, ph: bestH, rotated: bestRot });
+
+    // Used rect occupies [px..px+bestW+gap] × [py..py+bestH+gap] (gap as separator)
+    const ux1 = px, uy1 = py;
+    const ux2 = px + bestW + gap, uy2 = py + bestH + gap;
+    const next: Rect[] = [];
+    for (const r of freeRects) {
+      if (ux2 <= r.x || ux1 >= r.x + r.w || uy2 <= r.y || uy1 >= r.y + r.h) {
+        next.push(r); continue;
+      }
+      // Split into up to 4 sub-rects
+      if (ux1 > r.x) next.push({ x: r.x, y: r.y, w: ux1 - r.x - gap, h: r.h });
+      if (ux2 < r.x + r.w) next.push({ x: ux2, y: r.y, w: r.x + r.w - ux2, h: r.h });
+      if (uy1 > r.y) next.push({ x: r.x, y: r.y, w: r.w, h: uy1 - r.y - gap });
+      if (uy2 < r.y + r.h) next.push({ x: r.x, y: uy2, w: r.w, h: r.y + r.h - uy2 });
+    }
+    // Filter degenerate / fully-contained rects
+    const cleaned: Rect[] = [];
+    for (let i = 0; i < next.length; i++) {
+      const a = next[i];
+      if (a.w <= 1e-6 || a.h <= 1e-6) continue;
+      let contained = false;
+      for (let j = 0; j < next.length; j++) {
+        if (i === j) continue;
+        const b = next[j];
+        if (b.w <= 1e-6 || b.h <= 1e-6) continue;
+        if (a.x >= b.x - 1e-6 && a.y >= b.y - 1e-6 &&
+            a.x + a.w <= b.x + b.w + 1e-6 && a.y + a.h <= b.y + b.h + 1e-6 &&
+            (a.w < b.w - 1e-6 || a.h < b.h - 1e-6 || j < i)) {
+          contained = true; break;
+        }
+      }
+      if (!contained) cleaned.push(a);
+    }
+    freeRects = cleaned;
+  }
+  return { placed, leftover };
+};
+
 const shelfPackFFDH = (
   binW: number, binH: number, gap: number, pieces: Piece[], allowGrow: boolean = false,
 ): { placed: Placed[]; leftover: Piece[] } => {
+  // When growing/compaction is allowed, use a true MAXRECTS packer that fills empty pockets.
+  if (allowGrow) return maxrectsPack(binW, binH, gap, pieces);
+
   const placed: Placed[] = [];
   const leftover: Piece[] = [];
   let shelfY = 0;
