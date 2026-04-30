@@ -14,8 +14,6 @@ import {
     Typography,
     Tabs,
     Form,
-    Divider,
-    Switch,
 } from 'antd';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -890,7 +888,7 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
             title="Megrendelés elküldése beszállítóknak"
             open={open}
             onCancel={onClose}
-            width={1100}
+            width={820}
             confirmLoading={sending}
             okText="Küldés"
             cancelText="Mégse"
@@ -920,132 +918,70 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                             </span>
                         ),
                         children: (
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-                                <div>
-                                    <Form layout="vertical" size="small">
-                                        <Form.Item label="Címzettek" required>
-                                            <Input
-                                                placeholder="email1@example.com, email2@example.com"
-                                                value={g.recipients}
-                                                onChange={e => updateGroup(g.key, { recipients: e.target.value })}
-                                            />
-                                        </Form.Item>
-                                        <div style={{ display: 'flex', gap: 12 }}>
-                                            <Form.Item label="Másolat (CC)" style={{ flex: 1 }}>
-                                                <Input
-                                                    placeholder="cc@example.com"
-                                                    value={g.cc}
-                                                    onChange={e => updateGroup(g.key, { cc: e.target.value })}
-                                                />
-                                            </Form.Item>
-                                            <Form.Item label="Válaszcím (Reply-To)" style={{ flex: 1 }}>
-                                                <Input
-                                                    placeholder="reply@example.com"
-                                                    value={g.reply_to}
-                                                    onChange={e => updateGroup(g.key, { reply_to: e.target.value })}
-                                                />
-                                            </Form.Item>
-                                        </div>
-                                        <div style={{ display: 'flex', gap: 12 }}>
-                                            <Form.Item label="Email sablon" style={{ flex: 1 }}>
-                                                <Select
-                                                    placeholder="Válassz sablont"
-                                                    value={g.template_key || undefined}
-                                                    showSearch
-                                                    optionFilterProp="label"
-                                                    onChange={(k: string) => applyTemplate(g, k)}
-                                                    options={emailTemplates.map(t => ({
-                                                        label: `${t.name} (${t.key})`, value: t.key,
-                                                    }))}
-                                                />
-                                            </Form.Item>
-                                            <Form.Item label="Aláírás" style={{ flex: 1 }}>
-                                                <Select
-                                                    placeholder="Válassz aláírást"
-                                                    allowClear
-                                                    value={g.signature_key || undefined}
-                                                    showSearch
-                                                    optionFilterProp="label"
-                                                    onChange={(k: string) => applySignature(g, k || '')}
-                                                    options={signatures.map(s => ({
-                                                        label: `${s.name} (${s.key})`, value: s.key,
-                                                    }))}
-                                                />
-                                            </Form.Item>
-                                        </div>
-                                        <Form.Item label="Tárgy">
-                                            <Input
-                                                value={g.subject}
-                                                onChange={e => updateGroup(g.key, { subject: e.target.value })}
-                                            />
-                                        </Form.Item>
-                                        <Form.Item
-                                            label={
-                                                <Space>
-                                                    <span>Törzs</span>
-                                                    <Switch
-                                                        size="small"
-                                                        checked={g.is_html}
-                                                        onChange={v => updateGroup(g.key, { is_html: v })}
-                                                        checkedChildren="HTML"
-                                                        unCheckedChildren="Szöveg"
-                                                    />
-                                                </Space>
-                                            }
-                                        >
-                                            {g.is_html ? (
-                                                <ReactQuill
-                                                    theme="snow"
-                                                    value={g.body}
-                                                    onChange={v => updateGroup(g.key, { body: v })}
-                                                    style={{ height: 280, marginBottom: 50 }}
-                                                />
-                                            ) : (
-                                                <Input.TextArea
-                                                    rows={14}
-                                                    value={g.body}
-                                                    onChange={e => updateGroup(g.key, { body: e.target.value })}
-                                                />
-                                            )}
-                                        </Form.Item>
-                                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
-                                            Helyettesíthető változók:&nbsp;
-                                            <code>{'{recipient_label}'}</code>,&nbsp;
-                                            <code>{'{item_count}'}</code>,&nbsp;
-                                            <code>{'{item_table_html}'}</code>,&nbsp;
-                                            <code>{'{item_list_text}'}</code>
-                                        </Typography.Text>
-                                    </Form>
+                            <Form layout="vertical" size="small">
+                                <Form.Item label="Címzettek" required>
+                                    <Input
+                                        placeholder="email1@example.com, email2@example.com"
+                                        value={g.recipients}
+                                        onChange={e => updateGroup(g.key, { recipients: e.target.value })}
+                                    />
+                                </Form.Item>
+                                <Form.Item label="Másolat (CC)">
+                                    <Input
+                                        placeholder="cc@example.com"
+                                        value={g.cc}
+                                        onChange={e => updateGroup(g.key, { cc: e.target.value })}
+                                    />
+                                </Form.Item>
+                                <Form.Item label="Válaszcím (Reply-To)">
+                                    <Input
+                                        placeholder="reply@example.com"
+                                        value={g.reply_to}
+                                        onChange={e => updateGroup(g.key, { reply_to: e.target.value })}
+                                    />
+                                </Form.Item>
+                                <div style={{ display: 'flex', gap: 12 }}>
+                                    <Form.Item label="Email sablon" style={{ flex: 1 }}>
+                                        <Select
+                                            placeholder="Válassz sablont"
+                                            value={g.template_key || undefined}
+                                            showSearch
+                                            optionFilterProp="label"
+                                            onChange={(k: string) => applyTemplate(g, k)}
+                                            options={emailTemplates.map(t => ({
+                                                label: `${t.name} (${t.key})`, value: t.key,
+                                            }))}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="Aláírás" style={{ flex: 1 }}>
+                                        <Select
+                                            placeholder="Válassz aláírást"
+                                            allowClear
+                                            value={g.signature_key || undefined}
+                                            showSearch
+                                            optionFilterProp="label"
+                                            onChange={(k: string) => applySignature(g, k || '')}
+                                            options={signatures.map(s => ({
+                                                label: `${s.name} (${s.key})`, value: s.key,
+                                            }))}
+                                        />
+                                    </Form.Item>
                                 </div>
-                                <div>
-                                    <Divider style={{ marginTop: 0 }}>Előnézet</Divider>
-                                    <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 12, background: '#fff' }}>
-                                        <div style={{ marginBottom: 8 }}><b>Tárgy:</b> {g.subject}</div>
-                                        <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
-                                            {g.recipients ? <>Címzett: {g.recipients}</> : <em>Nincs címzett</em>}
-                                            {g.cc && <> · CC: {g.cc}</>}
-                                        </div>
-                                        <div className="email-preview-content" style={{ maxHeight: 460, overflow: 'auto' }}>
-                                            {g.is_html ? (
-                                                <div dangerouslySetInnerHTML={{
-                                                    __html: (g.body || '').replace(/<a /gi, '<a target="_blank" '),
-                                                }} />
-                                            ) : (
-                                                <pre style={{ whiteSpace: 'pre-wrap' }}>{g.body}</pre>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <Divider>Tételek ({g.items.length})</Divider>
-                                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, maxHeight: 180, overflow: 'auto' }}>
-                                        {g.items.map(it => (
-                                            <li key={it.id}>
-                                                <strong>{it.order_number}</strong> — {it.code ? `${it.code} ` : ''}{it.item_name}
-                                                {' '}<span style={{ color: '#888' }}>({it.quantity} {it.unit})</span>
-                                            </li>
-                                        ))}
-                                    </ul>
-                                </div>
-                            </div>
+                                <Form.Item label="Tárgy">
+                                    <Input
+                                        value={g.subject}
+                                        onChange={e => updateGroup(g.key, { subject: e.target.value })}
+                                    />
+                                </Form.Item>
+                                <Form.Item label="Törzs">
+                                    <ReactQuill
+                                        theme="snow"
+                                        value={g.body}
+                                        onChange={v => updateGroup(g.key, { body: v })}
+                                        style={{ height: 320, marginBottom: 50 }}
+                                    />
+                                </Form.Item>
+                            </Form>
                         ),
                     }))}
                 />

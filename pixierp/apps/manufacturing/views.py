@@ -681,54 +681,64 @@ class ManufacturingCostItemViewSet(
 
     def _build_group_context(self, items):
         """Return ctx dict used by both the render endpoint and the
-        send endpoint. `items` is an iterable of ManufacturingCostItem."""
-        html_rows = []
-        text_rows = []
-        for ci in items:
+        send endpoint. `items` is an iterable of ManufacturingCostItem.
+
+        Same-named items are aggregated: quantities summed, order numbers
+        comma-separated in the reference column. Columns:
+            Tétel | Mennyiség | ME | Hivatkozási szám
+        """
+        items_list = list(items)
+        # Aggregate by (lowercased name, unit) to merge duplicates
+        from collections import OrderedDict
+        agg = OrderedDict()
+        for ci in items_list:
             order, _coi = self._resolve_order_context(ci)
             ord_no = order.order_number if order else '-'
-            qty = float(ci.quantity)
-            code_txt = ''
+            key = ((ci.name or '').strip().lower(), (ci.unit or '').strip().lower())
+            entry = agg.get(key)
+            if entry is None:
+                entry = {
+                    'name': ci.name or '',
+                    'unit': ci.unit or '',
+                    'qty': 0.0,
+                    'orders': [],
+                }
+                agg[key] = entry
             try:
-                if ci.type == 'material' and ci.ref_id:
-                    from apps.warehouse.models import Material
-                    m = Material.objects.filter(id=ci.ref_id).only('code').first()
-                    if m:
-                        code_txt = m.code
-                elif ci.type == 'service' and ci.ref_id:
-                    s = Service.objects.filter(id=ci.ref_id).only('code').first()
-                    if s:
-                        code_txt = s.code
+                entry['qty'] += float(ci.quantity)
             except Exception:
                 pass
-            deadline = ''
-            if order and order.quote_request and order.quote_request.deadline:
-                deadline = order.quote_request.deadline.strftime('%Y.%m.%d')
+            if ord_no and ord_no not in entry['orders']:
+                entry['orders'].append(ord_no)
+
+        html_rows = []
+        text_rows = []
+        for entry in agg.values():
+            refs = ', '.join(entry['orders']) or '-'
+            qty_str = f"{entry['qty']:g}"
             html_rows.append(
                 f"<tr>"
-                f"<td style='border:1px solid #ddd;padding:4px 8px'>{ord_no}</td>"
-                f"<td style='border:1px solid #ddd;padding:4px 8px'>{code_txt}</td>"
-                f"<td style='border:1px solid #ddd;padding:4px 8px'>{ci.name}</td>"
-                f"<td style='border:1px solid #ddd;padding:4px 8px;text-align:right'>{qty:g} {ci.unit}</td>"
-                f"<td style='border:1px solid #ddd;padding:4px 8px'>{deadline}</td>"
+                f"<td style='border:1px solid #ddd;padding:4px 8px'>{entry['name']}</td>"
+                f"<td style='border:1px solid #ddd;padding:4px 8px;text-align:right'>{qty_str}</td>"
+                f"<td style='border:1px solid #ddd;padding:4px 8px'>{entry['unit']}</td>"
+                f"<td style='border:1px solid #ddd;padding:4px 8px'>{refs}</td>"
                 f"</tr>"
             )
-            text_rows.append(f"- [{ord_no}] {code_txt} {ci.name} — {qty:g} {ci.unit} (határidő: {deadline or '-'})")
+            text_rows.append(f"- {entry['name']} — {qty_str} {entry['unit']} (hivatk.: {refs})")
 
         html_table = (
             "<table style='border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px'>"
             "<thead><tr>"
-            "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Megrendelés</th>"
-            "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Cikkszám</th>"
             "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Tétel</th>"
             "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Mennyiség</th>"
-            "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Határidő</th>"
+            "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>ME</th>"
+            "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Hivatkozási szám</th>"
             "</tr></thead><tbody>"
             + ''.join(html_rows) +
             "</tbody></table>"
         )
         return {
-            'item_count': len(items if hasattr(items, '__len__') else list(items)),
+            'item_count': len(items_list),
             'item_table_html': html_table,
             'item_list_text': '\n'.join(text_rows),
         }
