@@ -31,6 +31,7 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import {
   SortableContext,
   horizontalListSortingStrategy,
+  verticalListSortingStrategy,
   useSortable,
   arrayMove,
 } from '@dnd-kit/sortable';
@@ -205,6 +206,13 @@ export interface EnhancedTableProps<T = any> extends Omit<TableProps<T>, 'compon
   cardBreakpoint?: number;
   /** Custom body-level table components (e.g., { body: { row: DraggableRow } }). Merged with EnhancedTable’s header override. */
   bodyComponents?: TableProps<T>['components'];
+  /** Optional row drag-and-drop reordering. When provided, rows are wrapped in a
+   *  vertical SortableContext using the supplied row ids. The drag handle must
+   *  be a component using useSortable from this same DndContext (e.g. CostDraggableRow). */
+  rowDnd?: {
+    items: (string | number)[];
+    onReorder: (activeId: string | number, overId: string | number) => void;
+  };
   /** Ha megadva, EnhancedTable egy Card-ba csomagolja magát, és a toolbar a Card fejlécébe (extra) kerül */
   cardTitle?: React.ReactNode;
   /** Tartalom a Card fejléc és a tábla között (pl. szűrő sorok) – csak cardTitle esetén */
@@ -228,6 +236,7 @@ function EnhancedTable<T extends object = any>({
   bodyComponents,
   cardTitle,
   innerHeader,
+  rowDnd,
   ...tableProps
 }: EnhancedTableProps<T>) {
   // Derive default order and visibility maps from the column definitions ────
@@ -323,12 +332,21 @@ function EnhancedTable<T extends object = any>({
   }, [tableProps.dataSource, cardSortKey, cardSortDir, rawColumns]);
 
   // DnD sensors ─────────────────────────────────────────────────────────────
-  const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } })
-  );
+  // When row drag is enabled, use distance-based activation so the row drag
+  // handle responds immediately. Otherwise keep the legacy long-press behaviour
+  // for column header drag.
+  const rowSensor = useSensor(PointerSensor, { activationConstraint: { distance: 4 } });
+  const colSensor = useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } });
+  const sensors = useSensors(rowDnd ? rowSensor : colSensor);
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
+    // Row drag: id is in rowDnd.items – forward to caller
+    if (rowDnd && rowDnd.items.some(i => String(i) === String(active.id))) {
+      rowDnd.onReorder(active.id as any, over.id as any);
+      return;
+    }
+    // Column drag
     setColOrder((prev) => {
       const src = prev || allKeys;
       const oldIdx = src.indexOf(active.id as string);
@@ -564,24 +582,35 @@ function EnhancedTable<T extends object = any>({
         <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
           <SortableContext items={colOrder} strategy={horizontalListSortingStrategy}>
             {pagRow}
-            <Table<T>
-              key={tableResetKey}
-              {...tableProps}
-              tableLayout="fixed"
-              scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}
-              pagination={topPag}
-              footer={footerFn}
-              columns={processedColumns as TableColumnType<T>[]}
-              components={{
-                ...(bodyComponents || {}),
-                header: {
-                  row: ({ children, ...rowProps }: any) => (
-                    <tr {...rowProps}>{children}</tr>
-                  ),
-                  cell: DraggableHeaderCell,
-                },
-              }}
-            />
+            {(() => {
+              const tableEl = (
+                <Table<T>
+                  key={tableResetKey}
+                  {...tableProps}
+                  tableLayout="fixed"
+                  scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}
+                  pagination={topPag}
+                  footer={footerFn}
+                  columns={processedColumns as TableColumnType<T>[]}
+                  components={{
+                    ...(bodyComponents || {}),
+                    header: {
+                      row: ({ children, ...rowProps }: any) => (
+                        <tr {...rowProps}>{children}</tr>
+                      ),
+                      cell: DraggableHeaderCell,
+                    },
+                  }}
+                />
+              );
+              return rowDnd
+                ? (
+                  <SortableContext items={rowDnd.items.map(String)} strategy={verticalListSortingStrategy}>
+                    {tableEl}
+                  </SortableContext>
+                )
+                : tableEl;
+            })()}
           </SortableContext>
         </DndContext>
       )}

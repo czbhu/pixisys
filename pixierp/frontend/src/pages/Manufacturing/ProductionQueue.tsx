@@ -22,21 +22,7 @@ import {
     AlertOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import {
-    DndContext,
-    closestCenter,
-    PointerSensor,
-    KeyboardSensor,
-    useSensor,
-    useSensors,
-    DragEndEvent,
-} from '@dnd-kit/core';
-import {
-    SortableContext,
-    sortableKeyboardCoordinates,
-    verticalListSortingStrategy,
-    arrayMove,
-} from '@dnd-kit/sortable';
+import { arrayMove } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
@@ -94,11 +80,6 @@ const ProductionQueue: React.FC = () => {
     const [filterCustomer, setFilterCustomer] = useState<number | null>(null);
     const [filterOrder, setFilterOrder] = useState<number | null>(null);
     const [filterSupplier, setFilterSupplier] = useState<number | null>(null);
-
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
-        useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
-    );
 
     const load = async () => {
         try {
@@ -245,21 +226,16 @@ const ProductionQueue: React.FC = () => {
     };
 
     // ── Drag & drop reorder ──────────────────────────────────────────────
-    const onDragEnd = async (event: DragEndEvent) => {
-        const { active, over } = event;
-        if (!over || active.id === over.id) return;
-        const oldIdx = filtered.findIndex(r => r.id === Number(active.id));
-        const newIdx = filtered.findIndex(r => r.id === Number(over.id));
+    const onRowReorder = async (activeId: string | number, overId: string | number) => {
+        const oldIdx = filtered.findIndex(r => r.id === Number(activeId));
+        const newIdx = filtered.findIndex(r => r.id === Number(overId));
         if (oldIdx < 0 || newIdx < 0) return;
 
-        // Reorder filtered locally and remap into rows array
         const reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
         const filteredIds = new Set(filtered.map(r => r.id));
         const others = rows.filter(r => !filteredIds.has(r.id));
-        const next = [...reorderedFiltered, ...others];
-        setRows(next);
+        setRows([...reorderedFiltered, ...others]);
 
-        // Persist all visible rows in their new order
         try {
             await api.post('/manufacturing/cost-items/reorder/', { ids: reorderedFiltered.map(r => r.id) });
         } catch (e) {
@@ -388,31 +364,28 @@ const ProductionQueue: React.FC = () => {
                     </Space>
                 }
             >
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
-                    <SortableContext items={filtered.map(r => r.id)} strategy={verticalListSortingStrategy}>
-                        <EnhancedTable
-                            tableKey="manufacturingProductionQueue"
-                            searchValue={query}
-                            onSearchChange={setQuery}
-                            searchPlaceholder="Keresés megrendelés, ügyfél, termék, tétel, megjegyzés szerint..."
-                            columns={columns}
-                            dataSource={filtered}
-                            pagination={{
-                                pageSize: 50,
-                                showSizeChanger: true,
-                                pageSizeOptions: ['20', '50', '100', '200'],
-                                showQuickJumper: true,
-                                showTotal: (total: number, range: [number, number]) =>
-                                    `${range[0]}-${range[1]} / ${total} tétel`,
-                            }}
-                            rowKey="id"
-                            cardBreakpoint={950}
-                            size="small"
-                            loading={loading}
-                            bodyComponents={{ body: { row: CostDraggableRow } }}
-                        />
-                    </SortableContext>
-                </DndContext>
+                <EnhancedTable
+                    tableKey="manufacturingProductionQueue"
+                    searchValue={query}
+                    onSearchChange={setQuery}
+                    searchPlaceholder="Keresés megrendelés, ügyfél, termék, tétel, megjegyzés szerint..."
+                    columns={columns}
+                    dataSource={filtered}
+                    pagination={{
+                        pageSize: 50,
+                        showSizeChanger: true,
+                        pageSizeOptions: ['20', '50', '100', '200'],
+                        showQuickJumper: true,
+                        showTotal: (total: number, range: [number, number]) =>
+                            `${range[0]}-${range[1]} / ${total} tétel`,
+                    }}
+                    rowKey="id"
+                    cardBreakpoint={950}
+                    size="small"
+                    loading={loading}
+                    bodyComponents={{ body: { row: CostDraggableRow } }}
+                    rowDnd={{ items: filtered.map(r => r.id), onReorder: onRowReorder }}
+                />
             </Card>
         </div>
     );
