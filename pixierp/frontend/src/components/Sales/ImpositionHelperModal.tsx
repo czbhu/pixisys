@@ -744,51 +744,73 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         </Col>
       </Row>
 
-      {/* Vágási terv */}
+      {/* Vágási terv (csoportosítva) */}
       <div style={{ marginTop: 16 }}>
-        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális darabolási terv ({barPlan.plans.length} szál)</Text>
-        {barPlan.plans.length === 0 && <Text type="secondary">Nincs darabolható mennyiség.</Text>}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-          {barPlan.plans.map((bp, idx) => {
-            const scale = Math.min(900 / bp.barLength, 0.5);
-            const svgW = Math.round(bp.barLength * scale);
-            const svgH = 26;
-            let cursor = 0;
-            return (
-              <div key={idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
-                <div style={{ fontSize: 12, marginBottom: 4 }}>
-                  <b>Szál #{idx + 1}</b> – {bp.barTypeName} ({bp.barLength} mm) ·
-                  <span style={{ marginLeft: 6 }}>használt: <b>{bp.usedLength} mm</b> · maradék: <b style={{ color: bp.waste > 0 ? '#fa8c16' : '#52c41a' }}>{bp.waste} mm</b></span>
-                </div>
-                <svg width={svgW} height={svgH} style={{ display: 'block', border: '1px solid #d9d9d9', background: '#fafafa' }}>
-                  {bp.cuts.map((c, ci) => {
-                    if (ci > 0) cursor += kerf;
-                    const x = cursor;
-                    const w = c.length;
-                    cursor += w;
-                    const col = colorForProduct(c.productId);
-                    return (
-                      <g key={ci}>
-                        {ci > 0 && (
-                          <rect x={(x - kerf) * scale} y={0} width={Math.max(1, kerf * scale)} height={svgH} fill="#ff4d4f" opacity={0.6} />
+        {(() => {
+          // Group identical bar plans
+          const groups: { sig: string; sample: typeof barPlan.plans[number]; indices: number[] }[] = [];
+          const map = new Map<string, number>();
+          barPlan.plans.forEach((bp, i) => {
+            const sig = `${bp.barTypeName}|${bp.barLength}|` + bp.cuts.map(c => `${c.productId}:${c.length}`).join(',');
+            const gi = map.get(sig);
+            if (gi !== undefined) groups[gi].indices.push(i + 1);
+            else { map.set(sig, groups.length); groups.push({ sig, sample: bp, indices: [i + 1] }); }
+          });
+          return (
+            <>
+              <Text strong style={{ display: 'block', marginBottom: 6 }}>
+                Optimális darabolási terv – {groups.length} különböző minta / {barPlan.plans.length} szál
+              </Text>
+              {barPlan.plans.length === 0 && <Text type="secondary">Nincs darabolható mennyiség.</Text>}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {groups.map((g, gi) => {
+                  const bp = g.sample;
+                  const scale = Math.min(900 / bp.barLength, 0.5);
+                  const svgW = Math.round(bp.barLength * scale);
+                  const svgH = 26;
+                  let cursor = 0;
+                  const idxLabel = g.indices.length > 1
+                    ? `Szál #${g.indices[0]}…#${g.indices[g.indices.length - 1]}`
+                    : `Szál #${g.indices[0]}`;
+                  return (
+                    <div key={gi} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
+                      <div style={{ fontSize: 12, marginBottom: 4 }}>
+                        <b>{idxLabel}</b> – {bp.barTypeName} ({bp.barLength} mm) ·
+                        <span style={{ marginLeft: 6 }}>használt: <b>{bp.usedLength} mm</b> · maradék: <b style={{ color: bp.waste > 0 ? '#fa8c16' : '#52c41a' }}>{bp.waste} mm</b></span>
+                        {g.indices.length > 1 && <Tag color="green" style={{ marginLeft: 8 }}>×{g.indices.length} azonos</Tag>}
+                      </div>
+                      <svg width={svgW} height={svgH} style={{ display: 'block', border: '1px solid #d9d9d9', background: '#fafafa' }}>
+                        {bp.cuts.map((c, ci) => {
+                          if (ci > 0) cursor += kerf;
+                          const x = cursor;
+                          const w = c.length;
+                          cursor += w;
+                          const col = colorForProduct(c.productId);
+                          return (
+                            <g key={ci}>
+                              {ci > 0 && (
+                                <rect x={(x - kerf) * scale} y={0} width={Math.max(1, kerf * scale)} height={svgH} fill="#ff4d4f" opacity={0.6} />
+                              )}
+                              <rect x={x * scale} y={0} width={w * scale} height={svgH} fill={col.fill} stroke={col.stroke} strokeWidth={0.6} />
+                              {w * scale > 30 && (
+                                <text x={(x + w / 2) * scale} y={svgH / 2 + 4} fontSize={10} textAnchor="middle" fill="#333">
+                                  {c.productName} {c.length}
+                                </text>
+                              )}
+                            </g>
+                          );
+                        })}
+                        {bp.waste > 0 && (
+                          <rect x={bp.usedLength * scale} y={0} width={bp.waste * scale} height={svgH} fill="#fafafa" stroke="#d9d9d9" strokeDasharray="3 2" />
                         )}
-                        <rect x={x * scale} y={0} width={w * scale} height={svgH} fill={col.fill} stroke={col.stroke} strokeWidth={0.6} />
-                        {w * scale > 30 && (
-                          <text x={(x + w / 2) * scale} y={svgH / 2 + 4} fontSize={10} textAnchor="middle" fill="#333">
-                            {c.productName} {c.length}
-                          </text>
-                        )}
-                      </g>
-                    );
-                  })}
-                  {bp.waste > 0 && (
-                    <rect x={bp.usedLength * scale} y={0} width={bp.waste * scale} height={svgH} fill="#fafafa" stroke="#d9d9d9" strokeDasharray="3 2" />
-                  )}
-                </svg>
+                      </svg>
+                    </div>
+                  );
+                })}
               </div>
-            );
-          })}
-        </div>
+            </>
+          );
+        })()}
       </div>
 
       {/* Szál felhasználás */}
@@ -1236,63 +1258,82 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         </Space>
       </div>
 
-      {/* ── Vizuális produkciós ívek (vegyes) ────────────────────────── */}
-      {mixedSheets.sheets.length > 0 && (
-        <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
-          <Text strong style={{ display: 'block', marginBottom: 8 }}>Produkciós ívek (vizuális)</Text>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-            {mixedSheets.sheets.map(ms => {
-              const sw = ms.sheet.width;
-              const sh = ms.sheet.height;
-              const scale = Math.min(260 / sw, 320 / sh, 1);
-              const svgW = Math.round(sw * scale);
-              const svgH = Math.round(sh * scale);
-              // Per-product counts for this sheet
-              const counts = new Map<number, { name: string; n: number }>();
-              ms.placed.forEach(pl => {
-                const c = counts.get(pl.productId);
-                if (c) c.n++;
-                else counts.set(pl.productId, { name: pl.productName, n: 1 });
-              });
-              return (
-                <div key={ms.idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 260 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9', marginBottom: 4 }}>
-                    Ív #{ms.idx} – {ms.sheet.name} ({sw}×{sh} mm)
-                  </div>
-                  <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
-                    Nyomott felület: <b>{Math.round(ms.bbox.w)}×{Math.round(ms.bbox.h)} mm</b> · Fedettség: <b>{Math.round(ms.coverage * 100)}%</b>
-                  </div>
-                  <div style={{ border: '2px solid #69b1ff', borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2 }}>
-                    <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
-                      <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
-                      {/* bbox */}
-                      <rect x={ms.bbox.x} y={ms.bbox.y} width={ms.bbox.w} height={ms.bbox.h}
-                        fill="none" stroke="#fa8c16" strokeWidth={0.6} strokeDasharray="3 2" />
-                      {ms.placed.map((pl, ci) => {
-                        const c = colorForProduct(pl.productId);
+      {/* ── Vizuális produkciós ívek (vegyes, csoportosítva) ────────── */}
+      {mixedSheets.sheets.length > 0 && (() => {
+        // Group identical sheets by layout signature
+        const groups: { sig: string; sample: typeof mixedSheets.sheets[number]; indices: number[] }[] = [];
+        const map = new Map<string, number>();
+        mixedSheets.sheets.forEach(ms => {
+          const sig = `${ms.sheet.id}|${ms.sheet.width}x${ms.sheet.height}|` +
+            ms.placed.map(p => `${p.productId}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.pw)}:${Math.round(p.ph)}`).sort().join(',');
+          const gi = map.get(sig);
+          if (gi !== undefined) groups[gi].indices.push(ms.idx);
+          else { map.set(sig, groups.length); groups.push({ sig, sample: ms, indices: [ms.idx] }); }
+        });
+        return (
+          <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
+            <Text strong style={{ display: 'block', marginBottom: 8 }}>
+              Produkciós ívek (vizuális) – {groups.length} különböző elrendezés / {mixedSheets.sheets.length} ív
+            </Text>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+              {groups.map((g, gi) => {
+                const ms = g.sample;
+                const sw = ms.sheet.width;
+                const sh = ms.sheet.height;
+                const scale = Math.min(260 / sw, 320 / sh, 1);
+                const svgW = Math.round(sw * scale);
+                const svgH = Math.round(sh * scale);
+                const counts = new Map<number, { name: string; n: number }>();
+                ms.placed.forEach(pl => {
+                  const c = counts.get(pl.productId);
+                  if (c) c.n++;
+                  else counts.set(pl.productId, { name: pl.productName, n: 1 });
+                });
+                const idxLabel = g.indices.length > 1
+                  ? `Ív #${g.indices[0]}…#${g.indices[g.indices.length - 1]} (${g.indices.length}× azonos)`
+                  : `Ív #${g.indices[0]}`;
+                return (
+                  <div key={gi} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 260 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9' }}>
+                        {idxLabel} – {ms.sheet.name} ({sw}×{sh} mm)
+                      </div>
+                      {g.indices.length > 1 && <Tag color="green" style={{ marginLeft: 6 }}>×{g.indices.length}</Tag>}
+                    </div>
+                    <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
+                      Nyomott felület: <b>{Math.round(ms.bbox.w)}×{Math.round(ms.bbox.h)} mm</b> · Fedettség: <b>{Math.round(ms.coverage * 100)}%</b>
+                    </div>
+                    <div style={{ border: '2px solid #69b1ff', borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2 }}>
+                      <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
+                        <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
+                        <rect x={ms.bbox.x} y={ms.bbox.y} width={ms.bbox.w} height={ms.bbox.h}
+                          fill="none" stroke="#fa8c16" strokeWidth={0.6} strokeDasharray="3 2" />
+                        {ms.placed.map((pl, ci) => {
+                          const c = colorForProduct(pl.productId);
+                          return (
+                            <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
+                              fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
+                          );
+                        })}
+                      </svg>
+                    </div>
+                    <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                      {Array.from(counts.entries()).map(([pid, c], i) => {
+                        const col = colorForProduct(pid);
                         return (
-                          <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
-                            fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
+                          <Tag key={i} style={{ background: col.fill, borderColor: col.stroke, color: '#000' }}>
+                            {c.name}: {c.n} db
+                          </Tag>
                         );
                       })}
-                    </svg>
+                    </div>
                   </div>
-                  <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                    {Array.from(counts.values()).map((c, i) => {
-                      const col = colorForProduct(Array.from(counts.keys())[i]);
-                      return (
-                        <Tag key={i} color="blue" style={{ background: col.fill, borderColor: col.stroke, color: '#000' }}>
-                          {c.name}: {c.n} db
-                        </Tag>
-                      );
-                    })}
-                  </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
       {Array.from(mixedSheets.shortageByProduct.values()).some(v => v > 0) && (
         <Alert
           style={{ marginTop: 12 }}
