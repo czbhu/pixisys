@@ -153,6 +153,70 @@ const shelfPackFFDH = (
     cursorX = useW;
     started = true;
   }
+
+  // Backfill pass: when allowGrow, fill the empty pockets ABOVE shorter items
+  // and the right-tail of each shelf using the leftover pieces (best-fit by waste).
+  if (allowGrow && leftover.length > 0 && placed.length > 0) {
+    type Rect = { x: number; y: number; w: number; h: number };
+    type Shelf = { y: number; h: number; items: Placed[] };
+    const shelves: Shelf[] = [];
+    for (const pl of placed) {
+      let s = shelves.find(sh => Math.abs(sh.y - pl.y) < 1e-6);
+      if (!s) { s = { y: pl.y, h: 0, items: [] }; shelves.push(s); }
+      s.items.push(pl);
+    }
+    shelves.forEach(s => { s.h = Math.max(...s.items.map(i => i.ph)); });
+    const freeRects: Rect[] = [];
+    for (const sh of shelves) {
+      // Free rect above each item that is shorter than the shelf
+      for (const it of sh.items) {
+        const freeH = sh.h - it.ph;
+        if (freeH > gap + 1e-6) {
+          freeRects.push({ x: it.x, y: sh.y + it.ph + gap, w: it.pw, h: freeH - gap });
+        }
+      }
+      // Right tail of the shelf
+      const maxRight = Math.max(...sh.items.map(i => i.x + i.pw));
+      const tailW = binW - maxRight - gap;
+      if (tailW > 0) freeRects.push({ x: maxRight + gap, y: sh.y, w: tailW, h: sh.h });
+    }
+
+    const sortedLeft = [...leftover].sort((a, b) => (b.w * b.h) - (a.w * a.h));
+    const remainingLeft: Piece[] = [];
+    for (const p of sortedLeft) {
+      const allowRot = p.rotateAllowed !== false;
+      let bestIdx = -1;
+      let bestRot = false;
+      let bestFitW = 0, bestFitH = 0;
+      let bestWaste = Infinity;
+      for (let i = 0; i < freeRects.length; i++) {
+        const fr = freeRects[i];
+        const tries: Array<[number, number, boolean]> = [[p.w, p.h, false]];
+        if (allowRot) tries.push([p.h, p.w, true]);
+        for (const [w, h, rot] of tries) {
+          if (w <= fr.w + 1e-6 && h <= fr.h + 1e-6) {
+            const waste = fr.w * fr.h - w * h;
+            if (waste < bestWaste) {
+              bestWaste = waste; bestIdx = i; bestRot = rot; bestFitW = w; bestFitH = h;
+            }
+          }
+        }
+      }
+      if (bestIdx === -1) { remainingLeft.push(p); continue; }
+      const fr = freeRects[bestIdx];
+      placed.push({ ...p, x: fr.x, y: fr.y, pw: bestFitW, ph: bestFitH, rotated: bestRot });
+      // Guillotine split of the consumed rect
+      const newRects: Rect[] = [];
+      const rightW = fr.w - bestFitW - gap;
+      if (rightW > 0) newRects.push({ x: fr.x + bestFitW + gap, y: fr.y, w: rightW, h: bestFitH });
+      const topH = fr.h - bestFitH - gap;
+      if (topH > 0) newRects.push({ x: fr.x, y: fr.y + bestFitH + gap, w: fr.w, h: topH });
+      freeRects.splice(bestIdx, 1, ...newRects);
+    }
+    leftover.length = 0;
+    remainingLeft.forEach(p => leftover.push(p));
+  }
+
   return { placed, leftover };
 };
 
