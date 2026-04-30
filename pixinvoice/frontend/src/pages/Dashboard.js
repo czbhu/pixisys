@@ -758,8 +758,8 @@ const Dashboard = () => {
             <Clock size={24} />
           </StatIcon>
           <StatContent>
-            <StatValue>{summaryYear?.draft_invoices ?? 0}</StatValue>
-            <StatLabel>Draft számlák ({summaryYear?.year || selectedYear})</StatLabel>
+            <StatValue>{formatCurrency(statistics?.incoming?.year?.amount_huf ?? statistics?.incoming?.year?.amount ?? 0, 'HUF')}</StatValue>
+            <StatLabel>Összes bejövő érték ({summaryYear?.year || selectedYear})</StatLabel>
           </StatContent>
         </StatCard>
       </DashboardContainer>
