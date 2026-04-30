@@ -547,6 +547,15 @@ class ManufacturingCostItemViewSet(
             company = (qr.company if qr else None) or (qr.customer if qr else None)
             cust_name = company.name if company else ''
             cust_id = company.id if company else None
+            # Fallback: first contact's company (legacy data with no FK)
+            if not cust_name and qr:
+                try:
+                    first_contact = qr.contacts.first()
+                    if first_contact and getattr(first_contact, 'company', None):
+                        cust_name = first_contact.company.name or ''
+                        cust_id = first_contact.company.id
+                except Exception:
+                    pass
             if customer_id and str(cust_id) != str(customer_id):
                 continue
             if order_id and str(order.id) != str(order_id):
