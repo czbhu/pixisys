@@ -1670,12 +1670,12 @@ const RFQs: React.FC = () => {
           <Row gutter={[8, 4]}>
             <Col xs={24} md={12}>
               <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                <div className="pixi-quill-resizable"><ReactQuill theme="snow" placeholder="Külső ajánlati leírás" /></div>
+                <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Külső ajánlati leírás" />
               </Form.Item>
             </Col>
             <Col xs={24} md={12}>
               <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                <div className="pixi-quill-resizable"><ReactQuill theme="snow" placeholder="Belső ajánlati leírás" /></div>
+                <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Belső ajánlati leírás" />
               </Form.Item>
             </Col>
           </Row>

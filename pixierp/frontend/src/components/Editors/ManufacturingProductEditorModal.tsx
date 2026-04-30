@@ -1291,12 +1291,12 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                        <Row gutter={[8, 4]}>
                          <Col span={12}>
                            <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                             <div className="pixi-quill-resizable"><ReactQuill theme="snow" /></div>
+                             <ReactQuill theme="snow" className="pixi-quill-resizable" />
                            </Form.Item>
                          </Col>
                          <Col span={12}>
                            <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                             <div className="pixi-quill-resizable"><ReactQuill theme="snow" /></div>
+                             <ReactQuill theme="snow" className="pixi-quill-resizable" />
                            </Form.Item>
                          </Col>
                        </Row>

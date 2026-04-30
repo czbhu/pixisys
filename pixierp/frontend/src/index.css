@@ -367,7 +367,8 @@ body,
   flex-direction: column;
   border-radius: 2px;
 }
-.pixi-quill-resizable > .quill {
+.pixi-quill-resizable > .quill,
+.pixi-quill-resizable.quill {
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
