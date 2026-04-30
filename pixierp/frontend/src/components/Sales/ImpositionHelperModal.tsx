@@ -12,7 +12,7 @@ interface ProductRow {
   width: number;
   height: number;
   quantity: number;
-  rotation?: 'auto' | 'normal' | 'rotated';
+  rotate?: 'auto' | 'normal' | 'rotated'; // A / 0 / 90 ; default 'auto'
 }
 
 interface SheetRow {
@@ -38,7 +38,7 @@ const colorForProduct = (productId: number) => {
 };
 
 // ── Tekercses ───────────────────────────────────────────
-interface RollProduct { id: number; name: string; width: number; length: number; quantity: number; rotation?: 'auto' | 'normal' | 'rotated'; }
+interface RollProduct { id: number; name: string; width: number; length: number; quantity: number; rotate?: 'auto' | 'normal' | 'rotated'; }
 interface RollRow { id: number; name: string; width: number; availableLength: number | null; /* fm = m */ }
 interface RollAllocation {
   productId: number;
@@ -182,12 +182,8 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   // ── Tekercses ───────────────────────────────────────────
   const [rollGap, setRollGap] = useState<number>(2);
   const [rollProducts, setRollProducts] = useState<RollProduct[]>([
-    { id: 1, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100, rotation: 'auto' },
+    { id: 1, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100 },
   ]);
-
-  // ── Keverhető (több termék egy alapanyagon) ──────────────
-  const [mixIves, setMixIves] = useState<boolean>(true);
-  const [mixTekerces, setMixTekerces] = useState<boolean>(true);
   const [rolls, setRolls] = useState<RollRow[]>([
     { id: 1, name: 'Tekercs 1000mm', width: 1000, availableLength: null },
   ]);
@@ -201,7 +197,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     mode?: Mode;
     kerf?: number; barProducts?: BarProduct[]; bars?: BarRow[];
     rollGap?: number; rollProducts?: RollProduct[]; rolls?: RollRow[];
-    mixIves?: boolean; mixTekerces?: boolean;
   };
   const [presets, setPresets] = useState<Preset[]>([]);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
@@ -229,8 +224,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     if (p.rollGap !== undefined) setRollGap(p.rollGap);
     if (p.rollProducts) setRollProducts(p.rollProducts);
     if (p.rolls) setRolls(p.rolls);
-    if (p.mixIves !== undefined) setMixIves(p.mixIves);
-    if (p.mixTekerces !== undefined) setMixTekerces(p.mixTekerces);
     setActivePresetId(p.id);
     setPresetNameInput(p.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,8 +247,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     if (p.rollGap !== undefined) setRollGap(p.rollGap);
     if (p.rollProducts) setRollProducts(p.rollProducts);
     if (p.rolls) setRolls(p.rolls);
-    if (p.mixIves !== undefined) setMixIves(p.mixIves);
-    if (p.mixTekerces !== undefined) setMixTekerces(p.mixTekerces);
     setActivePresetId(p.id);
     setPresetNameInput(p.name);
   };
@@ -264,7 +255,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     bleed, products, sheets, mode,
     kerf, barProducts, bars,
     rollGap, rollProducts, rolls,
-    mixIves, mixTekerces,
   });
 
   const newPreset = () => {
@@ -277,10 +267,8 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     setBarProducts([{ id: Date.now() + 2, name: 'Darab 1', length: 1200, quantity: 20 }]);
     setBars([{ id: Date.now() + 3, name: '6 m szál', length: 6000, available: null }]);
     setRollGap(2);
-    setRollProducts([{ id: Date.now() + 4, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100, rotation: 'auto' }]);
+    setRollProducts([{ id: Date.now() + 4, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100 }]);
     setRolls([{ id: Date.now() + 5, name: 'Tekercs 1000mm', width: 1000, availableLength: null }]);
-    setMixIves(true);
-    setMixTekerces(true);
   };
 
   const savePreset = () => {
@@ -334,7 +322,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     message.success('Törölve');
   };
 
-  const addProduct = () => setProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 210, height: 297, quantity: 100, rotation: 'auto' }]);
+  const addProduct = () => setProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 210, height: 297, quantity: 100 }]);
   const removeProduct = (id: number) => setProducts(ps => ps.filter(p => p.id !== id));
   const updateProduct = (id: number, patch: Partial<ProductRow>) => setProducts(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
 
@@ -351,7 +339,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const updateBar = (id: number, patch: Partial<BarRow>) => setBars(bs => bs.map(b => b.id === id ? { ...b, ...patch } : b));
 
   // ── Tekercses CRUD ───────────────────────────────────────
-  const addRollProduct = () => setRollProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 200, length: 300, quantity: 50, rotation: 'auto' }]);
+  const addRollProduct = () => setRollProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 200, length: 300, quantity: 50 }]);
   const removeRollProduct = (id: number) => setRollProducts(ps => ps.filter(p => p.id !== id));
   const updateRollProduct = (id: number, patch: Partial<RollProduct>) => setRollProducts(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
   const addRoll = () => setRolls(rs => [...rs, { id: Date.now(), name: `Tekercs ${rs.length + 1}`, width: 1000, availableLength: null }]);
@@ -431,86 +419,75 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
 
   // ── Vegyes (mixed) packer Íves módhoz – több termék egy íven ──────────
   const mixedSheets = useMemo(() => {
-    // Build pieces honoring per-product rotation override
-    const buildPieces = (src: ProductRow[]): Piece[] => {
-      const pcs: Piece[] = [];
-      src.forEach(p => {
-        const rot = p.rotation || 'auto';
-        for (let i = 0; i < p.quantity; i++) {
-          if (rot === 'rotated') pcs.push({ productId: p.id, productName: p.name, w: p.height, h: p.width, rotateAllowed: false });
-          else if (rot === 'normal') pcs.push({ productId: p.id, productName: p.name, w: p.width, h: p.height, rotateAllowed: false });
-          else pcs.push({ productId: p.id, productName: p.name, w: p.width, h: p.height, rotateAllowed: true });
-        }
-      });
-      pcs.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
-      return pcs;
-    };
+    const pieces: Piece[] = [];
+    products.forEach(p => {
+      const rot = p.rotate ?? 'auto';
+      const allowRot = rot === 'auto';
+      // 'rotated' → swap w/h; 'normal' → keep; 'auto' → keep, but rotate allowed
+      const w = rot === 'rotated' ? p.height : p.width;
+      const h = rot === 'rotated' ? p.width : p.height;
+      for (let i = 0; i < p.quantity; i++) pieces.push({ productId: p.id, productName: p.name, w, h, rotateAllowed: allowRot });
+    });
+    pieces.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
 
     const remaining = new Map<number, number | null>(sheets.map(s => [s.id, s.available]));
     type PackedSheet = { idx: number; sheet: SheetRow; placed: Placed[]; bbox: { x: number; y: number; w: number; h: number }; coverage: number };
     const out: PackedSheet[] = [];
+    let pool = pieces.slice();
 
-    // If mix is OFF, process each product separately so each sheet contains only one product type
-    const productGroups: ProductRow[][] = mixIves
-      ? [products]
-      : products.map(p => [p]);
+    let safety = 1000;
+    while (pool.length > 0 && safety-- > 0) {
+      let best: { sheet: SheetRow; placed: Placed[]; leftover: Piece[]; area: number } | null = null;
 
-    let leftoverPiecesAll: Piece[] = [];
+      // Try multiple seed orderings/orientations per sheet
+      // 4th variant pre-rotates only pieces that allow rotation
+      const variants: Piece[][] = [
+        [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+        [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
+        [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        [...pool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w }))
+          .sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+      ];
 
-    for (const group of productGroups) {
-      let pool = buildPieces(group);
-
-      let safety = 1000;
-      while (pool.length > 0 && safety-- > 0) {
-        let best: { sheet: SheetRow; placed: Placed[]; leftover: Piece[]; area: number } | null = null;
-
-        // Try multiple seed orderings/orientations per sheet
-        const variants: Piece[][] = [
-          [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-          [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
-          [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
-          [...pool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w })).sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-        ];
-
-        for (const s of sheets) {
-          const av = remaining.get(s.id);
-          if (av !== null && av !== undefined && av <= 0) continue;
-          for (const variant of variants) {
-            const r = shelfPackFFDH(s.width, s.height, bleed, variant);
-            if (r.placed.length === 0) continue;
-            const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
-            const used = new Map<number, number>();
-            r.placed.forEach(pl => used.set(pl.productId, (used.get(pl.productId) || 0) + 1));
-            const cnt = new Map<number, number>();
-            const remainingPool: Piece[] = [];
-            pool.forEach(p => {
-              const u = used.get(p.productId) || 0;
-              const c = cnt.get(p.productId) || 0;
-              if (c < u) cnt.set(p.productId, c + 1);
-              else remainingPool.push(p);
-            });
-            if (!best || r.placed.length > best.placed.length ||
-              (r.placed.length === best.placed.length && area > best.area)) {
-              best = { sheet: s, placed: r.placed, leftover: remainingPool, area };
-            }
+      for (const s of sheets) {
+        const av = remaining.get(s.id);
+        if (av !== null && av !== undefined && av <= 0) continue;
+        for (const variant of variants) {
+          const r = shelfPackFFDH(s.width, s.height, bleed, variant);
+          if (r.placed.length === 0) continue;
+          const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
+          // Map placed pieces back to original pool (for leftover bookkeeping)
+          const used = new Map<number, number>();
+          r.placed.forEach(pl => used.set(pl.productId, (used.get(pl.productId) || 0) + 1));
+          const cnt = new Map<number, number>();
+          const remainingPool: Piece[] = [];
+          pool.forEach(p => {
+            const u = used.get(p.productId) || 0;
+            const c = cnt.get(p.productId) || 0;
+            if (c < u) cnt.set(p.productId, c + 1);
+            else remainingPool.push(p);
+          });
+          if (!best || r.placed.length > best.placed.length ||
+            (r.placed.length === best.placed.length && area > best.area)) {
+            best = { sheet: s, placed: r.placed, leftover: remainingPool, area };
           }
         }
-        if (!best) break;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        best.placed.forEach(pl => {
-          if (pl.x < minX) minX = pl.x;
-          if (pl.y < minY) minY = pl.y;
-          if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
-          if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
-        });
-        const bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
-        const coverage = best.area / (best.sheet.width * best.sheet.height);
-        out.push({ idx: out.length + 1, sheet: best.sheet, placed: best.placed, bbox, coverage });
-        pool = best.leftover;
-        const av = remaining.get(best.sheet.id);
-        if (av !== null && av !== undefined) remaining.set(best.sheet.id, av - 1);
       }
-      leftoverPiecesAll = leftoverPiecesAll.concat(pool);
+      if (!best) break;
+      // bbox
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      best.placed.forEach(pl => {
+        if (pl.x < minX) minX = pl.x;
+        if (pl.y < minY) minY = pl.y;
+        if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+        if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+      });
+      const bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      const coverage = best.area / (best.sheet.width * best.sheet.height);
+      out.push({ idx: out.length + 1, sheet: best.sheet, placed: best.placed, bbox, coverage });
+      pool = best.leftover;
+      const av = remaining.get(best.sheet.id);
+      if (av !== null && av !== undefined) remaining.set(best.sheet.id, av - 1);
     }
 
     const sheetUsageM = new Map<number, number>();
@@ -518,15 +495,10 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     const producedByProduct = new Map<number, number>();
     out.forEach(s => s.placed.forEach(pl => producedByProduct.set(pl.productId, (producedByProduct.get(pl.productId) || 0) + 1)));
     const shortageByProduct = new Map<number, number>();
-    leftoverPiecesAll.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
+    pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
 
-    // Detect rotated products (any placed piece rotated, OR product override = 'rotated')
-    const rotatedByProduct = new Map<number, boolean>();
-    products.forEach(p => { if (p.rotation === 'rotated') rotatedByProduct.set(p.id, true); });
-    out.forEach(s => s.placed.forEach(pl => { if (pl.rotated) rotatedByProduct.set(pl.productId, true); }));
-
-    return { sheets: out, sheetUsage: sheetUsageM, producedByProduct, shortageByProduct, rotatedByProduct };
-  }, [products, sheets, bleed, mixIves]);
+    return { sheets: out, sheetUsage: sheetUsageM, producedByProduct, shortageByProduct };
+  }, [products, sheets, bleed]);
 
   // ── Szálanyag (1D cutting stock) ────────────────────────────
   // FFD: minden darabot (mennyiség szerint kibontva, hossz szerint csökkenő)
@@ -675,19 +647,15 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
 
   // ── Vegyes packer Tekercseshez – több termék egy tekercsen ─────────
   const mixedRolls = useMemo(() => {
-    const buildPieces = (src: RollProduct[]): Piece[] => {
-      const pcs: Piece[] = [];
-      src.forEach(p => {
-        const rot = p.rotation || 'auto';
-        for (let i = 0; i < p.quantity; i++) {
-          if (rot === 'rotated') pcs.push({ productId: p.id, productName: p.name, w: p.length, h: p.width, rotateAllowed: false });
-          else if (rot === 'normal') pcs.push({ productId: p.id, productName: p.name, w: p.width, h: p.length, rotateAllowed: false });
-          else pcs.push({ productId: p.id, productName: p.name, w: p.width, h: p.length, rotateAllowed: true });
-        }
-      });
-      pcs.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
-      return pcs;
-    };
+    const pieces: Piece[] = [];
+    rollProducts.forEach(p => {
+      const rot = p.rotate ?? 'auto';
+      const allowRot = rot === 'auto';
+      const w = rot === 'rotated' ? p.length : p.width;
+      const h = rot === 'rotated' ? p.width : p.length;
+      for (let i = 0; i < p.quantity; i++) pieces.push({ productId: p.id, productName: p.name, w, h, rotateAllowed: allowRot });
+    });
+    pieces.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
 
     type PackedRoll = {
       idx: number; roll: RollRow; placed: Placed[];
@@ -695,80 +663,82 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       printedAreaMm2: number; coverage: number;
     };
     const out: PackedRoll[] = [];
+    let pool = pieces.slice();
 
     // Per-roll remaining length budget (mm); null/∞ → very large.
     const remaining = new Map<number, number>();
     rolls.forEach(r => remaining.set(r.id, r.availableLength === null ? 1e9 : r.availableLength * 1000));
 
-    // mix off → split per product so each tekercs gets only one product type
-    const groups: RollProduct[][] = mixTekerces ? [rollProducts] : rollProducts.map(p => [p]);
-    let leftoverAll: Piece[] = [];
+    let safety = 200;
+    while (pool.length > 0 && safety-- > 0) {
+      // Evaluate every roll with remaining budget; pick best by coverage,
+      // then by pieces packed (more = better), then by narrower roll (less waste width).
+      let best: { r: RollRow; placed: Placed[]; leftover: Piece[]; usedLengthMm: number; bboxW: number; bboxH: number; area: number; coverage: number } | null = null;
 
-    for (const group of groups) {
-      let pool = buildPieces(group);
+      // Try multiple seed orderings/orientations and pick the best per (roll).
+      // 4th variant pre-rotates only pieces that allow rotation
+      const variants: Piece[][] = [
+        [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+        [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
+        [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        [...pool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w }))
+          .sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+      ];
 
-      let safety = 200;
-      while (pool.length > 0 && safety-- > 0) {
-        let best: { r: RollRow; placed: Placed[]; leftover: Piece[]; usedLengthMm: number; bboxW: number; bboxH: number; area: number; coverage: number } | null = null;
-        const variants: Piece[][] = [
-          [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-          [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
-          [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
-          [...pool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w })).sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-        ];
-
-        for (const r of rolls) {
-          const rem = remaining.get(r.id) || 0;
-          if (rem <= 0) continue;
-          for (const variant of variants) {
-            const result = shelfPackFFDH(r.width, rem, rollGap, variant);
-            if (result.placed.length === 0) continue;
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-            let area = 0;
-            result.placed.forEach(pl => {
-              if (pl.x < minX) minX = pl.x;
-              if (pl.y < minY) minY = pl.y;
-              if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
-              if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
-              area += pl.pw * pl.ph;
-            });
-            const usedLengthMm = maxY;
-            const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
-            const used = new Map<string, number>();
-            result.placed.forEach(pl => {
-              const k = `${pl.productId}`;
-              used.set(k, (used.get(k) || 0) + 1);
-            });
-            const remainingPool: Piece[] = [];
-            const cnt = new Map<number, number>();
-            pool.forEach(p => {
-              const u = used.get(`${p.productId}`) || 0;
-              const c = cnt.get(p.productId) || 0;
-              if (c < u) { cnt.set(p.productId, c + 1); }
-              else remainingPool.push(p);
-            });
-            const cand = {
-              r, placed: result.placed, leftover: remainingPool,
-              usedLengthMm, bboxW: maxX - minX, bboxH: maxY - minY, area, coverage,
-            };
-            if (!best) { best = cand; continue; }
-            if (cand.coverage > best.coverage + 1e-6) best = cand;
-            else if (Math.abs(cand.coverage - best.coverage) <= 1e-6) {
-              if (cand.placed.length > best.placed.length) best = cand;
-              else if (cand.placed.length === best.placed.length && cand.r.width < best.r.width) best = cand;
-            }
+      for (const r of rolls) {
+        const rem = remaining.get(r.id) || 0;
+        if (rem <= 0) continue;
+        for (const variant of variants) {
+          const result = shelfPackFFDH(r.width, rem, rollGap, variant);
+          if (result.placed.length === 0) continue;
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          let area = 0;
+          result.placed.forEach(pl => {
+            if (pl.x < minX) minX = pl.x;
+            if (pl.y < minY) minY = pl.y;
+            if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+            if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+            area += pl.pw * pl.ph;
+          });
+          const usedLengthMm = maxY;
+          const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
+          // Map leftover back to ORIGINAL pool entries (so forced-rotation variant doesn't permanently rotate the pool)
+          const placedKey = new Set<string>();
+          result.placed.forEach(pl => placedKey.add(`${pl.productId}|${Math.min(pl.pw, pl.ph)}|${Math.max(pl.pw, pl.ph)}`));
+          const used = new Map<string, number>();
+          result.placed.forEach(pl => {
+            const k = `${pl.productId}`;
+            used.set(k, (used.get(k) || 0) + 1);
+          });
+          const remainingPool: Piece[] = [];
+          const cnt = new Map<number, number>();
+          pool.forEach(p => {
+            const k = p.productId;
+            const u = used.get(`${k}`) || 0;
+            const c = cnt.get(k) || 0;
+            if (c < u) { cnt.set(k, c + 1); /* consumed */ }
+            else remainingPool.push(p);
+          });
+          const cand = {
+            r, placed: result.placed, leftover: remainingPool,
+            usedLengthMm, bboxW: maxX - minX, bboxH: maxY - minY, area, coverage,
+          };
+          if (!best) { best = cand; continue; }
+          if (cand.coverage > best.coverage + 1e-6) best = cand;
+          else if (Math.abs(cand.coverage - best.coverage) <= 1e-6) {
+            if (cand.placed.length > best.placed.length) best = cand;
+            else if (cand.placed.length === best.placed.length && cand.r.width < best.r.width) best = cand;
           }
         }
-        if (!best) break;
-        out.push({
-          idx: out.length + 1, roll: best.r, placed: best.placed,
-          usedLengthMm: best.usedLengthMm, bboxW: best.bboxW, bboxH: best.bboxH,
-          printedAreaMm2: best.area, coverage: best.coverage,
-        });
-        remaining.set(best.r.id, (remaining.get(best.r.id) || 0) - best.usedLengthMm);
-        pool = best.leftover;
       }
-      leftoverAll = leftoverAll.concat(pool);
+      if (!best) break;
+      out.push({
+        idx: out.length + 1, roll: best.r, placed: best.placed,
+        usedLengthMm: best.usedLengthMm, bboxW: best.bboxW, bboxH: best.bboxH,
+        printedAreaMm2: best.area, coverage: best.coverage,
+      });
+      remaining.set(best.r.id, (remaining.get(best.r.id) || 0) - best.usedLengthMm);
+      pool = best.leftover;
     }
 
     const rollUsageM = new Map<number, number>();
@@ -776,14 +746,10 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     const producedByProduct = new Map<number, number>();
     out.forEach(o => o.placed.forEach(pl => producedByProduct.set(pl.productId, (producedByProduct.get(pl.productId) || 0) + 1)));
     const shortageByProduct = new Map<number, number>();
-    leftoverAll.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
+    pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
 
-    const rotatedByProduct = new Map<number, boolean>();
-    rollProducts.forEach(p => { if (p.rotation === 'rotated') rotatedByProduct.set(p.id, true); });
-    out.forEach(o => o.placed.forEach(pl => { if (pl.rotated) rotatedByProduct.set(pl.productId, true); }));
-
-    return { rolls: out, rollUsage: rollUsageM, producedByProduct, shortageByProduct, rotatedByProduct };
-  }, [rollProducts, rolls, rollGap, mixTekerces]);
+    return { rolls: out, rollUsage: rollUsageM, producedByProduct, shortageByProduct };
+  }, [rollProducts, rolls, rollGap]);
 
   // ── Renderek külön módokhoz ─────────────────────────────────────────
   const renderSzalanyag = () => (
@@ -966,23 +932,12 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#389e0d' }}>Termékek</Text>
-              <Space>
-                <Tooltip title="Ha be van kapcsolva, egy tekercsre több féle termék is kerülhet. Kikapcsolva: minden tekercsen csak egyféle termék.">
-                  <Radio.Group size="small" value={mixTekerces ? 'mix' : 'solo'} onChange={e => setMixTekerces(e.target.value === 'mix')}>
-                    <Radio.Button value="mix">Keverhető</Radio.Button>
-                    <Radio.Button value="solo">Külön</Radio.Button>
-                  </Radio.Group>
-                </Tooltip>
-                <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
-              </Space>
+              <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
             </div>
-            {rollProducts.map(p => {
-              const wasRotated = mixedRolls.rotatedByProduct.get(p.id) === true;
-              return (
+            {rollProducts.map(p => (
               <Row key={p.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
                 <Col span={5}>
-                  <Input size="small" value={p.name} onChange={e => updateRollProduct(p.id, { name: e.target.value })} placeholder="Név"
-                    suffix={wasRotated ? <Tooltip title="Ez a termék el van forgatva"><Tag color="orange" style={{ marginRight: -8 }}>↻ 90°</Tag></Tooltip> : null} />
+                  <Input size="small" value={p.name} onChange={e => updateRollProduct(p.id, { name: e.target.value })} placeholder="Név" />
                 </Col>
                 <Col span={4}>
                   <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 100 }} value={p.width} min={1}
@@ -993,12 +948,12 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                     onChange={v => updateRollProduct(p.id, { length: Number(v) || 0 })} addonAfter="mm" placeholder="Hossz" />
                 </Col>
                 <Col span={4}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 76 }} value={p.quantity} min={0}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={p.quantity} min={0}
                     onChange={v => updateRollProduct(p.id, { quantity: Number(v) || 0 })} addonAfter="db" placeholder="Db" />
                 </Col>
                 <Col span={5}>
-                  <Tooltip title="Forgatás: A=auto, 0°=fix álló, 90°=fix forgatott">
-                    <Radio.Group size="small" value={p.rotation || 'auto'} onChange={e => updateRollProduct(p.id, { rotation: e.target.value })}>
+                  <Tooltip title="Termék forgatása: A=automatikus, 0=eredeti, 90=elforgatva">
+                    <Radio.Group size="small" value={p.rotate ?? 'auto'} onChange={e => updateRollProduct(p.id, { rotate: e.target.value })}>
                       <Radio.Button value="auto">A</Radio.Button>
                       <Radio.Button value="normal">0°</Radio.Button>
                       <Radio.Button value="rotated">90°</Radio.Button>
@@ -1011,8 +966,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                   )}
                 </Col>
               </Row>
-              );
-            })}
+            ))}
           </div>
         </Col>
 
@@ -1063,17 +1017,37 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           size="small"
           pagination={false}
           bordered
-          dataSource={rollProducts.map(p => ({
-            key: p.id,
-            product: `${p.name} (${p.width}×${p.length})`,
-            needed: p.quantity,
-            produced: mixedRolls.producedByProduct.get(p.id) || 0,
-            shortage: mixedRolls.shortageByProduct.get(p.id) || 0,
-          }))}
+          dataSource={rollProducts.map(p => {
+            let rotCount = 0, totCount = 0;
+            mixedRolls.rolls.forEach(mr => mr.placed.forEach(pl => {
+              if (pl.productId !== p.id) return;
+              totCount++;
+              if (Math.abs(pl.pw - p.width) > 0.5) rotCount++;
+            }));
+            const rotInfo = totCount === 0 ? '' :
+              rotCount === 0 ? '0°' :
+              rotCount === totCount ? '90°' :
+              `vegyes (${rotCount}/${totCount} elforgatva)`;
+            return {
+              key: p.id,
+              product: `${p.name} (${p.width}×${p.length})`,
+              needed: p.quantity,
+              produced: mixedRolls.producedByProduct.get(p.id) || 0,
+              rotation: rotInfo,
+              shortage: mixedRolls.shortageByProduct.get(p.id) || 0,
+            };
+          })}
           columns={[
             { title: 'Termék', dataIndex: 'product', key: 'product' },
             { title: 'Kért', dataIndex: 'needed', key: 'needed', align: 'right', width: 90 },
             { title: 'Gyártott', dataIndex: 'produced', key: 'produced', align: 'right', width: 100 },
+            {
+              title: 'Forgatás', dataIndex: 'rotation', key: 'rotation', width: 130,
+              render: (v: string) => !v ? <span style={{ color: '#bbb' }}>—</span> :
+                v === '0°' ? <Tag color="default">0°</Tag> :
+                v === '90°' ? <Tag color="orange">90°</Tag> :
+                <Tag color="gold">{v}</Tag>,
+            },
             {
               title: 'Hiány', dataIndex: 'shortage', key: 'shortage', align: 'right', width: 90,
               render: (v: number) => v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
@@ -1245,19 +1219,28 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                 <Col span={5}>
                   <Input size="small" value={p.name} onChange={e => updateProduct(p.id, { name: e.target.value })} placeholder="Név" />
                 </Col>
-                <Col span={5}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={p.width} min={1}
+                <Col span={4}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 100 }} value={p.width} min={1}
                     onChange={v => updateProduct(p.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
                 </Col>
-                <Col span={5}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={p.height} min={1}
+                <Col span={4}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 100 }} value={p.height} min={1}
                     onChange={v => updateProduct(p.id, { height: Number(v) || 0 })} addonAfter="mm" placeholder="Mag." />
                 </Col>
-                <Col span={6}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={p.quantity} min={0}
+                <Col span={4}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={p.quantity} min={0}
                     onChange={v => updateProduct(p.id, { quantity: Number(v) || 0 })} addonAfter="db" placeholder="Db" />
                 </Col>
-                <Col span={3} style={{ textAlign: 'right' }}>
+                <Col span={5}>
+                  <Tooltip title="Termék forgatása: A=automatikus, 0=eredeti, 90=elforgatva">
+                    <Radio.Group size="small" value={p.rotate ?? 'auto'} onChange={e => updateProduct(p.id, { rotate: e.target.value })}>
+                      <Radio.Button value="auto">A</Radio.Button>
+                      <Radio.Button value="normal">0°</Radio.Button>
+                      <Radio.Button value="rotated">90°</Radio.Button>
+                    </Radio.Group>
+                  </Tooltip>
+                </Col>
+                <Col span={2} style={{ textAlign: 'right' }}>
                   {products.length > 1 && (
                     <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeProduct(p.id)} />
                   )}
@@ -1299,13 +1282,6 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                       onChange={v => updateSheet(s.id, { available: v == null ? null : Number(v) })}
                       addonAfter="db" placeholder="∞" />
                   </Tooltip>
-                </Col>
-                <Col span={5}>
-                  <Radio.Group size="small" value={s.rotate} onChange={e => updateSheet(s.id, { rotate: e.target.value })}>
-                    <Radio.Button value="auto">A</Radio.Button>
-                    <Radio.Button value="normal">0°</Radio.Button>
-                    <Radio.Button value="rotated">90°</Radio.Button>
-                  </Radio.Group>
                 </Col>
                 <Col span={2} style={{ textAlign: 'right' }}>
                   {sheets.length > 1 && (
@@ -1356,11 +1332,23 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           dataSource={products.map(p => {
             const produced = mixedSheets.producedByProduct.get(p.id) || 0;
             const shortage = mixedSheets.shortageByProduct.get(p.id) || 0;
+            // Count rotation: a placed piece is rotated if its pw differs from product.width
+            let rotCount = 0, totCount = 0;
+            mixedSheets.sheets.forEach(ms => ms.placed.forEach(pl => {
+              if (pl.productId !== p.id) return;
+              totCount++;
+              if (Math.abs(pl.pw - p.width) > 0.5) rotCount++;
+            }));
+            const rotInfo = totCount === 0 ? '' :
+              rotCount === 0 ? '0°' :
+              rotCount === totCount ? '90°' :
+              `vegyes (${rotCount}/${totCount} elforgatva)`;
             return {
               key: p.id,
               product: `${p.name} (${p.width}×${p.height})`,
               needed: p.quantity,
               produced,
+              rotation: rotInfo,
               shortage,
             };
           })}
@@ -1368,6 +1356,13 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             { title: 'Termék', dataIndex: 'product', key: 'product' },
             { title: 'Kért', dataIndex: 'needed', key: 'needed', align: 'right', width: 90 },
             { title: 'Gyártott', dataIndex: 'produced', key: 'produced', align: 'right', width: 100 },
+            {
+              title: 'Forgatás', dataIndex: 'rotation', key: 'rotation', width: 130,
+              render: (v: string) => !v ? <span style={{ color: '#bbb' }}>—</span> :
+                v === '0°' ? <Tag color="default">0°</Tag> :
+                v === '90°' ? <Tag color="orange">90°</Tag> :
+                <Tag color="gold">{v}</Tag>,
+            },
             {
               title: 'Hiány', dataIndex: 'shortage', key: 'shortage', align: 'right', width: 90,
               render: (v: number) => v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
