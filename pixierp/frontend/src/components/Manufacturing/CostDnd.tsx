@@ -54,7 +54,7 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
   const style: React.CSSProperties = {
     ...props.style,
     transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }),
-    transition: transition || 'transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms ease',
+    transition: transition || 'transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms ease',
     position: 'relative',
     ...(isDragging
       ? {
@@ -67,14 +67,11 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
       : {}),
     ...(dropSide
       ? {
-          // Use a thick coloured border on the appropriate side as the drop
-          // indicator. The negative margin keeps row height stable so layout
-          // doesn't shift while the indicator is visible.
-          [dropSide === 'top' ? 'boxShadow' : 'boxShadow']:
-            dropSide === 'top'
-              ? 'inset 0 3px 0 0 #1677ff'
-              : 'inset 0 -3px 0 0 #1677ff',
-          background: '#f0f7ff',
+          // Single 3px coloured line at the top or bottom of the row,
+          // indicating exactly where the dragged item will land.
+          boxShadow: dropSide === 'top'
+            ? 'inset 0 3px 0 0 #1677ff'
+            : 'inset 0 -3px 0 0 #1677ff',
         }
       : {}),
   };
