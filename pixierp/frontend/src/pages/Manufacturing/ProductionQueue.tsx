@@ -115,6 +115,7 @@ const ProductionQueue: React.FC = () => {
     const [filterCustomer, setFilterCustomer] = useState<number | null>(null);
     const [filterOrder, setFilterOrder] = useState<number | null>(null);
     const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
+    const [filterStatus, setFilterStatus] = useState<string[]>([]);
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
@@ -192,12 +193,19 @@ const ProductionQueue: React.FC = () => {
                 r = r.filter(x => !x.is_internal && x.supplier_id === id);
             }
         }
+        if (filterStatus.length > 0) {
+            const set = new Set(filterStatus);
+            r = r.filter(x => {
+                if (set.has('paused') && x.is_paused) return true;
+                return set.has(x.status || 'new');
+            });
+        }
         const q = normalize(query);
         if (q) {
             r = r.filter(x => normalize([x.order_number, x.customer_name, x.product_name, x.item_name, x.code, x.notes].join(' ')).includes(q));
         }
         return r;
-    }, [rows, filterCustomer, filterOrder, filterSupplier, query]);
+    }, [rows, filterCustomer, filterOrder, filterSupplier, filterStatus, query]);
 
     // ── Actions ──────────────────────────────────────────────────────────
     const handleStatusChange = async (id: number, newStatus: string) => {
@@ -627,6 +635,18 @@ const ProductionQueue: React.FC = () => {
                             onChange={(v) => setFilterSupplier(v ?? null)}
                             showSearch optionFilterProp="label"
                         />
+                        <Select
+                            allowClear placeholder="Státusz" style={{ minWidth: 180 }}
+                            mode="multiple"
+                            maxTagCount="responsive"
+                            value={filterStatus}
+                            onChange={(v) => setFilterStatus(v || [])}
+                            options={[
+                                ...Object.keys(STATUS_LABELS).map(k => ({ value: k, label: STATUS_LABELS[k] })),
+                                { value: 'paused', label: 'Szünetel' },
+                            ]}
+                            optionFilterProp="label"
+                        />
                         <Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>
                         <Tooltip title={selectedRowKeys.length > 0 ? 'Kijelölt sorok exportálása' : 'Az összes látható sor exportálása'}>
                             <Button icon={<FileTextOutlined />} onClick={exportCsv}>
@@ -813,6 +833,13 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                 }
                 const defaultTpl = tpls.find(t => t.key === 'manufacturing_supplier_order') || tpls[0] || null;
 
+                // Pick the user's default signature (key='default') if available.
+                let sigs: any[] = signatures;
+                if (!sigs || sigs.length === 0) {
+                    try { sigs = await settingsService.getSignatures(); } catch { sigs = []; }
+                }
+                const defaultSig = sigs.find(s => s.key === 'default') || sigs[0] || null;
+
                 const next: GroupState[] = initialGroups.map(g => {
                     const r = renderedByKey[g.key];
                     const ctx = {
@@ -826,9 +853,14 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                     const subject = defaultTpl
                         ? renderTemplateText(defaultTpl.subject_template || '', ctx)
                         : `Gyártási megrendelés - ${g.items.length} tétel`;
-                    const body = defaultTpl
+                    let body = defaultTpl
                         ? renderTemplateText(defaultTpl.body_template || '', ctx)
                         : `<p>Tisztelt ${g.label}!</p><p>Kérjük, az alábbi tételek gyártását / leszállítását szíveskedjenek megkezdeni:</p>${ctx.item_table_html}<p>Köszönettel,<br>PixiERP</p>`;
+                    const isHtml = defaultTpl ? !!defaultTpl.is_html : true;
+                    if (defaultSig) {
+                        const sigHtml = renderSignature(defaultSig, user);
+                        if (sigHtml) body = body + (isHtml ? '' : '\n\n') + sigHtml;
+                    }
                     return {
                         key: g.key,
                         label: g.label,
@@ -837,10 +869,10 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                         cc: defaultTpl?.default_cc || '',
                         reply_to: defaultTpl?.default_reply_to || '',
                         template_key: defaultTpl?.key || '',
-                        signature_key: '',
+                        signature_key: defaultSig?.key || '',
                         subject,
                         body,
-                        is_html: defaultTpl ? !!defaultTpl.is_html : true,
+                        is_html: isHtml,
                         item_table_html: ctx.item_table_html,
                         item_list_text: ctx.item_list_text,
                     };
