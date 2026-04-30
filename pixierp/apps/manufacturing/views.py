@@ -1361,15 +1361,15 @@ class ManufacturingCostItemViewSet(
         # Top half = KÜLSŐ
         top_end = draw_section(height - 1.5 * cm, internal=False)
 
-        # Dashed separator at the page's vertical mid
-        sep_y = height / 2
+        # Dashed separator one line below the KÜLSŐ section
+        sep_y = top_end - 0.5 * cm
         p.setDash(6, 3)
         p.setLineWidth(0.5)
         p.line(2 * cm, sep_y, width - 2 * cm, sep_y)
         p.setDash()
 
         # Bottom half = BELSŐ
-        bottom_start = sep_y - 0.6 * cm
+        bottom_start = sep_y - 0.5 * cm
         draw_section(bottom_start, internal=True)
 
         p.showPage()
