@@ -13,6 +13,8 @@ import { hrService } from '../../services/hrService';
 import ProductEditorModal from '../Editors/ProductEditorModal';
 import ServiceEditorModal from '../Editors/ServiceEditorModal';
 import ManufacturingProductEditorModal from '../Editors/ManufacturingProductEditorModal';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 type ConcreteItemType = 'product' | 'manufacturing' | 'service';
 type ItemType = ConcreteItemType | 'all';
@@ -1791,13 +1793,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
                   <Row gutter={8}>
                     <Col span={12}>
-                      <Form.Item label="Leírás" name="description" style={{ marginBottom: 8 }}>
-                        <Input.TextArea rows={4} style={{ resize: 'vertical' }} placeholder="Külső leírás" />
+                      <Form.Item label="Leírás" name="description" style={{ marginBottom: 8 }} getValueFromEvent={(v) => v}>
+                        <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Külső leírás" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
-                      <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 8 }}>
-                        <Input.TextArea rows={4} style={{ resize: 'vertical' }} placeholder="Belső leírás" />
+                      <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 8 }} getValueFromEvent={(v) => v}>
+                        <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Belső leírás" />
                       </Form.Item>
                     </Col>
                   </Row>
