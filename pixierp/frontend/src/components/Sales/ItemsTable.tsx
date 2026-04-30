@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
 import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag } from 'antd';
-import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined } from '@ant-design/icons';
+import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -8,6 +8,7 @@ import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { buildTreeMetaBy, CostTreeGuide } from '../Manufacturing/CostDnd';
+import ImpositionHelperModal from './ImpositionHelperModal';
 
 const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
   new: { label: 'Új', color: 'default' },
@@ -110,6 +111,8 @@ const DraggableRow = ({ children, ...props }: any) => {
 export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
+  // Per-tétel impozíció editor cél tétel
+  const [impositionItem, setImpositionItem] = useState<any | null>(null);
   const [dataSource, setDataSource] = useState<Item[]>([]);
 
   useEffect(() => {
@@ -258,18 +261,27 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         discount_percent: Number((record as any).discount_percent || 0),
         discount_amount: Number((record as any).discount_amount || 0),
       };
+      let createdItem: any = null;
       if (record.item_type === 'product' && record.product) {
-        await salesService.addRfqProductItem(quoteRequestId, Number(record.product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqProductItem(quoteRequestId, Number(record.product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else if (record.item_type === 'manufacturing' && record.manufacturing_product) {
         // Duplicate the manufacturing product so the copy is fully independent
         const dup = await manufacturingService.duplicateProduct(Number(record.manufacturing_product));
-        await salesService.addRfqManufacturingItem(quoteRequestId, dup.id, common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqManufacturingItem(quoteRequestId, dup.id, common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else if (record.item_type === 'service' && record.service) {
-        await salesService.addRfqServiceItem(quoteRequestId, Number(record.service), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqServiceItem(quoteRequestId, Number(record.service), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
       } else {
         message.error('Nem található a tétel hivatkozása, nem másolható');
         return;
       }
+      // Per-tétel impozíció független mély-másolata az új tételbe
+      try {
+        const srcImp = (record as any).imposition_data;
+        if (createdItem && createdItem.id && srcImp && typeof srcImp === 'object' && Object.keys(srcImp).length > 0) {
+          const cloned = JSON.parse(JSON.stringify(srcImp));
+          await salesService.updateQuoteRequestItem(createdItem.id, { imposition_data: cloned });
+        }
+      } catch { /* nem kritikus, hagyjuk */ }
       message.success('Tétel másolva');
       onRefresh && onRefresh();
       setTimeout(() => window.scrollTo(0, savedScroll), 120);
@@ -413,6 +425,15 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
+          <Tooltip title={record.imposition_data && Object.keys(record.imposition_data).length > 0 ? 'Impozíció szerkesztése (mentett)' : 'Impozíció hozzáadása'}>
+            <Button
+              size="small"
+              icon={<AppstoreOutlined />}
+              type={record.imposition_data && Object.keys(record.imposition_data).length > 0 ? 'primary' : 'default'}
+              ghost={!!(record.imposition_data && Object.keys(record.imposition_data).length > 0)}
+              onClick={() => setImpositionItem(record)}
+            />
+          </Tooltip>
           <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>
           {record.attachments && record.attachments.length > 0 && (
             <Tooltip title={`Csatolmányok (${record.attachments.length})`}>
@@ -578,6 +599,17 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           ]}
         />
       </Modal>
+      <ImpositionHelperModal
+        open={!!impositionItem}
+        onClose={() => setImpositionItem(null)}
+        initialItemData={impositionItem?.imposition_data || null}
+        itemContextLabel={impositionItem ? (impositionItem.product_name || impositionItem.material_name || impositionItem.manufacturing_product_name || impositionItem.service_name || impositionItem.description || `#${impositionItem.id}`) : undefined}
+        onSaveToItem={async (snapshot) => {
+          if (!impositionItem) return;
+          await salesService.updateQuoteRequestItem(impositionItem.id, { imposition_data: snapshot });
+          onRefresh && onRefresh();
+        }}
+      />
     </Card>
   );
 };

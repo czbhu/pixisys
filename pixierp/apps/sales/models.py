@@ -328,7 +328,10 @@ class QuoteRequestItem(models.Model):
     discounted_net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes nettó összesen")
     discounted_gross_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes bruttó összesen")
     description = models.TextField(blank=True, verbose_name="Leírás")
-    
+
+    # Per-item impozíció pillanatkép (független minden más tételtől és a globális presetektől)
+    imposition_data = models.JSONField(blank=True, null=True, default=dict, verbose_name="Impozíció adatok")
+
     # Ordering and Nesting
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children', verbose_name="Szülő tétel")

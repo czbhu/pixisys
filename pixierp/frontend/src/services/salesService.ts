@@ -429,7 +429,7 @@ export const salesService = {
         return response.data;
     },
     // Quote request items CRUD
-    async updateQuoteRequestItem(itemId: number, data: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number }>) {
+    async updateQuoteRequestItem(itemId: number, data: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any }>) {
         const response = await api.patch(`/sales/quote-request-items/${itemId}/`, data);
         return response.data;
     },

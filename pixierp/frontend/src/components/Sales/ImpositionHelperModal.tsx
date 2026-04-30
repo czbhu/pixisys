@@ -302,9 +302,15 @@ interface Props {
   initialProductHeight?: number;
   initialProductQty?: number;
   initialPresetId?: string | null;
+  /** Per-RFQ-tétel impozíció: ha meg van adva, ezt töltjük be megnyitáskor a globális preset helyett. */
+  initialItemData?: any | null;
+  /** Per-RFQ-tétel mentés callback. Ha meg van adva, megjelenik a "Mentés a tételhez" gomb. */
+  onSaveToItem?: (snapshot: any) => void | Promise<void>;
+  /** Tétel megnevezése a fejléchez. */
+  itemContextLabel?: string;
 }
 
-const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId }) => {
+const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId, initialItemData, onSaveToItem, itemContextLabel }) => {
   const [mode, setMode] = useState<Mode>('ives');
   const [bleed, setBleed] = useState<number>(3);
   const [products, setProducts] = useState<ProductRow[]>([
@@ -526,6 +532,26 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     setPresetNameInput(p.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, initialPresetId, presets.length]);
+
+  // Auto-load per-item snapshot when opened with initialItemData
+  useEffect(() => {
+    if (!open || !initialItemData || typeof initialItemData !== 'object') return;
+    const d = initialItemData as any;
+    if (Object.keys(d).length === 0) return;
+    if (d.mode) setMode(d.mode);
+    if (d.bleed !== undefined) setBleed(d.bleed);
+    if (Array.isArray(d.products)) setProducts(d.products);
+    if (Array.isArray(d.sheets)) setSheets(d.sheets);
+    if (d.kerf !== undefined) setKerf(d.kerf);
+    if (Array.isArray(d.barProducts)) setBarProducts(d.barProducts);
+    if (Array.isArray(d.bars)) setBars(d.bars);
+    if (d.rollGap !== undefined) setRollGap(d.rollGap);
+    if (Array.isArray(d.rollProducts)) setRollProducts(d.rollProducts);
+    if (Array.isArray(d.rolls)) setRolls(d.rolls);
+    setActivePresetId(null);
+    setPresetNameInput('');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, initialItemData]);
 
   const persist = (next: Preset[]) => {
     setPresets(next);
@@ -1489,7 +1515,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
 
   return (
     <Modal
-      title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás (segédlet)</span>}
+      title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás (segédlet){itemContextLabel ? <Text type="secondary" style={{ marginLeft: 8, fontWeight: 400 }}>– {itemContextLabel}</Text> : null}</span>}
       open={open}
       onCancel={onClose}
       onOk={onClose}
@@ -1498,7 +1524,29 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       width={1265}
       styles={{ body: { padding: 10 } }}
     >
-      {/* ── Presetek ───────────────────────────────────────────────────── */}
+      {/* ── Per-tétel mentés sáv ───────────────────────────────────────── */}
+      {onSaveToItem && (
+        <div style={{ marginBottom: 8, padding: 8, background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <Text strong>Tételhez kötött impozíció:</Text>
+          <Text type="secondary" style={{ flex: 1 }}>Ez a beállítás csak ehhez a tételhez tartozik – másoláskor másolódik, törléskor csak innen tűnik el.</Text>
+          <Button
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={async () => {
+              try {
+                await onSaveToItem(presetSnapshot());
+                message.success('Mentve a tételhez');
+                onClose();
+              } catch {
+                message.error('Mentés sikertelen');
+              }
+            }}
+          >
+            Mentés a tételhez
+          </Button>
+        </div>
+      )}
+      {/* ── Presetek (globális sablonok) ─────────────────────────────── */}
       <div style={{ marginBottom: 12, padding: 10, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
         <Space wrap style={{ width: '100%' }}>
           <Text strong>Mentett impozíciók:</Text>
