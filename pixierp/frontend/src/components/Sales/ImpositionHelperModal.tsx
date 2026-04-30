@@ -303,15 +303,15 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                   <Input size="small" value={p.name} onChange={e => updateProduct(p.id, { name: e.target.value })} placeholder="Név" />
                 </Col>
                 <Col span={5}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={p.width} min={1}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={p.width} min={1}
                     onChange={v => updateProduct(p.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
                 </Col>
                 <Col span={5}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={p.height} min={1}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={p.height} min={1}
                     onChange={v => updateProduct(p.id, { height: Number(v) || 0 })} addonAfter="mm" placeholder="Mag." />
                 </Col>
                 <Col span={6}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={p.quantity} min={0}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={p.quantity} min={0}
                     onChange={v => updateProduct(p.id, { quantity: Number(v) || 0 })} addonAfter="db" placeholder="Db" />
                 </Col>
                 <Col span={3} style={{ textAlign: 'right' }}>
@@ -339,20 +339,20 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             </div>
             {sheets.map(s => (
               <Row key={s.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
-                <Col span={4}>
+                <Col span={3}>
                   <Input size="small" value={s.name} onChange={e => updateSheet(s.id, { name: e.target.value })} placeholder="Név" />
                 </Col>
-                <Col span={4}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 104 }} value={s.width} min={1}
+                <Col span={5}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={s.width} min={1}
                     onChange={v => updateSheet(s.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
                 </Col>
-                <Col span={4}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 104 }} value={s.height} min={1}
+                <Col span={5}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={s.height} min={1}
                     onChange={v => updateSheet(s.id, { height: Number(v) || 0 })} addonAfter="mm" placeholder="Mag." />
                 </Col>
-                <Col span={5}>
+                <Col span={4}>
                   <Tooltip title="Üres = végtelen">
-                    <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={s.available ?? undefined} min={0}
+                    <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={s.available ?? undefined} min={0}
                       onChange={v => updateSheet(s.id, { available: v == null ? null : Number(v) })}
                       addonAfter="db" placeholder="∞" />
                   </Tooltip>
