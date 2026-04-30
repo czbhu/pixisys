@@ -41,17 +41,20 @@ interface AssignmentResult {
   allocations: Allocation[];
 }
 
-const itemsPerSheet = (sw: number, sh: number, pw: number, ph: number, bleed: number, rotate: SheetRow['rotate']) => {
-  const w = pw + 2 * bleed;
-  const h = ph + 2 * bleed;
-  if (w <= 0 || h <= 0 || sw <= 0 || sh <= 0) return { count: 0, rotated: false, cols: 0, rows: 0 };
-  const fitNormal = Math.floor(sw / w) * Math.floor(sh / h);
-  const fitRotated = Math.floor(sw / h) * Math.floor(sh / w);
+const itemsPerSheet = (sw: number, sh: number, pw: number, ph: number, gap: number, rotate: SheetRow['rotate']) => {
+  if (pw <= 0 || ph <= 0 || sw <= 0 || sh <= 0) return { count: 0, rotated: false, cols: 0, rows: 0 };
+  // gap = nyomatköz (két nyomat közötti távolság). N elem sora: N*p + (N-1)*gap <= s  =>  N <= (s+gap)/(p+gap)
+  const colsN = Math.max(0, Math.floor((sw + gap) / (pw + gap)));
+  const rowsN = Math.max(0, Math.floor((sh + gap) / (ph + gap)));
+  const colsR = Math.max(0, Math.floor((sw + gap) / (ph + gap)));
+  const rowsR = Math.max(0, Math.floor((sh + gap) / (pw + gap)));
+  const fitNormal = colsN * rowsN;
+  const fitRotated = colsR * rowsR;
   let rotated = false;
   if (rotate === 'auto') rotated = fitRotated > fitNormal;
   else if (rotate === 'rotated') rotated = true;
-  const cols = rotated ? Math.floor(sw / h) : Math.floor(sw / w);
-  const rows = rotated ? Math.floor(sh / w) : Math.floor(sh / h);
+  const cols = rotated ? colsR : colsN;
+  const rows = rotated ? rowsR : rowsN;
   return { count: cols * rows, rotated, cols, rows };
 };
 
@@ -327,8 +330,10 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#0958d9' }}>Ívek (rendelkezésre álló)</Text>
               <Space>
-                <span style={{ fontSize: 12 }}>Ráhagyás:</span>
-                <InputNumber size="small" controls={false} min={0} value={bleed} onChange={v => setBleed(Number(v) || 0)} addonAfter="mm" style={{ width: 90 }} />
+                <span style={{ fontSize: 12 }}>Nyomatköz:</span>
+                <Tooltip title="Két nyomat közötti távolság (mm)">
+                  <InputNumber size="small" controls={false} min={0} value={bleed} onChange={v => setBleed(Number(v) || 0)} addonAfter="mm" style={{ width: 90 }} />
+                </Tooltip>
                 <Button size="small" icon={<PlusOutlined />} onClick={addSheet}>Ív</Button>
               </Space>
             </div>
@@ -464,10 +469,12 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
               if (!product) return null;
               const sw = sheet.width;
               const sh = sheet.height;
-              const pw = product.width + 2 * bleed;
-              const ph = product.height + 2 * bleed;
+              const pw = product.width;
+              const ph = product.height;
               const cellW = al.rotated ? ph : pw;
               const cellH = al.rotated ? pw : ph;
+              const stepX = cellW + bleed; // nyomatköz hozzáadva
+              const stepY = cellH + bleed;
               const scale = Math.min(220 / sw, 280 / sh, 1);
               const svgW = Math.round(sw * scale);
               const svgH = Math.round(sh * scale);
@@ -486,18 +493,13 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                       {Array.from({ length: al.cols * al.rows }).map((_, ci) => {
                         const col = ci % al.cols;
                         const row = Math.floor(ci / al.cols);
-                        const x = col * cellW;
-                        const y = row * cellH;
+                        const x = col * stepX;
+                        const y = row * stepY;
                         const filled = ci < itemsOnThis;
-                        const innerPad = bleed;
                         return (
                           <g key={ci}>
                             <rect x={x} y={y} width={cellW} height={cellH}
                               fill={filled ? '#bae0ff' : '#f0f0f0'} stroke={filled ? '#69b1ff' : '#d9d9d9'} strokeWidth={0.5} />
-                            {filled && innerPad > 0 && (
-                              <rect x={x + innerPad} y={y + innerPad} width={cellW - 2 * innerPad} height={cellH - 2 * innerPad}
-                                fill="#91caff" stroke="#1677ff" strokeWidth={0.4} strokeDasharray="1 1" />
-                            )}
                             {filled && cellW * scale > 22 && cellH * scale > 14 && (
                               <text x={x + cellW / 2} y={y + cellH / 2 + 3}
                                 fontSize={Math.max(6, Math.min(cellW, cellH) * 0.18)}
