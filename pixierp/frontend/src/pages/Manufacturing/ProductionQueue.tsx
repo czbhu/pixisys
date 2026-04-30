@@ -30,6 +30,7 @@ import {
     PlayCircleOutlined,
     AlertOutlined,
     SendOutlined,
+    FileTextOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -530,6 +531,11 @@ const ProductionQueue: React.FC = () => {
                             showSearch optionFilterProp="label"
                         />
                         <Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>
+                        <Tooltip title={selectedRowKeys.length > 0 ? 'Kijelölt sorok exportálása' : 'Az összes látható sor exportálása'}>
+                            <Button icon={<FileTextOutlined />} onClick={exportCsv}>
+                                CSV{selectedRowKeys.length ? ` (${selectedRowKeys.length})` : ''}
+                            </Button>
+                        </Tooltip>
                         <Button
                             type="primary"
                             icon={<SendOutlined />}
