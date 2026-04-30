@@ -338,11 +338,11 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
                   <Input size="small" value={s.name} onChange={e => updateSheet(s.id, { name: e.target.value })} placeholder="Név" />
                 </Col>
                 <Col span={4}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={s.width} min={1}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 104 }} value={s.width} min={1}
                     onChange={v => updateSheet(s.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
                 </Col>
                 <Col span={4}>
-                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 72 }} value={s.height} min={1}
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 104 }} value={s.height} min={1}
                     onChange={v => updateSheet(s.id, { height: Number(v) || 0 })} addonAfter="mm" placeholder="Mag." />
                 </Col>
                 <Col span={5}>
