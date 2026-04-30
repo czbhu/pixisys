@@ -374,16 +374,60 @@ function EnhancedTable<T extends object = any>({
         // Always give every column an explicit width so tableLayout="fixed"
         // respects each column independently — no redistribution of space.
         const effectiveWidth = savedWidth || (c as any).width || 150;
+
+        // ── Auto-tooltip + ellipsis on overflow ──────────────────────────
+        // Every data column has a fixed width (tableLayout="fixed"), so any
+        // content wider than the cell gets clipped. We wrap the rendered
+        // value in a Tooltip showing the full content, and add an inner
+        // ellipsis span so the truncation visually indicates overflow.
+        // Skipped for: actions column, drag handle column.
+        let processed: any = c;
+        const skipAutoTooltip = isActions || key === 'drag';
+        if (!skipAutoTooltip) {
+          const origRender = (c as any).render;
+          const wrappedRender = (value: any, record: any, index: number) => {
+            const node = origRender ? origRender(value, record, index) : value;
+            // Determine the tooltip text – prefer string-form of raw value.
+            let titleNode: React.ReactNode;
+            if (origRender) {
+              titleNode = (typeof value === 'string' || typeof value === 'number')
+                ? String(value)
+                : node;
+            } else {
+              titleNode = (value === null || value === undefined || value === '') ? null : String(value);
+            }
+            if (titleNode === null || titleNode === undefined || titleNode === '') return node;
+            return (
+              <Tooltip
+                title={<span style={{ whiteSpace: 'pre-wrap' }}>{titleNode}</span>}
+                mouseEnterDelay={0.3}
+                placement="topLeft"
+              >
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {node}
+                </span>
+              </Tooltip>
+            );
+          };
+          processed = {
+            ...c,
+            ellipsis: typeof (c as any).ellipsis === 'object'
+              ? { ...(c as any).ellipsis, showTitle: false }
+              : { showTitle: false },
+            render: wrappedRender,
+          };
+        }
+
         if (isActions) {
           // Actions column: fixed width, not resizable, not draggable
           return {
-            ...c,
-            width: (c as any).width || 120,
+            ...processed,
+            width: (processed as any).width || 120,
             onHeaderCell: () => ({ id: key }),
           };
         }
         return {
-          ...c,
+          ...processed,
           width: effectiveWidth,
           onHeaderCell: () => ({
             id: key,
