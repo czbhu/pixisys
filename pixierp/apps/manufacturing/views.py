@@ -1078,13 +1078,15 @@ class ManufacturingCostItemViewSet(
         except Exception:
             qr_image = None
 
-        # Sub-items (altételek) — siblings of `ci` belonging to the same
-        # ManufacturingProduct, in the table order (model default).
+        # Sub-items (altételek) — all cost items belonging to the same
+        # ManufacturingProduct (parent of the clicked row). Ordered to
+        # match the queue page: by queue_position (nulls last), then id.
+        from django.db.models import F
         sub_items = list(
             ManufacturingCostItem.objects
             .select_related('supplier', 'department')
             .filter(product=product)
-            .order_by('sort_order', 'id')
+            .order_by(F('queue_position').asc(nulls_last=True), 'id')
         )
 
         # ── Drawing ─────────────────────────────────────────────────────

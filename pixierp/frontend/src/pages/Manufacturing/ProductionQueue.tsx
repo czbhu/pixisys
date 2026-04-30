@@ -35,6 +35,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { CostDraggableRow, CostRowContext, dragModeRef } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
+import useUserPreference from '../../hooks/useUserPreference';
 import api from '../../services/api';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -472,36 +473,66 @@ const ProductionQueue: React.FC = () => {
     ];
 
     // ── CSV export of selected (or all visible) rows ──────────────────────
+    // CSV column descriptors keyed by the same `key` used in the AntD
+    // columns array, so we can honour the table's visibility & order
+    // preferences.
+    const csvColumnDefs: Record<string, { label: string; value: (r: QueueRow, idx: number) => any }> = {
+        pos:           { label: '#',                    value: (_r, idx) => idx + 1 },
+        order_number:  { label: 'Megrendelés',          value: r => r.order_number },
+        customer_name: { label: 'Ügyfél',               value: r => r.customer_name ?? '' },
+        order_date:    { label: 'Megr. dátuma',         value: r => r.order_date ? dayjs(r.order_date).format('YYYY-MM-DD') : '' },
+        deadline:      { label: 'Határidő',             value: r => r.deadline ? dayjs(r.deadline).format('YYYY-MM-DD') : '' },
+        code:          { label: 'Cikkszám',             value: r => r.code ?? '' },
+        product_name:  { label: 'Termék',               value: r => r.product_name ?? '' },
+        item_name:     { label: 'Tétel',                value: r => r.item_name ?? '' },
+        status:        { label: 'Státusz',              value: r => `${STATUS_LABELS[r.status] || r.status}${r.is_paused ? ' (Szünet)' : ''}` },
+        notes:         { label: 'Megjegyzés',           value: r => (r.notes || '').replace(/\r?\n/g, ' ') },
+        supplier:      { label: 'Beszállító / Részleg', value: r => r.is_internal ? `Belső: ${r.department_name || ''}`.trim() : (r.supplier_name || '') },
+        // 'actions' column is intentionally omitted from CSV
+    };
+
+    // Read the same preference keys the EnhancedTable uses.
+    const csvDefaultOrder = Object.keys(csvColumnDefs);
+    const csvDefaultVis: Record<string, boolean> = csvDefaultOrder.reduce(
+        (acc, k) => ({ ...acc, [k]: true }), {} as Record<string, boolean>,
+    );
+    const [colVisPref] = useUserPreference<Record<string, boolean>>(
+        'manufacturingProductionQueue_colVis', csvDefaultVis,
+    );
+    const [colOrderPref] = useUserPreference<string[]>(
+        'manufacturingProductionQueue_colOrder', csvDefaultOrder,
+    );
+
     const exportCsv = () => {
         const source = selectedRowKeys.length > 0
             ? filtered.filter(r => selectedRowKeys.includes(r.id))
             : filtered;
         if (!source.length) { message.warning('Nincs exportálható sor.'); return; }
-        const rows = source.map(r => ({
-            'Sorhely': r.queue_position ?? '',
-            'Megrendelés szám': r.order_number,
-            'Megrendelés dátum': r.order_date ? dayjs(r.order_date).format('YYYY-MM-DD') : '',
-            'Határidő': r.deadline ? dayjs(r.deadline).format('YYYY-MM-DD') : '',
-            'Ügyfél': r.customer_name ?? '',
-            'Termék': r.product_name ?? '',
-            'Cikkszám': r.code ?? '',
-            'Tétel': r.item_name ?? '',
-            'Mennyiség': r.quantity,
-            'ME': r.unit ?? '',
-            'Beszállító / Részleg': r.is_internal
-                ? `Belső: ${r.department_name || ''}`.trim()
-                : (r.supplier_name || ''),
-            'Státusz': STATUS_LABELS[r.status] || r.status,
-            'Szünetel': r.is_paused ? 'Igen' : 'Nem',
-            'Megjegyzés': (r.notes || '').replace(/\r?\n/g, ' '),
-        }));
-        const headers = Object.keys(rows[0]);
+
+        // Determine the CSV column order: respect the saved column order,
+        // append any new columns at the end. Then drop hidden columns and
+        // any keys that don't have a CSV descriptor (e.g. 'actions').
+        const savedOrder = (colOrderPref && colOrderPref.length > 0) ? colOrderPref : csvDefaultOrder;
+        const orderedKeys = [
+            ...savedOrder.filter(k => csvDefaultOrder.includes(k)),
+            ...csvDefaultOrder.filter(k => !savedOrder.includes(k)),
+        ];
+        const visibleKeys = orderedKeys.filter(k => {
+            // colVisPref may be missing entries → default to visible
+            return colVisPref?.[k] !== false;
+        });
+        if (!visibleKeys.length) { message.warning('Nincs látható oszlop az exportáláshoz.'); return; }
+
+        const headers = visibleKeys.map(k => csvColumnDefs[k].label);
         const escape = (v: any) => {
             const s = String(v ?? '');
             return /[,";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
         };
-        const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
-        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const lines = [
+            headers.join(','),
+            ...source.map((r, idx) => visibleKeys.map(k => escape(csvColumnDefs[k].value(r, idx))).join(',')),
+        ];
+        const blob = new Blob(['\uFEFF' + lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
