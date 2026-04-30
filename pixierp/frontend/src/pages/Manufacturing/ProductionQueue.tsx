@@ -23,7 +23,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
-import { CostDragHandle, CostDraggableRow } from '../../components/Manufacturing/CostDnd';
+import { CostDraggableRow, CostRowContext } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 
@@ -71,6 +71,28 @@ interface QueueRow {
     quantity: number;
     unit: string;
 }
+
+/** Drag-handle cell: long-press the order number to start a row drag. */
+const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
+    const { setActivatorNodeRef, listeners } = React.useContext(CostRowContext);
+    return (
+        <span
+            ref={setActivatorNodeRef as any}
+            {...(listeners || {})}
+            style={{
+                cursor: 'grab',
+                userSelect: 'none',
+                touchAction: 'none',
+                display: 'inline-block',
+                width: '100%',
+                fontWeight: 500,
+            }}
+            title="Tartsa nyomva 0,4 mp-ig a sor mozgatásához"
+        >
+            {value}
+        </span>
+    );
+};
 
 const ProductionQueue: React.FC = () => {
     const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
@@ -308,10 +330,10 @@ const ProductionQueue: React.FC = () => {
     };
 
     const columns: any[] = [
-        { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
         { title: '#', key: 'pos', width: 50, render: (_: any, __: any, idx: number) => idx + 1 },
         { title: 'Megrendelés', dataIndex: 'order_number', key: 'order_number', width: 130,
-            sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || '') },
+            sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || ''),
+            render: (v: string) => <DragOrderCell value={v} /> },
         { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180, ellipsis: true,
             sorter: (a: QueueRow, b: QueueRow) => (a.customer_name || '').localeCompare(b.customer_name || '', 'hu') },
         { title: 'Megr. dátuma', dataIndex: 'order_date', key: 'order_date', width: 110,
