@@ -361,8 +361,8 @@ body,
 .pixi-quill-resizable {
   resize: vertical;
   overflow: hidden;
-  min-height: 160px;
-  height: 160px;
+  min-height: 110px;
+  height: 110px;
   display: flex;
   flex-direction: column;
   border-radius: 2px;
