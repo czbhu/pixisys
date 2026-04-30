@@ -602,6 +602,7 @@ class ManufacturingCostItemViewSet(
                 'department_name': ci.department.name if ci.department else '',
                 'quantity': float(ci.quantity),
                 'unit': ci.unit,
+                'supplier_email_sent_at': ci.supplier_email_sent_at.isoformat() if ci.supplier_email_sent_at else None,
             })
         return Response(data)
 
@@ -897,6 +898,12 @@ class ManufacturingCostItemViewSet(
                         archive_to_imap_sent(cfg, msg)
                     except Exception:
                         pass
+                    # Stamp the send timestamp on each cost-item.
+                    if cost_item_ids:
+                        from django.utils import timezone as _tz
+                        ManufacturingCostItem.objects.filter(id__in=cost_item_ids).update(
+                            supplier_email_sent_at=_tz.now()
+                        )
                     results.append({'key': key, 'label': label, 'sent': True,
                                     'recipients': recipients_list,
                                     'item_count': len(cost_item_ids)})
@@ -984,6 +991,13 @@ class ManufacturingCostItemViewSet(
                     archive_to_imap_sent(cfg, msg)
                 except Exception:
                     pass
+                # Stamp the send timestamp on each cost-item.
+                _ids = [i.id for i in g['items']]
+                if _ids:
+                    from django.utils import timezone as _tz
+                    ManufacturingCostItem.objects.filter(id__in=_ids).update(
+                        supplier_email_sent_at=_tz.now()
+                    )
                 results.append({'key': key, 'label': g['label'], 'sent': True,
                                 'recipients': recipients_list, 'item_count': len(g['items'])})
             except Exception as e:

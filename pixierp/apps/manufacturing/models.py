@@ -371,6 +371,7 @@ class ManufacturingCostItem(models.Model):
     is_per_unit = models.BooleanField(default=False, verbose_name="Egységre vetített")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
     notes = models.TextField(blank=True, default='', verbose_name="Megjegyzések")
+    supplier_email_sent_at = models.DateTimeField(null=True, blank=True, verbose_name="Beszállítói e-mail kiküldve")
 
     # Gyártási sor (queue) – globális sorrend
     queue_position = models.PositiveIntegerField(null=True, blank=True, db_index=True, verbose_name="Sorhely")

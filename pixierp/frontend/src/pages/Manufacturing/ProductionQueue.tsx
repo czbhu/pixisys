@@ -81,6 +81,7 @@ interface QueueRow {
     department_name: string;
     quantity: number;
     unit: string;
+    supplier_email_sent_at: string | null;
 }
 
 /** Drag-handle cell: long-press the order number to start a GROUP drag
@@ -468,9 +469,18 @@ const ProductionQueue: React.FC = () => {
         { title: 'Tétel', dataIndex: 'item_name', key: 'item_name', width: 200, ellipsis: true,
             sorter: (a: QueueRow, b: QueueRow) => (a.item_name || '').localeCompare(b.item_name || '', 'hu') },
         { title: 'Státusz', key: 'status', width: 140, render: (_: any, r: QueueRow) => (
-            <Space>
-                {renderStatus(r)}
-                {r.is_paused && <Tag color="default">Szünet</Tag>}
+            <Space direction="vertical" size={2} style={{ display: 'flex' }}>
+                <Space size={4}>
+                    {renderStatus(r)}
+                    {r.is_paused && <Tag color="default">Szünet</Tag>}
+                </Space>
+                {r.supplier_email_sent_at && (
+                    <Tooltip title={`Beszállítói e-mail kiküldve: ${dayjs(r.supplier_email_sent_at).format('YYYY.MM.DD HH:mm')}`}>
+                        <span style={{ fontSize: 11, color: '#888' }}>
+                            e-mail: {dayjs(r.supplier_email_sent_at).format('YYYY.MM.DD HH:mm')}
+                        </span>
+                    </Tooltip>
+                )}
             </Space>
         ) },
         { title: 'Megjegyzés', dataIndex: 'notes', key: 'notes', width: 220, ellipsis: true,
