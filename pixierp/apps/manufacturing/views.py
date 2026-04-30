@@ -605,26 +605,62 @@ class ManufacturingCostItemViewSet(
             })
         return Response(data)
 
+    def _full_queue_ids(self, exclude_id=None):
+        """Return all visible-queue cost-item ids in current display order
+        (queue_position asc nulls last, then id). Items belonging to
+        delivered/cancelled customer orders are skipped (mirrors `queue`)."""
+        from django.db.models import F
+        qs = (ManufacturingCostItem.objects
+              .select_related('product')
+              .order_by(F('queue_position').asc(nulls_last=True), 'id'))
+        ids = []
+        for ci in qs:
+            if exclude_id is not None and ci.id == exclude_id:
+                continue
+            order, _coi = self._resolve_order_context(ci)
+            if not order or order.status in ('delivered', 'cancelled'):
+                continue
+            ids.append(ci.id)
+        return ids
+
+    def _renumber(self, ordered_ids):
+        """Set queue_position = index for the given id list, in one transaction."""
+        from django.db import transaction
+        items = {ci.id: ci for ci in ManufacturingCostItem.objects.filter(id__in=ordered_ids)}
+        with transaction.atomic():
+            for idx, cid in enumerate(ordered_ids):
+                ci = items.get(int(cid))
+                if not ci:
+                    continue
+                if ci.queue_position != idx:
+                    ci.queue_position = idx
+                    ci.save(update_fields=['queue_position'])
+
     @action(detail=True, methods=['post'], url_path='sos')
     def sos(self, request, pk=None):
+        """Move this cost-item to the very top of the queue (position 0)
+        and renumber the rest. Always safe (never produces negative
+        queue_position values)."""
         ci = self.get_object()
-        cur_min = ManufacturingCostItem.objects.exclude(queue_position__isnull=True).aggregate(
-            m=models.Min('queue_position'))['m']
-        new_pos = (cur_min - 1) if cur_min is not None else 0
-        ci.queue_position = new_pos
+        rest = self._full_queue_ids(exclude_id=ci.id)
+        new_order = [ci.id] + rest
         ci.is_paused = False
-        ci.save(update_fields=['queue_position', 'is_paused'])
+        ci.save(update_fields=['is_paused'])
+        self._renumber(new_order)
+        ci.refresh_from_db(fields=['queue_position'])
         return Response({'queue_position': ci.queue_position, 'is_paused': ci.is_paused})
 
     @action(detail=True, methods=['post'], url_path='pause')
     def pause(self, request, pk=None):
+        """Move this cost-item to the very end of the queue and mark
+        is_paused=True. Renumbers the queue compactly."""
         ci = self.get_object()
-        cur_max = ManufacturingCostItem.objects.exclude(queue_position__isnull=True).aggregate(
-            m=models.Max('queue_position'))['m']
-        new_pos = (cur_max + 1) if cur_max is not None else 0
-        ci.queue_position = new_pos
+        rest = self._full_queue_ids(exclude_id=ci.id)
+        new_order = rest + [ci.id]
         ci.is_paused = True
-        ci.save(update_fields=['queue_position', 'is_paused'])
+        ci.save(update_fields=['is_paused'])
+        self._renumber(new_order)
+        ci.refresh_from_db(fields=['queue_position'])
         return Response({'queue_position': ci.queue_position, 'is_paused': ci.is_paused})
 
     @action(detail=True, methods=['post'], url_path='resume')
@@ -640,14 +676,7 @@ class ManufacturingCostItemViewSet(
         ids = request.data.get('ids') or []
         if not isinstance(ids, list):
             return Response({'error': 'ids must be a list'}, status=400)
-        # Renumber starting from 0 to keep positions compact
-        items = {ci.id: ci for ci in ManufacturingCostItem.objects.filter(id__in=ids)}
-        for idx, cid in enumerate(ids):
-            ci = items.get(int(cid))
-            if not ci:
-                continue
-            ci.queue_position = idx
-            ci.save(update_fields=['queue_position'])
+        self._renumber([int(x) for x in ids])
         return Response({'updated': len(ids)})
 
 

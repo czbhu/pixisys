@@ -13,6 +13,15 @@ interface RowContextProps {
 }
 export const CostRowContext = createContext<RowContextProps>({});
 
+/**
+ * Module-level marker that records WHICH activator started the most
+ * recent drag — set during the pointerdown capture phase before the
+ * @dnd-kit pointer-sensor activation timer fires. Consumers can read
+ * this in their `onReorder` handler to switch between single-row and
+ * group (e.g. whole-order) reorder semantics.
+ */
+export const dragModeRef: { current: 'single' | 'group' } = { current: 'single' };
+
 export const CostDragHandle: React.FC = () => {
   const { setActivatorNodeRef, listeners } = useContext(CostRowContext);
   return (
@@ -117,7 +126,21 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
 
   return (
     <CostRowContext.Provider value={{ setActivatorNodeRef, listeners }}>
-      <tr {...props} ref={setNodeRef} style={style} {...attributes}>
+      <tr
+        {...props}
+        ref={setNodeRef}
+        style={style}
+        {...attributes}
+        {...(listeners || {})}
+        onPointerDownCapture={(e) => {
+          // Default to single-row drag. A more specific activator deeper in
+          // the row (e.g. the order-number cell) can overwrite this in its
+          // own capture-phase handler, which fires AFTER this one because
+          // capture phase runs outermost → innermost.
+          dragModeRef.current = 'single';
+          (props.onPointerDownCapture as any)?.(e);
+        }}
+      >
         {children}
       </tr>
     </CostRowContext.Provider>

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
@@ -20,10 +20,12 @@ import {
     PauseCircleOutlined,
     PlayCircleOutlined,
     AlertOutlined,
+    UndoOutlined,
+    RedoOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
-import { CostDraggableRow, CostRowContext } from '../../components/Manufacturing/CostDnd';
+import { CostDraggableRow, CostRowContext, dragModeRef } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 
@@ -72,13 +74,15 @@ interface QueueRow {
     unit: string;
 }
 
-/** Drag-handle cell: long-press the order number to start a row drag. */
+/** Drag-handle cell: long-press the order number to start a GROUP drag
+ *  (moves the entire order). Long-press anywhere else on the row starts a
+ *  single-row drag. */
 const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
-    const { setActivatorNodeRef, listeners } = React.useContext(CostRowContext);
+    const { listeners } = React.useContext(CostRowContext);
     return (
         <span
-            ref={setActivatorNodeRef as any}
             {...(listeners || {})}
+            onPointerDownCapture={() => { dragModeRef.current = 'group'; }}
             style={{
                 cursor: 'grab',
                 userSelect: 'none',
@@ -87,7 +91,7 @@ const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
                 width: '100%',
                 fontWeight: 500,
             }}
-            title="Tartsa nyomva 0,4 mp-ig a sor mozgatásához"
+            title="Tartsa nyomva 0,4 mp-ig: az egész megrendelést mozgatja"
         >
             {value}
         </span>
@@ -208,13 +212,13 @@ const ProductionQueue: React.FC = () => {
     };
 
     const handlePrintWorksheet = async (r: QueueRow) => {
-        if (!r.customer_order_item_id) {
-            message.warning('Nincs hozzárendelt megrendelés-tétel');
-            return;
-        }
         try {
+            // Same endpoint as on the /sales/customer-orders page – a full
+            // order-level worksheet. The internal (lower) half now also
+            // lists every item with a checkbox so the operator can tick
+            // off completed lines.
             const response = await api.get(
-                `/sales/customer-orders/${r.order_id}/item_work_sheet/?item_id=${r.customer_order_item_id}`,
+                `/sales/customer-orders/${r.order_id}/work_sheet/`,
                 { responseType: 'blob' }
             );
             const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -260,43 +264,139 @@ const ProductionQueue: React.FC = () => {
                 await api.post(`/manufacturing/cost-items/${r.id}/resume/`);
                 message.success('Folytatva');
             } else {
+                pushUndo();
                 await api.post(`/manufacturing/cost-items/${r.id}/pause/`);
                 message.success('Szüneteltetve, sor végére helyezve');
             }
             await load();
         } catch (e) {
             console.error(e);
-            message.error('M\u0171velet sikertelen');
+            message.error('Művelet sikertelen');
         }
     };
 
     const handleSos = async (r: QueueRow) => {
         try {
+            pushUndo();
             await api.post(`/manufacturing/cost-items/${r.id}/sos/`);
             message.success('Sor elejére helyezve');
             await load();
         } catch (e) {
             console.error(e);
-            message.error('M\u0171velet sikertelen');
+            message.error('Művelet sikertelen');
         }
     };
 
-    // ── Drag & drop reorder ──────────────────────────────────────────────
-    const onRowReorder = async (activeId: string | number, overId: string | number) => {
-        const oldIdx = filtered.findIndex(r => r.id === Number(activeId));
-        const newIdx = filtered.findIndex(r => r.id === Number(overId));
-        if (oldIdx < 0 || newIdx < 0) return;
+    // ── Undo/Redo ───────────────────────────────────────────────────────
+    // History stacks store full row-id orderings (not just filtered) so
+    // undo/redo correctly round-trips even when filters are active.
+    const [undoStack, setUndoStack] = useState<number[][]>([]);
+    const [redoStack, setRedoStack] = useState<number[][]>([]);
+    const rowsRef = useRef<QueueRow[]>([]);
+    rowsRef.current = rows;
 
-        const reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
-        const filteredIds = new Set(filtered.map(r => r.id));
-        const others = rows.filter(r => !filteredIds.has(r.id));
-        setRows([...reorderedFiltered, ...others]);
+    const pushUndo = useCallback(() => {
+        setUndoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
+        setRedoStack([]);
+    }, []);
 
+    const applyOrder = useCallback(async (ids: number[]) => {
+        const map = new Map(rowsRef.current.map(r => [r.id, r]));
+        const ordered = ids.map(i => map.get(i)).filter(Boolean) as QueueRow[];
+        rowsRef.current.forEach(r => { if (!ids.includes(r.id)) ordered.push(r); });
+        setRows(ordered);
         try {
-            await api.post('/manufacturing/cost-items/reorder/', { ids: reorderedFiltered.map(r => r.id) });
+            await api.post('/manufacturing/cost-items/reorder/', { ids: ordered.map(r => r.id) });
         } catch (e) {
             console.error(e);
-            message.error('Sorrend ment\u00e9se sikertelen');
+            message.error('Sorrend mentése sikertelen');
+            await load();
+        }
+    }, []);
+
+    const handleUndo = useCallback(async () => {
+        if (undoStack.length === 0) return;
+        const prev = undoStack[undoStack.length - 1];
+        setUndoStack(s => s.slice(0, -1));
+        setRedoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
+        await applyOrder(prev);
+        message.success('Visszavonva');
+    }, [undoStack, applyOrder]);
+
+    const handleRedo = useCallback(async () => {
+        if (redoStack.length === 0) return;
+        const next = redoStack[redoStack.length - 1];
+        setRedoStack(s => s.slice(0, -1));
+        setUndoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
+        await applyOrder(next);
+        message.success('Mégis');
+    }, [redoStack, applyOrder]);
+
+    // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl+Shift+Z = redo
+    useEffect(() => {
+        const onKey = (e: KeyboardEvent) => {
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
+            const mod = e.ctrlKey || e.metaKey;
+            if (!mod) return;
+            const key = e.key.toLowerCase();
+            if (key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); }
+            else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); handleRedo(); }
+        };
+        window.addEventListener('keydown', onKey);
+        return () => window.removeEventListener('keydown', onKey);
+    }, [handleUndo, handleRedo]);
+
+    // ── Drag & drop reorder ──────────────────────────────────────────────
+    /**
+     * Two activation modes (chosen by which DOM element the user grabbed):
+     *  - 'single' (default): only this one cost-item moves.
+     *  - 'group':            all cost-items belonging to the same order_id
+     *                        move together (used when the user long-presses
+     *                        the order-number cell).
+     */
+    const onRowReorder = async (activeId: string | number, overId: string | number) => {
+        const activeRow = filtered.find(r => r.id === Number(activeId));
+        const overRow = filtered.find(r => r.id === Number(overId));
+        if (!activeRow || !overRow) return;
+        if (activeRow.id === overRow.id) return;
+
+        const mode: 'single' | 'group' = dragModeRef.current;
+        let reorderedFiltered: QueueRow[];
+
+        if (mode === 'group' && activeRow.order_id !== overRow.order_id) {
+            const groupKeys: number[] = [];
+            const groupMap = new Map<number, QueueRow[]>();
+            filtered.forEach(r => {
+                if (!groupMap.has(r.order_id)) {
+                    groupMap.set(r.order_id, []);
+                    groupKeys.push(r.order_id);
+                }
+                groupMap.get(r.order_id)!.push(r);
+            });
+            const fromIdx = groupKeys.indexOf(activeRow.order_id);
+            const toIdx = groupKeys.indexOf(overRow.order_id);
+            if (fromIdx < 0 || toIdx < 0) return;
+            const movedKeys = arrayMove(groupKeys, fromIdx, toIdx);
+            reorderedFiltered = movedKeys.flatMap(k => groupMap.get(k)!);
+        } else {
+            const oldIdx = filtered.findIndex(r => r.id === activeRow.id);
+            const newIdx = filtered.findIndex(r => r.id === overRow.id);
+            if (oldIdx < 0 || newIdx < 0) return;
+            reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
+        }
+
+        pushUndo();
+        const filteredIds = new Set(filtered.map(r => r.id));
+        const others = rows.filter(r => !filteredIds.has(r.id));
+        const newRows = [...reorderedFiltered, ...others];
+        setRows(newRows);
+
+        try {
+            await api.post('/manufacturing/cost-items/reorder/', { ids: newRows.map(r => r.id) });
+        } catch (e) {
+            console.error(e);
+            message.error('Sorrend mentése sikertelen');
             await load();
         }
     };
@@ -417,6 +517,12 @@ const ProductionQueue: React.FC = () => {
                             showSearch optionFilterProp="label"
                         />
                         <Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>
+                        <Tooltip title="Visszavonás (Ctrl+Z)">
+                            <Button icon={<UndoOutlined />} disabled={undoStack.length === 0} onClick={handleUndo} />
+                        </Tooltip>
+                        <Tooltip title="Mégis (Ctrl+Y)">
+                            <Button icon={<RedoOutlined />} disabled={redoStack.length === 0} onClick={handleRedo} />
+                        </Tooltip>
                     </Space>
                 }
             >

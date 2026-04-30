@@ -3359,7 +3359,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         project_name = rfq.project_name if rfq and hasattr(rfq, 'project_name') and rfq.project_name else '-'
         
         def draw_section(start_y, include_internal_desc=False):
-            """Draw one section of the worksheet"""
+            """Draw one section of the worksheet.
+
+            When `include_internal_desc=True` (the internal/factory half of
+            the page) we also draw a checkbox next to every item so the
+            operator can tick off completed lines."""
+            with_checkboxes = include_internal_desc
             y = start_y
             
             # Draw QR Code (Top Right)
@@ -3455,15 +3460,27 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 # Prefer OrderItem description, then QuoteItem description, then Entity description
                 item_description = item.description or quote_item.description or entity_desc
                 
+                # Checkbox (internal half only): empty square left of the
+                # first item line, with the rest of the item indented.
+                if with_checkboxes:
+                    box_size = 0.4*cm
+                    box_y = y - box_size + 0.05*cm
+                    p.setLineWidth(0.8)
+                    p.rect(2*cm, box_y, box_size, box_size, stroke=1, fill=0)
+                    p.setLineWidth(1)
+                    text_x = 2.6*cm
+                else:
+                    text_x = 2*cm
+
                 # Draw item info
-                p.drawString(2*cm, y, f"Cikkszám: {item_code}")
+                p.drawString(text_x, y, f"Cikkszám: {item_code}")
                 y -= 0.5*cm
-                p.drawString(2*cm, y, f"Név: {item_name[:50]}")
+                p.drawString(text_x, y, f"Név: {item_name[:50]}")
                 y -= 0.5*cm
                 if item_description:
-                    p.drawString(2*cm, y, f"Leírás: {item_description[:120]}")
+                    p.drawString(text_x, y, f"Leírás: {item_description[:120]}")
                     y -= 0.5*cm
-                p.drawString(2*cm, y, f"Mennyiség: {float(item.quantity)} {quote_item.unit}")
+                p.drawString(text_x, y, f"Mennyiség: {float(item.quantity)} {quote_item.unit}")
                 y -= 0.7*cm
             
             return y
