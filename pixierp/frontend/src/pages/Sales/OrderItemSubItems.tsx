@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert, Select } from 'antd';
+import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert, Popover } from 'antd';
 import {
   ShoppingCartOutlined,
   ToolOutlined,
@@ -264,21 +264,34 @@ const OrderItemSubItems: React.FC = () => {
         : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>),
     },
     {
-      title: 'Státusz', key: 'status', width: 160,
-      render: (_: any, r: SubItem) => (
-        <Select
-          size="small"
-          value={r.status || 'new'}
-          style={{ width: 150 }}
-          onChange={(val) => handleStatusChange(r.id, val)}
-        >
-          {STATUS_OPTIONS.map(o => (
-            <Select.Option key={o.value} value={o.value}>
-              <Tag color={o.color} style={{ marginRight: 0 }}>{o.label}</Tag>
-            </Select.Option>
-          ))}
-        </Select>
-      ),
+      title: 'Státusz', key: 'status', width: 140,
+      render: (_: any, r: SubItem) => {
+        const cur = r.status || 'new';
+        const opt = STATUS_OPTIONS.find(o => o.value === cur) || STATUS_OPTIONS[0];
+        const content = (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {STATUS_OPTIONS.map(o => (
+              <Button
+                key={o.value}
+                size="small"
+                type={o.value === cur ? 'primary' : 'text'}
+                disabled={o.value === cur}
+                style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+                onClick={(e) => { e.stopPropagation(); handleStatusChange(r.id, o.value); }}
+              >
+                {o.label}
+              </Button>
+            ))}
+          </div>
+        );
+        return (
+          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }}>
+            <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>
+              {opt.label}
+            </Tag>
+          </Popover>
+        );
+      },
     },
     {
       title: 'Hierarchia', key: 'hier', width: 80,
