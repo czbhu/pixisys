@@ -9,6 +9,8 @@ import {
     Tag,
     Tooltip,
     Popover,
+    Table,
+    Spin,
 } from 'antd';
 import {
     EyeOutlined,
@@ -17,6 +19,7 @@ import {
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
+import { manufacturingService } from '../../services/manufacturingService';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -67,6 +70,8 @@ const OrderedProducts: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<string[]>([
         'new', 'confirmed', 'in_production', 'ready', 'in_delivery',
     ]);
+    const [subItemsByRow, setSubItemsByRow] = useState<Record<number, any[]>>({});
+    const [subLoading, setSubLoading] = useState<Record<number, boolean>>({});
 
     useEffect(() => {
         loadItems();
@@ -96,6 +101,122 @@ const OrderedProducts: React.FC = () => {
             message.error('Státusz frissítése sikertelen');
             setItems(prev);
         }
+    };
+
+    const loadSubItems = async (record: OrderedManufacturingItem) => {
+        if (subItemsByRow[record.id]) return;
+        setSubLoading(prev => ({ ...prev, [record.id]: true }));
+        try {
+            const product: any = await manufacturingService.getProduct(record.manufacturing_product_id);
+            const raw: any[] = product.cost_items || [];
+            const mapped = raw.map((c: any, idx: number) => ({
+                id: c.id ?? Date.now() + idx,
+                type: c.type || 'other',
+                code: c.code || '',
+                name: c.name || '',
+                quantity: Number(c.quantity) || 0,
+                unit: c.unit || 'db',
+                cost_price: Number(c.cost_price) || 0,
+                supplier_name: c.supplier_name || c.supplier_info?.name || '',
+                department_name: c.department_name || c.department_info?.name || '',
+                is_internal: !!c.is_internal,
+                currency_code: (c.currency_info?.code || c.currency || 'HUF').toString().toUpperCase(),
+                sort_order: typeof c.sort_order === 'number' ? c.sort_order : idx,
+                status: c.status || 'new',
+            }));
+            mapped.sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0));
+            setSubItemsByRow(prev => ({ ...prev, [record.id]: mapped }));
+        } catch (e) {
+            console.error(e);
+            message.error('Altételek betöltése sikertelen');
+        } finally {
+            setSubLoading(prev => ({ ...prev, [record.id]: false }));
+        }
+    };
+
+    const handleSubStatusChange = async (rowId: number, subId: number, newStatus: string) => {
+        const prev = subItemsByRow[rowId] || [];
+        setSubItemsByRow(s => ({
+            ...s,
+            [rowId]: prev.map(it => it.id === subId ? { ...it, status: newStatus } : it),
+        }));
+        try {
+            await api.patch(`/manufacturing/cost-items/${subId}/`, { status: newStatus });
+            message.success('Státusz frissítve');
+        } catch (e) {
+            console.error(e);
+            message.error('Státusz frissítése sikertelen');
+            setSubItemsByRow(s => ({ ...s, [rowId]: prev }));
+        }
+    };
+
+    const renderStatusPopover = (currentStatus: string, onChange: (s: string) => void) => {
+        const color = ORDER_ITEM_STATUS_COLORS[currentStatus] || 'default';
+        const text = ORDER_ITEM_STATUS_LABELS[currentStatus] || currentStatus;
+        const content = (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {Object.keys(ORDER_ITEM_STATUS_LABELS).map(opt => (
+                    <Button
+                        key={opt}
+                        size="small"
+                        type={opt === currentStatus ? 'primary' : 'text'}
+                        disabled={opt === currentStatus}
+                        style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+                        onClick={(e) => { e.stopPropagation(); onChange(opt); }}
+                    >
+                        {ORDER_ITEM_STATUS_LABELS[opt]}
+                    </Button>
+                ))}
+            </div>
+        );
+        return (
+            <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }}>
+                <Tag color={color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>{text}</Tag>
+            </Popover>
+        );
+    };
+
+    const expandedRowRender = (record: OrderedManufacturingItem) => {
+        const data = subItemsByRow[record.id];
+        const isLoading = !!subLoading[record.id];
+        if (isLoading || !data) {
+            return <div style={{ padding: 16, textAlign: 'center' }}><Spin size="small" /> Altételek betöltése...</div>;
+        }
+        if (data.length === 0) {
+            return <div style={{ padding: 16, color: '#999' }}>Nincsenek altételek.</div>;
+        }
+        const subColumns = [
+            { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 110 },
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+            { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity', width: 100,
+                render: (v: number, r: any) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.unit || ''}` },
+            { title: 'Egységár', dataIndex: 'cost_price', key: 'cost_price', width: 130,
+                render: (v: number, r: any) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_code || 'HUF'}` },
+            { title: 'Beszállító', key: 'supplier', width: 180,
+                render: (_: any, r: any) => r.is_internal
+                    ? <Tag color="blue">{r.department_name || 'Belső'}</Tag>
+                    : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>),
+            },
+            { title: 'Státusz', key: 'status', width: 140,
+                render: (_: any, r: any) => renderStatusPopover(r.status || 'new', (s) => handleSubStatusChange(record.id, r.id, s)),
+            },
+        ];
+        return (
+            <div style={{ padding: '8px 0 8px 32px' }}>
+                <Table
+                    size="small"
+                    rowKey="id"
+                    columns={subColumns}
+                    dataSource={data}
+                    pagination={false}
+                />
+                <div style={{ marginTop: 8 }}>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/sales/customer-orders/${record.order_id}/items/${record.id}/subitems`)}>
+                        Altételek szerkesztése
+                    </Button>
+                </div>
+            </div>
+        );
     };
 
     const normalize = (s: any) =>
@@ -289,6 +410,10 @@ const OrderedProducts: React.FC = () => {
                     cardBreakpoint={950}
                     size="small"
                     loading={loading}
+                    expandable={{
+                        expandedRowRender,
+                        onExpand: (expanded, record) => { if (expanded) loadSubItems(record); },
+                    }}
                     onRow={(record: OrderedManufacturingItem) => ({
                         onDoubleClick: () => navigate(`/manufacturing/products/${record.manufacturing_product_id}`),
                         style: { cursor: 'pointer' },
