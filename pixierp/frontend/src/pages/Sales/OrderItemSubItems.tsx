@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert } from 'antd';
+import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert, Select } from 'antd';
 import {
   ShoppingCartOutlined,
   ToolOutlined,
@@ -32,6 +32,17 @@ import {
 } from '../../components/Manufacturing/CostDnd';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
+import api from '../../services/api';
+
+const STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
+  { value: 'new', label: 'Új', color: 'blue' },
+  { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
+  { value: 'in_production', label: 'Gyártásban', color: 'orange' },
+  { value: 'ready', label: 'Kész', color: 'green' },
+  { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
+  { value: 'delivered', label: 'Leszállítva', color: 'success' },
+  { value: 'cancelled', label: 'Törölve', color: 'red' },
+];
 
 interface SubItem extends CostDndItem {
   id: number;
@@ -46,6 +57,7 @@ interface SubItem extends CostDndItem {
   department?: number | null;
   department_name?: string;
   is_internal?: boolean;
+  status?: string;
   // Pass-through fields for save round-tripping
   ref_id?: number | null;
   unit_price?: number;
@@ -132,6 +144,7 @@ const OrderItemSubItems: React.FC = () => {
           currency_code: (c.currency_info?.code || c.currency || 'HUF').toString().toUpperCase(),
           sort_order: typeof c.sort_order === 'number' ? c.sort_order : idx,
           parent_local_id: typeof c.parent === 'number' ? c.parent : null,
+          status: c.status || 'new',
         }));
         mapped.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setItems(mapped);
@@ -214,6 +227,18 @@ const OrderItemSubItems: React.FC = () => {
 
   const stub = (label: string) => () => message.info(`${label}: hamarosan`);
 
+  const handleStatusChange = async (id: number, newStatus: string) => {
+    const prev = items;
+    setItems(items.map(it => it.id === id ? { ...it, status: newStatus } : it));
+    try {
+      await api.patch(`/manufacturing/cost-items/${id}/`, { status: newStatus });
+    } catch (e) {
+      console.error(e);
+      message.error('Státusz frissítése sikertelen');
+      setItems(prev);
+    }
+  };
+
   const columns: any[] = [
     { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
     {
@@ -237,6 +262,23 @@ const OrderItemSubItems: React.FC = () => {
       render: (_: any, r: SubItem) => r.is_internal
         ? <Tag color="blue">{r.department_name || 'Belső'}</Tag>
         : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>),
+    },
+    {
+      title: 'Státusz', key: 'status', width: 160,
+      render: (_: any, r: SubItem) => (
+        <Select
+          size="small"
+          value={r.status || 'new'}
+          style={{ width: 150 }}
+          onChange={(val) => handleStatusChange(r.id, val)}
+        >
+          {STATUS_OPTIONS.map(o => (
+            <Select.Option key={o.value} value={o.value}>
+              <Tag color={o.color} style={{ marginRight: 0 }}>{o.label}</Tag>
+            </Select.Option>
+          ))}
+        </Select>
+      ),
     },
     {
       title: 'Hierarchia', key: 'hier', width: 80,

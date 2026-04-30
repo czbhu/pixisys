@@ -1,4 +1,4 @@
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
@@ -10,13 +10,15 @@ from apps.core.permissions import OwnDataFilterMixin
 from .models import (
     ProductClass, Project, ManufacturingProduct, Service, ServiceGroup,
     CalculatorTemplate, Calculation, ServiceSupplierPrice, ServiceCostItem,
-    ProductTemplate, ProductTemplateSize, ManufacturingProductAttachment
+    ProductTemplate, ProductTemplateSize, ManufacturingProductAttachment,
+    ManufacturingCostItem,
 )
 from .serializers import (
     ProductClassSerializer, ProjectSerializer, ManufacturingProductSerializer,
     CurrencySerializer, ServiceSerializer, ServiceGroupSerializer, CalculatorTemplateSerializer,
     CalculationSerializer, ServiceSupplierPriceSerializer, ServiceCostItemSerializer,
-    ProductTemplateSerializer, ManufacturingProductAttachmentSerializer
+    ProductTemplateSerializer, ManufacturingProductAttachmentSerializer,
+    ManufacturingCostItemSerializer,
 )
 from apps.crm.models import Contact
 from apps.hr.models import Employee
@@ -219,6 +221,7 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 department=ci.department,
                 currency=ci.currency,
                 is_per_unit=ci.is_per_unit,
+                status=ci.status,
             )
 
         serializer = self.get_serializer(new_product)
@@ -482,6 +485,18 @@ class ServiceCostItemViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(supplier__isnull=True, is_internal=False)
 
         return queryset
+
+
+class ManufacturingCostItemViewSet(
+    mixins.RetrieveModelMixin,
+    mixins.UpdateModelMixin,
+    viewsets.GenericViewSet,
+):
+    """Single-cost-item endpoint, primarily for status updates from the
+    customer-order subitems page. Full CRUD on the embedded list still
+    happens via PATCH /manufacturing/products/{id}/."""
+    queryset = ManufacturingCostItem.objects.all()
+    serializer_class = ManufacturingCostItemSerializer
 
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):

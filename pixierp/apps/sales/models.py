@@ -231,8 +231,37 @@ class CustomerOrderItem(models.Model):
         return f"{self.customer_order.order_number} - {self.description[:50]}"
 
     def save(self, *args, **kwargs):
+        old_status = None
+        if self.pk:
+            try:
+                old_status = type(self).objects.only('status').get(pk=self.pk).status
+            except type(self).DoesNotExist:
+                pass
         super().save(*args, **kwargs)
         self.check_parent_status()
+        if old_status != self.status:
+            self._propagate_status_to_cost_items()
+
+    def _propagate_status_to_cost_items(self):
+        """Push this item's status down to the cost_items of the underlying
+        manufacturing product. Only upgrades — never downgrades. Cancelled
+        cost items are left alone."""
+        STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        if self.status not in STATUS_ORDER:
+            return
+        qi = self.quote_item
+        mp = getattr(qi, 'manufacturing_product', None) if qi else None
+        if not mp:
+            return
+        target_rank = STATUS_ORDER.index(self.status)
+        from apps.manufacturing.models import ManufacturingCostItem
+        items = ManufacturingCostItem.objects.filter(product=mp).exclude(status='cancelled')
+        for ci in items:
+            if ci.status not in STATUS_ORDER:
+                continue
+            if STATUS_ORDER.index(ci.status) < target_rank:
+                ci.status = self.status
+                ci.save(update_fields=['status'])
 
     def check_parent_status(self):
         STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']

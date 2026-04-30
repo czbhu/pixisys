@@ -340,11 +340,21 @@ class ManufacturingProductSerializer(serializers.ModelSerializer):
              instance.allowed_contacts.set(contacts)
 
         if cost_items_data is not None:
+             # Snapshot existing statuses by sort_order so a full PATCH from the
+             # inline editor (which doesn't expose status) doesn't reset progress
+             # already made on the customer-order subitems page.
+             old_status_by_so = {
+                 ci.sort_order: ci.status for ci in instance.cost_items.all()
+             }
              # Full replacement strategy
              instance.cost_items.all().delete()
              parent_indexes = [item.pop('parent_index', None) for item in cost_items_data]
              created = []
-             for item_data in cost_items_data:
+             for idx, item_data in enumerate(cost_items_data):
+                 if 'status' not in item_data:
+                     so = item_data.get('sort_order', idx)
+                     if so in old_status_by_so:
+                         item_data['status'] = old_status_by_so[so]
                  created.append(ManufacturingCostItem.objects.create(product=instance, **item_data))
              self._link_cost_parents(created, parent_indexes)
 

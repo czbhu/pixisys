@@ -343,6 +343,16 @@ class ManufacturingProduct(models.Model):
 
 class ManufacturingCostItem(models.Model):
     """Gyártási termék költség elem"""
+    STATUS_CHOICES = [
+        ('new', 'Új'),
+        ('confirmed', 'Megerősítve'),
+        ('in_production', 'Gyártásban'),
+        ('ready', 'Kész'),
+        ('in_delivery', 'Szállítás alatt'),
+        ('delivered', 'Kiszállítva'),
+        ('cancelled', 'Törölve'),
+    ]
+
     product = models.ForeignKey(ManufacturingProduct, on_delete=models.CASCADE, related_name='cost_items', verbose_name="Termék")
     type = models.CharField(max_length=20, default='other', verbose_name="Típus") # material, service, other
     ref_id = models.IntegerField(null=True, blank=True, verbose_name="Referencia ID") # material_id or service_id
@@ -359,6 +369,7 @@ class ManufacturingCostItem(models.Model):
     department = models.ForeignKey(Department, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Belső részleg")
     currency = models.CharField(max_length=3, default='HUF', verbose_name="Pénznem")
     is_per_unit = models.BooleanField(default=False, verbose_name="Egységre vetített")
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='new', verbose_name="Státusz")
 
     # Sorrend & alá-felérendelés
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")

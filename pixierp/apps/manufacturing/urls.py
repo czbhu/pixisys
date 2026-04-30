@@ -4,7 +4,7 @@ from .views import (
     ProductClassViewSet, ProjectViewSet, ManufacturingProductViewSet, 
     CurrencyViewSet, ServiceViewSet, ServiceGroupViewSet, CalculatorTemplateViewSet, 
     CalculationViewSet, ServiceSupplierPriceViewSet, ServiceCostItemViewSet,
-    ProductTemplateViewSet
+    ProductTemplateViewSet, ManufacturingCostItemViewSet,
 )
 
 router = DefaultRouter()
@@ -19,6 +19,7 @@ router.register(r'calculations', CalculationViewSet)
 router.register(r'service-supplier-prices', ServiceSupplierPriceViewSet)
 router.register(r'service-cost-items', ServiceCostItemViewSet)
 router.register(r'product-templates', ProductTemplateViewSet, basename='product-template')
+router.register(r'cost-items', ManufacturingCostItemViewSet, basename='manufacturing-cost-item')
 
 urlpatterns = [
     path('', include(router.urls)),
