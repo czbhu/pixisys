@@ -11,15 +11,21 @@ import {
     Popover,
     Table,
     Spin,
+    Modal,
+    Input,
 } from 'antd';
 import {
     EyeOutlined,
-    ReloadOutlined
+    ReloadOutlined,
+    PrinterOutlined,
+    FieldTimeOutlined,
+    MessageOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
+import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 
 const { Option } = Select;
@@ -64,6 +70,7 @@ interface OrderedManufacturingItem {
 
 const OrderedProducts: React.FC = () => {
     const navigate = useNavigate();
+    const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
     const [items, setItems] = useState<OrderedManufacturingItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [query, setQuery] = useState('');
@@ -100,6 +107,61 @@ const OrderedProducts: React.FC = () => {
             console.error(e);
             message.error('Státusz frissítése sikertelen');
             setItems(prev);
+        }
+    };
+
+    const handleStartTimer = (record: OrderedManufacturingItem) => {
+        setPreselectedOrderId(record.order_id);
+        setPreselectedItemId(record.id);
+        setTimerModalOpen(true);
+    };
+
+    const handlePrintWorksheet = async (record: OrderedManufacturingItem) => {
+        try {
+            const response = await api.get(
+                `/sales/customer-orders/${record.order_id}/item_work_sheet/?item_id=${record.id}`,
+                { responseType: 'blob' }
+            );
+            const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+            window.open(url, '_blank');
+        } catch (e) {
+            console.error(e);
+            message.error('Hiba a munkalap letöltése során');
+        }
+    };
+
+    const handleAddNote = async (record: OrderedManufacturingItem) => {
+        try {
+            const { data } = await api.get(`/sales/customer-order-items/${record.id}/`);
+            const existing: string = data.notes || '';
+            let value = existing;
+            Modal.confirm({
+                title: `Megjegyzés — ${record.name}`,
+                width: 600,
+                icon: <MessageOutlined />,
+                content: (
+                    <Input.TextArea
+                        defaultValue={existing}
+                        rows={6}
+                        onChange={(e) => { value = e.target.value; }}
+                        placeholder="Írja be a megjegyzést..."
+                    />
+                ),
+                okText: 'Mentés',
+                cancelText: 'Mégse',
+                onOk: async () => {
+                    try {
+                        await api.patch(`/sales/customer-order-items/${record.id}/`, { notes: value });
+                        message.success('Megjegyzés mentve');
+                    } catch (e) {
+                        console.error(e);
+                        message.error('Megjegyzés mentése sikertelen');
+                    }
+                },
+            });
+        } catch (e) {
+            console.error(e);
+            message.error('Tétel betöltése sikertelen');
         }
     };
 
@@ -350,10 +412,31 @@ const OrderedProducts: React.FC = () => {
         {
             title: 'Műveletek',
             key: 'actions',
-            width: 80,
+            width: 200,
             fixed: 'right' as const,
             render: (_: any, record: OrderedManufacturingItem) => (
-                <Space size="small">
+                <Space size="small" onClick={(e) => e.stopPropagation()}>
+                    <Tooltip title="Munkaóra indítása">
+                        <Button
+                            icon={<FieldTimeOutlined />}
+                            size="small"
+                            onClick={() => handleStartTimer(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Megjegyzés hozzáadása">
+                        <Button
+                            icon={<MessageOutlined />}
+                            size="small"
+                            onClick={() => handleAddNote(record)}
+                        />
+                    </Tooltip>
+                    <Tooltip title="Munkalap nyomtatása">
+                        <Button
+                            icon={<PrinterOutlined />}
+                            size="small"
+                            onClick={() => handlePrintWorksheet(record)}
+                        />
+                    </Tooltip>
                     <Tooltip title="Gyártás megnyitása">
                         <Button
                             icon={<EyeOutlined />}
