@@ -963,6 +963,327 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
+    @action(detail=True, methods=['get'], url_path='work_sheet')
+    def work_sheet(self, request, pk=None):
+        """Per-item worksheet PDF.
+
+        Renders ONE A4 page with:
+          • Customer-order header (order number, customer, deadline, project)
+          • The parent ManufacturingProduct (the queue row's `product`) as
+            the main item — name, code, quantity (taken from the related
+            CustomerOrderItem when available)
+          • The full breakdown of altételek (sibling cost items belonging
+            to the same product), each with a checkbox so the operator can
+            tick off completed lines. Sorted as in the queue table:
+            (sort_order, id) — i.e. the model's default ordering.
+          • Notes: the parent CustomerOrderItem.description (if any) PLUS
+            each cost item's `notes` field (if any).
+        """
+        from django.http import HttpResponse
+        from io import BytesIO
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+            from reportlab.lib.units import cm
+            from reportlab.lib.utils import ImageReader
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+            import qrcode
+        except ImportError:
+            return Response({'error': 'ReportLab not installed'}, status=500)
+        from django.conf import settings as dj_settings
+
+        ci = self.get_object()
+        product = ci.product
+        order, coi = self._resolve_order_context(ci)
+
+        # Font setup
+        try:
+            pdfmetrics.registerFont(TTFont('DejaVu', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'))
+            pdfmetrics.registerFont(TTFont('DejaVu-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'))
+            font_normal = 'DejaVu'
+            font_bold = 'DejaVu-Bold'
+        except Exception:
+            font_normal = 'Helvetica'
+            font_bold = 'Helvetica-Bold'
+
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+
+        # Header info
+        order_number = order.order_number if order else '-'
+        customer_name = '-'
+        contact_name = ''
+        project_name = ''
+        deadline = ''
+        item_note = ''
+        item_qty_str = ''
+        if order and order.quote_request:
+            rfq = order.quote_request
+            if rfq.company:
+                customer_name = rfq.company.name
+            elif rfq.customer:
+                customer_name = rfq.customer.name
+            try:
+                c = rfq.contacts.first()
+                if c:
+                    contact_name = c.name
+            except Exception:
+                pass
+            if rfq.project:
+                project_name = rfq.project.name
+            if rfq.deadline:
+                deadline = rfq.deadline.strftime('%Y.%m.%d')
+        if coi:
+            try:
+                item_qty_str = f"{float(coi.quantity):g}"
+                qi = coi.quote_item
+                if qi and qi.unit:
+                    item_qty_str += f" {qi.unit}"
+            except Exception:
+                pass
+            item_note = coi.description or (coi.quote_item.description if coi.quote_item else '') or ''
+
+        product_code = getattr(product, 'code', '') or ''
+        product_name = product.name or ''
+        product_internal_desc = getattr(product, 'internal_description', '') or ''
+        product_desc = getattr(product, 'description', '') or ''
+
+        # QR (link back to the order page)
+        base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
+        if order:
+            target_url = f"{base_url}/sales/customer-orders/{order.id}"
+        else:
+            target_url = f"{base_url}/manufacturing/queue"
+        try:
+            qr = qrcode.QRCode(version=1, box_size=10, border=2)
+            qr.add_data(target_url)
+            qr.make(fit=True)
+            qr_pil = qr.make_image(fill_color='black', back_color='white')
+            qr_buf = BytesIO()
+            qr_pil.save(qr_buf, format='PNG')
+            qr_buf.seek(0)
+            qr_image = ImageReader(qr_buf)
+        except Exception:
+            qr_image = None
+
+        # Sub-items (altételek) — siblings of `ci` belonging to the same
+        # ManufacturingProduct, in the table order (model default).
+        sub_items = list(
+            ManufacturingCostItem.objects
+            .select_related('supplier', 'department')
+            .filter(product=product)
+            .order_by('sort_order', 'id')
+        )
+
+        # ── Drawing ─────────────────────────────────────────────────────
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        def wrap_to_width(text, fname, fsize, max_w):
+            words = (text or '').split()
+            lines = []
+            cur = ''
+            for w in words:
+                cand = (cur + ' ' + w).strip()
+                if stringWidth(cand, fname, fsize) <= max_w:
+                    cur = cand
+                else:
+                    if cur:
+                        lines.append(cur)
+                    cur = w
+            if cur:
+                lines.append(cur)
+            return lines or ['']
+
+        y = height - 2 * cm
+        left = 2 * cm
+        right_margin = 2 * cm
+        qr_size = 3 * cm
+
+        # Title + QR top right
+        p.setFont(font_bold, 12)
+        p.drawString(left, y, f"MUNKALAP - {order_number}")
+        if qr_image:
+            p.drawImage(qr_image, width - right_margin - qr_size, y - qr_size + 0.4 * cm,
+                        width=qr_size, height=qr_size)
+        text_right_limit = width - right_margin - qr_size - 0.5 * cm
+        max_text_w = text_right_limit - left
+
+        y -= 0.9 * cm
+
+        def header_row(label, value, bold_label=True):
+            nonlocal y
+            if not value:
+                return
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, f"{label}:")
+            p.setFont(font_normal, 10)
+            label_offset = 3.2 * cm
+            value_max = max_text_w - label_offset
+            lines = wrap_to_width(str(value), font_normal, 10, value_max)
+            for i, line in enumerate(lines[:2]):
+                p.drawString(left + label_offset, y - i * 0.45 * cm, line)
+            y -= max(0.55 * cm, len(lines[:2]) * 0.45 * cm)
+
+        header_row('Megrendelő', f"{customer_name}{(' - ' + contact_name) if contact_name else ''}")
+        header_row('Projekt', project_name)
+        header_row('Határidő', deadline)
+        # Reset y past QR area before drawing the wide product block
+        y = min(y, height - 2 * cm - qr_size - 0.4 * cm)
+
+        # Product block
+        p.setStrokeColorRGB(0.6, 0.6, 0.6)
+        p.setLineWidth(0.5)
+        p.line(left, y, width - right_margin, y)
+        y -= 0.6 * cm
+
+        p.setFont(font_bold, 12)
+        p.drawString(left, y, "TÉTEL")
+        y -= 0.6 * cm
+
+        p.setFont(font_bold, 10)
+        p.drawString(left, y, "Cikkszám:")
+        p.setFont(font_normal, 10)
+        p.drawString(left + 3.2 * cm, y, product_code or '-')
+        y -= 0.55 * cm
+
+        p.setFont(font_bold, 10)
+        p.drawString(left, y, "Megnevezés:")
+        p.setFont(font_normal, 10)
+        name_lines = wrap_to_width(product_name, font_normal, 10, width - left - right_margin - 3.2 * cm)
+        for i, line in enumerate(name_lines[:2]):
+            p.drawString(left + 3.2 * cm, y - i * 0.45 * cm, line)
+        y -= max(0.55 * cm, len(name_lines[:2]) * 0.45 * cm)
+
+        if item_qty_str:
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, "Mennyiség:")
+            p.setFont(font_normal, 10)
+            p.drawString(left + 3.2 * cm, y, item_qty_str)
+            y -= 0.55 * cm
+
+        if product_desc:
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, "Leírás:")
+            y -= 0.4 * cm
+            p.setFont(font_normal, 9)
+            for line in wrap_to_width(product_desc, font_normal, 9, width - left - right_margin)[:4]:
+                p.drawString(left, y, line)
+                y -= 0.4 * cm
+            y -= 0.1 * cm
+
+        if product_internal_desc:
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, "Belső leírás:")
+            y -= 0.4 * cm
+            p.setFont(font_normal, 9)
+            for line in wrap_to_width(product_internal_desc, font_normal, 9, width - left - right_margin)[:4]:
+                p.drawString(left, y, line)
+                y -= 0.4 * cm
+            y -= 0.1 * cm
+
+        if item_note:
+            p.setFont(font_bold, 10)
+            p.drawString(left, y, "Megjegyzés:")
+            y -= 0.4 * cm
+            p.setFont(font_normal, 9)
+            for line in wrap_to_width(item_note, font_normal, 9, width - left - right_margin)[:6]:
+                p.drawString(left, y, line)
+                y -= 0.4 * cm
+            y -= 0.1 * cm
+
+        # Sub-items (altételek) section
+        y -= 0.3 * cm
+        p.setStrokeColorRGB(0.6, 0.6, 0.6)
+        p.line(left, y, width - right_margin, y)
+        y -= 0.6 * cm
+
+        p.setFont(font_bold, 12)
+        p.drawString(left, y, f"ALTÉTELEK ({len(sub_items)})")
+        y -= 0.6 * cm
+
+        # Column headers
+        col_x_box = left
+        col_x_name = left + 0.7 * cm
+        col_x_qty = width - right_margin - 5.5 * cm
+        col_x_supp = width - right_margin - 3.5 * cm
+
+        p.setFont(font_bold, 9)
+        p.drawString(col_x_name, y, "Tétel")
+        p.drawString(col_x_qty, y, "Mennyiség")
+        p.drawString(col_x_supp, y, "Beszállító / Részleg")
+        y -= 0.15 * cm
+        p.setLineWidth(0.3)
+        p.line(left, y, width - right_margin, y)
+        y -= 0.4 * cm
+
+        p.setFont(font_normal, 9)
+        for sub in sub_items:
+            # Page break if we run out of space
+            if y < 2.5 * cm:
+                p.showPage()
+                y = height - 2 * cm
+                p.setFont(font_normal, 9)
+
+            # Checkbox
+            box = 0.35 * cm
+            p.setLineWidth(0.7)
+            p.rect(col_x_box, y - box + 0.05 * cm, box, box, stroke=1, fill=0)
+
+            # Highlight the row this worksheet was triggered from
+            is_self = sub.id == ci.id
+            if is_self:
+                p.setFont(font_bold, 9)
+
+            name_max_w = col_x_qty - col_x_name - 0.2 * cm
+            name_lines = wrap_to_width(sub.name or '', font_normal, 9, name_max_w)
+            p.drawString(col_x_name, y, name_lines[0])
+
+            try:
+                qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
+            except Exception:
+                qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
+            p.drawString(col_x_qty, y, qty_txt)
+
+            if sub.is_internal:
+                supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
+            elif sub.supplier:
+                supp_txt = sub.supplier.name
+            else:
+                supp_txt = '-'
+            supp_lines = wrap_to_width(supp_txt, font_normal, 9, width - right_margin - col_x_supp)
+            p.drawString(col_x_supp, y, supp_lines[0])
+
+            y -= 0.45 * cm
+
+            # Continuation lines for the name (rare)
+            for extra in name_lines[1:2]:
+                p.drawString(col_x_name, y, extra)
+                y -= 0.4 * cm
+
+            # Sub-item note (if any)
+            if sub.notes:
+                p.setFont(font_normal, 8)
+                p.setFillGray(0.35)
+                for line in wrap_to_width(f"↳ {sub.notes}", font_normal, 8, width - col_x_name - right_margin)[:3]:
+                    p.drawString(col_x_name, y, line)
+                    y -= 0.35 * cm
+                p.setFillGray(0)
+                p.setFont(font_normal, 9)
+
+            if is_self:
+                p.setFont(font_normal, 9)
+
+            y -= 0.1 * cm
+
+        p.showPage()
+        p.save()
+        buffer.seek(0)
+        response = HttpResponse(buffer, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
+        return response
+
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):
     """Termék sablonok CRUD"""

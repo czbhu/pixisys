@@ -225,12 +225,10 @@ const ProductionQueue: React.FC = () => {
 
     const handlePrintWorksheet = async (r: QueueRow) => {
         try {
-            // Same endpoint as on the /sales/customer-orders page – a full
-            // order-level worksheet. The internal (lower) half now also
-            // lists every item with a checkbox so the operator can tick
-            // off completed lines.
+            // Per-cost-item worksheet: only the parent item's parameters
+            // and its altételek (sibling cost items) with checkboxes.
             const response = await api.get(
-                `/sales/customer-orders/${r.order_id}/work_sheet/`,
+                `/manufacturing/cost-items/${r.id}/work_sheet/`,
                 { responseType: 'blob' }
             );
             const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
