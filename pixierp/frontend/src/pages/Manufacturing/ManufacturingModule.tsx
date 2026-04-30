@@ -13,11 +13,13 @@ import {
     GroupOutlined,
     AppstoreOutlined,
     FileOutlined,
+    OrderedListOutlined,
 } from '@ant-design/icons';
 import Products from './Products';
 import ProductDetail from './ProductDetail';
 import ProductEditor from './ProductEditor';
 import OrderedProducts from './OrderedProducts';
+import ProductionQueue from './ProductionQueue';
 import ProductClasses from './ProductClasses';
 import Projects from './Projects';
 import Services from './Services';
@@ -31,6 +33,7 @@ const ManufacturingModule: React.FC = () => {
         { key: '/manufacturing/products', label: 'Egyedi gyártás', icon: <SkinOutlined /> },
         { key: '/manufacturing/product-editor', label: 'Termék szerkesztő', icon: <AppstoreOutlined /> },
         { key: '/manufacturing/ordered-products', label: 'Megrendelt Gyártások', icon: <ShoppingOutlined /> },
+        { key: '/manufacturing/queue', label: 'Gyártási Sor', icon: <OrderedListOutlined /> },
         { key: '/manufacturing/product-classes', label: 'Termékkategóriák', icon: <TagsOutlined /> },
         { key: '/manufacturing/services', label: 'Szolgáltatások', icon: <ScissorOutlined /> },
         { key: '/manufacturing/service-groups', label: 'Szolgáltatás csoportok', icon: <GroupOutlined /> },
@@ -45,6 +48,7 @@ const ManufacturingModule: React.FC = () => {
             <Route path="/products/:id" element={<ProductDetail />} />
             <Route path="/product-editor" element={<ProductEditor />} />
             <Route path="/ordered-products" element={<OrderedProducts />} />
+            <Route path="/queue" element={<ProductionQueue />} />
             <Route path="/product-classes" element={<ProductClasses />} />
             <Route path="/projects" element={<Projects />} />
             <Route path="/services" element={<Services />} />

@@ -2,6 +2,7 @@ from rest_framework import viewsets, status, mixins
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
+from django.db import models
 from rest_framework.permissions import AllowAny
 from rest_framework.pagination import PageNumberPagination
 from django_filters.rest_framework import DjangoFilterBackend
@@ -497,6 +498,148 @@ class ManufacturingCostItemViewSet(
     happens via PATCH /manufacturing/products/{id}/."""
     queryset = ManufacturingCostItem.objects.all()
     serializer_class = ManufacturingCostItemSerializer
+
+    def _resolve_order_context(self, ci):
+        """Return (customer_order, customer_order_item) for a cost_item, or (None, None)."""
+        from apps.sales.models import QuoteRequestItem, CustomerOrderItem
+        try:
+            mp = ci.product
+            qris = QuoteRequestItem.objects.filter(manufacturing_product=mp).only('id')
+            if not qris.exists():
+                return None, None
+            coi = (CustomerOrderItem.objects
+                   .select_related('customer_order',
+                                   'customer_order__quote_request',
+                                   'customer_order__quote_request__company',
+                                   'customer_order__quote_request__customer')
+                   .filter(quote_item__in=qris)
+                   .exclude(status='cancelled')
+                   .order_by('-customer_order__order_date')
+                   .first())
+            if not coi:
+                return None, None
+            return coi.customer_order, coi
+        except Exception:
+            return None, None
+
+    @action(detail=False, methods=['get'], url_path='queue')
+    def queue(self, request):
+        """List all cost_items belonging to non-cancelled/non-delivered customer orders.
+        Sorted by queue_position (nulls last by id)."""
+        from django.db.models import F
+        qs = (ManufacturingCostItem.objects
+              .select_related('product', 'supplier', 'department')
+              .order_by(F('queue_position').asc(nulls_last=True), 'id'))
+
+        # Optional filters
+        customer_id = request.query_params.get('customer')
+        order_id = request.query_params.get('order')
+        supplier_id = request.query_params.get('supplier')
+
+        data = []
+        for ci in qs:
+            order, coi = self._resolve_order_context(ci)
+            if not order:
+                continue
+            if order.status in ('delivered', 'cancelled'):
+                continue
+            qr = order.quote_request
+            company = (qr.company if qr else None) or (qr.customer if qr else None)
+            cust_name = company.name if company else ''
+            cust_id = company.id if company else None
+            if customer_id and str(cust_id) != str(customer_id):
+                continue
+            if order_id and str(order.id) != str(order_id):
+                continue
+            if supplier_id and str(ci.supplier_id or '') != str(supplier_id):
+                continue
+
+            # Resolve code via serializer logic
+            code = ''
+            try:
+                if ci.type == 'material' and ci.ref_id:
+                    from apps.warehouse.models import Material
+                    m = Material.objects.filter(id=ci.ref_id).only('code').first()
+                    if m:
+                        code = m.code
+                elif ci.type == 'service' and ci.ref_id:
+                    s = Service.objects.filter(id=ci.ref_id).only('code').first()
+                    if s:
+                        code = s.code
+            except Exception:
+                pass
+
+            data.append({
+                'id': ci.id,
+                'queue_position': ci.queue_position,
+                'is_paused': ci.is_paused,
+                'order_id': order.id,
+                'order_number': order.order_number,
+                'order_date': order.order_date.isoformat() if order.order_date else None,
+                'deadline': qr.deadline.isoformat() if qr and qr.deadline else None,
+                'customer_id': cust_id,
+                'customer_name': cust_name,
+                'customer_order_item_id': coi.id if coi else None,
+                'manufacturing_product_id': ci.product_id,
+                'product_name': ci.product.name if ci.product else '',
+                'item_name': ci.name,
+                'code': code,
+                'status': ci.status,
+                'notes': ci.notes or '',
+                'supplier_id': ci.supplier_id,
+                'supplier_name': ci.supplier.name if ci.supplier else '',
+                'is_internal': ci.is_internal,
+                'department_id': ci.department_id,
+                'department_name': ci.department.name if ci.department else '',
+                'quantity': float(ci.quantity),
+                'unit': ci.unit,
+            })
+        return Response(data)
+
+    @action(detail=True, methods=['post'], url_path='sos')
+    def sos(self, request, pk=None):
+        ci = self.get_object()
+        cur_min = ManufacturingCostItem.objects.exclude(queue_position__isnull=True).aggregate(
+            m=models.Min('queue_position'))['m']
+        new_pos = (cur_min - 1) if cur_min is not None else 0
+        ci.queue_position = new_pos
+        ci.is_paused = False
+        ci.save(update_fields=['queue_position', 'is_paused'])
+        return Response({'queue_position': ci.queue_position, 'is_paused': ci.is_paused})
+
+    @action(detail=True, methods=['post'], url_path='pause')
+    def pause(self, request, pk=None):
+        ci = self.get_object()
+        cur_max = ManufacturingCostItem.objects.exclude(queue_position__isnull=True).aggregate(
+            m=models.Max('queue_position'))['m']
+        new_pos = (cur_max + 1) if cur_max is not None else 0
+        ci.queue_position = new_pos
+        ci.is_paused = True
+        ci.save(update_fields=['queue_position', 'is_paused'])
+        return Response({'queue_position': ci.queue_position, 'is_paused': ci.is_paused})
+
+    @action(detail=True, methods=['post'], url_path='resume')
+    def resume(self, request, pk=None):
+        ci = self.get_object()
+        ci.is_paused = False
+        ci.save(update_fields=['is_paused'])
+        return Response({'is_paused': ci.is_paused})
+
+    @action(detail=False, methods=['post'], url_path='reorder')
+    def reorder(self, request):
+        """Body: { ids: [id1, id2, ...] } – sets queue_position by index."""
+        ids = request.data.get('ids') or []
+        if not isinstance(ids, list):
+            return Response({'error': 'ids must be a list'}, status=400)
+        # Renumber starting from 0 to keep positions compact
+        items = {ci.id: ci for ci in ManufacturingCostItem.objects.filter(id__in=ids)}
+        for idx, cid in enumerate(ids):
+            ci = items.get(int(cid))
+            if not ci:
+                continue
+            ci.queue_position = idx
+            ci.save(update_fields=['queue_position'])
+        return Response({'updated': len(ids)})
 
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):
