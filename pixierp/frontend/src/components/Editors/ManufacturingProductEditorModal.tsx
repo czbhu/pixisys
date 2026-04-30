@@ -1289,12 +1289,12 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                        <Row gutter={[8, 4]}>
                          <Col span={12}>
                            <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
-                             <Input.TextArea autoSize={{ minRows: 3 }} style={{ resize: 'vertical' }} />
+                             <Input.TextArea rows={4} style={{ resize: 'vertical' }} />
                            </Form.Item>
                          </Col>
                          <Col span={12}>
                            <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
-                             <Input.TextArea autoSize={{ minRows: 3 }} style={{ resize: 'vertical' }} />
+                             <Input.TextArea rows={4} style={{ resize: 'vertical' }} />
                            </Form.Item>
                          </Col>
                        </Row>
