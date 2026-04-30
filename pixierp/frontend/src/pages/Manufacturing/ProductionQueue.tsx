@@ -115,7 +115,7 @@ const ProductionQueue: React.FC = () => {
     const [filterCustomer, setFilterCustomer] = useState<number | null>(null);
     const [filterOrder, setFilterOrder] = useState<number | null>(null);
     const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
-    const [filterStatus, setFilterStatus] = useState<string[]>([]);
+    const [filterStatus, setFilterStatus] = useState<string[]>(['in_production']);
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
