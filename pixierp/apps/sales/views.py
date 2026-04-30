@@ -3,7 +3,7 @@ from django.db import models
 from django.db.models import Q, Prefetch
 from django.template import Template, Context
 import datetime
-from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from django.shortcuts import get_object_or_404
@@ -1790,6 +1790,7 @@ def public_order_view(request, token: str):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@authentication_classes([])
 def public_submit_order(request, token: str):
     """Publikus megrendelés beküldése"""
     qr = get_object_or_404(QuoteRequest, public_token=token)
@@ -4189,6 +4190,7 @@ def public_delivery_pdf(request, token: str):
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
+@authentication_classes([])
 def confirm_delivery(request, token: str):
     """
     Szállítólevél visszaigazolása publikus token alapján
