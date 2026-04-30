@@ -258,7 +258,12 @@ const PublicQuoteOrder: React.FC = () => {
       key: 'description',
       width: 300,
       render: (_: string, record: QuoteItem) => {
-        const txt = record.description || record.product_description || '';
+        const txt = record.description
+          || record.product_description
+          || (record as any).manufacturing_product_description
+          || (record as any).material_description
+          || (record as any).service_description
+          || '';
         const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(txt);
         if (looksLikeHtml) {
           return (
@@ -417,7 +422,15 @@ const PublicQuoteOrder: React.FC = () => {
           <Descriptions.Item label="Cím" span={2}>{data.title}</Descriptions.Item>
           {data.description && (
             <Descriptions.Item label="Leírás" span={2}>
-              <div style={{ whiteSpace: 'pre-wrap' }}>{data.description}</div>
+              {/<\/?[a-z][\s\S]*>/i.test(data.description) ? (
+                <div
+                  className="pixi-rich-cell"
+                  style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                  dangerouslySetInnerHTML={{ __html: data.description }}
+                />
+              ) : (
+                <div style={{ whiteSpace: 'pre-wrap' }}>{data.description}</div>
+              )}
             </Descriptions.Item>
           )}
         </Descriptions>
