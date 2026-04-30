@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { Card, Tag, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
 // @ts-ignore
@@ -66,6 +66,9 @@ const RFQDetail: React.FC = () => {
   const [navPreviewData, setNavPreviewData] = useState<any>(null);
   const [navPreviewSel, setNavPreviewSel] = useState<Record<string, boolean>>({});
   const [navDebug, setNavDebug] = useState<boolean>(false);
+  const [lastSavedAt, setLastSavedAt] = useState<dayjs.Dayjs | null>(null);
+  const [saving, setSaving] = useState(false);
+  const closeAfterSaveRef = useRef(false);
   const selectedCompanyId = Form.useWatch('company_id', formBasic);
   const watchedCurrency = Form.useWatch('currency_code', formBasic);
   const activeCurrency = watchedCurrency || rfq?.currency_code || 'HUF';
@@ -475,7 +478,10 @@ const RFQDetail: React.FC = () => {
           </Space>
         </div>
         <Form layout="vertical" form={formBasic} size="small" onFinish={async (v) => {
+          const closeAfter = closeAfterSaveRef.current;
+          closeAfterSaveRef.current = false;
           console.log('[RFQDetail] Form submitted with values:', v);
+          setSaving(true);
           try {
             // Company or 'private' required for new quote and demand on save
             const companyId = v.company_id ?? rfq.company?.id;
@@ -532,17 +538,49 @@ const RFQDetail: React.FC = () => {
             
             await salesService.updateQuoteRequestBasic(Number(id), updateData);
             message.success('Mentve');
+            setLastSavedAt(dayjs());
+            if (closeAfter) {
+              navigate('/sales/rfqs');
+              return;
+            }
             load();
           } catch (err) {
             console.error('[RFQDetail] Save failed:', err);
             message.error('Mentés sikertelen');
+          } finally {
+            setSaving(false);
           }
         }}>
           <Row gutter={12}>
             <Col span={24} style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 12 }}>
-               <Space>
-                 <div style={{ marginRight: 16 }}>{statusTag(rfq.status)}</div>
-                 <Button type="primary" htmlType="submit">Mentés</Button>
+               <Space direction="vertical" align="end" size={2}>
+                 <Space>
+                   <div style={{ marginRight: 16 }}>{statusTag(rfq.status)}</div>
+                   <Button
+                     loading={saving && !closeAfterSaveRef.current}
+                     onClick={() => {
+                       closeAfterSaveRef.current = false;
+                       formBasic.submit();
+                     }}
+                   >
+                     Mentés
+                   </Button>
+                   <Button
+                     type="primary"
+                     loading={saving && closeAfterSaveRef.current}
+                     onClick={() => {
+                       closeAfterSaveRef.current = true;
+                       formBasic.submit();
+                     }}
+                   >
+                     Mentés &amp; bezárás
+                   </Button>
+                 </Space>
+                 {lastSavedAt && (
+                   <span style={{ fontSize: 11, color: '#888' }}>
+                     Utoljára mentve: {lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}
+                   </span>
+                 )}
                </Space>
             </Col>
           </Row>
