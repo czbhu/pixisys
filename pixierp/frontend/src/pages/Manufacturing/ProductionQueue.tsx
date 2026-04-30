@@ -473,6 +473,45 @@ const ProductionQueue: React.FC = () => {
         },
     ];
 
+    // ── CSV export of selected (or all visible) rows ──────────────────────
+    const exportCsv = () => {
+        const source = selectedRowKeys.length > 0
+            ? filtered.filter(r => selectedRowKeys.includes(r.id))
+            : filtered;
+        if (!source.length) { message.warning('Nincs exportálható sor.'); return; }
+        const rows = source.map(r => ({
+            'Sorhely': r.queue_position ?? '',
+            'Megrendelés szám': r.order_number,
+            'Megrendelés dátum': r.order_date ? dayjs(r.order_date).format('YYYY-MM-DD') : '',
+            'Határidő': r.deadline ? dayjs(r.deadline).format('YYYY-MM-DD') : '',
+            'Ügyfél': r.customer_name ?? '',
+            'Termék': r.product_name ?? '',
+            'Cikkszám': r.code ?? '',
+            'Tétel': r.item_name ?? '',
+            'Mennyiség': r.quantity,
+            'ME': r.unit ?? '',
+            'Beszállító / Részleg': r.is_internal
+                ? `Belső: ${r.department_name || ''}`.trim()
+                : (r.supplier_name || ''),
+            'Státusz': STATUS_LABELS[r.status] || r.status,
+            'Szünetel': r.is_paused ? 'Igen' : 'Nem',
+            'Megjegyzés': (r.notes || '').replace(/\r?\n/g, ' '),
+        }));
+        const headers = Object.keys(rows[0]);
+        const escape = (v: any) => {
+            const s = String(v ?? '');
+            return /[,";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+        };
+        const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
+        const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `gyartasi_sor_${dayjs().format('YYYY-MM-DD_HHmm')}.csv`;
+        a.click();
+        URL.revokeObjectURL(url);
+    };
+
     // ── Send order to supplier ────────────────────────────────────────────
     const openSendModal = () => {
         // Group selected rows by supplier (or department if internal).
