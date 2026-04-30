@@ -1081,6 +1081,10 @@ class ManufacturingCostItemViewSet(
                 c = rfq.contacts.first()
                 if c:
                     contact_name = c.name
+                    # Fallback: derive customer from the first contact's
+                    # company when the RFQ has no company / customer FK.
+                    if customer_name == '-' and getattr(c, 'company', None):
+                        customer_name = c.company.name or '-'
             except Exception:
                 pass
             if rfq.project:
