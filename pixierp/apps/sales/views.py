@@ -1806,6 +1806,15 @@ def public_submit_order(request, token: str):
     valid_items = qr.items.filter(id__in=item_ids)
     if valid_items.count() != len(item_ids):
         return Response({'error': 'Érvénytelen tétel azonosító'}, status=400)
+
+    # Már megrendelt tételek elutasítása
+    already_ordered_ids = list(
+        valid_items.filter(customerorderitem__isnull=False)
+        .exclude(customerorderitem__customer_order__status='cancelled')
+        .values_list('id', flat=True).distinct()
+    )
+    if already_ordered_ids:
+        return Response({'error': f'A következő tételek már meg vannak rendelve: {already_ordered_ids}'}, status=409)
     
     # Megrendelés létrehozása
     from django.db import transaction

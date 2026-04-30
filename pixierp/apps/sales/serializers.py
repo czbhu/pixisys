@@ -77,9 +77,16 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     discounted_gross_total = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
     attachments = QuoteRequestItemAttachmentSerializer(many=True, read_only=True)
     is_ordered = serializers.SerializerMethodField()
+    ordered_at = serializers.SerializerMethodField()
 
     def get_is_ordered(self, obj):
         return obj.customerorderitem_set.exclude(customer_order__status='cancelled').exists()
+
+    def get_ordered_at(self, obj):
+        coi = obj.customerorderitem_set.exclude(customer_order__status='cancelled').order_by('customer_order__created_at').first()
+        if not coi:
+            return None
+        return coi.customer_order.created_at
 
     class Meta:
         model = QuoteRequestItem

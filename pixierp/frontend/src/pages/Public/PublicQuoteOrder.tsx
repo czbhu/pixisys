@@ -29,6 +29,8 @@ interface QuoteItem {
   manufacturing_product_name?: string;
   manufacturing_product_code?: string;
   product_description?: string;
+  is_ordered?: boolean;
+  ordered_at?: string | null;
 }
 
 interface QuoteData {
@@ -77,8 +79,12 @@ const PublicQuoteOrder: React.FC = () => {
       const response = await axios.get(`${API_BASE_URL}/sales/quote-requests/public/${token}/order/`);
       setData(response.data);
       
-      // Select all items by default
-      const allItemIds = new Set<number>(response.data.items?.map((item: QuoteItem) => item.id) || []);
+      // Select all NOT-yet-ordered items by default
+      const allItemIds = new Set<number>(
+        (response.data.items || [])
+          .filter((item: QuoteItem) => !item.is_ordered)
+          .map((item: QuoteItem) => item.id)
+      );
       setSelectedItems(allItemIds);
     } catch (err: any) {
       setError(err.response?.data?.error || 'Hiba történt az adatok betöltésekor');
@@ -101,7 +107,7 @@ const PublicQuoteOrder: React.FC = () => {
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      const allItemIds = new Set(data?.items.map(item => item.id) || []);
+      const allItemIds = new Set((data?.items || []).filter(i => !i.is_ordered).map(item => item.id));
       setSelectedItems(allItemIds);
     } else {
       setSelectedItems(new Set());
@@ -150,7 +156,10 @@ const PublicQuoteOrder: React.FC = () => {
   };
 
   const getItemCode = (item: QuoteItem) => {
-    return item.product_code || item.material_code || item.manufacturing_product_code || item.item_type === 'manufacturing' ? 'EGYEDI' : '';
+    // Valódi cikkszám, bármilyen forrásból (precedence-fix: előbb összes kód, utána fallback EGYEDI)
+    const real = item.product_code || item.material_code || item.manufacturing_product_code;
+    if (real) return real;
+    return item.item_type === 'manufacturing' ? 'EGYEDI' : '';
   };
 
   if (loading) {
@@ -188,8 +197,9 @@ const PublicQuoteOrder: React.FC = () => {
   }, 0);
   const totalVat = totalGross - totalNet;
 
-  const allSelected = data.items.length > 0 && selectedItems.size === data.items.length;
-  const indeterminate = selectedItems.size > 0 && selectedItems.size < data.items.length;
+  const orderableItems = data.items.filter(it => !it.is_ordered);
+  const allSelected = orderableItems.length > 0 && selectedItems.size === orderableItems.length;
+  const indeterminate = selectedItems.size > 0 && selectedItems.size < orderableItems.length;
 
   const columns = [
     { 
@@ -207,12 +217,25 @@ const PublicQuoteOrder: React.FC = () => {
       key: 'selected',
       width: 100,
       className: 'no-print',
-      render: (_: any, record: QuoteItem) => (
-        <Checkbox
-          checked={selectedItems.has(record.id)}
-          onChange={(e) => handleItemToggle(record.id, e.target.checked)}
-        />
-      )
+      render: (_: any, record: QuoteItem) => {
+        if (record.is_ordered) {
+          const dt = record.ordered_at ? new Date(record.ordered_at).toLocaleDateString('hu-HU') : '';
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Checkbox checked disabled />
+              <Text type="success" style={{ fontSize: 11, lineHeight: 1.1 }}>
+                Megrendelve{dt ? ` ${dt}` : ''}
+              </Text>
+            </div>
+          );
+        }
+        return (
+          <Checkbox
+            checked={selectedItems.has(record.id)}
+            onChange={(e) => handleItemToggle(record.id, e.target.checked)}
+          />
+        );
+      }
     },
     { 
       title: 'Cikkszám', 
@@ -234,7 +257,20 @@ const PublicQuoteOrder: React.FC = () => {
       dataIndex: 'description',
       key: 'description',
       width: 300,
-      render: (_: string, record: QuoteItem) => <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{record.description || record.product_description}</Text>
+      render: (_: string, record: QuoteItem) => {
+        const txt = record.description || record.product_description || '';
+        const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(txt);
+        if (looksLikeHtml) {
+          return (
+            <div
+              className="pixi-rich-cell"
+              style={{ fontSize: 12, wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+              dangerouslySetInnerHTML={{ __html: txt }}
+            />
+          );
+        }
+        return <Text style={{ fontSize: 12, whiteSpace: 'pre-wrap' }}>{txt}</Text>;
+      }
     },
     { 
       title: 'Mennyiség', 
