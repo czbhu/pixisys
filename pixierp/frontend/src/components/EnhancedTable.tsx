@@ -27,7 +27,7 @@ import {
   useSensors,
   closestCenter,
 } from '@dnd-kit/core';
-import type { DragEndEvent } from '@dnd-kit/core';
+import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
 import {
   SortableContext,
   horizontalListSortingStrategy,
@@ -39,6 +39,19 @@ import { CSS } from '@dnd-kit/utilities';
 import useUserPreference from '../hooks/useUserPreference';
 import { useResponsiveTable } from '../hooks/useResponsiveTable';
 import ResponsiveCardList from './ResponsiveCardList';
+
+// ─── Sticky drop-indicator context for row drag ───────────────────────────
+// Carries the currently-dragged row id and the last-known "over" row id.
+// Row components (e.g. CostDraggableRow) read this so the blue line stays
+// visible even when the pointer briefly leaves all rows.
+interface RowDndIndicatorState {
+  activeId: string | number | null;
+  overId: string | number | null;
+}
+export const RowDndIndicatorContext = React.createContext<RowDndIndicatorState>({
+  activeId: null,
+  overId: null,
+});
 
 // ─── Drag-and-drop header cell ────────────────────────────────────────────────
 
@@ -340,6 +353,8 @@ function EnhancedTable<T extends object = any>({
   const sensors = useSensors(rowDnd ? rowSensor : colSensor);
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
+    setStickyOverId(null);
+    setActiveDragId(null);
     if (!over || active.id === over.id) return;
     // Row drag: id is in rowDnd.items – forward to caller
     if (rowDnd && rowDnd.items.some(i => String(i) === String(active.id))) {
@@ -353,6 +368,28 @@ function EnhancedTable<T extends object = any>({
       const newIdx = src.indexOf(over.id as string);
       return arrayMove(src, oldIdx, newIdx);
     });
+  };
+
+  // Sticky drop indicator state ──────────────────────────────────
+  // Keeps the kek line visible even when the pointer momentarily leaves
+  // every row (between rows, on table border etc). Updated only when a new
+  // row becomes 'over' and cleared on drag end / cancel.
+  const [activeDragId, setActiveDragId] = useState<string | number | null>(null);
+  const [stickyOverId, setStickyOverId] = useState<string | number | null>(null);
+
+  const handleDragStart = (e: DragStartEvent) => {
+    if (rowDnd && rowDnd.items.some(i => String(i) === String(e.active.id))) {
+      setActiveDragId(e.active.id as any);
+    }
+  };
+  const handleDragOver = (e: DragOverEvent) => {
+    if (e.over && rowDnd && rowDnd.items.some(i => String(i) === String(e.over!.id))) {
+      setStickyOverId(e.over.id as any);
+    }
+  };
+  const handleDragCancel = () => {
+    setStickyOverId(null);
+    setActiveDragId(null);
   };
 
   // Build the final column list ─────────────────────────────────────────────
@@ -616,7 +653,14 @@ function EnhancedTable<T extends object = any>({
           onPageSizeChange={handleSizeChange}
         />
       ) : (
-        <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDragEnd={handleDragEnd}
+          onDragCancel={handleDragCancel}
+        >
           <SortableContext items={colOrder} strategy={horizontalListSortingStrategy}>
             {pagRow}
             {(() => {
@@ -643,7 +687,9 @@ function EnhancedTable<T extends object = any>({
               return rowDnd
                 ? (
                   <SortableContext items={rowDnd.items.map(String)}>
-                    {tableEl}
+                    <RowDndIndicatorContext.Provider value={{ activeId: activeDragId, overId: stickyOverId }}>
+                      {tableEl}
+                    </RowDndIndicatorContext.Provider>
                   </SortableContext>
                 )
                 : tableEl;

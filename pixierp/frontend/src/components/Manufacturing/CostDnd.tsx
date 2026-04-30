@@ -3,6 +3,7 @@ import { Button } from 'antd';
 import { MenuOutlined } from '@ant-design/icons';
 import { useSortable, arrayMove } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { RowDndIndicatorContext } from '../EnhancedTable';
 
 // Shared row context so the DragHandle can pick up listeners from the
 // surrounding sortable row.
@@ -39,12 +40,36 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
     active,
   } = useSortable({ id: props['data-row-key'] });
 
-  // Determine drop indicator side: above or below the hovered row.
-  // Uses the live pointer/active rect vs the over row rect midpoint, which
-  // is stable because non-dragged rows do not move during drag (no
-  // sortable strategy is applied at the SortableContext level).
+  // Sticky indicator from EnhancedTable (rowDnd) – stays visible even when
+  // the pointer briefly leaves every row. Falls back to the local useSortable
+  // values for legacy callers (ProductSubItemsTable etc.) that don't use
+  // EnhancedTable's rowDnd.
+  const sticky = useContext(RowDndIndicatorContext);
+  const rowId = props['data-row-key'];
+  const stickyActive = sticky.activeId;
+  const stickyOver = sticky.overId;
+  const useSticky = stickyActive != null;
+
+  // Determine drop indicator side: above or below this row.
   let dropSide: 'top' | 'bottom' | null = null;
-  if (isOver && active && over && active.id !== over.id) {
+  if (useSticky) {
+    if (
+      stickyOver != null &&
+      String(stickyOver) === String(rowId) &&
+      String(stickyActive) !== String(rowId) &&
+      active && over
+    ) {
+      const activeRect = active.rect.current.translated;
+      const overRect = over.rect;
+      if (activeRect && overRect) {
+        const activeCenter = activeRect.top + activeRect.height / 2;
+        const overCenter = overRect.top + overRect.height / 2;
+        dropSide = activeCenter < overCenter ? 'top' : 'bottom';
+      } else {
+        dropSide = 'bottom';
+      }
+    }
+  } else if (isOver && active && over && active.id !== over.id) {
     const activeRect = active.rect.current.translated;
     const overRect = over.rect;
     if (activeRect && overRect) {
