@@ -1,6 +1,6 @@
-import React, { useMemo, useState } from 'react';
-import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip } from 'antd';
-import { PlusOutlined, DeleteOutlined, AppstoreOutlined } from '@ant-design/icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message } from 'antd';
+import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -71,6 +71,79 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const [sheets, setSheets] = useState<SheetRow[]>([
     { id: 1, name: 'B2', width: 500, height: 700, available: null, rotate: 'auto' },
   ]);
+
+  // ── Presetek (localStorage) ────────────────────────────────────────────
+  const STORAGE_KEY = 'pixisys_imposition_presets_v1';
+  type Preset = { id: string; name: string; bleed: number; products: ProductRow[]; sheets: SheetRow[]; updatedAt: string };
+  const [presets, setPresets] = useState<Preset[]>([]);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
+  const [presetNameInput, setPresetNameInput] = useState<string>('');
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) setPresets(JSON.parse(raw));
+    } catch {}
+  }, []);
+
+  const persist = (next: Preset[]) => {
+    setPresets(next);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch {}
+  };
+
+  const loadPreset = (id: string) => {
+    const p = presets.find(x => x.id === id);
+    if (!p) return;
+    setBleed(p.bleed);
+    setProducts(p.products);
+    setSheets(p.sheets);
+    setActivePresetId(p.id);
+    setPresetNameInput(p.name);
+  };
+
+  const newPreset = () => {
+    setActivePresetId(null);
+    setPresetNameInput('');
+    setBleed(3);
+    setProducts([{ id: Date.now(), name: 'Termék 1', width: initialProductWidth ?? 210, height: initialProductHeight ?? 297, quantity: initialProductQty ?? 100 }]);
+    setSheets([{ id: Date.now() + 1, name: 'B2', width: 500, height: 700, available: null, rotate: 'auto' }]);
+  };
+
+  const savePreset = () => {
+    const name = (presetNameInput || '').trim();
+    if (!name) { message.warning('Adj meg egy nevet a mentéshez'); return; }
+    const now = new Date().toISOString();
+    if (activePresetId && presets.some(p => p.id === activePresetId)) {
+      const next = presets.map(p => p.id === activePresetId ? { ...p, name, bleed, products, sheets, updatedAt: now } : p);
+      persist(next);
+      message.success('Mentve');
+    } else {
+      const id = `imp_${Date.now()}`;
+      const preset: Preset = { id, name, bleed, products, sheets, updatedAt: now };
+      persist([...presets, preset]);
+      setActivePresetId(id);
+      message.success('Mentve új presetként');
+    }
+  };
+
+  const duplicatePreset = () => {
+    const name = (presetNameInput || 'Impozíció').trim() + ' (másolat)';
+    const id = `imp_${Date.now()}`;
+    const now = new Date().toISOString();
+    const preset: Preset = { id, name, bleed, products, sheets, updatedAt: now };
+    persist([...presets, preset]);
+    setActivePresetId(id);
+    setPresetNameInput(name);
+    message.success('Lemásolva');
+  };
+
+  const deletePreset = () => {
+    if (!activePresetId) return;
+    const next = presets.filter(p => p.id !== activePresetId);
+    persist(next);
+    newPreset();
+    message.success('Törölve');
+  };
 
   const addProduct = () => setProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 210, height: 297, quantity: 100 }]);
   const removeProduct = (id: number) => setProducts(ps => ps.filter(p => p.id !== id));
@@ -162,6 +235,42 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       width={1100}
       styles={{ body: { padding: 16 } }}
     >
+      {/* ── Presetek ───────────────────────────────────────────────────── */}
+      <div style={{ marginBottom: 12, padding: 10, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+        <Space wrap style={{ width: '100%' }}>
+          <Text strong>Mentett impozíciók:</Text>
+          <Select
+            style={{ minWidth: 240 }}
+            placeholder="Válassz mentett impozíciót…"
+            value={activePresetId ?? undefined}
+            onChange={(v) => loadPreset(v)}
+            allowClear
+            onClear={newPreset}
+            options={presets.map(p => ({ label: p.name, value: p.id }))}
+          />
+          <Input
+            style={{ width: 220 }}
+            placeholder="Név"
+            value={presetNameInput}
+            onChange={(e) => setPresetNameInput(e.target.value)}
+          />
+          <Button icon={<SaveOutlined />} type="primary" onClick={savePreset}>
+            {activePresetId ? 'Mentés' : 'Mentés újként'}
+          </Button>
+          <Button icon={<CopyOutlined />} onClick={duplicatePreset} disabled={!presets.length && !activePresetId}>
+            Másolás
+          </Button>
+          <Button icon={<FileAddOutlined />} onClick={newPreset}>
+            Új
+          </Button>
+          {activePresetId && (
+            <Popconfirm title="Biztosan törlöd ezt az impozíciót?" okText="Törlés" cancelText="Mégse" onConfirm={deletePreset}>
+              <Button icon={<DeleteOutlined />} danger>Törlés</Button>
+            </Popconfirm>
+          )}
+        </Space>
+      </div>
+
       <Row gutter={16}>
         {/* ── Termékek ──────────────────────────────────────────── */}
         <Col span={12}>
