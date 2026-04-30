@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message } from 'antd';
+import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message, Segmented } from 'antd';
 import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
+
+type Mode = 'ives' | 'szalanyag' | 'tekerces';
 
 interface ProductRow {
   id: number;
@@ -19,6 +21,40 @@ interface SheetRow {
   height: number;
   available: number | null; // null = unlimited
   rotate: 'auto' | 'normal' | 'rotated';
+}
+
+// ── Szálanyag (1D) ──────────────────────────────────────
+interface BarProduct { id: number; name: string; length: number; quantity: number; }
+interface BarRow { id: number; name: string; length: number; available: number | null; }
+interface BarCut { productId: number; productName: string; length: number; }
+interface BarPlan { barTypeId: number; barTypeName: string; barLength: number; cuts: BarCut[]; usedLength: number; waste: number; }
+
+const pieceColors = ['#bae0ff', '#b7eb8f', '#ffd591', '#ffadd2', '#d3adf7', '#87e8de', '#ffe58f', '#ff9c6e'];
+const pieceStrokes = ['#1677ff', '#52c41a', '#fa8c16', '#eb2f96', '#722ed1', '#13c2c2', '#faad14', '#d4380d'];
+const colorForProduct = (productId: number) => {
+  const idx = Math.abs(productId) % pieceColors.length;
+  return { fill: pieceColors[idx], stroke: pieceStrokes[idx] };
+};
+
+// ── Tekercses ───────────────────────────────────────────
+interface RollProduct { id: number; name: string; width: number; length: number; quantity: number; }
+interface RollRow { id: number; name: string; width: number; availableLength: number | null; /* fm = m */ }
+interface RollAllocation {
+  productId: number;
+  productName: string;
+  rollId: number;
+  rollName: string;
+  rollWidth: number;
+  productWidth: number;
+  productLength: number;
+  rotated: boolean;
+  piecesAcross: number;
+  rowsNeeded: number;
+  rowLengthMm: number;
+  totalLengthMm: number;
+  qty: number;
+  shortage: number;
+  coverage: number; // 0..1
 }
 
 interface Allocation {
@@ -68,6 +104,7 @@ interface Props {
 }
 
 const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductWidth, initialProductHeight, initialProductQty, initialPresetId }) => {
+  const [mode, setMode] = useState<Mode>('ives');
   const [bleed, setBleed] = useState<number>(3);
   const [products, setProducts] = useState<ProductRow[]>([
     { id: 1, name: 'Termék 1', width: initialProductWidth ?? 210, height: initialProductHeight ?? 297, quantity: initialProductQty ?? 100 },
@@ -76,9 +113,34 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     { id: 1, name: 'B2', width: 500, height: 700, available: null, rotate: 'auto' },
   ]);
 
+  // ── Szálanyag (1D) ──────────────────────────────────────
+  const [kerf, setKerf] = useState<number>(3);
+  const [barProducts, setBarProducts] = useState<BarProduct[]>([
+    { id: 1, name: 'Darab 1', length: 1200, quantity: 20 },
+  ]);
+  const [bars, setBars] = useState<BarRow[]>([
+    { id: 1, name: '6 m szál', length: 6000, available: null },
+  ]);
+
+  // ── Tekercses ───────────────────────────────────────────
+  const [rollGap, setRollGap] = useState<number>(2);
+  const [rollProducts, setRollProducts] = useState<RollProduct[]>([
+    { id: 1, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100 },
+  ]);
+  const [rolls, setRolls] = useState<RollRow[]>([
+    { id: 1, name: 'Tekercs 1000mm', width: 1000, availableLength: null },
+  ]);
+
   // ── Presetek (localStorage) ────────────────────────────────────────────
   const STORAGE_KEY = 'pixisys_imposition_presets_v1';
-  type Preset = { id: string; name: string; bleed: number; products: ProductRow[]; sheets: SheetRow[]; updatedAt: string };
+  type Preset = {
+    id: string; name: string; bleed: number;
+    products: ProductRow[]; sheets: SheetRow[];
+    updatedAt: string;
+    mode?: Mode;
+    kerf?: number; barProducts?: BarProduct[]; bars?: BarRow[];
+    rollGap?: number; rollProducts?: RollProduct[]; rolls?: RollRow[];
+  };
   const [presets, setPresets] = useState<Preset[]>([]);
   const [activePresetId, setActivePresetId] = useState<string | null>(null);
   const [presetNameInput, setPresetNameInput] = useState<string>('');
@@ -95,9 +157,16 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     if (!open || !initialPresetId || !presets.length) return;
     const p = presets.find(x => x.id === initialPresetId);
     if (!p) return;
+    setMode(p.mode ?? 'ives');
     setBleed(p.bleed);
     setProducts(p.products);
     setSheets(p.sheets);
+    if (p.kerf !== undefined) setKerf(p.kerf);
+    if (p.barProducts) setBarProducts(p.barProducts);
+    if (p.bars) setBars(p.bars);
+    if (p.rollGap !== undefined) setRollGap(p.rollGap);
+    if (p.rollProducts) setRollProducts(p.rollProducts);
+    if (p.rolls) setRolls(p.rolls);
     setActivePresetId(p.id);
     setPresetNameInput(p.name);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -111,12 +180,25 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const loadPreset = (id: string) => {
     const p = presets.find(x => x.id === id);
     if (!p) return;
+    setMode(p.mode ?? 'ives');
     setBleed(p.bleed);
     setProducts(p.products);
     setSheets(p.sheets);
+    if (p.kerf !== undefined) setKerf(p.kerf);
+    if (p.barProducts) setBarProducts(p.barProducts);
+    if (p.bars) setBars(p.bars);
+    if (p.rollGap !== undefined) setRollGap(p.rollGap);
+    if (p.rollProducts) setRollProducts(p.rollProducts);
+    if (p.rolls) setRolls(p.rolls);
     setActivePresetId(p.id);
     setPresetNameInput(p.name);
   };
+
+  const presetSnapshot = (): Omit<Preset, 'id' | 'name' | 'updatedAt'> => ({
+    bleed, products, sheets, mode,
+    kerf, barProducts, bars,
+    rollGap, rollProducts, rolls,
+  });
 
   const newPreset = () => {
     setActivePresetId(null);
@@ -124,6 +206,12 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     setBleed(3);
     setProducts([{ id: Date.now(), name: 'Termék 1', width: initialProductWidth ?? 210, height: initialProductHeight ?? 297, quantity: initialProductQty ?? 100 }]);
     setSheets([{ id: Date.now() + 1, name: 'B2', width: 500, height: 700, available: null, rotate: 'auto' }]);
+    setKerf(3);
+    setBarProducts([{ id: Date.now() + 2, name: 'Darab 1', length: 1200, quantity: 20 }]);
+    setBars([{ id: Date.now() + 3, name: '6 m szál', length: 6000, available: null }]);
+    setRollGap(2);
+    setRollProducts([{ id: Date.now() + 4, name: 'Termék 1', width: initialProductWidth ?? 200, length: initialProductHeight ?? 300, quantity: initialProductQty ?? 100 }]);
+    setRolls([{ id: Date.now() + 5, name: 'Tekercs 1000mm', width: 1000, availableLength: null }]);
   };
 
   const savePreset = () => {
@@ -131,12 +219,12 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     if (!name) { message.warning('Adj meg egy nevet a mentéshez'); return; }
     const now = new Date().toISOString();
     if (activePresetId && presets.some(p => p.id === activePresetId)) {
-      const next = presets.map(p => p.id === activePresetId ? { ...p, name, bleed, products, sheets, updatedAt: now } : p);
+      const next = presets.map(p => p.id === activePresetId ? { ...p, name, ...presetSnapshot(), updatedAt: now } : p);
       persist(next);
       message.success('Mentve');
     } else {
       const id = `imp_${Date.now()}`;
-      const preset: Preset = { id, name, bleed, products, sheets, updatedAt: now };
+      const preset: Preset = { id, name, ...presetSnapshot(), updatedAt: now };
       persist([...presets, preset]);
       setActivePresetId(id);
       message.success('Mentve új presetként');
@@ -147,7 +235,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     const name = (presetNameInput || 'Impozíció').trim() + ' (másolat)';
     const id = `imp_${Date.now()}`;
     const now = new Date().toISOString();
-    const preset: Preset = { id, name, bleed, products, sheets, updatedAt: now };
+    const preset: Preset = { id, name, ...presetSnapshot(), updatedAt: now };
     persist([...presets, preset]);
     setActivePresetId(id);
     setPresetNameInput(name);
@@ -184,6 +272,22 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const addSheet = () => setSheets(ss => [...ss, { id: Date.now(), name: `Ív ${ss.length + 1}`, width: 330, height: 487, available: null, rotate: 'auto' }]);
   const removeSheet = (id: number) => setSheets(ss => ss.filter(s => s.id !== id));
   const updateSheet = (id: number, patch: Partial<SheetRow>) => setSheets(ss => ss.map(s => s.id === id ? { ...s, ...patch } : s));
+
+  // ── Szálanyag CRUD ──────────────────────────────────────
+  const addBarProduct = () => setBarProducts(ps => [...ps, { id: Date.now(), name: `Darab ${ps.length + 1}`, length: 1000, quantity: 10 }]);
+  const removeBarProduct = (id: number) => setBarProducts(ps => ps.filter(p => p.id !== id));
+  const updateBarProduct = (id: number, patch: Partial<BarProduct>) => setBarProducts(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
+  const addBar = () => setBars(bs => [...bs, { id: Date.now(), name: `Szál ${bs.length + 1}`, length: 6000, available: null }]);
+  const removeBar = (id: number) => setBars(bs => bs.filter(b => b.id !== id));
+  const updateBar = (id: number, patch: Partial<BarRow>) => setBars(bs => bs.map(b => b.id === id ? { ...b, ...patch } : b));
+
+  // ── Tekercses CRUD ───────────────────────────────────────
+  const addRollProduct = () => setRollProducts(ps => [...ps, { id: Date.now(), name: `Termék ${ps.length + 1}`, width: 200, length: 300, quantity: 50 }]);
+  const removeRollProduct = (id: number) => setRollProducts(ps => ps.filter(p => p.id !== id));
+  const updateRollProduct = (id: number, patch: Partial<RollProduct>) => setRollProducts(ps => ps.map(p => p.id === id ? { ...p, ...patch } : p));
+  const addRoll = () => setRolls(rs => [...rs, { id: Date.now(), name: `Tekercs ${rs.length + 1}`, width: 1000, availableLength: null }]);
+  const removeRoll = (id: number) => setRolls(rs => rs.filter(r => r.id !== id));
+  const updateRoll = (id: number, patch: Partial<RollRow>) => setRolls(rs => rs.map(r => r.id === id ? { ...r, ...patch } : r));
 
   // ── Számítás ────────────────────────────────────────────────────────────
   // Mátrix: minden (termék × ív) párra kihozatal
@@ -256,6 +360,492 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     return map;
   }, [assignments]);
 
+  // ── Szálanyag (1D cutting stock) ────────────────────────────
+  // FFD: minden darabot (mennyiség szerint kibontva, hossz szerint csökkenő)
+  // best-fit a már nyitott szálakra; ha nem fér, új szálat nyit a legkisebb
+  // megfelelő típusból (még van készlet).
+  const barPlan = useMemo(() => {
+    type Open = BarPlan;
+    const opens: Open[] = [];
+    const remaining = new Map<number, number | null>(bars.map(b => [b.id, b.available]));
+    const shortageByProduct = new Map<number, number>();
+
+    // expand pieces
+    type Piece = { productId: number; productName: string; length: number; };
+    const pieces: Piece[] = [];
+    for (const p of barProducts) {
+      for (let i = 0; i < p.quantity; i++) pieces.push({ productId: p.id, productName: p.name, length: p.length });
+    }
+    pieces.sort((a, b) => b.length - a.length);
+
+    for (const piece of pieces) {
+      // best fit existing
+      let bestIdx = -1;
+      let bestSlack = Infinity;
+      for (let i = 0; i < opens.length; i++) {
+        const o = opens[i];
+        const need = piece.length + (o.cuts.length > 0 ? kerf : 0);
+        const free = o.barLength - o.usedLength;
+        if (free >= need && free - need < bestSlack) {
+          bestSlack = free - need; bestIdx = i;
+        }
+      }
+      if (bestIdx >= 0) {
+        const o = opens[bestIdx];
+        const add = piece.length + (o.cuts.length > 0 ? kerf : 0);
+        o.cuts.push({ productId: piece.productId, productName: piece.productName, length: piece.length });
+        o.usedLength += add;
+        o.waste = o.barLength - o.usedLength;
+        continue;
+      }
+      // open new bar: smallest bar type that fits piece, with availability
+      const candidates = bars
+        .filter(b => b.length >= piece.length)
+        .filter(b => {
+          const av = remaining.get(b.id);
+          return av === null || (av ?? 0) > 0;
+        })
+        .sort((a, b) => a.length - b.length);
+      const chosen = candidates[0];
+      if (!chosen) {
+        shortageByProduct.set(piece.productId, (shortageByProduct.get(piece.productId) || 0) + 1);
+        continue;
+      }
+      const newBar: Open = {
+        barTypeId: chosen.id,
+        barTypeName: chosen.name,
+        barLength: chosen.length,
+        cuts: [{ productId: piece.productId, productName: piece.productName, length: piece.length }],
+        usedLength: piece.length,
+        waste: chosen.length - piece.length,
+      };
+      opens.push(newBar);
+      const av = remaining.get(chosen.id);
+      if (av !== null && av !== undefined) remaining.set(chosen.id, av - 1);
+    }
+
+    // bar type usage
+    const barUsage = new Map<number, number>();
+    opens.forEach(o => barUsage.set(o.barTypeId, (barUsage.get(o.barTypeId) || 0) + 1));
+
+    return { plans: opens, shortageByProduct, barUsage };
+  }, [barProducts, bars, kerf]);
+
+  // ── Tekercses ────────────────────────────────────────────
+  const rollAllocations = useMemo<RollAllocation[]>(() => {
+    const remaining = new Map<number, number | null>(
+      rolls.map(r => [r.id, r.availableLength === null ? null : r.availableLength * 1000])
+    );
+    const out: RollAllocation[] = [];
+
+    for (const p of rollProducts) {
+      // for each roll compute best fit (most pieces across, then highest coverage)
+      type Cand = { roll: RollRow; piecesAcross: number; rotated: boolean; rowLengthMm: number; coverage: number; };
+      const cands: Cand[] = [];
+      for (const r of rolls) {
+        const accNormal = Math.max(0, Math.floor((r.width + rollGap) / (p.width + rollGap)));
+        const accRotated = Math.max(0, Math.floor((r.width + rollGap) / (p.length + rollGap)));
+        if (accNormal > 0) {
+          const usedW = accNormal * p.width + (accNormal - 1) * rollGap;
+          cands.push({ roll: r, piecesAcross: accNormal, rotated: false, rowLengthMm: p.length + rollGap, coverage: usedW / r.width });
+        }
+        if (accRotated > 0) {
+          const usedW = accRotated * p.length + (accRotated - 1) * rollGap;
+          cands.push({ roll: r, piecesAcross: accRotated, rotated: true, rowLengthMm: p.width + rollGap, coverage: usedW / r.width });
+        }
+      }
+      // best: most pieces across; tiebreak by coverage; then by lowest row length
+      cands.sort((a, b) => b.piecesAcross - a.piecesAcross || b.coverage - a.coverage || a.rowLengthMm - b.rowLengthMm);
+      const best = cands[0];
+      if (!best || best.piecesAcross === 0) {
+        out.push({
+          productId: p.id, productName: p.name, rollId: -1, rollName: '—',
+          rollWidth: 0, productWidth: p.width, productLength: p.length, rotated: false,
+          piecesAcross: 0, rowsNeeded: 0, rowLengthMm: 0, totalLengthMm: 0,
+          qty: 0, shortage: p.quantity, coverage: 0,
+        });
+        continue;
+      }
+      const rowsNeeded = Math.ceil(p.quantity / best.piecesAcross);
+      let totalLengthMm = rowsNeeded * best.rowLengthMm - rollGap;
+      if (totalLengthMm < 0) totalLengthMm = 0;
+
+      const av = remaining.get(best.roll.id);
+      let actualLengthMm = totalLengthMm;
+      let producedQty = p.quantity;
+      let shortage = 0;
+      if (av !== null && av !== undefined) {
+        if (av < totalLengthMm) {
+          // limited length
+          const possibleRows = Math.max(0, Math.floor((av + rollGap) / best.rowLengthMm));
+          producedQty = Math.min(p.quantity, possibleRows * best.piecesAcross);
+          actualLengthMm = possibleRows > 0 ? possibleRows * best.rowLengthMm - rollGap : 0;
+          shortage = p.quantity - producedQty;
+        }
+        remaining.set(best.roll.id, Math.max(0, av - actualLengthMm));
+      }
+
+      out.push({
+        productId: p.id, productName: p.name, rollId: best.roll.id, rollName: best.roll.name,
+        rollWidth: best.roll.width, productWidth: p.width, productLength: p.length, rotated: best.rotated,
+        piecesAcross: best.piecesAcross, rowsNeeded: Math.ceil(producedQty / best.piecesAcross),
+        rowLengthMm: best.rowLengthMm, totalLengthMm: actualLengthMm,
+        qty: producedQty, shortage, coverage: best.coverage,
+      });
+    }
+    return out;
+  }, [rollProducts, rolls, rollGap]);
+
+  const rollUsage = useMemo(() => {
+    const map = new Map<number, number>(); // mm
+    rollAllocations.forEach(ra => {
+      if (ra.rollId < 0) return;
+      map.set(ra.rollId, (map.get(ra.rollId) || 0) + ra.totalLengthMm);
+    });
+    return map;
+  }, [rollAllocations]);
+
+  // ── Renderek külön módokhoz ─────────────────────────────────────────
+  const renderSzalanyag = () => (
+    <>
+      <Row gutter={16}>
+        {/* Termékek (1D) */}
+        <Col span={12}>
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong style={{ color: '#389e0d' }}>Termékek (darabok)</Text>
+              <Button size="small" icon={<PlusOutlined />} onClick={addBarProduct}>Darab</Button>
+            </div>
+            {barProducts.map(p => (
+              <Row key={p.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
+                <Col span={9}>
+                  <Input size="small" value={p.name} onChange={e => updateBarProduct(p.id, { name: e.target.value })} placeholder="Név" />
+                </Col>
+                <Col span={7}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={p.length} min={1}
+                    onChange={v => updateBarProduct(p.id, { length: Number(v) || 0 })} addonAfter="mm" placeholder="Hossz" />
+                </Col>
+                <Col span={6}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={p.quantity} min={0}
+                    onChange={v => updateBarProduct(p.id, { quantity: Number(v) || 0 })} addonAfter="db" placeholder="Db" />
+                </Col>
+                <Col span={2} style={{ textAlign: 'right' }}>
+                  {barProducts.length > 1 && (
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeBarProduct(p.id)} />
+                  )}
+                </Col>
+              </Row>
+            ))}
+          </div>
+        </Col>
+        {/* Szálak */}
+        <Col span={12}>
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong style={{ color: '#0958d9' }}>Szálanyag (rendelkezésre álló)</Text>
+              <Space>
+                <span style={{ fontSize: 12 }}>Darabolási vastagság:</span>
+                <Tooltip title="Vágásnál levesz anyag (kerf, mm)">
+                  <InputNumber size="small" controls={false} min={0} value={kerf} onChange={v => setKerf(Number(v) || 0)} addonAfter="mm" style={{ width: 96 }} />
+                </Tooltip>
+                <Button size="small" icon={<PlusOutlined />} onClick={addBar}>Szál</Button>
+              </Space>
+            </div>
+            {bars.map(b => (
+              <Row key={b.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
+                <Col span={8}>
+                  <Input size="small" value={b.name} onChange={e => updateBar(b.id, { name: e.target.value })} placeholder="Név" />
+                </Col>
+                <Col span={8}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={b.length} min={1}
+                    onChange={v => updateBar(b.id, { length: Number(v) || 0 })} addonAfter="mm" placeholder="Szálhossz" />
+                </Col>
+                <Col span={6}>
+                  <Tooltip title="Üres = végtelen">
+                    <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={b.available ?? undefined} min={0}
+                      onChange={v => updateBar(b.id, { available: v == null ? null : Number(v) })}
+                      addonAfter="db" placeholder="∞" />
+                  </Tooltip>
+                </Col>
+                <Col span={2} style={{ textAlign: 'right' }}>
+                  {bars.length > 1 && (
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeBar(b.id)} />
+                  )}
+                </Col>
+              </Row>
+            ))}
+          </div>
+        </Col>
+      </Row>
+
+      {/* Vágási terv */}
+      <div style={{ marginTop: 16 }}>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális darabolási terv ({barPlan.plans.length} szál)</Text>
+        {barPlan.plans.length === 0 && <Text type="secondary">Nincs darabolható mennyiség.</Text>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {barPlan.plans.map((bp, idx) => {
+            const scale = Math.min(900 / bp.barLength, 0.5);
+            const svgW = Math.round(bp.barLength * scale);
+            const svgH = 26;
+            let cursor = 0;
+            return (
+              <div key={idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 6, padding: 8 }}>
+                <div style={{ fontSize: 12, marginBottom: 4 }}>
+                  <b>Szál #{idx + 1}</b> – {bp.barTypeName} ({bp.barLength} mm) ·
+                  <span style={{ marginLeft: 6 }}>használt: <b>{bp.usedLength} mm</b> · maradék: <b style={{ color: bp.waste > 0 ? '#fa8c16' : '#52c41a' }}>{bp.waste} mm</b></span>
+                </div>
+                <svg width={svgW} height={svgH} style={{ display: 'block', border: '1px solid #d9d9d9', background: '#fafafa' }}>
+                  {bp.cuts.map((c, ci) => {
+                    if (ci > 0) cursor += kerf;
+                    const x = cursor;
+                    const w = c.length;
+                    cursor += w;
+                    const col = colorForProduct(c.productId);
+                    return (
+                      <g key={ci}>
+                        {ci > 0 && (
+                          <rect x={(x - kerf) * scale} y={0} width={Math.max(1, kerf * scale)} height={svgH} fill="#ff4d4f" opacity={0.6} />
+                        )}
+                        <rect x={x * scale} y={0} width={w * scale} height={svgH} fill={col.fill} stroke={col.stroke} strokeWidth={0.6} />
+                        {w * scale > 30 && (
+                          <text x={(x + w / 2) * scale} y={svgH / 2 + 4} fontSize={10} textAnchor="middle" fill="#333">
+                            {c.productName} {c.length}
+                          </text>
+                        )}
+                      </g>
+                    );
+                  })}
+                  {bp.waste > 0 && (
+                    <rect x={bp.usedLength * scale} y={0} width={bp.waste * scale} height={svgH} fill="#fafafa" stroke="#d9d9d9" strokeDasharray="3 2" />
+                  )}
+                </svg>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Szál felhasználás */}
+      <div style={{ marginTop: 12, padding: 12, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Szál felhasználás</Text>
+        <Space wrap>
+          {bars.map(b => {
+            const used = barPlan.barUsage.get(b.id) || 0;
+            const limit = b.available;
+            const over = limit !== null && used > limit;
+            return (
+              <Tag key={b.id} color={over ? 'red' : used > 0 ? 'blue' : 'default'}>
+                {b.name}: {used} {limit !== null ? `/ ${limit}` : '/ ∞'} db
+              </Tag>
+            );
+          })}
+        </Space>
+      </div>
+
+      {Array.from(barPlan.shortageByProduct.entries()).length > 0 && (
+        <Alert
+          style={{ marginTop: 12 }}
+          type="warning"
+          showIcon
+          message={`Hiány: ${Array.from(barPlan.shortageByProduct.entries()).map(([pid, n]) => {
+            const p = barProducts.find(x => x.id === pid);
+            return `${p?.name || '?'} (${n} db)`;
+          }).join(', ')}`}
+        />
+      )}
+    </>
+  );
+
+  const renderTekerces = () => (
+    <>
+      <Row gutter={16}>
+        {/* Termékek */}
+        <Col span={12}>
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong style={{ color: '#389e0d' }}>Termékek</Text>
+              <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
+            </div>
+            {rollProducts.map(p => (
+              <Row key={p.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
+                <Col span={5}>
+                  <Input size="small" value={p.name} onChange={e => updateRollProduct(p.id, { name: e.target.value })} placeholder="Név" />
+                </Col>
+                <Col span={5}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 110 }} value={p.width} min={1}
+                    onChange={v => updateRollProduct(p.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
+                </Col>
+                <Col span={5}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 110 }} value={p.length} min={1}
+                    onChange={v => updateRollProduct(p.id, { length: Number(v) || 0 })} addonAfter="mm" placeholder="Hossz" />
+                </Col>
+                <Col span={6}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 84 }} value={p.quantity} min={0}
+                    onChange={v => updateRollProduct(p.id, { quantity: Number(v) || 0 })} addonAfter="db" placeholder="Db" />
+                </Col>
+                <Col span={3} style={{ textAlign: 'right' }}>
+                  {rollProducts.length > 1 && (
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeRollProduct(p.id)} />
+                  )}
+                </Col>
+              </Row>
+            ))}
+          </div>
+        </Col>
+
+        {/* Tekercsek */}
+        <Col span={12}>
+          <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: 12 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+              <Text strong style={{ color: '#0958d9' }}>Tekercsek</Text>
+              <Space>
+                <span style={{ fontSize: 12 }}>Nyomatköz:</span>
+                <Tooltip title="Két nyomat közötti távolság (mm)">
+                  <InputNumber size="small" controls={false} min={0} value={rollGap} onChange={v => setRollGap(Number(v) || 0)} addonAfter="mm" style={{ width: 90 }} />
+                </Tooltip>
+                <Button size="small" icon={<PlusOutlined />} onClick={addRoll}>Tekercs</Button>
+              </Space>
+            </div>
+            {rolls.map(r => (
+              <Row key={r.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
+                <Col span={8}>
+                  <Input size="small" value={r.name} onChange={e => updateRoll(r.id, { name: e.target.value })} placeholder="Név" />
+                </Col>
+                <Col span={7}>
+                  <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 120 }} value={r.width} min={1}
+                    onChange={v => updateRoll(r.id, { width: Number(v) || 0 })} addonAfter="mm" placeholder="Szél." />
+                </Col>
+                <Col span={7}>
+                  <Tooltip title="Üres = végtelen (folyóméter)">
+                    <InputNumber size="small" controls={false} style={{ width: '100%', minWidth: 96 }} value={r.availableLength ?? undefined} min={0}
+                      onChange={v => updateRoll(r.id, { availableLength: v == null ? null : Number(v) })}
+                      addonAfter="fm" placeholder="∞" />
+                  </Tooltip>
+                </Col>
+                <Col span={2} style={{ textAlign: 'right' }}>
+                  {rolls.length > 1 && (
+                    <Button size="small" type="text" danger icon={<DeleteOutlined />} onClick={() => removeRoll(r.id)} />
+                  )}
+                </Col>
+              </Row>
+            ))}
+          </div>
+        </Col>
+      </Row>
+
+      {/* Allokáció táblázat */}
+      <div style={{ marginTop: 16 }}>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális kiosztás (legjobb fedettség)</Text>
+        <Table
+          size="small"
+          pagination={false}
+          bordered
+          dataSource={rollAllocations.map((ra, i) => ({
+            key: i,
+            product: `${ra.productName} (${ra.productWidth}×${ra.productLength}, ${ra.qty + ra.shortage} db)`,
+            roll: ra.rollName === '—' ? '—' : `${ra.rollName} (${ra.rollWidth} mm)${ra.rotated ? ' · 90°' : ''}`,
+            across: ra.piecesAcross > 0 ? `${ra.piecesAcross} db / sor` : '—',
+            rows: ra.rowsNeeded,
+            length: ra.totalLengthMm > 0 ? `${(ra.totalLengthMm / 1000).toFixed(2)} fm` : '—',
+            coverage: ra.piecesAcross > 0 ? `${Math.round(ra.coverage * 100)}%` : '—',
+            shortage: ra.shortage,
+          }))}
+          columns={[
+            { title: 'Termék', dataIndex: 'product', key: 'product', width: 220 },
+            { title: 'Tekercs', dataIndex: 'roll', key: 'roll' },
+            { title: 'Sorszélesség', dataIndex: 'across', key: 'across', width: 110 },
+            { title: 'Sorok', dataIndex: 'rows', key: 'rows', align: 'right', width: 80 },
+            { title: 'Folyóméter', dataIndex: 'length', key: 'length', align: 'right', width: 110 },
+            { title: 'Fedettség', dataIndex: 'coverage', key: 'coverage', align: 'right', width: 100 },
+            {
+              title: 'Hiány', dataIndex: 'shortage', key: 'shortage', align: 'right', width: 90,
+              render: (v: number) => v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
+            },
+          ]}
+        />
+      </div>
+
+      {/* Vizuális tekercs */}
+      {rollAllocations.some(ra => ra.totalLengthMm > 0) && (
+        <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Tekercs vizualizáció</Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+            {rollAllocations.map((ra, idx) => {
+              if (ra.totalLengthMm <= 0) return null;
+              const cellW = ra.rotated ? ra.productLength : ra.productWidth;
+              const cellH = ra.rotated ? ra.productWidth : ra.productLength;
+              const stepX = cellW + rollGap;
+              const stepY = cellH + rollGap;
+              const sw = ra.rollWidth;
+              const sh = ra.totalLengthMm;
+              const scale = Math.min(220 / sw, 360 / sh, 1);
+              const svgW = Math.round(sw * scale);
+              const svgH = Math.round(sh * scale);
+              const totalCells = ra.piecesAcross * ra.rowsNeeded;
+              const col = colorForProduct(ra.productId);
+              return (
+                <div key={idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 240 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9', marginBottom: 4 }}>
+                    {ra.productName} <span style={{ color: '#999', fontWeight: 400 }}>→</span> {ra.rollName}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
+                    {ra.piecesAcross} db/sor{ra.rotated ? ' · 90°' : ''} · {ra.rowsNeeded} sor · {(ra.totalLengthMm / 1000).toFixed(2)} fm · fedettség {Math.round(ra.coverage * 100)}%
+                  </div>
+                  <div style={{ border: '2px solid #69b1ff', borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2 }}>
+                    <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
+                      <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
+                      {Array.from({ length: totalCells }).map((_, ci) => {
+                        const c = ci % ra.piecesAcross;
+                        const r = Math.floor(ci / ra.piecesAcross);
+                        const x = c * stepX;
+                        const y = r * stepY;
+                        const filled = ci < ra.qty;
+                        return (
+                          <rect key={ci} x={x} y={y} width={cellW} height={cellH}
+                            fill={filled ? col.fill : '#f0f0f0'} stroke={filled ? col.stroke : '#d9d9d9'} strokeWidth={0.5} />
+                        );
+                      })}
+                    </svg>
+                  </div>
+                  <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
+                    Tekercs: <b>{ra.rollWidth} mm</b> széles · Termék: <b>{ra.productWidth}×{ra.productLength} mm</b>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Tekercs felhasználás */}
+      <div style={{ marginTop: 12, padding: 12, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Tekercs felhasználás</Text>
+        <Space wrap>
+          {rolls.map(r => {
+            const usedMm = rollUsage.get(r.id) || 0;
+            const usedM = usedMm / 1000;
+            const limit = r.availableLength;
+            const over = limit !== null && usedM > limit;
+            return (
+              <Tag key={r.id} color={over ? 'red' : usedMm > 0 ? 'blue' : 'default'}>
+                {r.name}: {usedM.toFixed(2)} {limit !== null ? `/ ${limit}` : '/ ∞'} fm
+              </Tag>
+            );
+          })}
+        </Space>
+      </div>
+
+      {rollAllocations.some(ra => ra.shortage > 0) && (
+        <Alert
+          style={{ marginTop: 12 }}
+          type="warning"
+          showIcon
+          message={`Hiány: ${rollAllocations.filter(ra => ra.shortage > 0).map(ra => `${ra.productName} (${ra.shortage} db)`).join(', ')}`}
+        />
+      )}
+    </>
+  );
+
   return (
     <Modal
       title={<span><AppstoreOutlined style={{ marginRight: 8 }} />Impozíció – Produkciózás (segédlet)</span>}
@@ -303,6 +893,21 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         </Space>
       </div>
 
+      {/* ── Mód választó ─────────────────────────────────────── */}
+      <div style={{ marginBottom: 12 }}>
+        <Segmented
+          value={mode}
+          onChange={(v) => setMode(v as Mode)}
+          options={[
+            { label: 'Íves (2D)', value: 'ives' },
+            { label: 'Szálanyag (1D)', value: 'szalanyag' },
+            { label: 'Tekercses (folyóméter)', value: 'tekerces' },
+          ]}
+          block
+        />
+      </div>
+
+      {mode === 'ives' && (<>
       <Row gutter={16}>
         {/* ── Termékek ──────────────────────────────────────────── */}
         <Col span={12}>
@@ -574,6 +1179,10 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           message="Nem minden terméket sikerült teljesen legyártani a rendelkezésre álló ívekből."
         />
       )}
+      </>)}
+
+      {mode === 'szalanyag' && renderSzalanyag()}
+      {mode === 'tekerces' && renderTekerces()}
     </Modal>
   );
 };
