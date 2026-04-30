@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
-import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../Manufacturing/CostDnd';
@@ -13,6 +13,7 @@ import { hrService } from '../../services/hrService';
 import ProductEditorModal from '../Editors/ProductEditorModal';
 import ServiceEditorModal from '../Editors/ServiceEditorModal';
 import ManufacturingProductEditorModal from '../Editors/ManufacturingProductEditorModal';
+import ImpositionHelperModal from './ImpositionHelperModal';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import dayjs from 'dayjs';
@@ -112,6 +113,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [savingKeepOpen, setSavingKeepOpen] = useState(false);
   const [savingClose, setSavingClose] = useState(false);
   const manuKeepOpenRef = useRef(false);
+  const [impositionOpen, setImpositionOpen] = useState(false);
   const [manuExistingProducts, setManuExistingProducts] = useState<any[]>([]);
 
   // Manu inline — cost items and dimensions state
@@ -1842,6 +1844,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   </Row>
 
                   <Collapse ghost size="small" style={{ marginBottom: 8 }}>
+                    <Collapse.Panel header={<span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>} key="imposition" extra={<Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); setImpositionOpen(true); }}>Megnyitás</Button>}>
+                      <div style={{ fontSize: 12, color: '#666' }}>Számítsd ki a produkciós ív kihozatalt: több termékméret és több ívméret kombinációi, érhetőség (készlet) figyelembe vételével.</div>
+                    </Collapse.Panel>
                     <Collapse.Panel header="Méret és súly" key="dims">
                       <Row gutter={8}>
                         <Col span={6}>
@@ -2178,6 +2183,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setSelected(created);
           setManuEditorOpen(false);
         }}
+      />
+
+      <ImpositionHelperModal
+        open={impositionOpen}
+        onClose={() => setImpositionOpen(false)}
+        initialProductWidth={Number(manuForm.getFieldValue('width')) || undefined}
+        initialProductHeight={Number(manuForm.getFieldValue('length')) || undefined}
+        initialProductQty={Number(manuForm.getFieldValue('manu_quantity')) || undefined}
       />
 
       {/* ── Cost item material / service search modal ─────────────────── */}
