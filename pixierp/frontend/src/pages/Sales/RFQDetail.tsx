@@ -387,8 +387,10 @@ const RFQDetail: React.FC = () => {
         }
       }
       message.success('Tétel frissítve');
-      setSelectorOpen(false);
-      setEditContext(null);
+      if (!(payload as any).keepOpen) {
+        setSelectorOpen(false);
+        setEditContext(null);
+      }
       refreshItems();
     } catch (e) {
       message.error('Nem sikerült frissíteni a tételt');

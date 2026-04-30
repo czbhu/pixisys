@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete } from 'antd';
 import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
@@ -15,6 +15,7 @@ import ServiceEditorModal from '../Editors/ServiceEditorModal';
 import ManufacturingProductEditorModal from '../Editors/ManufacturingProductEditorModal';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+import dayjs from 'dayjs';
 
 type ConcreteItemType = 'product' | 'manufacturing' | 'service';
 type ItemType = ConcreteItemType | 'all';
@@ -107,6 +108,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // Inline manufacturing form state
   const [manuForm] = Form.useForm();
   const [manuSubmitting, setManuSubmitting] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<dayjs.Dayjs | null>(null);
+  const [savingKeepOpen, setSavingKeepOpen] = useState(false);
+  const [savingClose, setSavingClose] = useState(false);
+  const manuKeepOpenRef = useRef(false);
   const [manuExistingProducts, setManuExistingProducts] = useState<any[]>([]);
 
   // Manu inline — cost items and dimensions state
@@ -808,7 +813,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     form.setFieldsValue({ unit, net_unit_price: price, quantity: qty, cost_price: cost, markup_percent: markup });
   };
 
-  const confirmAdd = async () => {
+  const confirmAdd = async (keepOpen: boolean = false) => {
     try {
       if (!selected) {
         message.warning('Válassz egy tételt a listából');
@@ -830,11 +835,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         discount_percent: v.discount_percent,
         discount_amount: v.discount_amount,
       };
-      await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks });
-      setPendingFiles([]);
-      setPendingFileRemarks({});
-      form.resetFields();
-      setSelected(null);
+      await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen } as any);
+      setLastSavedAt(dayjs());
+      if (!keepOpen) {
+        setPendingFiles([]);
+        setPendingFileRemarks({});
+        form.resetFields();
+        setSelected(null);
+      }
     } catch (e) {
       // validation error surfaced by form
     }
@@ -858,7 +866,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   };
 
   // Save inline manufacturing product and add to RFQ
-  const handleManuInlineSubmit = async () => {
+  const handleManuInlineSubmit = async (keepOpen: boolean = false) => {
+    manuKeepOpenRef.current = keepOpen;
     try {
       const v = await manuForm.validateFields();
       setManuSubmitting(true);
@@ -1017,7 +1026,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
         };
-        await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+        await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
         setManuPendingFiles([]);
         setManuPendingFileRemarks({});
 
@@ -1048,7 +1057,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
           pendingManuPayload: deferredPayload,
         };
-        await onAdd(pendingUpdatePayload as any);
+        await onAdd({ ...pendingUpdatePayload, keepOpen } as any);
         message.success('Egyedi gyártás módosítva (az ajánlat mentésekor kerül a rendszerbe)');
 
       } else if (rfqId) {
@@ -1110,7 +1119,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             description: created.description || '',
             manuCostItems: costItemsForRfq,
           };
-          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
           setManuPendingFiles([]);
           setManuPendingFileRemarks({});
         } catch (addErr) {
@@ -1182,7 +1191,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             manuCostItems: costItemsForRfq,
             pendingManuPayload: deferredPayload,
           };
-          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks } as any);
+          await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
           setManuPendingFiles([]);
           setManuPendingFileRemarks({});
         } catch (addErr) {
@@ -1198,6 +1207,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       // else form validation errors are shown inline
     } finally {
       setManuSubmitting(false);
+      setLastSavedAt(dayjs());
     }
   };
 
@@ -1640,27 +1650,54 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     <Modal
       open={open}
       onCancel={handleModalCancel}
-      onOk={() => {
-        // In manu tab: use inline create/save flow when:
-        // 1. Editing an existing manufacturing item (mode='edit' with manufacturing initialSelection)
-        // 2. No item selected yet (inline create mode)
-        // 3. A newly-created manufacturing item is selected (has __type set by inline flow)
-        const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
-        if (activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId))) {
-          handleManuInlineSubmit();
-        } else {
-          confirmAdd();
-        }
-      }}
-      okText={
-        (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés'
-          : activeKey === 'manufacturing' && !selected ? 'Hozzáadás'
-          : mode === 'edit' ? 'Mentés' : 'Hozzáadás'
-      }
-      okButtonProps={{ loading: manuSubmitting }}
       title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
       width="min(1400px, 96vw)"
       styles={{ body: { padding: 10 } }}
+      footer={(() => {
+        const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
+        const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
+        const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés & bezárás'
+          : activeKey === 'manufacturing' && !selected ? 'Hozzáadás & bezárás'
+          : mode === 'edit' ? 'Mentés & bezárás' : 'Hozzáadás & bezárás';
+        const secondaryLabel = mode === 'edit' || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
+        const doSave = async (keepOpen: boolean) => {
+          if (keepOpen) setSavingKeepOpen(true); else setSavingClose(true);
+          try {
+            if (useManuFlow) {
+              await handleManuInlineSubmit(keepOpen);
+            } else {
+              await confirmAdd(keepOpen);
+            }
+          } finally {
+            if (keepOpen) setSavingKeepOpen(false); else setSavingClose(false);
+          }
+        };
+        return (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 11, color: '#888' }}>
+              {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
+            </span>
+            <Space>
+              <Button onClick={handleModalCancel}>Mégse</Button>
+              <Button
+                loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
+                disabled={savingClose}
+                onClick={() => doSave(true)}
+              >
+                {secondaryLabel}
+              </Button>
+              <Button
+                type="primary"
+                loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
+                disabled={savingKeepOpen}
+                onClick={() => doSave(false)}
+              >
+                {primaryLabel}
+              </Button>
+            </Space>
+          </div>
+        );
+      })()}
     >
       <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
         <Tabs
