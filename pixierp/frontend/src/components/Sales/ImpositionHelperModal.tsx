@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message } from 'antd';
-import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
 
@@ -142,6 +142,21 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     const next = presets.filter(p => p.id !== activePresetId);
     persist(next);
     newPreset();
+    message.success('Törölve');
+  };
+
+  const renamePresetInline = (id: string, newName: string) => {
+    const trimmed = (newName || '').trim();
+    if (!trimmed) return;
+    const next = presets.map(p => p.id === id ? { ...p, name: trimmed, updatedAt: new Date().toISOString() } : p);
+    persist(next);
+    if (activePresetId === id) setPresetNameInput(trimmed);
+  };
+
+  const deletePresetById = (id: string) => {
+    const next = presets.filter(p => p.id !== id);
+    persist(next);
+    if (activePresetId === id) newPreset();
     message.success('Törölve');
   };
 
@@ -437,7 +452,104 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           })}
         </Space>
       </div>
+      {/* ── Vizuális produkciós ívek ────────────────────────── */}
+      {assignments.some(a => a.allocations.length > 0) && (
+        <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
+          <Text strong style={{ display: 'block', marginBottom: 8 }}>Produkciós ívek (vizuális)</Text>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
+            {assignments.flatMap(a => a.allocations.map((al, idx) => {
+              const sheet = sheets.find(s => s.id === al.sheetId);
+              if (!sheet) return null;
+              const product = products.find(pp => pp.id === a.productId);
+              if (!product) return null;
+              const sw = sheet.width;
+              const sh = sheet.height;
+              const pw = product.width + 2 * bleed;
+              const ph = product.height + 2 * bleed;
+              const cellW = al.rotated ? ph : pw;
+              const cellH = al.rotated ? pw : ph;
+              const scale = Math.min(220 / sw, 280 / sh, 1);
+              const svgW = Math.round(sw * scale);
+              const svgH = Math.round(sh * scale);
+              const remainingOnLast = al.itemsProduced % al.perSheet;
+              const fullSheets = remainingOnLast === 0 ? al.sheetsUsed : al.sheetsUsed - 1;
+              const partialItems = remainingOnLast;
 
+              const renderOneSheet = (itemsOnThis: number, label: string, isFull: boolean, key: string) => (
+                <div key={key} style={{ textAlign: 'center' }}>
+                  <div style={{
+                    border: `2px solid ${isFull ? '#69b1ff' : '#ffc069'}`,
+                    borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2,
+                  }}>
+                    <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
+                      <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
+                      {Array.from({ length: al.cols * al.rows }).map((_, ci) => {
+                        const col = ci % al.cols;
+                        const row = Math.floor(ci / al.cols);
+                        const x = col * cellW;
+                        const y = row * cellH;
+                        const filled = ci < itemsOnThis;
+                        const innerPad = bleed;
+                        return (
+                          <g key={ci}>
+                            <rect x={x} y={y} width={cellW} height={cellH}
+                              fill={filled ? '#bae0ff' : '#f0f0f0'} stroke={filled ? '#69b1ff' : '#d9d9d9'} strokeWidth={0.5} />
+                            {filled && innerPad > 0 && (
+                              <rect x={x + innerPad} y={y + innerPad} width={cellW - 2 * innerPad} height={cellH - 2 * innerPad}
+                                fill="#91caff" stroke="#1677ff" strokeWidth={0.4} strokeDasharray="1 1" />
+                            )}
+                            {filled && cellW * scale > 22 && cellH * scale > 14 && (
+                              <text x={x + cellW / 2} y={y + cellH / 2 + 3}
+                                fontSize={Math.max(6, Math.min(cellW, cellH) * 0.18)}
+                                textAnchor="middle" fill="#0958d9" fontWeight={600}>
+                                {ci + 1}
+                              </text>
+                            )}
+                          </g>
+                        );
+                      })}
+                    </svg>
+                  </div>
+                  <div style={{ fontSize: 10, color: isFull ? '#1677ff' : '#fa8c16', marginTop: 2 }}>{label}</div>
+                </div>
+              );
+
+              return (
+                <div key={`${a.productId}-${al.sheetId}-${idx}`} style={{
+                  background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10,
+                  display: 'flex', flexDirection: 'column', gap: 6, minWidth: 240,
+                }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9' }}>
+                    {a.productName} <span style={{ color: '#999', fontWeight: 400 }}>→</span> {sheet.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#666' }}>
+                    {al.perSheet} db/ív ({al.cols}×{al.rows}{al.rotated ? ', 90°' : ''}) · Ív: {sheet.width}×{sheet.height} mm · Termék: {product.width}×{product.height} mm
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+                    {fullSheets > 0 && (
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        {renderOneSheet(al.perSheet, `${al.perSheet} db`, true, 'full')}
+                        {fullSheets > 1 && (
+                          <div style={{ fontSize: 11, color: '#1677ff', fontWeight: 600, marginTop: 2 }}>×{fullSheets}</div>
+                        )}
+                      </div>
+                    )}
+                    {partialItems > 0 && renderOneSheet(
+                      partialItems,
+                      `${partialItems}/${al.perSheet} db (${Math.round(partialItems / al.perSheet * 100)}%)`,
+                      false,
+                      'partial'
+                    )}
+                  </div>
+                  <div style={{ fontSize: 11, color: '#666' }}>
+                    Összesen: <b>{al.sheetsUsed} ív</b> → <b>{al.itemsProduced} db</b> termék
+                  </div>
+                </div>
+              );
+            }))}
+          </div>
+        </div>
+      )}
       {assignments.some(a => a.shortage > 0) && (
         <Alert
           style={{ marginTop: 12 }}
