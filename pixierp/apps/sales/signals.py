@@ -1,7 +1,7 @@
 """
 Signal handlers for tracking activity on Sales models
 """
-from django.db.models.signals import post_save, post_delete
+from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
 from django.contrib.contenttypes.models import ContentType
 from apps.core.models import ActivityLog
@@ -121,6 +121,47 @@ def log_customer_order_delete(sender, instance, **kwargs):
             obj=None,
             request=getattr(instance, '_log_request', None)
         )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Propagate CustomerOrder.status → ManufacturingCostItem.status
+# ──────────────────────────────────────────────────────────────────────────────
+@receiver(pre_save, sender=CustomerOrder)
+def _track_customer_order_status_change(sender, instance, **kwargs):
+    """Cache the previously persisted status so post_save can detect a real change."""
+    if not instance.pk:
+        instance._previous_status = None
+        return
+    try:
+        instance._previous_status = (
+            CustomerOrder.objects.only('status').get(pk=instance.pk).status
+        )
+    except CustomerOrder.DoesNotExist:
+        instance._previous_status = None
+
+
+@receiver(post_save, sender=CustomerOrder)
+def _propagate_status_to_manufacturing(sender, instance, created, **kwargs):
+    """When the order status changes, mirror it on every related
+    ManufacturingCostItem so the gyártási sor reflects the new state."""
+    if created:
+        return
+    prev = getattr(instance, '_previous_status', None)
+    if prev == instance.status:
+        return
+    try:
+        from apps.manufacturing.models import ManufacturingCostItem
+        mp_ids = list(
+            instance.items.exclude(quote_item__manufacturing_product__isnull=True)
+            .values_list('quote_item__manufacturing_product_id', flat=True)
+            .distinct()
+        )
+        if mp_ids:
+            ManufacturingCostItem.objects.filter(
+                product_id__in=mp_ids
+            ).update(status=instance.status)
+    except Exception as e:  # pragma: no cover
+        print(f"[CustomerOrder→ManufacturingCostItem] status propagation failed: {e}")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
