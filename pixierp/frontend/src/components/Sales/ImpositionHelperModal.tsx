@@ -193,7 +193,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const [rolls, setRolls] = useState<RollRow[]>([
     { id: 1, name: 'Tekercs 1000mm', width: 1000, availableLength: null },
   ]);
-  const [rollsMixable, setRollsMixable] = useState<boolean>(true);
+  const [keepRollRows, setKeepRollRows] = useState<boolean>(true);
 
   // ── Presetek (localStorage) ────────────────────────────────────────────
   const STORAGE_KEY = 'pixisys_imposition_presets_v1';
@@ -705,7 +705,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         const rem = remaining.get(r.id) || 0;
         if (rem <= 0) continue;
         for (const variant of variants) {
-          const result = shelfPackFFDH(r.width, rem, rollGap, variant, rollsMixable);
+          const result = shelfPackFFDH(r.width, rem, rollGap, variant, !keepRollRows);
           if (result.placed.length === 0) continue;
           let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
           let area = 0;
@@ -765,7 +765,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
 
     return { rolls: out, rollUsage: rollUsageM, producedByProduct, shortageByProduct };
-  }, [rollProducts, rolls, rollGap, rollsMixable]);
+  }, [rollProducts, rolls, rollGap, keepRollRows]);
 
   // ── Renderek külön módokhoz ─────────────────────────────────────────
   const renderSzalanyag = () => (
@@ -949,10 +949,10 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#389e0d' }}>Termékek</Text>
               <Space>
-                <Tooltip title="Be: a termékek túl is nyúlhatnak a soron (magában a polcban keverés megengedett). Ki: szigorú sormağasság.">
-                  <span style={{ fontSize: 12, color: '#666' }}>Keverhető:</span>
+                <Tooltip title="Be: szigorú sormagasság (a polcban indított első darab határozza meg). Ki: a termékek túlnyúlhatnak a soron.">
+                  <span style={{ fontSize: 12, color: '#666' }}>Sorok tartása:</span>
                 </Tooltip>
-                <Switch size="small" checked={rollsMixable} onChange={setRollsMixable} />
+                <Switch size="small" checked={keepRollRows} onChange={setKeepRollRows} />
                 <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
               </Space>
             </div>
