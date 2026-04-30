@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message, Segmented } from 'antd';
+import { Modal, Row, Col, Button, Radio, InputNumber, Input, Table, Space, Typography, Alert, Tag, Tooltip, Select, Popconfirm, message, Segmented, Switch } from 'antd';
 import { PlusOutlined, DeleteOutlined, AppstoreOutlined, SaveOutlined, CopyOutlined, FileAddOutlined, EditOutlined, FolderOpenOutlined } from '@ant-design/icons';
 
 const { Text } = Typography;
@@ -100,7 +100,7 @@ type Piece = { productId: number; productName: string; w: number; h: number; rot
 type Placed = Piece & { x: number; y: number; pw: number; ph: number; rotated: boolean };
 
 const shelfPackFFDH = (
-  binW: number, binH: number, gap: number, pieces: Piece[],
+  binW: number, binH: number, gap: number, pieces: Piece[], allowGrow: boolean = false,
 ): { placed: Placed[]; leftover: Piece[] } => {
   const placed: Placed[] = [];
   const leftover: Piece[] = [];
@@ -116,7 +116,11 @@ const shelfPackFFDH = (
       if (!started) return null;
       const x = cursorX === 0 ? 0 : cursorX + gap;
       if (x + w > binW + 1e-6) return null;
-      if (h > shelfH + 1e-6) return null;
+      if (h > shelfH + 1e-6) {
+        // Strict shelf: reject taller pieces. With allowGrow, expand shelf if it still fits the bin.
+        if (!allowGrow) return null;
+        if (shelfY + h > binH + 1e-6) return null;
+      }
       return { x, w, h, rot };
     };
     let r = tryCurrent(p.w, p.h, false);
@@ -124,6 +128,7 @@ const shelfPackFFDH = (
     if (r) {
       placed.push({ ...p, x: r.x, y: shelfY, pw: r.w, ph: r.h, rotated: r.rot });
       cursorX = r.x + r.w;
+      if (r.h > shelfH) shelfH = r.h; // grow shelf height when allowed
       continue;
     }
     // Open new shelf
@@ -169,6 +174,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const [sheets, setSheets] = useState<SheetRow[]>([
     { id: 1, name: 'B2', width: 500, height: 700, available: null, rotate: 'auto' },
   ]);
+  const [productsMixable, setProductsMixable] = useState<boolean>(true);
 
   // ── Szálanyag (1D) ──────────────────────────────────────
   const [kerf, setKerf] = useState<number>(3);
@@ -187,6 +193,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
   const [rolls, setRolls] = useState<RollRow[]>([
     { id: 1, name: 'Tekercs 1000mm', width: 1000, availableLength: null },
   ]);
+  const [rollsMixable, setRollsMixable] = useState<boolean>(true);
 
   // ── Presetek (localStorage) ────────────────────────────────────────────
   const STORAGE_KEY = 'pixisys_imposition_presets_v1';
@@ -439,37 +446,46 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     while (pool.length > 0 && safety-- > 0) {
       let best: { sheet: SheetRow; placed: Placed[]; leftover: Piece[]; area: number } | null = null;
 
-      // Try multiple seed orderings/orientations per sheet
-      // 4th variant pre-rotates only pieces that allow rotation
-      const variants: Piece[][] = [
-        [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-        [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
-        [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
-        [...pool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w }))
-          .sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
-      ];
+      // When productsMixable=false, restrict each sheet to ONE productId.
+      const productIdGroups: (number | null)[] = productsMixable
+        ? [null]
+        : Array.from(new Set(pool.map(p => p.productId)));
 
-      for (const s of sheets) {
-        const av = remaining.get(s.id);
-        if (av !== null && av !== undefined && av <= 0) continue;
-        for (const variant of variants) {
-          const r = shelfPackFFDH(s.width, s.height, bleed, variant);
-          if (r.placed.length === 0) continue;
-          const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
-          // Map placed pieces back to original pool (for leftover bookkeeping)
-          const used = new Map<number, number>();
-          r.placed.forEach(pl => used.set(pl.productId, (used.get(pl.productId) || 0) + 1));
-          const cnt = new Map<number, number>();
-          const remainingPool: Piece[] = [];
-          pool.forEach(p => {
-            const u = used.get(p.productId) || 0;
-            const c = cnt.get(p.productId) || 0;
-            if (c < u) cnt.set(p.productId, c + 1);
-            else remainingPool.push(p);
-          });
-          if (!best || r.placed.length > best.placed.length ||
-            (r.placed.length === best.placed.length && area > best.area)) {
-            best = { sheet: s, placed: r.placed, leftover: remainingPool, area };
+      for (const restrictPid of productIdGroups) {
+        const subPool = restrictPid === null ? pool : pool.filter(p => p.productId === restrictPid);
+        if (subPool.length === 0) continue;
+
+        // Try multiple seed orderings/orientations per sheet
+        const variants: Piece[][] = [
+          [...subPool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+          [...subPool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
+          [...subPool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+          [...subPool].map(p => p.rotateAllowed === false ? p : ({ ...p, w: p.h, h: p.w }))
+            .sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+        ];
+
+        for (const s of sheets) {
+          const av = remaining.get(s.id);
+          if (av !== null && av !== undefined && av <= 0) continue;
+          for (const variant of variants) {
+            const r = shelfPackFFDH(s.width, s.height, bleed, variant);
+            if (r.placed.length === 0) continue;
+            const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
+            // Map placed pieces back to original pool (for leftover bookkeeping)
+            const used = new Map<number, number>();
+            r.placed.forEach(pl => used.set(pl.productId, (used.get(pl.productId) || 0) + 1));
+            const cnt = new Map<number, number>();
+            const remainingPool: Piece[] = [];
+            pool.forEach(p => {
+              const u = used.get(p.productId) || 0;
+              const c = cnt.get(p.productId) || 0;
+              if (c < u) cnt.set(p.productId, c + 1);
+              else remainingPool.push(p);
+            });
+            if (!best || r.placed.length > best.placed.length ||
+              (r.placed.length === best.placed.length && area > best.area)) {
+              best = { sheet: s, placed: r.placed, leftover: remainingPool, area };
+            }
           }
         }
       }
@@ -498,7 +514,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
 
     return { sheets: out, sheetUsage: sheetUsageM, producedByProduct, shortageByProduct };
-  }, [products, sheets, bleed]);
+  }, [products, sheets, bleed, productsMixable]);
 
   // ── Szálanyag (1D cutting stock) ────────────────────────────
   // FFD: minden darabot (mennyiség szerint kibontva, hossz szerint csökkenő)
@@ -689,7 +705,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         const rem = remaining.get(r.id) || 0;
         if (rem <= 0) continue;
         for (const variant of variants) {
-          const result = shelfPackFFDH(r.width, rem, rollGap, variant);
+          const result = shelfPackFFDH(r.width, rem, rollGap, variant, rollsMixable);
           if (result.placed.length === 0) continue;
           let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
           let area = 0;
@@ -749,7 +765,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
 
     return { rolls: out, rollUsage: rollUsageM, producedByProduct, shortageByProduct };
-  }, [rollProducts, rolls, rollGap]);
+  }, [rollProducts, rolls, rollGap, rollsMixable]);
 
   // ── Renderek külön módokhoz ─────────────────────────────────────────
   const renderSzalanyag = () => (
@@ -932,7 +948,13 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#389e0d' }}>Termékek</Text>
-              <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
+              <Space>
+                <Tooltip title="Be: a termékek túl is nyúlhatnak a soron (magában a polcban keverés megengedett). Ki: szigorú sormağasság.">
+                  <span style={{ fontSize: 12, color: '#666' }}>Keverhető:</span>
+                </Tooltip>
+                <Switch size="small" checked={rollsMixable} onChange={setRollsMixable} />
+                <Button size="small" icon={<PlusOutlined />} onClick={addRollProduct}>Termék</Button>
+              </Space>
             </div>
             {rollProducts.map(p => (
               <Row key={p.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
@@ -1152,8 +1174,8 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       onOk={onClose}
       okText="Bezár"
       cancelButtonProps={{ style: { display: 'none' } }}
-      width={1100}
-      styles={{ body: { padding: 16 } }}
+      width={1265}
+      styles={{ body: { padding: 10 } }}
     >
       {/* ── Presetek ───────────────────────────────────────────────────── */}
       <div style={{ marginBottom: 12, padding: 10, background: '#fafafa', borderRadius: 8, border: '1px solid #f0f0f0' }}>
@@ -1212,7 +1234,13 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: 12 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
               <Text strong style={{ color: '#389e0d' }}>Termékek</Text>
-              <Button size="small" icon={<PlusOutlined />} onClick={addProduct}>Termék</Button>
+              <Space>
+                <Tooltip title="Be: többféle termék mehet egy ívre. Ki: egy íven csak egyféle termék.">
+                  <span style={{ fontSize: 12, color: '#666' }}>Keverhető:</span>
+                </Tooltip>
+                <Switch size="small" checked={productsMixable} onChange={setProductsMixable} />
+                <Button size="small" icon={<PlusOutlined />} onClick={addProduct}>Termék</Button>
+              </Space>
             </div>
             {products.map((p, idx) => (
               <Row key={p.id} gutter={6} style={{ marginBottom: 6 }} align="middle">
