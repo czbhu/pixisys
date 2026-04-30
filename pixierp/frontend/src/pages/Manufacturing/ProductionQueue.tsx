@@ -12,7 +12,15 @@ import {
     Modal,
     Input,
     Typography,
+    Tabs,
+    Form,
+    Divider,
+    Switch,
 } from 'antd';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
+import { settingsService } from '../../services/settingsService';
+import { useAuth } from '../../contexts/AuthContext';
 import {
     ReloadOutlined,
     PrinterOutlined,
@@ -585,7 +593,8 @@ export default ProductionQueue;
 
 // ─────────────────────────────────────────────────────────────────────────
 // SendOrderModal: groups the selected cost-items by supplier/department,
-// lets the user review/edit recipient e-mail addresses per group, then
+// lets the user fully edit per-group recipients, subject and HTML body
+// (just like the RFQ "Ajánlat küldés" modal), with live preview, then
 // POSTs to /manufacturing/cost-items/send_supplier_order/.
 
 interface SendGroup {
@@ -602,29 +611,212 @@ interface SendOrderModalProps {
     onSent: (unsentIds: number[]) => void;
 }
 
-const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: initialGroups, onSent }) => {
-    const [groups, setGroups] = useState<SendGroup[]>([]);
-    const [sending, setSending] = useState(false);
+interface GroupState {
+    key: string;
+    label: string;
+    items: QueueRow[];
+    recipients: string;
+    cc: string;
+    reply_to: string;
+    template_key: string;
+    signature_key: string;
+    subject: string;
+    body: string;
+    is_html: boolean;
+    item_table_html: string;
+    item_list_text: string;
+}
 
-    // Sync local copy whenever the modal opens with a new selection. We ALSO
-    // pre-fill `recipient` from each item's supplier/department default
-    // (best-effort: the BE is the source of truth for actual e-mail
-    // addresses, but we display whatever was passed in).
+/** Substitute the supported placeholders in a subject/body template. */
+const renderTemplateText = (
+    text: string,
+    ctx: { recipient_label: string; item_count: number; item_table_html: string; item_list_text: string },
+) => {
+    if (!text) return '';
+    return text
+        .replace(/\{recipient_label\}/g, ctx.recipient_label)
+        .replace(/\{item_count\}/g, String(ctx.item_count))
+        .replace(/\{item_table_html\}/g, ctx.item_table_html)
+        .replace(/\{item_list_text\}/g, ctx.item_list_text);
+};
+
+const renderSignature = (sig: any, user: any) => {
+    if (!sig?.body_html) return '';
+    let s: string = sig.body_html;
+    const uName = user?.last_name && user?.first_name
+        ? `${user.last_name} ${user.first_name}`
+        : (user?.username || user?.name || '');
+    s = s.replace(/\{user_name\}/g, uName);
+    s = s.replace(/\{user_email\}/g, user?.email || '');
+    s = s.replace(/\{user_phonenumber\}/g, user?.employee_profile?.phone || user?.phone || '');
+    s = s.replace(/\{user_position\}/g, user?.employee_profile?.position?.title || user?.position || '');
+    return s;
+};
+
+const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: initialGroups, onSent }) => {
+    const { user } = useAuth();
+    const [groups, setGroups] = useState<GroupState[]>([]);
+    const [activeKey, setActiveKey] = useState<string>('');
+    const [sending, setSending] = useState(false);
+    const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
+    const [signatures, setSignatures] = useState<any[]>([]);
+    const [loadingCtx, setLoadingCtx] = useState(false);
+
+    // Load templates + signatures once when the modal opens.
     useEffect(() => {
-        if (open) setGroups(initialGroups.map(g => ({ ...g, recipient: g.recipient || '' })));
+        if (!open) return;
+        (async () => {
+            try {
+                const [tpls, sigs] = await Promise.all([
+                    settingsService.getEmailTemplates(),
+                    settingsService.getSignatures(),
+                ]);
+                setEmailTemplates(tpls || []);
+                setSignatures(sigs || []);
+            } catch {
+                // non-fatal
+            }
+        })();
+    }, [open]);
+
+    // Build per-group state every time the modal is (re)opened with a new
+    // selection. Fetches the rendered context (item_table_html etc.) from
+    // the backend, then pre-fills subject/body using the default template.
+    useEffect(() => {
+        if (!open) return;
+        if (initialGroups.length === 0) {
+            setGroups([]);
+            return;
+        }
+        let cancelled = false;
+        (async () => {
+            setLoadingCtx(true);
+            try {
+                const ids = initialGroups.flatMap(g => g.items.map(i => i.id));
+                let renderedByKey: Record<string, any> = {};
+                try {
+                    const { data } = await api.post('/manufacturing/cost-items/render_supplier_order/', {
+                        cost_item_ids: ids,
+                    });
+                    (data?.groups || []).forEach((g: any) => { renderedByKey[g.key] = g; });
+                } catch {
+                    // fallback: build a minimal HTML table client-side
+                }
+
+                // Pick default template (manufacturing_supplier_order if present)
+                let tpls: any[] = emailTemplates;
+                if (!tpls || tpls.length === 0) {
+                    try { tpls = await settingsService.getEmailTemplates(); } catch { tpls = []; }
+                }
+                const defaultTpl = tpls.find(t => t.key === 'manufacturing_supplier_order') || tpls[0] || null;
+
+                const next: GroupState[] = initialGroups.map(g => {
+                    const r = renderedByKey[g.key];
+                    const ctx = {
+                        recipient_label: g.label,
+                        item_count: g.items.length,
+                        item_table_html: r?.item_table_html || buildFallbackTable(g.items),
+                        item_list_text: r?.item_list_text || g.items.map(i =>
+                            `- [${i.order_number}] ${i.code || ''} ${i.item_name} — ${i.quantity} ${i.unit}`
+                        ).join('\n'),
+                    };
+                    const subject = defaultTpl
+                        ? renderTemplateText(defaultTpl.subject_template || '', ctx)
+                        : `Gyártási megrendelés - ${g.items.length} tétel`;
+                    const body = defaultTpl
+                        ? renderTemplateText(defaultTpl.body_template || '', ctx)
+                        : `<p>Tisztelt ${g.label}!</p><p>Kérjük, az alábbi tételek gyártását / leszállítását szíveskedjenek megkezdeni:</p>${ctx.item_table_html}<p>Köszönettel,<br>PixiERP</p>`;
+                    return {
+                        key: g.key,
+                        label: g.label,
+                        items: g.items,
+                        recipients: g.recipient || '',
+                        cc: defaultTpl?.default_cc || '',
+                        reply_to: defaultTpl?.default_reply_to || '',
+                        template_key: defaultTpl?.key || '',
+                        signature_key: '',
+                        subject,
+                        body,
+                        is_html: defaultTpl ? !!defaultTpl.is_html : true,
+                        item_table_html: ctx.item_table_html,
+                        item_list_text: ctx.item_list_text,
+                    };
+                });
+                if (cancelled) return;
+                setGroups(next);
+                setActiveKey(next[0]?.key || '');
+            } finally {
+                if (!cancelled) setLoadingCtx(false);
+            }
+        })();
+        return () => { cancelled = true; };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, initialGroups]);
 
+    const updateGroup = (key: string, patch: Partial<GroupState>) => {
+        setGroups(gs => gs.map(g => g.key === key ? { ...g, ...patch } : g));
+    };
+
+    /** Apply a template to a group: re-render subject/body with the group's
+     *  context, and re-append the currently selected signature (if any). */
+    const applyTemplate = (g: GroupState, templateKey: string, signatureKey?: string) => {
+        const tpl = emailTemplates.find(t => t.key === templateKey);
+        const ctx = {
+            recipient_label: g.label,
+            item_count: g.items.length,
+            item_table_html: g.item_table_html,
+            item_list_text: g.item_list_text,
+        };
+        let subject = g.subject;
+        let body = g.body;
+        let cc = g.cc;
+        let replyTo = g.reply_to;
+        let isHtml = g.is_html;
+        if (tpl) {
+            subject = renderTemplateText(tpl.subject_template || '', ctx);
+            body = renderTemplateText(tpl.body_template || '', ctx);
+            cc = tpl.default_cc || '';
+            replyTo = tpl.default_reply_to || '';
+            isHtml = !!tpl.is_html;
+        }
+        const sigKey = signatureKey ?? g.signature_key;
+        if (sigKey) {
+            const sig = signatures.find(s => s.key === sigKey);
+            const sigHtml = renderSignature(sig, user);
+            if (sigHtml) body = body + (isHtml ? '' : '\n\n') + sigHtml;
+        }
+        updateGroup(g.key, { template_key: templateKey, subject, body, cc, reply_to: replyTo, is_html: isHtml });
+    };
+
+    const applySignature = (g: GroupState, sigKey: string) => {
+        // Re-apply the current template and append the new signature.
+        applyTemplate({ ...g, signature_key: sigKey }, g.template_key || '', sigKey);
+        updateGroup(g.key, { signature_key: sigKey });
+    };
+
     const handleSend = async () => {
-        const cost_item_ids = groups.flatMap(g => g.items.map(i => i.id));
-        const recipients: Record<string, string> = {};
-        groups.forEach(g => {
-            if (g.recipient.trim()) recipients[g.key] = g.recipient.trim();
-        });
+        // Basic validation: every group must have a recipient.
+        const missing = groups.filter(g => !g.recipients.trim());
+        if (missing.length > 0) {
+            message.warning(`Hiányzó címzett: ${missing.map(g => g.label).join(', ')}`);
+            return;
+        }
         setSending(true);
         try {
-            const { data } = await api.post('/manufacturing/cost-items/send_supplier_order/', {
-                cost_item_ids, recipients,
-            });
+            const payload = {
+                groups: groups.map(g => ({
+                    key: g.key,
+                    label: g.label,
+                    cost_item_ids: g.items.map(i => i.id),
+                    recipients: g.recipients.trim(),
+                    cc: g.cc.trim(),
+                    reply_to: g.reply_to.trim(),
+                    subject: g.subject,
+                    body: g.body,
+                    is_html: g.is_html,
+                })),
+            };
+            const { data } = await api.post('/manufacturing/cost-items/send_supplier_order/', payload);
             const failedKeys = new Set<string>(
                 (data.results || []).filter((r: any) => !r.sent).map((r: any) => r.key)
             );
@@ -655,7 +847,7 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
             title="Megrendelés elküldése beszállítóknak"
             open={open}
             onCancel={onClose}
-            width={780}
+            width={1100}
             confirmLoading={sending}
             okText="Küldés"
             cancelText="Mégse"
@@ -664,38 +856,177 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
         >
             <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
                 A kijelölt tételek beszállító / belső részleg szerint csoportosítva kerülnek elküldésre.
-                Minden csoporthoz egy levél megy ki, a tételek listájával.
+                Minden fülön külön szerkesztheted a tárgyat, törzset és címzetteket.
             </Typography.Paragraph>
-            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-                {groups.map(g => (
-                    <Card key={g.key} size="small" title={
-                        <Space>
-                            {g.key.startsWith('dep:')
-                                ? <Tag color="blue">{g.label}</Tag>
-                                : <Tag color="orange">{g.label}</Tag>}
-                            <Typography.Text type="secondary">{g.items.length} tétel</Typography.Text>
-                        </Space>
-                    }>
-                        <Input
-                            placeholder="címzett@példa.hu (több cím vesszővel elválasztva)"
-                            value={g.recipient}
-                            onChange={(e) => {
-                                const v = e.target.value;
-                                setGroups(gs => gs.map(x => x.key === g.key ? { ...x, recipient: v } : x));
-                            }}
-                            style={{ marginBottom: 8 }}
-                        />
-                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
-                            {g.items.map(it => (
-                                <li key={it.id}>
-                                    <strong>{it.order_number}</strong> — {it.code ? `${it.code} ` : ''}{it.item_name}
-                                    {' '}<span style={{ color: '#888' }}>({it.quantity} {it.unit})</span>
-                                </li>
-                            ))}
-                        </ul>
-                    </Card>
-                ))}
-            </Space>
+            {loadingCtx && groups.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center' }}>Betöltés…</div>
+            ) : groups.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center' }}>Nincs kijelölt tétel.</div>
+            ) : (
+                <Tabs
+                    activeKey={activeKey}
+                    onChange={setActiveKey}
+                    items={groups.map(g => ({
+                        key: g.key,
+                        label: (
+                            <span>
+                                {g.key.startsWith('dep:')
+                                    ? <Tag color="blue">Belső</Tag>
+                                    : <Tag color="orange">Beszállító</Tag>}
+                                {g.label} <Typography.Text type="secondary">({g.items.length})</Typography.Text>
+                            </span>
+                        ),
+                        children: (
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                                <div>
+                                    <Form layout="vertical" size="small">
+                                        <Form.Item label="Címzettek" required>
+                                            <Input
+                                                placeholder="email1@example.com, email2@example.com"
+                                                value={g.recipients}
+                                                onChange={e => updateGroup(g.key, { recipients: e.target.value })}
+                                            />
+                                        </Form.Item>
+                                        <div style={{ display: 'flex', gap: 12 }}>
+                                            <Form.Item label="Másolat (CC)" style={{ flex: 1 }}>
+                                                <Input
+                                                    placeholder="cc@example.com"
+                                                    value={g.cc}
+                                                    onChange={e => updateGroup(g.key, { cc: e.target.value })}
+                                                />
+                                            </Form.Item>
+                                            <Form.Item label="Válaszcím (Reply-To)" style={{ flex: 1 }}>
+                                                <Input
+                                                    placeholder="reply@example.com"
+                                                    value={g.reply_to}
+                                                    onChange={e => updateGroup(g.key, { reply_to: e.target.value })}
+                                                />
+                                            </Form.Item>
+                                        </div>
+                                        <div style={{ display: 'flex', gap: 12 }}>
+                                            <Form.Item label="Email sablon" style={{ flex: 1 }}>
+                                                <Select
+                                                    placeholder="Válassz sablont"
+                                                    value={g.template_key || undefined}
+                                                    showSearch
+                                                    optionFilterProp="label"
+                                                    onChange={(k: string) => applyTemplate(g, k)}
+                                                    options={emailTemplates.map(t => ({
+                                                        label: `${t.name} (${t.key})`, value: t.key,
+                                                    }))}
+                                                />
+                                            </Form.Item>
+                                            <Form.Item label="Aláírás" style={{ flex: 1 }}>
+                                                <Select
+                                                    placeholder="Válassz aláírást"
+                                                    allowClear
+                                                    value={g.signature_key || undefined}
+                                                    showSearch
+                                                    optionFilterProp="label"
+                                                    onChange={(k: string) => applySignature(g, k || '')}
+                                                    options={signatures.map(s => ({
+                                                        label: `${s.name} (${s.key})`, value: s.key,
+                                                    }))}
+                                                />
+                                            </Form.Item>
+                                        </div>
+                                        <Form.Item label="Tárgy">
+                                            <Input
+                                                value={g.subject}
+                                                onChange={e => updateGroup(g.key, { subject: e.target.value })}
+                                            />
+                                        </Form.Item>
+                                        <Form.Item
+                                            label={
+                                                <Space>
+                                                    <span>Törzs</span>
+                                                    <Switch
+                                                        size="small"
+                                                        checked={g.is_html}
+                                                        onChange={v => updateGroup(g.key, { is_html: v })}
+                                                        checkedChildren="HTML"
+                                                        unCheckedChildren="Szöveg"
+                                                    />
+                                                </Space>
+                                            }
+                                        >
+                                            {g.is_html ? (
+                                                <ReactQuill
+                                                    theme="snow"
+                                                    value={g.body}
+                                                    onChange={v => updateGroup(g.key, { body: v })}
+                                                    style={{ height: 280, marginBottom: 50 }}
+                                                />
+                                            ) : (
+                                                <Input.TextArea
+                                                    rows={14}
+                                                    value={g.body}
+                                                    onChange={e => updateGroup(g.key, { body: e.target.value })}
+                                                />
+                                            )}
+                                        </Form.Item>
+                                        <Typography.Text type="secondary" style={{ fontSize: 11 }}>
+                                            Helyettesíthető változók:&nbsp;
+                                            <code>{'{recipient_label}'}</code>,&nbsp;
+                                            <code>{'{item_count}'}</code>,&nbsp;
+                                            <code>{'{item_table_html}'}</code>,&nbsp;
+                                            <code>{'{item_list_text}'}</code>
+                                        </Typography.Text>
+                                    </Form>
+                                </div>
+                                <div>
+                                    <Divider style={{ marginTop: 0 }}>Előnézet</Divider>
+                                    <div style={{ border: '1px solid #ddd', borderRadius: 4, padding: 12, background: '#fff' }}>
+                                        <div style={{ marginBottom: 8 }}><b>Tárgy:</b> {g.subject}</div>
+                                        <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>
+                                            {g.recipients ? <>Címzett: {g.recipients}</> : <em>Nincs címzett</em>}
+                                            {g.cc && <> · CC: {g.cc}</>}
+                                        </div>
+                                        <div className="email-preview-content" style={{ maxHeight: 460, overflow: 'auto' }}>
+                                            {g.is_html ? (
+                                                <div dangerouslySetInnerHTML={{
+                                                    __html: (g.body || '').replace(/<a /gi, '<a target="_blank" '),
+                                                }} />
+                                            ) : (
+                                                <pre style={{ whiteSpace: 'pre-wrap' }}>{g.body}</pre>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <Divider>Tételek ({g.items.length})</Divider>
+                                    <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, maxHeight: 180, overflow: 'auto' }}>
+                                        {g.items.map(it => (
+                                            <li key={it.id}>
+                                                <strong>{it.order_number}</strong> — {it.code ? `${it.code} ` : ''}{it.item_name}
+                                                {' '}<span style={{ color: '#888' }}>({it.quantity} {it.unit})</span>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                </div>
+                            </div>
+                        ),
+                    }))}
+                />
+            )}
         </Modal>
     );
 };
+
+/** Last-resort client-side HTML table builder, used only if the BE render
+ *  endpoint failed. The BE-rendered version is richer (deadlines, codes). */
+function buildFallbackTable(items: QueueRow[]): string {
+    const rows = items.map(i =>
+        `<tr>
+            <td style='border:1px solid #ddd;padding:4px 8px'>${i.order_number || '-'}</td>
+            <td style='border:1px solid #ddd;padding:4px 8px'>${i.code || ''}</td>
+            <td style='border:1px solid #ddd;padding:4px 8px'>${i.item_name || ''}</td>
+            <td style='border:1px solid #ddd;padding:4px 8px;text-align:right'>${i.quantity} ${i.unit || ''}</td>
+        </tr>`
+    ).join('');
+    return `<table style='border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px'>
+        <thead><tr>
+            <th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Megrendelés</th>
+            <th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Cikkszám</th>
+            <th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Tétel</th>
+            <th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Mennyiség</th>
+        </tr></thead><tbody>${rows}</tbody></table>`;
+}
