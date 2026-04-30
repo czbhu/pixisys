@@ -59,6 +59,20 @@ interface CustomerOrder {
 
   const { confirm } = Modal;
 
+  const stripHtml = (s: any): string => {
+    if (s == null) return '';
+    const str = String(s);
+    if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
+    if (typeof document !== 'undefined') {
+      try {
+        const tmp = document.createElement('div');
+        tmp.innerHTML = str;
+        return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+      } catch { /* fallthrough */ }
+    }
+    return str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+  };
+
   const DEFAULT_ITEMS_COL_ORDER = [
     'order_date', 'order_number', 'name',
     'product_description', 'internal_description', 'description',
@@ -239,9 +253,9 @@ interface CustomerOrder {
         'Dátum': it.order_date ? dayjs(it.order_date).format('YYYY-MM-DD') : '',
         'Ügyfél': it.customer_name,
         'Tétel neve': it.name,
-        'Leírás': it.product_description ?? '',
-        'Belső leírás': it.internal_description ?? '',
-        'Megjegyzés': it.description ?? '',
+        'Leírás': stripHtml(it.product_description),
+        'Belső leírás': stripHtml(it.internal_description),
+        'Megjegyzés': stripHtml(it.description),
         'Beszállító': it.supplier_name ?? '',
         'Határidő': it.deadline ? dayjs(it.deadline).format('YYYY-MM-DD') : '',
         'Nettó összeg': it.net_total ?? '',
@@ -874,17 +888,17 @@ interface CustomerOrder {
     {
       title: 'Leírás', dataIndex: 'product_description', key: 'product_description', width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'product_description'),
-      render: (t: string) => (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{t}</div>)
+      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{p}</div>); }
     },
     {
       title: 'Belső leírás', dataIndex: 'internal_description', key: 'internal_description', width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'internal_description'),
-      render: (t: string) => (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{t}</div>)
+      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{p}</div>); }
     },
     {
       title: 'Megjegyzés', dataIndex: 'description', key: 'description', responsive: ['md'] as any, width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'description'),
-      render: (t: string) => (<div title={t} style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{t}</div>)
+      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p}</div>); }
     },
     {
       title: 'Beszállítók', dataIndex: 'supplier_name', key: 'supplier_name', ellipsis: true, responsive: ['lg'] as any,
