@@ -94,6 +94,62 @@ const itemsPerSheet = (sw: number, sh: number, pw: number, ph: number, gap: numb
   return { count: cols * rows, rotated, cols, rows };
 };
 
+// ── Shelf-FFDH 2D bin packer (több termék vegyítése egy alapanyagon) ─
+type Piece = { productId: number; productName: string; w: number; h: number; rotateAllowed?: boolean };
+type Placed = Piece & { x: number; y: number; pw: number; ph: number; rotated: boolean };
+
+const shelfPackFFDH = (
+  binW: number, binH: number, gap: number, pieces: Piece[],
+): { placed: Placed[]; leftover: Piece[] } => {
+  const placed: Placed[] = [];
+  const leftover: Piece[] = [];
+  let shelfY = 0;
+  let shelfH = 0;
+  let cursorX = 0;
+  let started = false;
+
+  for (const p of pieces) {
+    const allowRot = p.rotateAllowed !== false;
+    // Try to fit in current shelf
+    const tryCurrent = (w: number, h: number, rot: boolean) => {
+      if (!started) return null;
+      const x = cursorX === 0 ? 0 : cursorX + gap;
+      if (x + w > binW + 1e-6) return null;
+      if (h > shelfH + 1e-6) return null;
+      return { x, w, h, rot };
+    };
+    let r = tryCurrent(p.w, p.h, false);
+    if (!r && allowRot) r = tryCurrent(p.h, p.w, true);
+    if (r) {
+      placed.push({ ...p, x: r.x, y: shelfY, pw: r.w, ph: r.h, rotated: r.rot });
+      cursorX = r.x + r.w;
+      continue;
+    }
+    // Open new shelf
+    const newY = started ? shelfY + shelfH + gap : 0;
+    const fitsN = p.w <= binW + 1e-6 && newY + p.h <= binH + 1e-6;
+    const fitsR = allowRot && p.h <= binW + 1e-6 && newY + p.w <= binH + 1e-6;
+    let useW = p.w, useH = p.h, rot = false;
+    if (fitsN && fitsR) {
+      // Prefer the orientation with the smaller height (less wasted shelf height)
+      if (p.w >= p.h) { /* normal */ } else { useW = p.h; useH = p.w; rot = true; }
+    } else if (fitsN) {
+      // normal
+    } else if (fitsR) {
+      useW = p.h; useH = p.w; rot = true;
+    } else {
+      leftover.push(p);
+      continue;
+    }
+    shelfY = newY;
+    shelfH = useH;
+    placed.push({ ...p, x: 0, y: shelfY, pw: useW, ph: useH, rotated: rot });
+    cursorX = useW;
+    started = true;
+  }
+  return { placed, leftover };
+};
+
 interface Props {
   open: boolean;
   onClose: () => void;
@@ -360,6 +416,67 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     return map;
   }, [assignments]);
 
+  // ── Vegyes (mixed) packer Íves módhoz – több termék egy íven ──────────
+  const mixedSheets = useMemo(() => {
+    const pieces: Piece[] = [];
+    products.forEach(p => {
+      const allowRot = true; // global per-sheet rotate setting alkalmazható később
+      for (let i = 0; i < p.quantity; i++) pieces.push({ productId: p.id, productName: p.name, w: p.width, h: p.height, rotateAllowed: allowRot });
+    });
+    pieces.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
+
+    const remaining = new Map<number, number | null>(sheets.map(s => [s.id, s.available]));
+    type PackedSheet = { idx: number; sheet: SheetRow; placed: Placed[]; bbox: { x: number; y: number; w: number; h: number }; coverage: number };
+    const out: PackedSheet[] = [];
+    let pool = pieces.slice();
+
+    let safety = 1000;
+    while (pool.length > 0 && safety-- > 0) {
+      let best: { sheet: SheetRow; placed: Placed[]; leftover: Piece[]; area: number } | null = null;
+      for (const s of sheets) {
+        const av = remaining.get(s.id);
+        if (av !== null && av !== undefined && av <= 0) continue;
+        const allowRotate = s.rotate === 'auto';
+        const inputPieces = allowRotate ? pool : pool.map(pp => {
+          // honor sheet-level rotate restriction by pre-rotating
+          if (s.rotate === 'rotated') return { ...pp, w: pp.h, h: pp.w, rotateAllowed: false };
+          return { ...pp, rotateAllowed: false };
+        });
+        const r = shelfPackFFDH(s.width, s.height, bleed, inputPieces);
+        if (r.placed.length === 0) continue;
+        const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
+        if (!best || r.placed.length > best.placed.length ||
+          (r.placed.length === best.placed.length && area > best.area)) {
+          best = { sheet: s, placed: r.placed, leftover: r.leftover, area };
+        }
+      }
+      if (!best) break;
+      // bbox
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      best.placed.forEach(pl => {
+        if (pl.x < minX) minX = pl.x;
+        if (pl.y < minY) minY = pl.y;
+        if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+        if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+      });
+      const bbox = { x: minX, y: minY, w: maxX - minX, h: maxY - minY };
+      const coverage = best.area / (best.sheet.width * best.sheet.height);
+      out.push({ idx: out.length + 1, sheet: best.sheet, placed: best.placed, bbox, coverage });
+      pool = best.leftover;
+      const av = remaining.get(best.sheet.id);
+      if (av !== null && av !== undefined) remaining.set(best.sheet.id, av - 1);
+    }
+
+    const sheetUsageM = new Map<number, number>();
+    out.forEach(s => sheetUsageM.set(s.sheet.id, (sheetUsageM.get(s.sheet.id) || 0) + 1));
+    const producedByProduct = new Map<number, number>();
+    out.forEach(s => s.placed.forEach(pl => producedByProduct.set(pl.productId, (producedByProduct.get(pl.productId) || 0) + 1)));
+    const shortageByProduct = new Map<number, number>();
+    pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
+
+    return { sheets: out, sheetUsage: sheetUsageM, producedByProduct, shortageByProduct };
+  }, [products, sheets, bleed]);
+
   // ── Szálanyag (1D cutting stock) ────────────────────────────
   // FFD: minden darabot (mennyiség szerint kibontva, hossz szerint csökkenő)
   // best-fit a már nyitott szálakra; ha nem fér, új szálat nyit a legkisebb
@@ -504,6 +621,55 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     });
     return map;
   }, [rollAllocations]);
+
+  // ── Vegyes packer Tekercseshez – több termék egy tekercsen ─────────
+  const mixedRolls = useMemo(() => {
+    const pieces: Piece[] = [];
+    rollProducts.forEach(p => {
+      for (let i = 0; i < p.quantity; i++) pieces.push({ productId: p.id, productName: p.name, w: p.width, h: p.length, rotateAllowed: true });
+    });
+    pieces.sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h));
+
+    type PackedRoll = {
+      idx: number; roll: RollRow; placed: Placed[];
+      usedLengthMm: number; bboxW: number; bboxH: number;
+      printedAreaMm2: number; coverage: number;
+    };
+    const out: PackedRoll[] = [];
+    let pool = pieces.slice();
+
+    let safety = 200;
+    for (const r of rolls) {
+      if (pool.length === 0 || safety-- <= 0) break;
+      const limitMm = r.availableLength === null ? 1e9 : r.availableLength * 1000;
+      const result = shelfPackFFDH(r.width, limitMm, rollGap, pool);
+      if (result.placed.length === 0) continue;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      let area = 0;
+      result.placed.forEach(pl => {
+        if (pl.x < minX) minX = pl.x;
+        if (pl.y < minY) minY = pl.y;
+        if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+        if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+        area += pl.pw * pl.ph;
+      });
+      const usedLengthMm = maxY;
+      const bboxW = maxX - minX;
+      const bboxH = maxY - minY;
+      const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
+      out.push({ idx: out.length + 1, roll: r, placed: result.placed, usedLengthMm, bboxW, bboxH, printedAreaMm2: area, coverage });
+      pool = result.leftover;
+    }
+
+    const rollUsageM = new Map<number, number>();
+    out.forEach(o => rollUsageM.set(o.roll.id, (rollUsageM.get(o.roll.id) || 0) + o.usedLengthMm));
+    const producedByProduct = new Map<number, number>();
+    out.forEach(o => o.placed.forEach(pl => producedByProduct.set(pl.productId, (producedByProduct.get(pl.productId) || 0) + 1)));
+    const shortageByProduct = new Map<number, number>();
+    pool.forEach(p => shortageByProduct.set(p.productId, (shortageByProduct.get(p.productId) || 0) + 1));
+
+    return { rolls: out, rollUsage: rollUsageM, producedByProduct, shortageByProduct };
+  }, [rollProducts, rolls, rollGap]);
 
   // ── Renderek külön módokhoz ─────────────────────────────────────────
   const renderSzalanyag = () => (
@@ -735,28 +901,22 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
 
       {/* Allokáció táblázat */}
       <div style={{ marginTop: 16 }}>
-        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális kiosztás (legjobb fedettség)</Text>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális kiosztás (több termék is kerülhet egy tekercsre)</Text>
         <Table
           size="small"
           pagination={false}
           bordered
-          dataSource={rollAllocations.map((ra, i) => ({
-            key: i,
-            product: `${ra.productName} (${ra.productWidth}×${ra.productLength}, ${ra.qty + ra.shortage} db)`,
-            roll: ra.rollName === '—' ? '—' : `${ra.rollName} (${ra.rollWidth} mm)${ra.rotated ? ' · 90°' : ''}`,
-            across: ra.piecesAcross > 0 ? `${ra.piecesAcross} db / sor` : '—',
-            rows: ra.rowsNeeded,
-            length: ra.totalLengthMm > 0 ? `${(ra.totalLengthMm / 1000).toFixed(2)} fm` : '—',
-            coverage: ra.piecesAcross > 0 ? `${Math.round(ra.coverage * 100)}%` : '—',
-            shortage: ra.shortage,
+          dataSource={rollProducts.map(p => ({
+            key: p.id,
+            product: `${p.name} (${p.width}×${p.length})`,
+            needed: p.quantity,
+            produced: mixedRolls.producedByProduct.get(p.id) || 0,
+            shortage: mixedRolls.shortageByProduct.get(p.id) || 0,
           }))}
           columns={[
-            { title: 'Termék', dataIndex: 'product', key: 'product', width: 220 },
-            { title: 'Tekercs', dataIndex: 'roll', key: 'roll' },
-            { title: 'Sorszélesség', dataIndex: 'across', key: 'across', width: 110 },
-            { title: 'Sorok', dataIndex: 'rows', key: 'rows', align: 'right', width: 80 },
-            { title: 'Folyóméter', dataIndex: 'length', key: 'length', align: 'right', width: 110 },
-            { title: 'Fedettség', dataIndex: 'coverage', key: 'coverage', align: 'right', width: 100 },
+            { title: 'Termék', dataIndex: 'product', key: 'product' },
+            { title: 'Kért', dataIndex: 'needed', key: 'needed', align: 'right', width: 90 },
+            { title: 'Gyártott', dataIndex: 'produced', key: 'produced', align: 'right', width: 100 },
             {
               title: 'Hiány', dataIndex: 'shortage', key: 'shortage', align: 'right', width: 90,
               render: (v: number) => v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
@@ -765,50 +925,54 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         />
       </div>
 
-      {/* Vizuális tekercs */}
-      {rollAllocations.some(ra => ra.totalLengthMm > 0) && (
+      {/* Vizuális tekercs (vegyes) */}
+      {mixedRolls.rolls.length > 0 && (
         <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Tekercs vizualizáció</Text>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-            {rollAllocations.map((ra, idx) => {
-              if (ra.totalLengthMm <= 0) return null;
-              const cellW = ra.rotated ? ra.productLength : ra.productWidth;
-              const cellH = ra.rotated ? ra.productWidth : ra.productLength;
-              const stepX = cellW + rollGap;
-              const stepY = cellH + rollGap;
-              const sw = ra.rollWidth;
-              const sh = ra.totalLengthMm;
+            {mixedRolls.rolls.map(mr => {
+              const sw = mr.roll.width;
+              const sh = mr.usedLengthMm;
+              if (sh <= 0) return null;
               const scale = Math.min(220 / sw, 360 / sh, 1);
               const svgW = Math.round(sw * scale);
               const svgH = Math.round(sh * scale);
-              const totalCells = ra.piecesAcross * ra.rowsNeeded;
-              const col = colorForProduct(ra.productId);
+              const printedM2 = mr.printedAreaMm2 / 1e6;
+              const counts = new Map<number, { name: string; n: number }>();
+              mr.placed.forEach(pl => {
+                const c = counts.get(pl.productId);
+                if (c) c.n++; else counts.set(pl.productId, { name: pl.productName, n: 1 });
+              });
               return (
-                <div key={idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 240 }}>
+                <div key={mr.idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 240 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9', marginBottom: 4 }}>
-                    {ra.productName} <span style={{ color: '#999', fontWeight: 400 }}>→</span> {ra.rollName}
+                    Tekercs #{mr.idx} – {mr.roll.name} ({sw} mm)
                   </div>
                   <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
-                    {ra.piecesAcross} db/sor{ra.rotated ? ' · 90°' : ''} · {ra.rowsNeeded} sor · {(ra.totalLengthMm / 1000).toFixed(2)} fm · fedettség {Math.round(ra.coverage * 100)}%
+                    <div>Felhasznált hossz: <b>{(mr.usedLengthMm / 1000).toFixed(2)} fm</b> · Fedettség: <b>{Math.round(mr.coverage * 100)}%</b></div>
+                    <div>Nyomott felület: <b>{printedM2.toFixed(3)} m²</b> · Befoglaló: <b>{Math.round(mr.bboxW)}×{Math.round(mr.bboxH)} mm</b></div>
                   </div>
                   <div style={{ border: '2px solid #69b1ff', borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2 }}>
                     <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
                       <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
-                      {Array.from({ length: totalCells }).map((_, ci) => {
-                        const c = ci % ra.piecesAcross;
-                        const r = Math.floor(ci / ra.piecesAcross);
-                        const x = c * stepX;
-                        const y = r * stepY;
-                        const filled = ci < ra.qty;
+                      {mr.placed.map((pl, ci) => {
+                        const c = colorForProduct(pl.productId);
                         return (
-                          <rect key={ci} x={x} y={y} width={cellW} height={cellH}
-                            fill={filled ? col.fill : '#f0f0f0'} stroke={filled ? col.stroke : '#d9d9d9'} strokeWidth={0.5} />
+                          <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
+                            fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
                         );
                       })}
                     </svg>
                   </div>
-                  <div style={{ fontSize: 11, color: '#666', marginTop: 4 }}>
-                    Tekercs: <b>{ra.rollWidth} mm</b> széles · Termék: <b>{ra.productWidth}×{ra.productLength} mm</b>
+                  <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {Array.from(counts.entries()).map(([pid, c], i) => {
+                      const col = colorForProduct(pid);
+                      return (
+                        <Tag key={i} style={{ background: col.fill, borderColor: col.stroke, color: '#000' }}>
+                          {c.name}: {c.n} db
+                        </Tag>
+                      );
+                    })}
                   </div>
                 </div>
               );
@@ -822,7 +986,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         <Text strong style={{ display: 'block', marginBottom: 6 }}>Tekercs felhasználás</Text>
         <Space wrap>
           {rolls.map(r => {
-            const usedMm = rollUsage.get(r.id) || 0;
+            const usedMm = mixedRolls.rollUsage.get(r.id) || 0;
             const usedM = usedMm / 1000;
             const limit = r.availableLength;
             const over = limit !== null && usedM > limit;
@@ -835,12 +999,15 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         </Space>
       </div>
 
-      {rollAllocations.some(ra => ra.shortage > 0) && (
+      {Array.from(mixedRolls.shortageByProduct.values()).some(v => v > 0) && (
         <Alert
           style={{ marginTop: 12 }}
           type="warning"
           showIcon
-          message={`Hiány: ${rollAllocations.filter(ra => ra.shortage > 0).map(ra => `${ra.productName} (${ra.shortage} db)`).join(', ')}`}
+          message={`Hiány: ${Array.from(mixedRolls.shortageByProduct.entries()).map(([pid, n]) => {
+            const p = rollProducts.find(x => x.id === pid);
+            return `${p?.name || '?'} (${n} db)`;
+          }).join(', ')}`}
         />
       )}
     </>
@@ -1022,36 +1189,28 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         />
       </div>
 
-      {/* ── Allokáció ──────────────────────────────────────────────────── */}
+      {/* ── Allokáció (vegyes packing) ──────────────────────────────── */}
       <div style={{ marginTop: 16 }}>
-        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális allokáció (legtöbb db/ív, készlet figyelembe vételével)</Text>
+        <Text strong style={{ display: 'block', marginBottom: 6 }}>Optimális allokáció (több termék is kerülhet egy ívre)</Text>
         <Table
           size="small"
           pagination={false}
           bordered
-          dataSource={assignments.flatMap(a => {
-            if (a.allocations.length === 0) {
-              return [{ key: `${a.productId}-none`, product: a.productName, sheet: '—', perSheet: '—', sheets: '—' as any, produced: 0, shortage: a.qtyNeeded }];
-            }
-            return a.allocations.map((al, i) => {
-              const sheet = sheets.find(s => s.id === al.sheetId);
-              return {
-                key: `${a.productId}-${al.sheetId}-${i}`,
-                product: i === 0 ? `${a.productName} (${a.qtyNeeded} db)` : '',
-                sheet: sheet ? `${sheet.name} (${sheet.width}×${sheet.height})${al.rotated ? ', 90°' : ''}` : '?',
-                perSheet: `${al.perSheet} db/ív (${al.cols}×${al.rows})`,
-                sheets: al.sheetsUsed as any,
-                produced: al.itemsProduced,
-                shortage: i === a.allocations.length - 1 ? a.shortage : 0,
-              };
-            });
-          }) as any}
+          dataSource={products.map(p => {
+            const produced = mixedSheets.producedByProduct.get(p.id) || 0;
+            const shortage = mixedSheets.shortageByProduct.get(p.id) || 0;
+            return {
+              key: p.id,
+              product: `${p.name} (${p.width}×${p.height})`,
+              needed: p.quantity,
+              produced,
+              shortage,
+            };
+          })}
           columns={[
-            { title: 'Termék', dataIndex: 'product', key: 'product', width: 200 },
-            { title: 'Ív', dataIndex: 'sheet', key: 'sheet' },
-            { title: 'Kihozatal', dataIndex: 'perSheet', key: 'perSheet', width: 140 },
-            { title: 'Felhasznált ív', dataIndex: 'sheets', key: 'sheets', align: 'right', width: 110 },
-            { title: 'Gyártott db', dataIndex: 'produced', key: 'produced', align: 'right', width: 110 },
+            { title: 'Termék', dataIndex: 'product', key: 'product' },
+            { title: 'Kért', dataIndex: 'needed', key: 'needed', align: 'right', width: 90 },
+            { title: 'Gyártott', dataIndex: 'produced', key: 'produced', align: 'right', width: 100 },
             {
               title: 'Hiány', dataIndex: 'shortage', key: 'shortage', align: 'right', width: 90,
               render: (v: number) => v > 0 ? <Tag color="red">{v}</Tag> : <span style={{ color: '#999' }}>0</span>,
@@ -1065,7 +1224,7 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
         <Text strong style={{ display: 'block', marginBottom: 6 }}>Ív felhasználás</Text>
         <Space wrap>
           {sheets.map(s => {
-            const used = sheetUsage.get(s.id) || 0;
+            const used = mixedSheets.sheetUsage.get(s.id) || 0;
             const limit = s.available;
             const over = limit !== null && used > limit;
             return (
@@ -1076,107 +1235,73 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
           })}
         </Space>
       </div>
-      {/* ── Vizuális produkciós ívek ────────────────────────── */}
-      {assignments.some(a => a.allocations.length > 0) && (
+
+      {/* ── Vizuális produkciós ívek (vegyes) ────────────────────────── */}
+      {mixedSheets.sheets.length > 0 && (
         <div style={{ marginTop: 12, padding: 12, background: '#fff7e6', borderRadius: 8, border: '1px solid #ffe7ba' }}>
           <Text strong style={{ display: 'block', marginBottom: 8 }}>Produkciós ívek (vizuális)</Text>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16 }}>
-            {assignments.flatMap(a => a.allocations.map((al, idx) => {
-              const sheet = sheets.find(s => s.id === al.sheetId);
-              if (!sheet) return null;
-              const product = products.find(pp => pp.id === a.productId);
-              if (!product) return null;
-              const sw = sheet.width;
-              const sh = sheet.height;
-              const pw = product.width;
-              const ph = product.height;
-              const cellW = al.rotated ? ph : pw;
-              const cellH = al.rotated ? pw : ph;
-              const stepX = cellW + bleed; // nyomatköz hozzáadva
-              const stepY = cellH + bleed;
-              const scale = Math.min(220 / sw, 280 / sh, 1);
+            {mixedSheets.sheets.map(ms => {
+              const sw = ms.sheet.width;
+              const sh = ms.sheet.height;
+              const scale = Math.min(260 / sw, 320 / sh, 1);
               const svgW = Math.round(sw * scale);
               const svgH = Math.round(sh * scale);
-              const remainingOnLast = al.itemsProduced % al.perSheet;
-              const fullSheets = remainingOnLast === 0 ? al.sheetsUsed : al.sheetsUsed - 1;
-              const partialItems = remainingOnLast;
-
-              const renderOneSheet = (itemsOnThis: number, label: string, isFull: boolean, key: string) => (
-                <div key={key} style={{ textAlign: 'center' }}>
-                  <div style={{
-                    border: `2px solid ${isFull ? '#69b1ff' : '#ffc069'}`,
-                    borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2,
-                  }}>
+              // Per-product counts for this sheet
+              const counts = new Map<number, { name: string; n: number }>();
+              ms.placed.forEach(pl => {
+                const c = counts.get(pl.productId);
+                if (c) c.n++;
+                else counts.set(pl.productId, { name: pl.productName, n: 1 });
+              });
+              return (
+                <div key={ms.idx} style={{ background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10, minWidth: 260 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9', marginBottom: 4 }}>
+                    Ív #{ms.idx} – {ms.sheet.name} ({sw}×{sh} mm)
+                  </div>
+                  <div style={{ fontSize: 11, color: '#666', marginBottom: 6 }}>
+                    Nyomott felület: <b>{Math.round(ms.bbox.w)}×{Math.round(ms.bbox.h)} mm</b> · Fedettség: <b>{Math.round(ms.coverage * 100)}%</b>
+                  </div>
+                  <div style={{ border: '2px solid #69b1ff', borderRadius: 4, background: '#fff', display: 'inline-block', overflow: 'hidden', padding: 2 }}>
                     <svg width={svgW} height={svgH} viewBox={`0 0 ${sw} ${sh}`}>
                       <rect x={0} y={0} width={sw} height={sh} fill="#fafafa" />
-                      {Array.from({ length: al.cols * al.rows }).map((_, ci) => {
-                        const col = ci % al.cols;
-                        const row = Math.floor(ci / al.cols);
-                        const x = col * stepX;
-                        const y = row * stepY;
-                        const filled = ci < itemsOnThis;
+                      {/* bbox */}
+                      <rect x={ms.bbox.x} y={ms.bbox.y} width={ms.bbox.w} height={ms.bbox.h}
+                        fill="none" stroke="#fa8c16" strokeWidth={0.6} strokeDasharray="3 2" />
+                      {ms.placed.map((pl, ci) => {
+                        const c = colorForProduct(pl.productId);
                         return (
-                          <g key={ci}>
-                            <rect x={x} y={y} width={cellW} height={cellH}
-                              fill={filled ? '#bae0ff' : '#f0f0f0'} stroke={filled ? '#69b1ff' : '#d9d9d9'} strokeWidth={0.5} />
-                            {filled && cellW * scale > 22 && cellH * scale > 14 && (
-                              <text x={x + cellW / 2} y={y + cellH / 2 + 3}
-                                fontSize={Math.max(6, Math.min(cellW, cellH) * 0.18)}
-                                textAnchor="middle" fill="#0958d9" fontWeight={600}>
-                                {ci + 1}
-                              </text>
-                            )}
-                          </g>
+                          <rect key={ci} x={pl.x} y={pl.y} width={pl.pw} height={pl.ph}
+                            fill={c.fill} stroke={c.stroke} strokeWidth={0.5} />
                         );
                       })}
                     </svg>
                   </div>
-                  <div style={{ fontSize: 10, color: isFull ? '#1677ff' : '#fa8c16', marginTop: 2 }}>{label}</div>
-                </div>
-              );
-
-              return (
-                <div key={`${a.productId}-${al.sheetId}-${idx}`} style={{
-                  background: '#fff', border: '1px solid #f0f0f0', borderRadius: 8, padding: 10,
-                  display: 'flex', flexDirection: 'column', gap: 6, minWidth: 240,
-                }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: '#0958d9' }}>
-                    {a.productName} <span style={{ color: '#999', fontWeight: 400 }}>→</span> {sheet.name}
-                  </div>
-                  <div style={{ fontSize: 11, color: '#666' }}>
-                    {al.perSheet} db/ív ({al.cols}×{al.rows}{al.rotated ? ', 90°' : ''}) · Ív: {sheet.width}×{sheet.height} mm · Termék: {product.width}×{product.height} mm
-                  </div>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-                    {fullSheets > 0 && (
-                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                        {renderOneSheet(al.perSheet, `${al.perSheet} db`, true, 'full')}
-                        {fullSheets > 1 && (
-                          <div style={{ fontSize: 11, color: '#1677ff', fontWeight: 600, marginTop: 2 }}>×{fullSheets}</div>
-                        )}
-                      </div>
-                    )}
-                    {partialItems > 0 && renderOneSheet(
-                      partialItems,
-                      `${partialItems}/${al.perSheet} db (${Math.round(partialItems / al.perSheet * 100)}%)`,
-                      false,
-                      'partial'
-                    )}
-                  </div>
-                  <div style={{ fontSize: 11, color: '#666' }}>
-                    Összesen: <b>{al.sheetsUsed} ív</b> → <b>{al.itemsProduced} db</b> termék
+                  <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {Array.from(counts.values()).map((c, i) => {
+                      const col = colorForProduct(Array.from(counts.keys())[i]);
+                      return (
+                        <Tag key={i} color="blue" style={{ background: col.fill, borderColor: col.stroke, color: '#000' }}>
+                          {c.name}: {c.n} db
+                        </Tag>
+                      );
+                    })}
                   </div>
                 </div>
               );
-            }))}
+            })}
           </div>
         </div>
       )}
-      {assignments.some(a => a.shortage > 0) && (
+      {Array.from(mixedSheets.shortageByProduct.values()).some(v => v > 0) && (
         <Alert
           style={{ marginTop: 12 }}
           type="warning"
           showIcon
-          message="Nem minden terméket sikerült teljesen legyártani a rendelkezésre álló ívekből."
+          message={`Hiány: ${Array.from(mixedSheets.shortageByProduct.entries()).map(([pid, n]) => {
+            const p = products.find(x => x.id === pid);
+            return `${p?.name || '?'} (${n} db)`;
+          }).join(', ')}`}
         />
       )}
       </>)}
