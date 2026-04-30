@@ -2479,12 +2479,42 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         if statuses:
             qs = qs.filter(status__in=statuses.split(','))
 
+        import re
+        from html import unescape
+
+        def strip_html(text):
+            if not text:
+                return ''
+            # Replace <br>, </p>, </div> with newlines for readability
+            t = re.sub(r'<\s*br\s*/?\s*>', '\n', text, flags=re.IGNORECASE)
+            t = re.sub(r'</\s*(p|div|li|tr)\s*>', '\n', t, flags=re.IGNORECASE)
+            # Strip remaining tags
+            t = re.sub(r'<[^>]+>', '', t)
+            t = unescape(t)
+            # Collapse 3+ newlines to 2, trim
+            t = re.sub(r'\n{3,}', '\n\n', t).strip()
+            return t
+
+        def resolve_customer_name(qr):
+            if not qr:
+                return ''
+            if qr.company:
+                return qr.company.name or ''
+            if qr.customer:
+                return qr.customer.name or ''
+            try:
+                first_contact = qr.contacts.first()
+                if first_contact and getattr(first_contact, 'company', None):
+                    return first_contact.company.name or ''
+            except Exception:
+                pass
+            return ''
+
         data = []
         for item in qs:
             mp = item.quote_item.manufacturing_product
             order = item.customer_order
             qr = order.quote_request
-            company = qr.company or qr.customer
             data.append({
                 'id': item.id,
                 'order_id': order.id,
@@ -2492,12 +2522,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'order_date': order.order_date.isoformat() if order.order_date else None,
                 'order_status': order.status,
                 'status': item.status,
-                'customer_name': company.name if company else '',
+                'customer_name': resolve_customer_name(qr),
                 'manufacturing_product_id': mp.id,
                 'name': mp.name,
                 'code': mp.code or '',
-                'description': item.description or mp.description or '',
-                'internal_description': mp.internal_description or '',
+                'description': strip_html(item.description or mp.description or ''),
+                'internal_description': strip_html(mp.internal_description or ''),
                 'quantity': float(item.quantity),
                 'unit': item.unit,
                 'net_unit_price': float(item.net_unit_price),

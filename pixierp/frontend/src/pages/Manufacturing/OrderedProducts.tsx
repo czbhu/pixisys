@@ -16,6 +16,7 @@ import {
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
+import api from '../../services/api';
 
 const { Option } = Select;
 
@@ -83,6 +84,19 @@ const OrderedProducts: React.FC = () => {
         }
     };
 
+    const handleStatusChange = async (id: number, newStatus: string) => {
+        const prev = items;
+        setItems(items.map(it => it.id === id ? { ...it, status: newStatus } : it));
+        try {
+            await api.patch(`/sales/customer-order-items/${id}/`, { status: newStatus });
+            message.success('Státusz frissítve');
+        } catch (e) {
+            console.error(e);
+            message.error('Státusz frissítése sikertelen');
+            setItems(prev);
+        }
+    };
+
     const normalize = (s: any) =>
         (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
@@ -121,11 +135,21 @@ const OrderedProducts: React.FC = () => {
             title: 'Státusz',
             dataIndex: 'status',
             key: 'status',
-            width: 130,
-            render: (s: string) => (
-                <Tag color={ORDER_ITEM_STATUS_COLORS[s] || 'default'}>
-                    {ORDER_ITEM_STATUS_LABELS[s] || s}
-                </Tag>
+            width: 160,
+            render: (s: string, record: OrderedManufacturingItem) => (
+                <Select
+                    size="small"
+                    value={s || 'new'}
+                    style={{ width: 150 }}
+                    onChange={(val) => handleStatusChange(record.id, val)}
+                    onClick={(e) => e.stopPropagation()}
+                >
+                    {Object.entries(ORDER_ITEM_STATUS_LABELS).map(([v, l]) => (
+                        <Option key={v} value={v}>
+                            <Tag color={ORDER_ITEM_STATUS_COLORS[v] || 'default'} style={{ marginRight: 0 }}>{l}</Tag>
+                        </Option>
+                    ))}
+                </Select>
             ),
             sorter: (a: OrderedManufacturingItem, b: OrderedManufacturingItem) =>
                 (ORDER_ITEM_STATUS_LABELS[a.status] || a.status).localeCompare(ORDER_ITEM_STATUS_LABELS[b.status] || b.status),
