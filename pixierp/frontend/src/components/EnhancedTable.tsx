@@ -375,38 +375,31 @@ function EnhancedTable<T extends object = any>({
         // respects each column independently — no redistribution of space.
         const effectiveWidth = savedWidth || (c as any).width || 150;
 
-        // ── Auto-tooltip + ellipsis on overflow ──────────────────────────
+        // ── Auto-truncate + native browser tooltip on overflow ───────────
         // Every data column has a fixed width (tableLayout="fixed"), so any
-        // content wider than the cell gets clipped. We wrap the rendered
-        // value in a Tooltip showing the full content, and add an inner
-        // ellipsis span so the truncation visually indicates overflow.
-        // Skipped for: actions column, drag handle column.
+        // content wider than the cell gets clipped. We add an inner ellipsis
+        // span and use the browser-native `title` attribute (zero React
+        // overhead — no portals, no extra components) so users see the full
+        // value on hover. Skipped for: actions column, drag handle column.
         let processed: any = c;
         const skipAutoTooltip = isActions || key === 'drag';
         if (!skipAutoTooltip) {
           const origRender = (c as any).render;
           const wrappedRender = (value: any, record: any, index: number) => {
             const node = origRender ? origRender(value, record, index) : value;
-            // Determine the tooltip text – prefer string-form of raw value.
-            let titleNode: React.ReactNode;
-            if (origRender) {
-              titleNode = (typeof value === 'string' || typeof value === 'number')
-                ? String(value)
-                : node;
-            } else {
-              titleNode = (value === null || value === undefined || value === '') ? null : String(value);
-            }
-            if (titleNode === null || titleNode === undefined || titleNode === '') return node;
+            // Pick a string title only when value is primitive — avoids
+            // serialising React nodes and keeps custom renders (Tags, etc.)
+            // free of double-tooltips.
+            const titleStr = (typeof value === 'string' || typeof value === 'number')
+              ? String(value)
+              : undefined;
             return (
-              <Tooltip
-                title={<span style={{ whiteSpace: 'pre-wrap' }}>{titleNode}</span>}
-                mouseEnterDelay={0.3}
-                placement="topLeft"
+              <span
+                title={titleStr}
+                style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
               >
-                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {node}
-                </span>
-              </Tooltip>
+                {node}
+              </span>
             );
           };
           processed = {
