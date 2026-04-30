@@ -9,6 +9,8 @@ import { crmService } from '../../services/crmService';
 import { salesService } from '../../services/salesService';
 import { hrService } from '../../services/hrService';
 import api from '../../services/api';
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 
 interface Props {
   open: boolean;
@@ -1288,13 +1290,13 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                        <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Leírás</div>
                        <Row gutter={[8, 4]}>
                          <Col span={12}>
-                           <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
-                             <Input.TextArea rows={4} style={{ resize: 'vertical' }} />
+                           <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                             <div className="pixi-quill-resizable"><ReactQuill theme="snow" /></div>
                            </Form.Item>
                          </Col>
                          <Col span={12}>
-                           <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
-                             <Input.TextArea rows={4} style={{ resize: 'vertical' }} />
+                           <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
+                             <div className="pixi-quill-resizable"><ReactQuill theme="snow" /></div>
                            </Form.Item>
                          </Col>
                        </Row>
