@@ -20,7 +20,15 @@ import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import Demands from './Demands';
-import { deepSearchMatch } from '../../utils/searchUtils';
+import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils';
+
+// Ékezet-független + kis/nagybetű-független filter a Select komponensekhez
+// (a default `optionFilterProp="label"` csak case-insensitive substring match-et csinál).
+const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
+  if (!input) return true;
+  const label = (option?.label ?? option?.children ?? '').toString();
+  return normalizeTextForSearch(label).includes(normalizeTextForSearch(input));
+};
 
 const { TextArea } = Input;
 
@@ -1487,7 +1495,8 @@ const RFQs: React.FC = () => {
                   <Form.Item name="company_id" noStyle>
                   <Select 
                     showSearch 
-                    optionFilterProp="label" 
+                    optionFilterProp="label"
+                    filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz céget vagy magánszemélyt" 
                     style={{ width: 'calc(100% - 32px)' }}
                     onFocus={async () => {
@@ -1581,7 +1590,8 @@ const RFQs: React.FC = () => {
                     mode="multiple" 
                     allowClear 
                     showSearch 
-                    optionFilterProp="label" 
+                    optionFilterProp="label"
+                    filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz kapcsolattartókat"
                     style={{ width: 'calc(100% - 190px)' }}
                     onFocus={async () => {
