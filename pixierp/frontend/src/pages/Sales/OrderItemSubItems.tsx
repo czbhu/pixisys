@@ -89,6 +89,38 @@ const OrderItemSubItems: React.FC = () => {
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
+  // ESC zárja be a (külön lapon megnyitott) altételek nézetet és így
+  // visszatér a megnyitó fülre (Tételek nézet).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      // Ne lőjünk el ESC-et, ha modal/dialog/input van fókuszban (pl. szerkesztés közben).
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName?.toLowerCase();
+      const isEditable = !!target && (
+        tag === 'input' || tag === 'textarea' || tag === 'select' ||
+        target.isContentEditable
+      );
+      const hasOpenModal = !!document.querySelector(
+        '.ant-modal-wrap:not([style*="display: none"]), .ant-drawer-open, .ant-picker-dropdown:not(.ant-picker-dropdown-hidden), .ant-select-dropdown:not(.ant-select-dropdown-hidden)'
+      );
+      if (isEditable || hasOpenModal) return;
+      e.preventDefault();
+      try {
+        window.close();
+      } catch { /* noop */ }
+      // Fallback ha a böngésző nem engedi a window.close()-t (pl. nem script
+      // által megnyitott lap): lépjünk vissza a történetben.
+      setTimeout(() => {
+        if (!window.closed) {
+          if (window.history.length > 1) window.history.back();
+        }
+      }, 50);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
