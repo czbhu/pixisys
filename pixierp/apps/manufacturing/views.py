@@ -679,6 +679,201 @@ class ManufacturingCostItemViewSet(
         self._renumber([int(x) for x in ids])
         return Response({'updated': len(ids)})
 
+    @action(detail=False, methods=['post'], url_path='send_supplier_order')
+    def send_supplier_order(self, request):
+        """Body:
+            {
+              cost_item_ids: [int, ...],
+              recipients: { "sup:<id>": "a@b,c@d", "dep:<id>": "..." }   # optional override
+            }
+
+        Groups the given cost items by supplier (or by internal department
+        when is_internal=True) and sends ONE e-mail per group containing the
+        item list. The email body is rendered from the `EmailTemplate` with
+        key `manufacturing_supplier_order` if present, otherwise a Hungarian
+        built-in fallback is used. SMTP credentials come from the active
+        `EmailServerConfig` (same one the rest of the app uses).
+        """
+        from django.core.mail import get_connection, EmailMultiAlternatives
+        from apps.core.models import EmailServerConfig, EmailTemplate
+
+        ids = request.data.get('cost_item_ids') or []
+        recipients_override = request.data.get('recipients') or {}
+        if not isinstance(ids, list) or not ids:
+            return Response({'error': 'cost_item_ids required'}, status=400)
+
+        # Load items + resolve order context for context-rich body
+        items_qs = (ManufacturingCostItem.objects
+                    .select_related('product', 'supplier', 'department')
+                    .filter(id__in=ids))
+
+        # Group by recipient key
+        groups = {}  # key -> { 'label': str, 'email': str, 'items': [..], 'is_internal': bool }
+        for ci in items_qs:
+            if ci.is_internal and ci.department_id:
+                key = f"dep:{ci.department_id}"
+                label = ci.department.name if ci.department else f"Belső #{ci.department_id}"
+                # First manager email as default
+                default_email = ''
+                if ci.department:
+                    mgr = ci.department.managers.exclude(email='').first()
+                    if mgr:
+                        default_email = mgr.email
+                is_internal = True
+            elif ci.supplier_id:
+                key = f"sup:{ci.supplier_id}"
+                label = ci.supplier.name if ci.supplier else f"Beszállító #{ci.supplier_id}"
+                default_email = (ci.supplier.email or '') if ci.supplier else ''
+                is_internal = False
+            else:
+                # Skip orphan items with no supplier nor department
+                continue
+
+            g = groups.setdefault(key, {
+                'label': label,
+                'email': recipients_override.get(key) or default_email,
+                'items': [],
+                'is_internal': is_internal,
+            })
+            g['items'].append(ci)
+
+        if not groups:
+            return Response({'error': 'A kijelölt tételekhez nincs címzett'}, status=400)
+
+        cfg = EmailServerConfig.objects.filter(is_active=True).first()
+        if not cfg:
+            return Response({'error': 'Nincs aktív email szerver konfiguráció'}, status=500)
+
+        connection = get_connection(
+            backend='django.core.mail.backends.smtp.EmailBackend',
+            host=cfg.smtp_host, port=cfg.smtp_port,
+            username=cfg.smtp_username, password=cfg.smtp_password,
+            use_tls=cfg.smtp_use_tls, use_ssl=cfg.smtp_use_ssl,
+            fail_silently=False, timeout=15,
+        )
+        from_email = f"{cfg.from_name} <{cfg.from_email}>" if cfg.from_name else cfg.from_email
+
+        tpl = EmailTemplate.objects.filter(key='manufacturing_supplier_order').first()
+
+        results = []
+        for key, g in groups.items():
+            if not g['email']:
+                results.append({'key': key, 'label': g['label'], 'sent': False, 'error': 'Hiányzó címzett'})
+                continue
+
+            # Build item rows
+            html_rows = []
+            text_rows = []
+            for ci in g['items']:
+                order, _coi = self._resolve_order_context(ci)
+                ord_no = order.order_number if order else '-'
+                qty = float(ci.quantity)
+                code_txt = ''
+                try:
+                    if ci.type == 'material' and ci.ref_id:
+                        from apps.warehouse.models import Material
+                        m = Material.objects.filter(id=ci.ref_id).only('code').first()
+                        if m:
+                            code_txt = m.code
+                    elif ci.type == 'service' and ci.ref_id:
+                        s = Service.objects.filter(id=ci.ref_id).only('code').first()
+                        if s:
+                            code_txt = s.code
+                except Exception:
+                    pass
+                deadline = ''
+                if order and order.quote_request and order.quote_request.deadline:
+                    deadline = order.quote_request.deadline.strftime('%Y.%m.%d')
+                html_rows.append(
+                    f"<tr>"
+                    f"<td style='border:1px solid #ddd;padding:4px 8px'>{ord_no}</td>"
+                    f"<td style='border:1px solid #ddd;padding:4px 8px'>{code_txt}</td>"
+                    f"<td style='border:1px solid #ddd;padding:4px 8px'>{ci.name}</td>"
+                    f"<td style='border:1px solid #ddd;padding:4px 8px;text-align:right'>{qty:g} {ci.unit}</td>"
+                    f"<td style='border:1px solid #ddd;padding:4px 8px'>{deadline}</td>"
+                    f"</tr>"
+                )
+                text_rows.append(f"- [{ord_no}] {code_txt} {ci.name} — {qty:g} {ci.unit} (határidő: {deadline or '-'})")
+
+            html_table = (
+                "<table style='border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px'>"
+                "<thead><tr>"
+                "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Megrendelés</th>"
+                "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Cikkszám</th>"
+                "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Tétel</th>"
+                "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Mennyiség</th>"
+                "<th style='border:1px solid #ddd;padding:4px 8px;background:#f5f5f5'>Határidő</th>"
+                "</tr></thead><tbody>"
+                + ''.join(html_rows) +
+                "</tbody></table>"
+            )
+
+            ctx = {
+                'recipient_label': g['label'],
+                'item_count': len(g['items']),
+                'item_table_html': html_table,
+                'item_list_text': '\n'.join(text_rows),
+            }
+
+            if tpl:
+                try:
+                    subject = (tpl.subject_template or 'Gyártási megrendelés - {item_count} tétel').format(**ctx)
+                    body_core = (tpl.body_template or '').format(**ctx)
+                    is_html = tpl.is_html
+                except Exception:
+                    subject = f"Gyártási megrendelés - {len(g['items'])} tétel"
+                    body_core = ''
+                    is_html = True
+                if is_html:
+                    html = body_core or (
+                        f"<p>Tisztelt {g['label']}!</p>"
+                        f"<p>Kérjük, az alábbi tételek gyártását / leszállítását szíveskedjenek megkezdeni:</p>"
+                        f"{html_table}"
+                        f"<p>Köszönettel,<br>PixiERP</p>"
+                    )
+                    text = ctx['item_list_text']
+                else:
+                    text = body_core or ctx['item_list_text']
+                    html = None
+            else:
+                subject = f"Gyártási megrendelés - {len(g['items'])} tétel ({g['label']})"
+                html = (
+                    f"<p>Tisztelt {g['label']}!</p>"
+                    f"<p>Kérjük, az alábbi tételek gyártását / leszállítását szíveskedjenek megkezdeni:</p>"
+                    f"{html_table}"
+                    f"<p>Köszönettel,<br>PixiERP</p>"
+                )
+                text = (
+                    f"Tisztelt {g['label']}!\n\n"
+                    f"Kérjük, az alábbi tételek gyártását / leszállítását szíveskedjenek megkezdeni:\n\n"
+                    f"{ctx['item_list_text']}\n\n"
+                    "Köszönettel,\nPixiERP"
+                )
+
+            recipients_list = [e.strip() for e in g['email'].replace(';', ',').split(',') if e.strip()]
+            try:
+                msg = EmailMultiAlternatives(
+                    subject=subject,
+                    body=text,
+                    from_email=from_email,
+                    to=recipients_list,
+                    connection=connection,
+                )
+                if html:
+                    msg.attach_alternative(html, 'text/html')
+                msg.send()
+                try:
+                    from apps.core.email_utils import archive_to_imap_sent
+                    archive_to_imap_sent(cfg, msg)
+                except Exception:
+                    pass
+                results.append({'key': key, 'label': g['label'], 'sent': True,
+                                'recipients': recipients_list, 'item_count': len(g['items'])})
+            except Exception as e:
+                results.append({'key': key, 'label': g['label'], 'sent': False, 'error': str(e)})
+
+        return Response({'results': results})
+
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):
     """Termék sablonok CRUD"""

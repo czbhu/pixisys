@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useMemo, useState, useRef } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
@@ -11,6 +11,7 @@ import {
     Popover,
     Modal,
     Input,
+    Typography,
 } from 'antd';
 import {
     ReloadOutlined,
@@ -20,13 +21,13 @@ import {
     PauseCircleOutlined,
     PlayCircleOutlined,
     AlertOutlined,
-    UndoOutlined,
-    RedoOutlined,
+    SendOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
 import { CostDraggableRow, CostRowContext, dragModeRef } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
+import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import api from '../../services/api';
 
 const STATUS_COLORS: Record<string, string> = {
@@ -106,6 +107,9 @@ const ProductionQueue: React.FC = () => {
     const [filterCustomer, setFilterCustomer] = useState<number | null>(null);
     const [filterOrder, setFilterOrder] = useState<number | null>(null);
     const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
+    const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+    const [sendModalOpen, setSendModalOpen] = useState(false);
+    const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
 
     const load = async () => {
         try {
@@ -264,11 +268,13 @@ const ProductionQueue: React.FC = () => {
                 await api.post(`/manufacturing/cost-items/${r.id}/resume/`);
                 message.success('Folytatva');
             } else {
-                pushUndo();
+                const before = rowsRef.current.map(x => x.id);
                 await api.post(`/manufacturing/cost-items/${r.id}/pause/`);
                 message.success('Szüneteltetve, sor végére helyezve');
+                await load();
+                const after = rowsRef.current.map(x => x.id);
+                registerReorderAction(`Szünet: ${r.item_name}`, before, after);
             }
-            await load();
         } catch (e) {
             console.error(e);
             message.error('Művelet sikertelen');
@@ -277,75 +283,41 @@ const ProductionQueue: React.FC = () => {
 
     const handleSos = async (r: QueueRow) => {
         try {
-            pushUndo();
+            const before = rowsRef.current.map(x => x.id);
             await api.post(`/manufacturing/cost-items/${r.id}/sos/`);
             message.success('Sor elejére helyezve');
             await load();
+            const after = rowsRef.current.map(x => x.id);
+            registerReorderAction(`SOS: ${r.item_name}`, before, after);
         } catch (e) {
             console.error(e);
             message.error('Művelet sikertelen');
         }
     };
 
-    // ── Undo/Redo ───────────────────────────────────────────────────────
-    // History stacks store full row-id orderings (not just filtered) so
-    // undo/redo correctly round-trips even when filters are active.
-    const [undoStack, setUndoStack] = useState<number[][]>([]);
-    const [redoStack, setRedoStack] = useState<number[][]>([]);
+    // ── Undo/Redo via global ActionHistory ───────────────────────────────
+    // Snapshots are taken BEFORE and AFTER each reorder/SOS/pause, then
+    // registered with the global header Undo/Redo buttons.
+    const { addAction } = useActionHistory();
     const rowsRef = useRef<QueueRow[]>([]);
     rowsRef.current = rows;
 
-    const pushUndo = useCallback(() => {
-        setUndoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
-        setRedoStack([]);
-    }, []);
-
-    const applyOrder = useCallback(async (ids: number[]) => {
+    const applyOrder = async (ids: number[]) => {
         const map = new Map(rowsRef.current.map(r => [r.id, r]));
         const ordered = ids.map(i => map.get(i)).filter(Boolean) as QueueRow[];
         rowsRef.current.forEach(r => { if (!ids.includes(r.id)) ordered.push(r); });
         setRows(ordered);
-        try {
-            await api.post('/manufacturing/cost-items/reorder/', { ids: ordered.map(r => r.id) });
-        } catch (e) {
-            console.error(e);
-            message.error('Sorrend mentése sikertelen');
-            await load();
-        }
-    }, []);
+        await api.post('/manufacturing/cost-items/reorder/', { ids: ordered.map(r => r.id) });
+    };
 
-    const handleUndo = useCallback(async () => {
-        if (undoStack.length === 0) return;
-        const prev = undoStack[undoStack.length - 1];
-        setUndoStack(s => s.slice(0, -1));
-        setRedoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
-        await applyOrder(prev);
-        message.success('Visszavonva');
-    }, [undoStack, applyOrder]);
-
-    const handleRedo = useCallback(async () => {
-        if (redoStack.length === 0) return;
-        const next = redoStack[redoStack.length - 1];
-        setRedoStack(s => s.slice(0, -1));
-        setUndoStack(s => [...s.slice(-49), rowsRef.current.map(r => r.id)]);
-        await applyOrder(next);
-        message.success('Mégis');
-    }, [redoStack, applyOrder]);
-
-    // Keyboard shortcuts: Ctrl/Cmd+Z = undo, Ctrl/Cmd+Y or Ctrl+Shift+Z = redo
-    useEffect(() => {
-        const onKey = (e: KeyboardEvent) => {
-            const target = e.target as HTMLElement | null;
-            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) return;
-            const mod = e.ctrlKey || e.metaKey;
-            if (!mod) return;
-            const key = e.key.toLowerCase();
-            if (key === 'z' && !e.shiftKey) { e.preventDefault(); handleUndo(); }
-            else if (key === 'y' || (key === 'z' && e.shiftKey)) { e.preventDefault(); handleRedo(); }
-        };
-        window.addEventListener('keydown', onKey);
-        return () => window.removeEventListener('keydown', onKey);
-    }, [handleUndo, handleRedo]);
+    const registerReorderAction = (description: string, beforeIds: number[], afterIds: number[]) => {
+        if (beforeIds.length === afterIds.length && beforeIds.every((v, i) => v === afterIds[i])) return;
+        addAction({
+            description,
+            undo: async () => { await applyOrder(beforeIds); await load(); },
+            redo: async () => { await applyOrder(afterIds); await load(); },
+        });
+    };
 
     // ── Drag & drop reorder ──────────────────────────────────────────────
     /**
@@ -386,14 +358,19 @@ const ProductionQueue: React.FC = () => {
             reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
         }
 
-        pushUndo();
+        const beforeIds = rows.map(r => r.id);
         const filteredIds = new Set(filtered.map(r => r.id));
         const others = rows.filter(r => !filteredIds.has(r.id));
         const newRows = [...reorderedFiltered, ...others];
+        const afterIds = newRows.map(r => r.id);
         setRows(newRows);
 
         try {
-            await api.post('/manufacturing/cost-items/reorder/', { ids: newRows.map(r => r.id) });
+            await api.post('/manufacturing/cost-items/reorder/', { ids: afterIds });
+            const desc = mode === 'group'
+                ? `Megrendelés mozgatás: ${activeRow.order_number}`
+                : `Tétel mozgatás: ${activeRow.item_name}`;
+            registerReorderAction(desc, beforeIds, afterIds);
         } catch (e) {
             console.error(e);
             message.error('Sorrend mentése sikertelen');
@@ -489,6 +466,36 @@ const ProductionQueue: React.FC = () => {
         },
     ];
 
+    // ── Send order to supplier ────────────────────────────────────────────
+    const openSendModal = () => {
+        // Group selected rows by supplier (or department if internal).
+        const map = new Map<string, SendGroup>();
+        rows.forEach(r => {
+            if (!selectedRowKeys.includes(r.id)) return;
+            let key: string;
+            let label: string;
+            if (r.is_internal && r.department_id) {
+                key = `dep:${r.department_id}`;
+                label = `Belső: ${r.department_name || `#${r.department_id}`}`;
+            } else if (r.supplier_id) {
+                key = `sup:${r.supplier_id}`;
+                label = r.supplier_name || `Beszállító #${r.supplier_id}`;
+            } else {
+                key = 'orphan';
+                label = '— Nincs beszállító —';
+            }
+            const g = map.get(key) || { key, label, recipient: '', items: [] };
+            g.items.push(r);
+            map.set(key, g);
+        });
+        if (map.size === 0) {
+            message.warning('Nincs kijelölt tétel');
+            return;
+        }
+        setSendGroups(Array.from(map.values()));
+        setSendModalOpen(true);
+    };
+
     return (
         <div>
             <Card
@@ -517,12 +524,14 @@ const ProductionQueue: React.FC = () => {
                             showSearch optionFilterProp="label"
                         />
                         <Button icon={<ReloadOutlined />} onClick={load}>Frissítés</Button>
-                        <Tooltip title="Visszavonás (Ctrl+Z)">
-                            <Button icon={<UndoOutlined />} disabled={undoStack.length === 0} onClick={handleUndo} />
-                        </Tooltip>
-                        <Tooltip title="Mégis (Ctrl+Y)">
-                            <Button icon={<RedoOutlined />} disabled={redoStack.length === 0} onClick={handleRedo} />
-                        </Tooltip>
+                        <Button
+                            type="primary"
+                            icon={<SendOutlined />}
+                            disabled={selectedRowKeys.length === 0}
+                            onClick={openSendModal}
+                        >
+                            Megrendelés elküldése{selectedRowKeys.length ? ` (${selectedRowKeys.length})` : ''}
+                        </Button>
                     </Space>
                 }
             >
@@ -547,10 +556,146 @@ const ProductionQueue: React.FC = () => {
                     loading={loading}
                     bodyComponents={{ body: { row: CostDraggableRow } }}
                     rowDnd={{ items: filtered.map(r => r.id), onReorder: onRowReorder }}
+                    rowSelection={{
+                        selectedRowKeys,
+                        onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as number[]),
+                        // The "select-all" checkbox in the header will operate on the
+                        // currently visible (filtered) rows only.
+                        getCheckboxProps: () => ({}),
+                        columnWidth: 40,
+                        fixed: true,
+                    }}
                 />
             </Card>
+            <SendOrderModal
+                open={sendModalOpen}
+                onClose={() => setSendModalOpen(false)}
+                groups={sendGroups}
+                onSent={(unsentIds) => {
+                    setSendModalOpen(false);
+                    // Keep only items that failed (no recipient / SMTP error) selected.
+                    setSelectedRowKeys(unsentIds);
+                }}
+            />
         </div>
     );
 };
 
 export default ProductionQueue;
+
+// ─────────────────────────────────────────────────────────────────────────
+// SendOrderModal: groups the selected cost-items by supplier/department,
+// lets the user review/edit recipient e-mail addresses per group, then
+// POSTs to /manufacturing/cost-items/send_supplier_order/.
+
+interface SendGroup {
+    key: string;       // 'sup:<id>' or 'dep:<id>'
+    label: string;     // human-readable supplier/department name
+    recipient: string; // editable e-mail address (comma/semicolon separated)
+    items: QueueRow[];
+}
+
+interface SendOrderModalProps {
+    open: boolean;
+    onClose: () => void;
+    groups: SendGroup[];
+    onSent: (unsentIds: number[]) => void;
+}
+
+const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: initialGroups, onSent }) => {
+    const [groups, setGroups] = useState<SendGroup[]>([]);
+    const [sending, setSending] = useState(false);
+
+    // Sync local copy whenever the modal opens with a new selection. We ALSO
+    // pre-fill `recipient` from each item's supplier/department default
+    // (best-effort: the BE is the source of truth for actual e-mail
+    // addresses, but we display whatever was passed in).
+    useEffect(() => {
+        if (open) setGroups(initialGroups.map(g => ({ ...g, recipient: g.recipient || '' })));
+    }, [open, initialGroups]);
+
+    const handleSend = async () => {
+        const cost_item_ids = groups.flatMap(g => g.items.map(i => i.id));
+        const recipients: Record<string, string> = {};
+        groups.forEach(g => {
+            if (g.recipient.trim()) recipients[g.key] = g.recipient.trim();
+        });
+        setSending(true);
+        try {
+            const { data } = await api.post('/manufacturing/cost-items/send_supplier_order/', {
+                cost_item_ids, recipients,
+            });
+            const failedKeys = new Set<string>(
+                (data.results || []).filter((r: any) => !r.sent).map((r: any) => r.key)
+            );
+            const unsent = groups
+                .filter(g => failedKeys.has(g.key))
+                .flatMap(g => g.items.map(i => i.id));
+            const sentCount = (data.results || []).filter((r: any) => r.sent).length;
+            const failedCount = (data.results || []).length - sentCount;
+            if (sentCount > 0) message.success(`${sentCount} e-mail elküldve`);
+            if (failedCount > 0) {
+                const errs = (data.results || [])
+                    .filter((r: any) => !r.sent)
+                    .map((r: any) => `${r.label}: ${r.error || 'ismeretlen hiba'}`)
+                    .join('\n');
+                Modal.error({ title: 'Néhány e-mail nem ment ki', content: <pre style={{ whiteSpace: 'pre-wrap' }}>{errs}</pre> });
+            }
+            onSent(unsent);
+        } catch (e: any) {
+            console.error(e);
+            message.error(e?.response?.data?.error || 'E-mail küldés sikertelen');
+        } finally {
+            setSending(false);
+        }
+    };
+
+    return (
+        <Modal
+            title="Megrendelés elküldése beszállítóknak"
+            open={open}
+            onCancel={onClose}
+            width={780}
+            confirmLoading={sending}
+            okText="Küldés"
+            cancelText="Mégse"
+            onOk={handleSend}
+            okButtonProps={{ disabled: groups.length === 0, icon: <SendOutlined /> }}
+        >
+            <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                A kijelölt tételek beszállító / belső részleg szerint csoportosítva kerülnek elküldésre.
+                Minden csoporthoz egy levél megy ki, a tételek listájával.
+            </Typography.Paragraph>
+            <Space direction="vertical" size="middle" style={{ width: '100%' }}>
+                {groups.map(g => (
+                    <Card key={g.key} size="small" title={
+                        <Space>
+                            {g.key.startsWith('dep:')
+                                ? <Tag color="blue">{g.label}</Tag>
+                                : <Tag color="orange">{g.label}</Tag>}
+                            <Typography.Text type="secondary">{g.items.length} tétel</Typography.Text>
+                        </Space>
+                    }>
+                        <Input
+                            placeholder="címzett@példa.hu (több cím vesszővel elválasztva)"
+                            value={g.recipient}
+                            onChange={(e) => {
+                                const v = e.target.value;
+                                setGroups(gs => gs.map(x => x.key === g.key ? { ...x, recipient: v } : x));
+                            }}
+                            style={{ marginBottom: 8 }}
+                        />
+                        <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12 }}>
+                            {g.items.map(it => (
+                                <li key={it.id}>
+                                    <strong>{it.order_number}</strong> — {it.code ? `${it.code} ` : ''}{it.item_name}
+                                    {' '}<span style={{ color: '#888' }}>({it.quantity} {it.unit})</span>
+                                </li>
+                            ))}
+                        </ul>
+                    </Card>
+                ))}
+            </Space>
+        </Modal>
+    );
+};
