@@ -433,21 +433,42 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     let safety = 1000;
     while (pool.length > 0 && safety-- > 0) {
       let best: { sheet: SheetRow; placed: Placed[]; leftover: Piece[]; area: number } | null = null;
+
+      // Try multiple seed orderings/orientations per sheet
+      const variants: Piece[][] = [
+        [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+        [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
+        [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        [...pool].map(p => ({ ...p, w: p.h, h: p.w })).sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+      ];
+
       for (const s of sheets) {
         const av = remaining.get(s.id);
         if (av !== null && av !== undefined && av <= 0) continue;
         const allowRotate = s.rotate === 'auto';
-        const inputPieces = allowRotate ? pool : pool.map(pp => {
-          // honor sheet-level rotate restriction by pre-rotating
-          if (s.rotate === 'rotated') return { ...pp, w: pp.h, h: pp.w, rotateAllowed: false };
-          return { ...pp, rotateAllowed: false };
-        });
-        const r = shelfPackFFDH(s.width, s.height, bleed, inputPieces);
-        if (r.placed.length === 0) continue;
-        const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
-        if (!best || r.placed.length > best.placed.length ||
-          (r.placed.length === best.placed.length && area > best.area)) {
-          best = { sheet: s, placed: r.placed, leftover: r.leftover, area };
+        for (const variant of variants) {
+          const inputPieces = allowRotate ? variant : variant.map(pp => {
+            if (s.rotate === 'rotated') return { ...pp, w: pp.h, h: pp.w, rotateAllowed: false };
+            return { ...pp, rotateAllowed: false };
+          });
+          const r = shelfPackFFDH(s.width, s.height, bleed, inputPieces);
+          if (r.placed.length === 0) continue;
+          const area = r.placed.reduce((sum, pl) => sum + pl.pw * pl.ph, 0);
+          // Map placed pieces back to original pool (for leftover bookkeeping)
+          const used = new Map<number, number>();
+          r.placed.forEach(pl => used.set(pl.productId, (used.get(pl.productId) || 0) + 1));
+          const cnt = new Map<number, number>();
+          const remainingPool: Piece[] = [];
+          pool.forEach(p => {
+            const u = used.get(p.productId) || 0;
+            const c = cnt.get(p.productId) || 0;
+            if (c < u) cnt.set(p.productId, c + 1);
+            else remainingPool.push(p);
+          });
+          if (!best || r.placed.length > best.placed.length ||
+            (r.placed.length === best.placed.length && area > best.area)) {
+            best = { sheet: s, placed: r.placed, leftover: remainingPool, area };
+          }
         }
       }
       if (!best) break;
@@ -647,29 +668,60 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
       // Evaluate every roll with remaining budget; pick best by coverage,
       // then by pieces packed (more = better), then by narrower roll (less waste width).
       let best: { r: RollRow; placed: Placed[]; leftover: Piece[]; usedLengthMm: number; bboxW: number; bboxH: number; area: number; coverage: number } | null = null;
+
+      // Try multiple seed orderings/orientations and pick the best per (roll).
+      const variants: Piece[][] = [
+        [...pool].sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+        [...pool].sort((a, b) => Math.min(b.w, b.h) - Math.min(a.w, a.h)),
+        [...pool].sort((a, b) => (b.w * b.h) - (a.w * a.h)),
+        // Forced pre-rotation seed (swap w/h on every piece) — packer can still un-rotate per piece if it fits better
+        [...pool].map(p => ({ ...p, w: p.h, h: p.w })).sort((a, b) => Math.max(b.w, b.h) - Math.max(a.w, a.h)),
+      ];
+
       for (const r of rolls) {
         const rem = remaining.get(r.id) || 0;
         if (rem <= 0) continue;
-        const result = shelfPackFFDH(r.width, rem, rollGap, pool);
-        if (result.placed.length === 0) continue;
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        let area = 0;
-        result.placed.forEach(pl => {
-          if (pl.x < minX) minX = pl.x;
-          if (pl.y < minY) minY = pl.y;
-          if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
-          if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
-          area += pl.pw * pl.ph;
-        });
-        const usedLengthMm = maxY;
-        const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
-        const cand = { r, placed: result.placed, leftover: result.leftover, usedLengthMm, bboxW: maxX - minX, bboxH: maxY - minY, area, coverage };
-        if (!best) { best = cand; continue; }
-        // Prefer higher coverage; tie → more pieces; tie → narrower roll
-        if (cand.coverage > best.coverage + 1e-6) best = cand;
-        else if (Math.abs(cand.coverage - best.coverage) <= 1e-6) {
-          if (cand.placed.length > best.placed.length) best = cand;
-          else if (cand.placed.length === best.placed.length && cand.r.width < best.r.width) best = cand;
+        for (const variant of variants) {
+          const result = shelfPackFFDH(r.width, rem, rollGap, variant);
+          if (result.placed.length === 0) continue;
+          let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+          let area = 0;
+          result.placed.forEach(pl => {
+            if (pl.x < minX) minX = pl.x;
+            if (pl.y < minY) minY = pl.y;
+            if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+            if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+            area += pl.pw * pl.ph;
+          });
+          const usedLengthMm = maxY;
+          const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
+          // Map leftover back to ORIGINAL pool entries (so forced-rotation variant doesn't permanently rotate the pool)
+          const placedKey = new Set<string>();
+          result.placed.forEach(pl => placedKey.add(`${pl.productId}|${Math.min(pl.pw, pl.ph)}|${Math.max(pl.pw, pl.ph)}`));
+          const used = new Map<string, number>();
+          result.placed.forEach(pl => {
+            const k = `${pl.productId}`;
+            used.set(k, (used.get(k) || 0) + 1);
+          });
+          const remainingPool: Piece[] = [];
+          const cnt = new Map<number, number>();
+          pool.forEach(p => {
+            const k = p.productId;
+            const u = used.get(`${k}`) || 0;
+            const c = cnt.get(k) || 0;
+            if (c < u) { cnt.set(k, c + 1); /* consumed */ }
+            else remainingPool.push(p);
+          });
+          const cand = {
+            r, placed: result.placed, leftover: remainingPool,
+            usedLengthMm, bboxW: maxX - minX, bboxH: maxY - minY, area, coverage,
+          };
+          if (!best) { best = cand; continue; }
+          if (cand.coverage > best.coverage + 1e-6) best = cand;
+          else if (Math.abs(cand.coverage - best.coverage) <= 1e-6) {
+            if (cand.placed.length > best.placed.length) best = cand;
+            else if (cand.placed.length === best.placed.length && cand.r.width < best.r.width) best = cand;
+          }
         }
       }
       if (!best) break;
