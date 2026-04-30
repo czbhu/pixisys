@@ -2937,6 +2937,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             supplier_name = None
             department_name = None
             is_internal = False
+            manufacturing_product_id = None
             
             # Resolve Name/Code/Supplier
             if item.product:
@@ -2957,6 +2958,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 # Try to get internal department if capable
                 if hasattr(item.manufacturing_product, 'internal_production_department') and item.manufacturing_product.internal_production_department:
                      department_name = item.manufacturing_product.internal_production_department.name
+                manufacturing_product_id = item.manufacturing_product.id
             elif item.service:
                 name = item.service.name
                 code = item.service.code
@@ -2992,7 +2994,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'is_internal': is_internal,
                 'item_type': item.item_type,
                 'status': current_status,
-                'order_item_id': order_item_id
+                'order_item_id': order_item_id,
+                'manufacturing_product_id': manufacturing_product_id,
             })
             
         return Response(result)

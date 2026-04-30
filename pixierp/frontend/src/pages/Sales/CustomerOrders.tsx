@@ -843,7 +843,12 @@ interface CustomerOrder {
       title: 'Megr. szám', dataIndex: 'order_number', key: 'order_number', width: 150,
       sorter: (a: any, b: any) => strSort(a, b, 'order_number'),
       render: (text: string, record: any) => (
-        <a style={{ color: '#1677ff', cursor: 'pointer', fontWeight: 500 }} onClick={() => navigate(`/sales/customer-orders/${record.originalOrder.id}`)}>
+        <a
+          style={{ color: '#1677ff', cursor: 'pointer', fontWeight: 500 }}
+          href={`/sales/customer-orders/${record.originalOrder.id}`}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
           {text}
         </a>
       ),
@@ -923,7 +928,7 @@ interface CustomerOrder {
     },
     { ...statusColumn, key: 'status', sorter: (a: any, b: any) => strSort(a, b, 'status') },
     {
-      title: 'Műveletek', key: 'actions', width: 150,
+      title: 'Műveletek', key: 'actions', width: 180,
       render: (_: any, record: any) => (
         <Space>
           <Tooltip title="Tétel munkalap">
@@ -945,6 +950,22 @@ interface CustomerOrder {
               }}
             />
           </Tooltip>
+          {(record.manufacturing_product_name || record.quote_item?.manufacturing_product) && (
+            <Tooltip title="Altételek (új lapon)">
+              <Button
+                icon={<AppstoreOutlined />}
+                size="small"
+                onClick={() => {
+                  const qriId = record.quote_item_id || record.quote_item?.id || record.id;
+                  window.open(
+                    `/sales/customer-orders/${record.originalOrder.id}/items/${qriId}/subitems`,
+                    '_blank',
+                    'noopener,noreferrer'
+                  );
+                }}
+              />
+            </Tooltip>
+          )}
           <Tooltip title="Munkaóra indítása">
             <Button
               icon={<FieldTimeOutlined />}

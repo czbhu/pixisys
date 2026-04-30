@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Drawer, Table, Button, Checkbox, Space, Tooltip, Tag, message, Select } from 'antd';
-import { PrinterOutlined, MailOutlined } from '@ant-design/icons';
+import { PrinterOutlined, MailOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import api from '../../services/api';
 
@@ -29,6 +29,7 @@ interface DetailedItem {
   item_type: string;
   status?: string;
   order_item_id?: number;
+  manufacturing_product_id?: number | null;
   children?: DetailedItem[];
 }
 
@@ -195,7 +196,7 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
   columns.push({
       title: 'Műveletek',
       key: 'actions',
-      width: 120,
+      width: 160,
       render: (_: any, record: DetailedItem) => (
           <Space>
               <Tooltip title="Munkalap nyomtatása">
@@ -204,6 +205,15 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
               <Tooltip title="Kiküldés (Email)">
                   <Button size="small" icon={<MailOutlined />} onClick={() => handleSend(record)} />
               </Tooltip>
+              {record.manufacturing_product_id && orderId && (
+                  <Tooltip title="Altételek (új lapon)">
+                      <Button
+                          size="small"
+                          icon={<AppstoreOutlined />}
+                          onClick={() => window.open(`/sales/customer-orders/${orderId}/items/${record.id}/subitems`, '_blank', 'noopener,noreferrer')}
+                      />
+                  </Tooltip>
+              )}
           </Space>
       )
   });

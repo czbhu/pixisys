@@ -21,6 +21,7 @@ import MyInvitations from './MyInvitations';
 import QuoteDetail from './QuoteDetail';
 import CustomerOrders from './CustomerOrders';
 import CustomerOrderDetail from './CustomerOrderDetail';
+import OrderItemSubItems from './OrderItemSubItems';
 import Invoicing from './Invoicing';
 import DeliveryNotes from './DeliveryNotes';
 import ModuleDashboard from '../../components/ModuleDashboard';
@@ -47,6 +48,7 @@ const SalesModule = () => {
       <Route path="/orders/:id/edit" element={<OrderForm />} />
       <Route path="/customer-orders" element={<CustomerOrders />} />
       <Route path="/customer-orders/:id" element={<CustomerOrderDetail />} />
+      <Route path="/customer-orders/:orderId/items/:itemId/subitems" element={<OrderItemSubItems />} />
       <Route path="/delivery-notes" element={<DeliveryNotes />} />
       <Route path="/invoicing" element={<Invoicing />} />
       <Route path="/invitations" element={<MyInvitations />} />
