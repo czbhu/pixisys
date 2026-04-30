@@ -357,3 +357,25 @@ body,
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
+/* Resizable ReactQuill wrapper used in RFQ description fields */
+.pixi-quill-resizable {
+  resize: vertical;
+  overflow: hidden;
+  min-height: 160px;
+  height: 160px;
+  display: flex;
+  flex-direction: column;
+  border-radius: 2px;
+}
+.pixi-quill-resizable > .quill {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+.pixi-quill-resizable .ql-container {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+}
