@@ -3103,8 +3103,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             p.setFont(font_bold, 12) # Reduced from 14
             p.drawString(2*cm, y, f"Megrendelésszám: {order.order_number}")
             
-            # QR Code (Top Right)
-            p.drawImage(qr_image, width-5*cm, y-1.5*cm, width=3*cm, height=3*cm)
+            # QR Code (Top Right) – fix méret + balról védőtávolság
+            qr_size = 3*cm
+            qr_x = width - 2*cm - qr_size  # = width - 5cm
+            qr_y_top = y - 0.2*cm           # kicsit feljebb hogy a szövegtömb tényleg ne lógjon rá
+            p.drawImage(qr_image, qr_x, qr_y_top - qr_size + 0.4*cm, width=qr_size, height=qr_size)
+            # Bal-szöveg jobb határa: QR előtt 0.5cm-rel
+            text_right_limit = qr_x - 0.5*cm
             y -= 1.0*cm # Reduced spacing
             
             p.setFont(font_normal, 10) # Reduced from 12
@@ -3118,22 +3123,49 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             p.setFont(font_bold, 10) # Reduced from 12
             p.drawString(2*cm, y, f"Megrendelő:")
             
-            cust_str = f"{customer_name} - {contact_name}"
+            cust_str = f"{customer_name} - {contact_name}".strip(' -')
             
             font_size_cust = 9 # Reduced from 10
             p.setFont(font_normal, font_size_cust)
-            
-            text_object = p.beginText(5.5*cm, y)
+
+            # Pixel-pontos tördelés szóhatárokon, hogy semmiképp ne lógjon a QR alá.
+            from reportlab.pdfbase.pdfmetrics import stringWidth
+            cust_x = 5.5*cm
+            max_text_w = max(2*cm, text_right_limit - cust_x)
+
+            def _wrap_to_width(text, font_name, font_size, max_w):
+                words = (text or '').split()
+                lines = []
+                cur = ''
+                for w in words:
+                    cand = (cur + ' ' + w).strip()
+                    if stringWidth(cand, font_name, font_size) <= max_w:
+                        cur = cand
+                    else:
+                        if cur:
+                            lines.append(cur)
+                        # ha egyetlen szó is hosszabb mint max_w → vágjuk karakterre
+                        if stringWidth(w, font_name, font_size) > max_w:
+                            buf = ''
+                            for ch in w:
+                                if stringWidth(buf + ch, font_name, font_size) <= max_w:
+                                    buf += ch
+                                else:
+                                    if buf:
+                                        lines.append(buf)
+                                    buf = ch
+                            cur = buf
+                        else:
+                            cur = w
+                if cur:
+                    lines.append(cur)
+                return lines or ['']
+
+            cust_lines = _wrap_to_width(cust_str, font_normal, font_size_cust, max_text_w)
+            text_object = p.beginText(cust_x, y)
             text_object.setFont(font_normal, font_size_cust)
-            
-            # Reduce width to ensure no overlap with QR
-            # Available width: (width - 5cm (QR start)) - 5.5cm (start x) = width - 10.5cm
-            # width is 21cm, so ~10.5cm available. 
-            # A bit safer margin:
-            cust_lines = textwrap.wrap(cust_str, width=55) 
-            
-            for line in cust_lines[:3]: 
-                 text_object.textLine(line)
+            for line in cust_lines[:3]:
+                text_object.textLine(line)
             p.drawText(text_object)
             
             # Reduced spacing
