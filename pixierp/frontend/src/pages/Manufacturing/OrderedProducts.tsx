@@ -8,6 +8,7 @@ import {
     message,
     Tag,
     Tooltip,
+    Popover,
 } from 'antd';
 import {
     EyeOutlined,
@@ -135,22 +136,46 @@ const OrderedProducts: React.FC = () => {
             title: 'Státusz',
             dataIndex: 'status',
             key: 'status',
-            width: 160,
-            render: (s: string, record: OrderedManufacturingItem) => (
-                <Select
-                    size="small"
-                    value={s || 'new'}
-                    style={{ width: 150 }}
-                    onChange={(val) => handleStatusChange(record.id, val)}
-                    onClick={(e) => e.stopPropagation()}
-                >
-                    {Object.entries(ORDER_ITEM_STATUS_LABELS).map(([v, l]) => (
-                        <Option key={v} value={v}>
-                            <Tag color={ORDER_ITEM_STATUS_COLORS[v] || 'default'} style={{ marginRight: 0 }}>{l}</Tag>
-                        </Option>
-                    ))}
-                </Select>
-            ),
+            width: 140,
+            render: (s: string, record: OrderedManufacturingItem) => {
+                const color = ORDER_ITEM_STATUS_COLORS[s] || 'default';
+                const text = ORDER_ITEM_STATUS_LABELS[s] || s;
+                const content = (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {Object.keys(ORDER_ITEM_STATUS_LABELS).map(opt => (
+                            <Button
+                                key={opt}
+                                size="small"
+                                type={opt === s ? 'primary' : 'text'}
+                                disabled={opt === s}
+                                style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStatusChange(record.id, opt);
+                                }}
+                            >
+                                {ORDER_ITEM_STATUS_LABELS[opt]}
+                            </Button>
+                        ))}
+                    </div>
+                );
+                return (
+                    <Popover
+                        content={content}
+                        title="Státusz váltás"
+                        trigger="click"
+                        overlayInnerStyle={{ padding: '6px 8px' }}
+                    >
+                        <Tag
+                            color={color}
+                            style={{ cursor: 'pointer' }}
+                            onClick={(e) => e.stopPropagation()}
+                        >
+                            {text}
+                        </Tag>
+                    </Popover>
+                );
+            },
             sorter: (a: OrderedManufacturingItem, b: OrderedManufacturingItem) =>
                 (ORDER_ITEM_STATUS_LABELS[a.status] || a.status).localeCompare(ORDER_ITEM_STATUS_LABELS[b.status] || b.status),
         },
