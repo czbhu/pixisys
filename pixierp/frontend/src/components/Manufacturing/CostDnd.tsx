@@ -40,21 +40,33 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
   } = useSortable({ id: props['data-row-key'] });
 
   // Determine drop indicator side: above or below the hovered row.
+  // Uses the live pointer/active rect vs the over row rect midpoint, which
+  // is stable because non-dragged rows do not move during drag (no
+  // sortable strategy is applied at the SortableContext level).
   let dropSide: 'top' | 'bottom' | null = null;
   if (isOver && active && over && active.id !== over.id) {
     const activeRect = active.rect.current.translated;
     const overRect = over.rect;
     if (activeRect && overRect) {
-      dropSide = activeRect.top < overRect.top ? 'bottom' : 'top';
+      const activeCenter = activeRect.top + activeRect.height / 2;
+      const overCenter = overRect.top + overRect.height / 2;
+      dropSide = activeCenter < overCenter ? 'top' : 'bottom';
     } else {
       dropSide = 'bottom';
     }
   }
 
+  // Apply dnd-kit transform if present. With a sortable strategy
+  // (legacy callers), non-dragged rows get a slide-aside translation;
+  // without a strategy (default), only the dragged row gets a transform.
+  const appliedTransform = CSS.Transform.toString(
+    transform && { ...transform, scaleY: 1, scaleX: 1 }
+  );
+
   const style: React.CSSProperties = {
     ...props.style,
-    transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }),
-    transition: transition || 'transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 120ms ease',
+    transform: appliedTransform,
+    transition: isDragging ? 'none' : (transition || 'box-shadow 100ms ease'),
     position: 'relative',
     ...(isDragging
       ? {
@@ -63,12 +75,14 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
           boxShadow: '0 8px 24px rgba(22, 119, 255, 0.25), 0 0 0 2px #1677ff inset',
           opacity: 0.96,
           cursor: 'grabbing',
+          // Disable pointer-events on the floating ghost so it doesn't
+          // block hover detection on rows underneath it.
+          pointerEvents: 'none',
         }
       : {}),
-    ...(dropSide
+    ...(dropSide && !isDragging
       ? {
-          // Single 3px coloured line at the top or bottom of the row,
-          // indicating exactly where the dragged item will land.
+          // Single 3px coloured line at the top or bottom of the row.
           boxShadow: dropSide === 'top'
             ? 'inset 0 3px 0 0 #1677ff'
             : 'inset 0 -3px 0 0 #1677ff',

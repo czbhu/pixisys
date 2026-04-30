@@ -642,7 +642,7 @@ function EnhancedTable<T extends object = any>({
               );
               return rowDnd
                 ? (
-                  <SortableContext items={rowDnd.items.map(String)} strategy={verticalListSortingStrategy}>
+                  <SortableContext items={rowDnd.items.map(String)}>
                     {tableEl}
                   </SortableContext>
                 )
