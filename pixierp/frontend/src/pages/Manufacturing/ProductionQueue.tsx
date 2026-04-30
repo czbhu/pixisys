@@ -342,7 +342,34 @@ const ProductionQueue: React.FC = () => {
         const mode: 'single' | 'group' = dragModeRef.current;
         let reorderedFiltered: QueueRow[];
 
-        if (mode === 'group' && activeRow.order_id !== overRow.order_id) {
+        // ── Multi-select drag ──────────────────────────────────────────
+        // If the user has multiple rows selected via the row checkboxes
+        // and starts dragging one of them, move ALL selected rows as a
+        // contiguous block to the drop position (preserving their
+        // relative order). Group-mode (long-press the order column)
+        // keeps its old behaviour.
+        const isMulti = mode !== 'group'
+            && selectedRowKeys.length > 1
+            && selectedRowKeys.map(Number).includes(activeRow.id);
+
+        if (isMulti) {
+            const movedIds = new Set(selectedRowKeys.map(Number));
+            // Don't try to move onto a row that's also being moved.
+            if (movedIds.has(overRow.id)) return;
+            const moved = filtered.filter(r => movedIds.has(r.id));
+            const remaining = filtered.filter(r => !movedIds.has(r.id));
+            let insertIdx = remaining.findIndex(r => r.id === overRow.id);
+            if (insertIdx < 0) insertIdx = remaining.length;
+            // Drop after the over-row when dragging downward.
+            const activeOldIdx = filtered.findIndex(r => r.id === activeRow.id);
+            const overOldIdx = filtered.findIndex(r => r.id === overRow.id);
+            if (activeOldIdx < overOldIdx) insertIdx += 1;
+            reorderedFiltered = [
+                ...remaining.slice(0, insertIdx),
+                ...moved,
+                ...remaining.slice(insertIdx),
+            ];
+        } else if (mode === 'group' && activeRow.order_id !== overRow.order_id) {
             const groupKeys: number[] = [];
             const groupMap = new Map<number, QueueRow[]>();
             filtered.forEach(r => {
@@ -373,9 +400,11 @@ const ProductionQueue: React.FC = () => {
 
         try {
             await api.post('/manufacturing/cost-items/reorder/', { ids: afterIds });
-            const desc = mode === 'group'
-                ? `Megrendelés mozgatás: ${activeRow.order_number}`
-                : `Tétel mozgatás: ${activeRow.item_name}`;
+            const desc = isMulti
+                ? `${selectedRowKeys.length} tétel mozgatás`
+                : mode === 'group'
+                    ? `Megrendelés mozgatás: ${activeRow.order_number}`
+                    : `Tétel mozgatás: ${activeRow.item_name}`;
             registerReorderAction(desc, beforeIds, afterIds);
         } catch (e) {
             console.error(e);
@@ -951,6 +980,13 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                             </span>
                         ),
                         children: (
+                            <Tabs
+                                size="small"
+                                items={[
+                                    {
+                                        key: 'edit',
+                                        label: 'Szerkesztés',
+                                        children: (
                             <Form layout="vertical" size="small">
                                 <Form.Item label="Címzettek" required>
                                     <Input
@@ -1015,6 +1051,49 @@ const SendOrderModal: React.FC<SendOrderModalProps> = ({ open, onClose, groups: 
                                     />
                                 </Form.Item>
                             </Form>
+                                        ),
+                                    },
+                                    {
+                                        key: 'preview',
+                                        label: 'Előnézet',
+                                        children: (() => {
+                                            const subst = (s: string) => (s || '')
+                                                .replace(/\{recipient_label\}/g, g.label)
+                                                .replace(/\{item_count\}/g, String(g.items.length))
+                                                .replace(/\{item_table_html\}/g, g.item_table_html || '')
+                                                .replace(/\{item_list_text\}/g, g.item_list_text || '');
+                                            return (
+                                                <div style={{ background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, padding: 16 }}>
+                                                    <div style={{ marginBottom: 8 }}>
+                                                        <Typography.Text type="secondary">Címzettek: </Typography.Text>
+                                                        <Typography.Text>{g.recipients || <em>(nincs megadva)</em>}</Typography.Text>
+                                                    </div>
+                                                    {g.cc && (
+                                                        <div style={{ marginBottom: 8 }}>
+                                                            <Typography.Text type="secondary">CC: </Typography.Text>
+                                                            <Typography.Text>{g.cc}</Typography.Text>
+                                                        </div>
+                                                    )}
+                                                    {g.reply_to && (
+                                                        <div style={{ marginBottom: 8 }}>
+                                                            <Typography.Text type="secondary">Reply-To: </Typography.Text>
+                                                            <Typography.Text>{g.reply_to}</Typography.Text>
+                                                        </div>
+                                                    )}
+                                                    <div style={{ marginBottom: 12 }}>
+                                                        <Typography.Text type="secondary">Tárgy: </Typography.Text>
+                                                        <Typography.Text strong>{subst(g.subject)}</Typography.Text>
+                                                    </div>
+                                                    <div
+                                                        style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 4, padding: 16, minHeight: 200 }}
+                                                        dangerouslySetInnerHTML={{ __html: subst(g.body) }}
+                                                    />
+                                                </div>
+                                            );
+                                        })(),
+                                    },
+                                ]}
+                            />
                         ),
                     }))}
                 />
