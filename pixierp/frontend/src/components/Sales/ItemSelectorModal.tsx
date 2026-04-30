@@ -1792,12 +1792,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   <Row gutter={8}>
                     <Col span={12}>
                       <Form.Item label="Leírás" name="description" style={{ marginBottom: 8 }}>
-                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Külső leírás" />
+                        <Input.TextArea autoSize={{ minRows: 2 }} style={{ resize: 'vertical' }} placeholder="Külső leírás" />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
                       <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 8 }}>
-                        <Input.TextArea autoSize={{ minRows: 2, maxRows: 4 }} placeholder="Belső leírás" />
+                        <Input.TextArea autoSize={{ minRows: 2 }} style={{ resize: 'vertical' }} placeholder="Belső leírás" />
                       </Form.Item>
                     </Col>
                   </Row>
