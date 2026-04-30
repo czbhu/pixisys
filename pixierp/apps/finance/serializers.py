@@ -319,6 +319,11 @@ Kassza tartalma utána: {transaction.balance_after}
             )
             
             message.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, message)
+            except Exception:
+                pass
             logger.info(f"Cash register notification email sent to {len(recipient_emails)} recipients")
         except Exception as e:
             # Log error but don't fail the transaction

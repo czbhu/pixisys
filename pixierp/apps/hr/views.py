@@ -738,6 +738,11 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
             )
             msg.attach_alternative(html_content, "text/html")
             msg.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, msg)
+            except Exception:
+                pass
             
             return Response({'message': 'Jelszó generálva és e-mailben elküldve'})
         except Exception as e:
@@ -931,6 +936,11 @@ Ez egy automatikusan generált üzenet a PixiERP rendszerből.
                 )
                 msg.attach_alternative(html_content, 'text/html')
                 msg.send()
+                try:
+                    from apps.core.email_utils import archive_to_imap_sent
+                    archive_to_imap_sent(email_config, msg)
+                except Exception:
+                    pass
                 return notify_error
             except Exception as exc:
                 email_err = f'Belépési adatok e-mail küldése sikertelen: {str(exc)}'

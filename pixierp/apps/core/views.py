@@ -447,6 +447,11 @@ def password_reset_request_view(request):
             )
             
             message.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, message)
+            except Exception:
+                pass
             logger.info(f"Jelszó visszaállító email elküldve: {email}")
         except Exception as e:
             # Log hiba de ne árulj el információt a felhasználóról
@@ -2062,6 +2067,11 @@ class TicketViewSet(viewsets.ModelViewSet):
             )
             message.attach_alternative(html_body, 'text/html')
             message.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, message)
+            except Exception:
+                pass
             logger.info(f'Ticket public link email sent to {requester_email} for {ticket.ticket_number}')
         except Exception as exc:
             logger.error(

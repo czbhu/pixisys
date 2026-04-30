@@ -1901,6 +1901,11 @@ A megrendelést a publikus linken keresztül küldték be.
                 connection=connection
             )
             msg.send()
+            try:
+                from apps.core.email_utils import archive_to_imap_sent
+                archive_to_imap_sent(email_config, msg)
+            except Exception:
+                pass
 
     except Exception as e:
         # Ha hiba van, logoljuk és error-t dobunk, de a tranzakció rollbackel
@@ -2849,6 +2854,11 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     )
                     msg.attach_alternative(html_message, "text/html")
                     msg.send()
+                    try:
+                        from apps.core.email_utils import archive_to_imap_sent
+                        archive_to_imap_sent(email_config, msg)
+                    except Exception:
+                        pass
                     email_sent = True
             except Exception as e:
                 error_message = f"Email küldési hiba: {str(e)}"
