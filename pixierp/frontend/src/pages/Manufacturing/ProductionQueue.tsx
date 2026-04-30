@@ -79,7 +79,7 @@ const ProductionQueue: React.FC = () => {
     const [query, setQuery] = useState('');
     const [filterCustomer, setFilterCustomer] = useState<number | null>(null);
     const [filterOrder, setFilterOrder] = useState<number | null>(null);
-    const [filterSupplier, setFilterSupplier] = useState<number | null>(null);
+    const [filterSupplier, setFilterSupplier] = useState<string | null>(null);
 
     const load = async () => {
         try {
@@ -107,9 +107,35 @@ const ProductionQueue: React.FC = () => {
         return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
     }, [rows]);
     const supplierOptions = useMemo(() => {
-        const map = new Map<number, string>();
-        rows.forEach(r => { if (r.supplier_id) map.set(r.supplier_id, r.supplier_name); });
-        return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
+        const sup = new Map<number, string>();
+        const dep = new Map<number, string>();
+        rows.forEach(r => {
+            if (r.is_internal && r.department_id) {
+                dep.set(r.department_id, r.department_name || `Belső #${r.department_id}`);
+            } else if (r.supplier_id) {
+                sup.set(r.supplier_id, r.supplier_name);
+            }
+        });
+        const opts: any[] = [];
+        if (sup.size) {
+            opts.push({
+                label: 'Besállítók',
+                title: 'Besállítók',
+                options: Array.from(sup.entries())
+                    .sort((a, b) => a[1].localeCompare(b[1], 'hu'))
+                    .map(([id, name]) => ({ value: `sup:${id}`, label: name })),
+            });
+        }
+        if (dep.size) {
+            opts.push({
+                label: 'Belső részlegek',
+                title: 'Belső részlegek',
+                options: Array.from(dep.entries())
+                    .sort((a, b) => a[1].localeCompare(b[1], 'hu'))
+                    .map(([id, name]) => ({ value: `dep:${id}`, label: name })),
+            });
+        }
+        return opts;
     }, [rows]);
 
     const normalize = (s: any) =>
@@ -119,7 +145,15 @@ const ProductionQueue: React.FC = () => {
         let r = rows;
         if (filterCustomer) r = r.filter(x => x.customer_id === filterCustomer);
         if (filterOrder) r = r.filter(x => x.order_id === filterOrder);
-        if (filterSupplier) r = r.filter(x => x.supplier_id === filterSupplier);
+        if (filterSupplier) {
+            const [kind, idStr] = filterSupplier.split(':');
+            const id = Number(idStr);
+            if (kind === 'dep') {
+                r = r.filter(x => x.is_internal && x.department_id === id);
+            } else {
+                r = r.filter(x => !x.is_internal && x.supplier_id === id);
+            }
+        }
         const q = normalize(query);
         if (q) {
             r = r.filter(x => normalize([x.order_number, x.customer_name, x.product_name, x.item_name, x.code, x.notes].join(' ')).includes(q));
@@ -354,7 +388,7 @@ const ProductionQueue: React.FC = () => {
                             showSearch optionFilterProp="label"
                         />
                         <Select
-                            allowClear placeholder="Beszállító" style={{ minWidth: 180 }}
+                            allowClear placeholder="Besállító / részleg" style={{ minWidth: 200 }}
                             value={filterSupplier ?? undefined}
                             options={supplierOptions}
                             onChange={(v) => setFilterSupplier(v ?? null)}
