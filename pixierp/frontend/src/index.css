@@ -380,3 +380,21 @@ body,
   min-height: 0;
   overflow: auto;
 }
+
+/* Rich-text (ReactQuill HTML) renderelése táblázat cellákban / tooltipekben */
+.pixi-rich-cell p,
+.pixi-rich-cell ul,
+.pixi-rich-cell ol,
+.pixi-rich-cell h1,
+.pixi-rich-cell h2,
+.pixi-rich-cell h3,
+.pixi-rich-cell h4 {
+  margin: 0 0 2px 0;
+  padding: 0;
+  line-height: 1.35;
+}
+.pixi-rich-cell p:last-child { margin-bottom: 0; }
+.pixi-rich-cell ul,
+.pixi-rich-cell ol { padding-left: 1.2em; }
+.pixi-rich-cell strong { font-weight: 600; }
+

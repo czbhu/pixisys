@@ -310,26 +310,39 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         responsive: ['md'],
         render: (text: string, record: any) => {
             const finalDescription = text || record.product_description || record.manufacturing_product_description || '';
-            const isLong = finalDescription.length > 100 || (finalDescription.match(/\n/g) || []).length > 3;
+            // Ha HTML van benne (pl. ReactQuill kimenet), HTML-ként rendereljük; egyébként sima szöveg pre-wrap-pel.
+            const looksLikeHtml = /<\/?[a-z][\s\S]*>/i.test(finalDescription);
+            const plainText = looksLikeHtml
+              ? finalDescription.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+              : finalDescription;
+            const isLong = plainText.length > 100 || (finalDescription.match(/<p[\s>]|<br|\n/gi) || []).length > 3;
 
-            const content = (
-              <div 
-                style={{
-                  display: '-webkit-box',
-                  WebkitLineClamp: 4,
-                  WebkitBoxOrient: 'vertical',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  maxHeight: '6em', // approx 4 lines
-                  whiteSpace: 'pre-wrap'
-                }}
-              >
-                  {finalDescription}
-              </div>
+            const baseStyle: React.CSSProperties = {
+              display: '-webkit-box',
+              WebkitLineClamp: 4,
+              WebkitBoxOrient: 'vertical' as any,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              maxHeight: '6em',
+              whiteSpace: looksLikeHtml ? 'normal' : 'pre-wrap',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+            };
+
+            const content = looksLikeHtml ? (
+              <div className="pixi-rich-cell" style={baseStyle} dangerouslySetInnerHTML={{ __html: finalDescription }} />
+            ) : (
+              <div style={baseStyle}>{finalDescription}</div>
+            );
+
+            const tooltipBody = looksLikeHtml ? (
+              <div className="pixi-rich-cell" style={{ maxWidth: 500 }} dangerouslySetInnerHTML={{ __html: finalDescription }} />
+            ) : (
+              <span style={{ whiteSpace: 'pre-wrap' }}>{finalDescription}</span>
             );
 
             return isLong ? (
-              <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{finalDescription}</span>} overlayStyle={{ maxWidth: 500 }}>
+              <Tooltip title={tooltipBody} overlayStyle={{ maxWidth: 520 }}>
                   {content}
               </Tooltip>
             ) : content;
