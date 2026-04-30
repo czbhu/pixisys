@@ -699,16 +699,18 @@ interface GroupState {
     item_list_text: string;
 }
 
-/** Substitute the supported placeholders in a subject/body template. */
+/** Substitute the supported placeholders in a subject/body template.
+ *  NOTE: `{item_table_html}` is intentionally NOT substituted here — the
+ *  ReactQuill editor strips <table> tags, so we leave the placeholder in
+ *  the body and let the backend inject the rendered table at send time. */
 const renderTemplateText = (
     text: string,
-    ctx: { recipient_label: string; item_count: number; item_table_html: string; item_list_text: string },
+    ctx: { recipient_label: string; item_count: number; item_list_text: string },
 ) => {
     if (!text) return '';
     return text
         .replace(/\{recipient_label\}/g, ctx.recipient_label)
         .replace(/\{item_count\}/g, String(ctx.item_count))
-        .replace(/\{item_table_html\}/g, ctx.item_table_html)
         .replace(/\{item_list_text\}/g, ctx.item_list_text);
 };
 

@@ -856,6 +856,24 @@ class ManufacturingCostItemViewSet(
                 body = g.get('body') or ''
                 is_html = bool(g.get('is_html', True))
 
+                # Substitute placeholders (the frontend leaves
+                # `{item_table_html}` in the body because Quill strips
+                # <table> tags). Build the context server-side from the
+                # actual cost-item ids.
+                cost_item_ids = g.get('cost_item_ids') or []
+                if cost_item_ids:
+                    ci_qs = (ManufacturingCostItem.objects
+                             .select_related('product', 'supplier', 'department')
+                             .filter(id__in=cost_item_ids))
+                    ctx = self._build_group_context(list(ci_qs))
+                else:
+                    ctx = {'item_count': 0, 'item_table_html': '', 'item_list_text': ''}
+                ctx['recipient_label'] = label
+                for ph in ('recipient_label', 'item_count', 'item_table_html', 'item_list_text'):
+                    token = '{' + ph + '}'
+                    subject = subject.replace(token, str(ctx[ph]))
+                    body = body.replace(token, str(ctx[ph]))
+
                 # Build a plain-text fallback so non-HTML clients see something
                 if is_html:
                     import re as _re
@@ -881,7 +899,7 @@ class ManufacturingCostItemViewSet(
                         pass
                     results.append({'key': key, 'label': label, 'sent': True,
                                     'recipients': recipients_list,
-                                    'item_count': len(g.get('cost_item_ids') or [])})
+                                    'item_count': len(cost_item_ids)})
                 except Exception as e:
                     results.append({'key': key, 'label': label, 'sent': False, 'error': str(e)})
             return Response({'results': results})
