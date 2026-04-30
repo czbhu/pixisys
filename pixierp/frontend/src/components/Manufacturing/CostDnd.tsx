@@ -34,13 +34,49 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
     transform,
     transition,
     isDragging,
+    isOver,
+    over,
+    active,
   } = useSortable({ id: props['data-row-key'] });
+
+  // Determine drop indicator side: above or below the hovered row.
+  let dropSide: 'top' | 'bottom' | null = null;
+  if (isOver && active && over && active.id !== over.id) {
+    const activeRect = active.rect.current.translated;
+    const overRect = over.rect;
+    if (activeRect && overRect) {
+      dropSide = activeRect.top < overRect.top ? 'bottom' : 'top';
+    } else {
+      dropSide = 'bottom';
+    }
+  }
 
   const style: React.CSSProperties = {
     ...props.style,
     transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }),
-    transition,
-    ...(isDragging ? { position: 'relative', zIndex: 9999, background: '#e6f7ff' } : {}),
+    transition: transition || 'transform 180ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms ease',
+    position: 'relative',
+    ...(isDragging
+      ? {
+          zIndex: 9999,
+          background: '#e6f4ff',
+          boxShadow: '0 8px 24px rgba(22, 119, 255, 0.25), 0 0 0 2px #1677ff inset',
+          opacity: 0.96,
+          cursor: 'grabbing',
+        }
+      : {}),
+    ...(dropSide
+      ? {
+          // Use a thick coloured border on the appropriate side as the drop
+          // indicator. The negative margin keeps row height stable so layout
+          // doesn't shift while the indicator is visible.
+          [dropSide === 'top' ? 'boxShadow' : 'boxShadow']:
+            dropSide === 'top'
+              ? 'inset 0 3px 0 0 #1677ff'
+              : 'inset 0 -3px 0 0 #1677ff',
+          background: '#f0f7ff',
+        }
+      : {}),
   };
 
   return (
