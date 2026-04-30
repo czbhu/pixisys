@@ -638,27 +638,48 @@ const ImpositionHelperModal: React.FC<Props> = ({ open, onClose, initialProductW
     const out: PackedRoll[] = [];
     let pool = pieces.slice();
 
+    // Per-roll remaining length budget (mm); null/∞ → very large.
+    const remaining = new Map<number, number>();
+    rolls.forEach(r => remaining.set(r.id, r.availableLength === null ? 1e9 : r.availableLength * 1000));
+
     let safety = 200;
-    for (const r of rolls) {
-      if (pool.length === 0 || safety-- <= 0) break;
-      const limitMm = r.availableLength === null ? 1e9 : r.availableLength * 1000;
-      const result = shelfPackFFDH(r.width, limitMm, rollGap, pool);
-      if (result.placed.length === 0) continue;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      let area = 0;
-      result.placed.forEach(pl => {
-        if (pl.x < minX) minX = pl.x;
-        if (pl.y < minY) minY = pl.y;
-        if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
-        if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
-        area += pl.pw * pl.ph;
+    while (pool.length > 0 && safety-- > 0) {
+      // Evaluate every roll with remaining budget; pick best by coverage,
+      // then by pieces packed (more = better), then by narrower roll (less waste width).
+      let best: { r: RollRow; placed: Placed[]; leftover: Piece[]; usedLengthMm: number; bboxW: number; bboxH: number; area: number; coverage: number } | null = null;
+      for (const r of rolls) {
+        const rem = remaining.get(r.id) || 0;
+        if (rem <= 0) continue;
+        const result = shelfPackFFDH(r.width, rem, rollGap, pool);
+        if (result.placed.length === 0) continue;
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        let area = 0;
+        result.placed.forEach(pl => {
+          if (pl.x < minX) minX = pl.x;
+          if (pl.y < minY) minY = pl.y;
+          if (pl.x + pl.pw > maxX) maxX = pl.x + pl.pw;
+          if (pl.y + pl.ph > maxY) maxY = pl.y + pl.ph;
+          area += pl.pw * pl.ph;
+        });
+        const usedLengthMm = maxY;
+        const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
+        const cand = { r, placed: result.placed, leftover: result.leftover, usedLengthMm, bboxW: maxX - minX, bboxH: maxY - minY, area, coverage };
+        if (!best) { best = cand; continue; }
+        // Prefer higher coverage; tie → more pieces; tie → narrower roll
+        if (cand.coverage > best.coverage + 1e-6) best = cand;
+        else if (Math.abs(cand.coverage - best.coverage) <= 1e-6) {
+          if (cand.placed.length > best.placed.length) best = cand;
+          else if (cand.placed.length === best.placed.length && cand.r.width < best.r.width) best = cand;
+        }
+      }
+      if (!best) break;
+      out.push({
+        idx: out.length + 1, roll: best.r, placed: best.placed,
+        usedLengthMm: best.usedLengthMm, bboxW: best.bboxW, bboxH: best.bboxH,
+        printedAreaMm2: best.area, coverage: best.coverage,
       });
-      const usedLengthMm = maxY;
-      const bboxW = maxX - minX;
-      const bboxH = maxY - minY;
-      const coverage = usedLengthMm > 0 ? area / (r.width * usedLengthMm) : 0;
-      out.push({ idx: out.length + 1, roll: r, placed: result.placed, usedLengthMm, bboxW, bboxH, printedAreaMm2: area, coverage });
-      pool = result.leftover;
+      remaining.set(best.r.id, (remaining.get(best.r.id) || 0) - best.usedLengthMm);
+      pool = best.leftover;
     }
 
     const rollUsageM = new Map<number, number>();
