@@ -3488,42 +3488,10 @@ const Materials: React.FC = () => {
             </Col>
           </Row>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-            <Form.Item name="width" label="Szélesség">
-              <NumInput 
-                style={{ width: '100%' }} 
-                min={0} 
-                precision={2} 
-                disabled={editingMaterial?.width_fixed}
-              />
-            </Form.Item>
-
-            <Form.Item name="length" label="Hosszúság">
-              <NumInput 
-                style={{ width: '100%' }} 
-                min={0} 
-                precision={2} 
-                disabled={editingMaterial?.length_fixed}
-              />
-            </Form.Item>
-
-            <Form.Item name="thickness" label="Vastagság">
-              <NumInput 
-                style={{ width: '100%' }} 
-                min={0} 
-                precision={2} 
-                disabled={editingMaterial?.height_fixed}
-              />
-            </Form.Item>
-          </div>
-
-          <Form.Item name="dimension_unit" label="Méret mértékegység">
-            <Select>
-              <Option value="mm">mm</Option>
-              <Option value="cm">cm</Option>
-              <Option value="m">m</Option>
-            </Select>
-          </Form.Item>
+          <Form.Item name="width" hidden><Input /></Form.Item>
+          <Form.Item name="length" hidden><Input /></Form.Item>
+          <Form.Item name="thickness" hidden><Input /></Form.Item>
+          <Form.Item name="dimension_unit" hidden><Input /></Form.Item>
 
           <Form.Item name="notes" label="Megjegyzés">
             <Input.TextArea rows={3} />
