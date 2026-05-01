@@ -547,7 +547,19 @@ class ManufacturingCostItemViewSet(
             company = (qr.company if qr else None) or (qr.customer if qr else None)
             cust_name = company.name if company else ''
             cust_id = company.id if company else None
-            # Fallback: first contact's company (legacy data with no FK)
+            # For private persons the company name is often blank or a generic
+            # placeholder – use the first contact's own name instead
+            is_private = (company and getattr(company, 'vat_status', None) == 'PRIVATE_PERSON')
+            if qr and (not cust_name or is_private):
+                try:
+                    first_contact = qr.contacts.first()
+                    if first_contact and first_contact.name:
+                        cust_name = first_contact.name
+                        if not cust_id and getattr(first_contact, 'company', None):
+                            cust_id = first_contact.company.id
+                except Exception:
+                    pass
+            # Legacy fallback: first contact's company (legacy data with no FK)
             if not cust_name and qr:
                 try:
                     first_contact = qr.contacts.first()
