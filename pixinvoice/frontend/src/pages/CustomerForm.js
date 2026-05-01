@@ -3,9 +3,9 @@ import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
-import { Save, ArrowLeft, Search, Loader, PlusCircle, Trash2 } from 'lucide-react';
+import { Save, ArrowLeft, Search, Loader, PlusCircle, Trash2, Users, Star, Mail, Phone } from 'lucide-react';
 import styled from 'styled-components';
-import api, { customerAPI, customerBankAccountAPI } from '../services/api';
+import api, { customerAPI, customerBankAccountAPI, contactAPI } from '../services/api';
 
 const FormContainer = styled.div`
   background: white;
@@ -788,6 +788,20 @@ const CustomerForm = () => {
       }
     }
   );
+
+  // Kapcsolattartók (csak szerkesztéskor)
+  const { data: contactsData, isLoading: contactsLoading } = useQuery(
+    ['customer-contacts', id],
+    () => contactAPI.getContacts({ customer_id: id, page_size: 1000 }),
+    {
+      enabled: isEdit,
+      select: (res) => {
+        const d = res?.data;
+        return Array.isArray(d) ? d : (d?.results || []);
+      },
+    }
+  );
+  const contacts = contactsData || [];
 
   // Fallback: ha a külön lekérés még nem jött meg, de a customer payload tartalmaz bank_accounts‑ot
   React.useEffect(() => {
@@ -2088,6 +2102,67 @@ const CustomerForm = () => {
           </Button>
         </ButtonGroup>
       </form>
+
+      {isEdit && (
+        <div style={{ marginTop: 32, paddingTop: 24, borderTop: '2px solid #ecf0f1' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+            <h3 style={{ fontSize: 18, fontWeight: 600, margin: 0, color: '#34495e', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Users size={18} />
+              Kapcsolattartók ({contacts.length})
+            </h3>
+            <Button
+              type="button"
+              variant="primary"
+              onClick={() => navigate(`/contacts/new?customer_id=${encodeURIComponent(id)}&return_to=${encodeURIComponent(`/customers/${id}/edit`)}`)}
+            >
+              <PlusCircle size={16} />
+              Új kapcsolattartó
+            </Button>
+          </div>
+          {contactsLoading ? (
+            <div style={{ color: '#7f8c8d', padding: '12px 0' }}>Betöltés...</div>
+          ) : contacts.length === 0 ? (
+            <div style={{ color: '#7f8c8d', padding: '12px 0', fontStyle: 'italic' }}>
+              Még nincs kapcsolattartó ehhez az ügyfélhez.
+            </div>
+          ) : (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+              {contacts.map((c) => (
+                <div
+                  key={c.id}
+                  onClick={() => navigate(`/contacts/${c.id}/edit?return_to=${encodeURIComponent(`/customers/${id}/edit`)}`)}
+                  style={{
+                    background: '#fff',
+                    border: c.is_primary ? '2px solid #f39c12' : '1px solid #ecf0f1',
+                    borderRadius: 6,
+                    padding: 12,
+                    cursor: 'pointer',
+                    transition: 'box-shadow 0.15s',
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.boxShadow = '0 2px 8px rgba(0,0,0,0.08)'; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.boxShadow = 'none'; }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, color: '#2c3e50', marginBottom: 6 }}>
+                    {c.is_primary && <Star size={14} fill="#f39c12" color="#f39c12" />}
+                    {c.full_name || `${c.last_name || ''} ${c.first_name || ''}`.trim() || '—'}
+                  </div>
+                  {c.position && <div style={{ fontSize: 12, color: '#7f8c8d', marginBottom: 6 }}>{c.position}</div>}
+                  {c.email && (
+                    <div style={{ fontSize: 13, color: '#34495e', display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <Mail size={12} /> {c.email}
+                    </div>
+                  )}
+                  {(c.phone || c.mobile) && (
+                    <div style={{ fontSize: 13, color: '#34495e', display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}>
+                      <Phone size={12} /> {c.phone || c.mobile}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Duplikáció megerősítő modal */}
       {duplicateModal && (

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { toast } from 'react-toastify';
 import { Save, ArrowLeft, User, Building, Mail, Phone, Star, Trash2 } from 'lucide-react';
 import styled from 'styled-components';
@@ -349,8 +349,21 @@ const SearchableSelectComponent = ({
 const ContactForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const isEdit = Boolean(id);
+  const prefillCustomerId = React.useMemo(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      return sp.get('customer_id') || sp.get('customer') || '';
+    } catch { return ''; }
+  }, [location.search]);
+  const returnTo = React.useMemo(() => {
+    try {
+      const sp = new URLSearchParams(location.search);
+      return sp.get('return_to') || '';
+    } catch { return ''; }
+  }, [location.search]);
   const [selectedCompanyId] = React.useState(() => {
     try { return localStorage.getItem('selectedCompanyId') || ''; } catch { return ''; }
   });
@@ -452,10 +465,11 @@ const ContactForm = () => {
     {
       onSuccess: () => {
         queryClient.invalidateQueries(['contacts']);
+        queryClient.invalidateQueries(['customer-contacts']);
         toast.success('Kapcsolattartó létrehozva');
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         try { localStorage.removeItem(KEEP_FLAG_KEY); } catch {}
-        navigate('/contacts');
+        navigate(returnTo || '/contacts');
       },
       onError: (error) => {
         toast.error('Hiba történt a kapcsolattartó létrehozása során');
@@ -474,7 +488,7 @@ const ContactForm = () => {
         toast.success('Kapcsolattartó frissítve');
         try { localStorage.removeItem(DRAFT_KEY); } catch {}
         try { localStorage.removeItem(KEEP_FLAG_KEY); } catch {}
-        navigate('/contacts');
+        navigate(returnTo || '/contacts');
       },
       onError: (error) => {
         toast.error('Hiba történt a kapcsolattartó frissítése során');
@@ -490,7 +504,7 @@ const ContactForm = () => {
         queryClient.invalidateQueries(['contacts']);
         queryClient.invalidateQueries(['customer-contacts']);
         toast.success('Kapcsolattartó törölve');
-        navigate('/contacts');
+        navigate(returnTo || '/contacts');
       },
       onError: (error) => {
         toast.error('Hiba történt a kapcsolattartó törlése során');
@@ -531,6 +545,14 @@ const ContactForm = () => {
       setValue('is_active', contact.is_active);
     }
   }, [contact, setValue]);
+
+  // Új kapcsolattartó esetén előválasztjuk a query paraméterben kapott ügyfelet.
+  useEffect(() => {
+    if (isEdit) return;
+    if (prefillCustomerId) {
+      setValue('customer', prefillCustomerId);
+    }
+  }, [isEdit, prefillCustomerId, setValue]);
 
   const onSubmit = (data) => {
     // Validáljuk, hogy van-e kiválasztott ügyfél, kivéve ha nyugtás
