@@ -82,6 +82,12 @@ class MaterialGroup(models.Model):
 
 class Material(models.Model):
     """Alapanyag modell"""
+    PRICE_SOURCE_MODE_CHOICES = [
+        ('manual', 'Kézi nettó egységár'),
+        ('default_version', 'Alapértelmezett árkalkuláció'),
+        ('optimal_version', 'Optimális árkalkuláció'),
+    ]
+
     UNIT_CHOICES = [
         ('db', 'db'),
         ('m', 'm'),
@@ -377,6 +383,20 @@ class Material(models.Model):
     )
     
     currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
+
+    price_source_mode = models.CharField(
+        max_length=30,
+        choices=PRICE_SOURCE_MODE_CHOICES,
+        default='manual',
+        verbose_name="Ár forrása",
+        help_text="Kézi ár, alapértelmezett verzió vagy optimális verzió alapján számolt nettó egységár"
+    )
+    default_price_calculation_version = models.CharField(
+        max_length=100,
+        blank=True,
+        default='',
+        verbose_name="Alapértelmezett árkalkulációs verzió"
+    )
     
     # Beszállítók és belső gyártás
     default_supplier = models.ForeignKey(
@@ -626,6 +646,14 @@ class MaterialCostItem(models.Model):
         verbose_name="Beszállító",
         help_text="Null = belső gyártás"
     )
+
+    price_calculation_version = models.CharField(
+        max_length=100,
+        default='1. verzió',
+        blank=True,
+        verbose_name="Árkalkulációs verzió",
+        help_text="Azonos verziónév alá tartozó költségelemek együtt adnak egy egységárat"
+    )
     
     is_internal = models.BooleanField(
         default=False,
@@ -660,6 +688,15 @@ class MaterialCostItem(models.Model):
         validators=[MinValueValidator(0)],
         verbose_name="Egységár",
         help_text="Bekerülési egységár"
+    )
+
+    price_quantity = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=1,
+        validators=[MinValueValidator(0.0001)],
+        verbose_name="Ár mennyisége",
+        help_text="Az ár hány alapanyag mértékegységre vonatkozik. Pl. 10 db-os csomagolási árnál 10."
     )
     
     markup_percentage = models.DecimalField(

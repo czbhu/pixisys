@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Upload, Checkbox, Row, Col } from 'antd';
+import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio } from 'antd';
 import NumInput from '../../components/NumInput';
-import { PlusOutlined, EditOutlined, DeleteOutlined, SaveOutlined, UploadOutlined, SearchOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import EnhancedTable from '../../components/EnhancedTable';
+import { manufacturingService, Currency as MCurrency } from '../../services/manufacturingService';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -26,6 +27,8 @@ interface Material {
   unit_selling_price: number;
   vat_type_id?: string;
   currency: string;
+  price_source_mode?: 'manual' | 'default_version' | 'optimal_version';
+  default_price_calculation_version?: string;
   material_type: string;
   material_group?: number;
   material_group_name?: string;
@@ -75,11 +78,6 @@ interface Supplier {
   name: string;
 }
 
-interface Department {
-  id: number;
-  name: string;
-}
-
 interface CostItem {
   id?: number;
   material: number;
@@ -90,7 +88,9 @@ interface CostItem {
   calculation_type: string;
   calculation_type_display?: string;
   unit: string;
+  price_calculation_version?: string;
   unit_price: number;
+  price_quantity?: number;
   markup_percentage: number;
   selling_price?: number;
   currency: string;
@@ -273,11 +273,9 @@ const Materials: React.FC = () => {
     }
   }, [searchParams]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
-  const [filteredSuppliers, setFilteredSuppliers] = useState<{ value: string }[]>([]);
   const [materialGroups, setMaterialGroups] = useState<MaterialGroup[]>([]);
-  const [departments, setDepartments] = useState<Department[]>([]);
   const [vatTypes, setVatTypes] = useState<VatType[]>([]);
-  const [isInternalProduction, setIsInternalProduction] = useState(false);
+  const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
   const [searchText, setSearchText] = useState<string>('');
   const [filterType, setFilterType] = useState<string>('all');
@@ -400,6 +398,7 @@ const Materials: React.FC = () => {
   
   // Cost items management
   const [costItems, setCostItems] = useState<CostItem[]>([]);
+  const [allCostItems, setAllCostItems] = useState<CostItem[]>([]);
   const [selectedSourceForCost, setSelectedSourceForCost] = useState<'internal' | number | null>(null);
   const [costItemForm] = Form.useForm();
   const [editingCostItem, setEditingCostItem] = useState<CostItem | null>(null);
@@ -415,8 +414,6 @@ const Materials: React.FC = () => {
   
   // Added suppliers management
   const [addedSuppliers, setAddedSuppliers] = useState<(Supplier & { is_internal?: boolean })[]>([]);
-  const [supplierSearchValue, setSupplierSearchValue] = useState<string>('');
-  const [filteredSuppliersForAdd, setFilteredSuppliersForAdd] = useState<{ value: string; label: string }[]>([]);
 
   // Stock management
   const [stocks, setStocks] = useState<MaterialStock[]>([]);
@@ -457,6 +454,77 @@ const Materials: React.FC = () => {
     return unitMap[calculationType] || ['db'];
   };
 
+  const getCurrencySymbol = (code?: string) => {
+    const currency = currencyList.find(c => c.code.toUpperCase() === (code || 'HUF').toUpperCase());
+    return currency?.symbol || code || 'HUF';
+  };
+
+  const convertCurrencyAmount = (amount: number, fromCode?: string, toCode?: string) => {
+    const from = (fromCode || 'HUF').toUpperCase();
+    const to = (toCode || 'HUF').toUpperCase();
+    if (from === to) return amount;
+    const fromCurr = currencyList.find(c => c.code.toUpperCase() === from);
+    const toCurr = currencyList.find(c => c.code.toUpperCase() === to);
+    const fromRate = fromCurr?.exchange_rate && fromCurr.exchange_rate > 0 ? fromCurr.exchange_rate : 1;
+    const toRate = toCurr?.exchange_rate && toCurr.exchange_rate > 0 ? toCurr.exchange_rate : 1;
+    return amount * (fromRate / toRate);
+  };
+
+  const getCostItemUnitAmount = (item: CostItem, priceField: 'unit_price' | 'selling_price' = 'selling_price') => {
+    const price = Number((item as any)[priceField] ?? item.unit_price ?? 0);
+    if (item.calculation_type === 'fixed') return price;
+    const quantity = Number(item.price_quantity || 1) || 1;
+    return price / quantity;
+  };
+
+  const getPriceVersionSummaries = () => {
+    const targetCurrency = form.getFieldValue('currency') || 'HUF';
+    const grouped = new Map<string, CostItem[]>();
+    allCostItems
+      .filter(item => item.is_active !== false)
+      .forEach(item => {
+        const version = (item.price_calculation_version || '1. verzió').trim() || '1. verzió';
+        grouped.set(version, [...(grouped.get(version) || []), item]);
+      });
+
+    return Array.from(grouped.entries()).map(([version, items]) => {
+      const unitCost = items.reduce((sum, item) => sum + convertCurrencyAmount(getCostItemUnitAmount(item, 'unit_price'), item.currency, targetCurrency), 0);
+      const unitSelling = items.reduce((sum, item) => sum + convertCurrencyAmount(getCostItemUnitAmount(item, 'selling_price'), item.currency, targetCurrency), 0);
+      return { version, items, unitCost, unitSelling, currency: targetCurrency };
+    }).sort((a, b) => a.version.localeCompare(b.version, 'hu'));
+  };
+
+  const getOptimalPriceVersion = () => {
+    const summaries = getPriceVersionSummaries().filter(v => v.unitSelling > 0);
+    return summaries.length ? summaries.reduce((best, current) => current.unitSelling < best.unitSelling ? current : best) : undefined;
+  };
+
+  const applyCalculatedPriceMode = (mode: 'default_version' | 'optimal_version') => {
+    const summaries = getPriceVersionSummaries();
+    const selectedVersion = form.getFieldValue('default_price_calculation_version');
+    const summary = mode === 'optimal_version'
+      ? getOptimalPriceVersion()
+      : summaries.find(v => v.version === selectedVersion) || summaries[0];
+
+    if (!summary) {
+      message.warning('Nincs elérhető árkalkulációs verzió');
+      return;
+    }
+
+    const net = Number(summary.unitSelling.toFixed(2));
+    setNetUnitPrice(net);
+    form.setFieldsValue({
+      price_source_mode: mode,
+      unit_cost_price: Number(summary.unitCost.toFixed(2)),
+      unit_selling_price: net,
+      markup_percentage: summary.unitCost > 0 ? Number((((summary.unitSelling - summary.unitCost) / summary.unitCost) * 100).toFixed(2)) : 0,
+    });
+    const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+    const vatPercentage = vat?.percentage || 0;
+    setCalculatedVat(net * (Number(vatPercentage) / 100));
+    setCalculatedGross(net * (1 + Number(vatPercentage) / 100));
+  };
+
   // Calculate selling price from unit price and markup
   const calculateSellingPrice = (unitPrice: number, markupPercentage: number): number => {
     return unitPrice * (1 + markupPercentage / 100);
@@ -472,9 +540,9 @@ const Materials: React.FC = () => {
     fetchMaterials();
     fetchSuppliers();
     fetchMaterialGroups();
-    fetchDepartments();
     fetchWarehouses();
     fetchVatTypes();
+    fetchCurrencies();
   }, []);
 
   // Recalculate VAT and gross price when vatTypes are loaded and editing
@@ -547,8 +615,6 @@ const Materials: React.FC = () => {
           return nameA.localeCompare(nameB, 'hu');
       });
       setSuppliers(sorted);
-      // Initialize filtered list with all suppliers
-      setFilteredSuppliersForAdd(sorted.map((s: Supplier) => ({ value: s.id?.toString(), label: s.name })));
     } catch (error) {
       console.error('Hiba a beszállítók betöltésekor:', error);
       message.error('Nem sikerült betölteni a beszállítókat');
@@ -563,16 +629,6 @@ const Materials: React.FC = () => {
       setMaterialGroups(sorted);
     } catch (error) {
       console.error('Hiba az alapanyag gyűjtők betöltésekor:', error);
-    }
-  };
-
-  const fetchDepartments = async () => {
-    try {
-      const response = await api.get('/hr/departments/');
-      const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
-      setDepartments(data);
-    } catch (error) {
-      console.error('Hiba az osztályok betöltésekor:', error);
     }
   };
 
@@ -598,6 +654,15 @@ const Materials: React.FC = () => {
     } catch (error) {
       console.error('Hiba az ÁFA típusok betöltésekor:', error);
       message.error('Nem sikerült betölteni az ÁFA típusokat');
+    }
+  };
+
+  const fetchCurrencies = async () => {
+    try {
+      const currencies = await manufacturingService.getCurrencies();
+      setCurrencyList(currencies);
+    } catch (error) {
+      console.error('Hiba a pénznemek betöltésekor:', error);
     }
   };
 
@@ -730,6 +795,7 @@ const Materials: React.FC = () => {
 
       const allCostItems = Array.isArray(costResponse.data) ? costResponse.data : (costResponse.data.results || []);
       const linkedSuppliers = Array.isArray(suppliersResponse.data) ? suppliersResponse.data : (suppliersResponse.data.results || []);
+      setAllCostItems(allCostItems);
       
       // Get unique suppliers from cost items and linked suppliers
       const uniqueSuppliers: Map<string, Supplier & { is_internal?: boolean }> = new Map();
@@ -766,6 +832,7 @@ const Materials: React.FC = () => {
     } catch (error) {
       console.error('Hiba a hozzáadott beszállítók betöltésekor:', error);
       setAddedSuppliers([]);
+      setAllCostItems([]);
     }
   };
 
@@ -773,16 +840,16 @@ const Materials: React.FC = () => {
     setEditingMaterial(null);
     setDuplicateSourceId(null);
     form.resetFields();
-    setIsInternalProduction(false);
     setSelectedMaterialFormat('piece');
     setSelectedSourceForCost(null);
     setCostItems([]);
+    setAllCostItems([]);
     setAddedSuppliers([]);
-    setSupplierSearchValue('');
     setNetUnitPrice(0);
     setCalculatedVat(0);
     setCalculatedGross(0);
     setSelectedVatTypeId(undefined);
+    form.setFieldsValue({ price_source_mode: 'manual', default_price_calculation_version: '' });
     setModalVisible(true);
   };
 
@@ -790,7 +857,6 @@ const Materials: React.FC = () => {
     console.log('📖 Loading material - vat_type_id:', material.vat_type_id);
     setEditingMaterial(material);
     setSelectedVatTypeId(material.vat_type_id || undefined);
-    setIsInternalProduction(material.is_internal_production);
     setSelectedMaterialFormat(material.material_format || 'piece');
     
     // Initialize net price and VAT calculations
@@ -904,6 +970,8 @@ const Materials: React.FC = () => {
       
       // Sync calculated prices with form values
       submitData.unit_selling_price = Number(netUnitPrice.toFixed(2));
+      submitData.price_source_mode = submitData.price_source_mode || 'manual';
+      submitData.default_price_calculation_version = submitData.default_price_calculation_version || '';
       
       // Map 'default_supplier_selection' to backend fields
       const selection = submitData.default_supplier_selection;
@@ -915,10 +983,6 @@ const Materials: React.FC = () => {
           submitData.is_internal_production = false;
           submitData.default_supplier = Number(selection);
           submitData.internal_production_department = null;
-      } else {
-        // Validation should prevent this, but just in case
-        submitData.is_internal_production = false;
-        submitData.default_supplier = null;
       }
 
       // Cleanup aux field
@@ -971,7 +1035,9 @@ const Materials: React.FC = () => {
                 name: ci.name,
                 calculation_type: ci.calculation_type,
                 unit: ci.unit,
+                price_calculation_version: ci.price_calculation_version || '1. verzió',
                 unit_price: ci.unit_price,
+                price_quantity: ci.price_quantity || 1,
                 markup_percentage: ci.markup_percentage,
                 currency: ci.currency,
                 is_active: ci.is_active,
@@ -1053,6 +1119,9 @@ const Materials: React.FC = () => {
     try {
       const values = await form.validateFields();
       values.vat_type_id = selectedVatTypeId || null;
+      values.unit_selling_price = Number(netUnitPrice.toFixed(2));
+      values.price_source_mode = values.price_source_mode || 'manual';
+      values.default_price_calculation_version = values.default_price_calculation_version || '';
       
       // Map 'default_supplier_selection' to backend fields
       const selection = values.default_supplier_selection;
@@ -1064,9 +1133,6 @@ const Materials: React.FC = () => {
           values.is_internal_production = false;
           values.default_supplier = Number(selection);
           values.internal_production_department = null;
-      } else {
-        values.is_internal_production = false;
-        values.default_supplier = null;
       }
       
       // Cleanup aux field
@@ -1165,42 +1231,6 @@ const Materials: React.FC = () => {
      });
   };
 
-  const handleSupplierSearch = (searchText: string) => {
-    const filtered = suppliers
-      .filter(s => s.name.toLowerCase().includes(searchText.toLowerCase()))
-      .map(s => ({ value: s.name }));
-    setFilteredSuppliers(filtered);
-  };
-
-  const handleSupplierSelect = (value: string) => {
-    const supplier = suppliers.find(s => s.name === value);
-    if (supplier && editingMaterial) {
-      setSelectedSourceForCost(supplier.id);
-      fetchCostItems(editingMaterial.id, supplier.id);
-    }
-  };
-
-  const handleSupplierSearchForAdd = (searchText: string) => {
-    setSupplierSearchValue(searchText);
-    // Filter out already added suppliers
-    const addedSupplierIds = addedSuppliers.filter(s => !s.is_internal).map(s => s.id);
-    
-    let filtered;
-    if (!searchText || searchText.trim() === '') {
-      // Show all available suppliers when search is empty
-      filtered = suppliers
-        .filter(s => !addedSupplierIds.includes(s.id))
-        .map(s => ({ value: s.name, label: s.name }));
-    } else {
-      // Filter by search text
-      filtered = suppliers
-        .filter(s => !addedSupplierIds.includes(s.id) && s.name.toLowerCase().includes(searchText.toLowerCase()))
-        .map(s => ({ value: s.name, label: s.name }));
-    }
-    
-    setFilteredSuppliersForAdd(filtered);
-  };
-
   const handleAddSupplier = async (supplierId: number) => {
     const supplier = suppliers.find(s => s.id === supplierId);
     if (!supplier) {
@@ -1241,7 +1271,6 @@ const Materials: React.FC = () => {
     }
     
     setAddedSuppliers([...addedSuppliers, { ...supplier, is_internal: false }]);
-    setSupplierSearchValue('');
     message.success(`${supplier.name} hozzáadva`);
   };
 
@@ -1309,6 +1338,8 @@ const Materials: React.FC = () => {
       unit: 'db',
       currency: 'HUF',
       is_active: true,
+      price_calculation_version: form.getFieldValue('default_price_calculation_version') || '1. verzió',
+      price_quantity: 1,
       unit_price: 0,
       markup_percentage: 35,
       selling_price: 0,
@@ -1330,6 +1361,9 @@ const Materials: React.FC = () => {
       if (editingMaterial && selectedSourceForCost) {
         fetchCostItems(editingMaterial.id, selectedSourceForCost);
       }
+      if (editingMaterial) {
+        fetchAddedSuppliers(editingMaterial.id);
+      }
     } catch (error) {
       message.error('Hiba a törlés során');
       console.error(error);
@@ -1348,6 +1382,9 @@ const Materials: React.FC = () => {
       setCostItemModalVisible(false);
       if (editingMaterial && selectedSourceForCost) {
         fetchCostItems(editingMaterial.id, selectedSourceForCost);
+      }
+      if (editingMaterial) {
+        fetchAddedSuppliers(editingMaterial.id);
       }
     } catch (error: any) {
       const data = error.response?.data;
@@ -1711,6 +1748,12 @@ const Materials: React.FC = () => {
 
   const costItemColumns = [
     {
+      title: 'Verzió',
+      dataIndex: 'price_calculation_version',
+      key: 'price_calculation_version',
+      render: (value: string) => value || '1. verzió',
+    },
+    {
       title: 'Megnevezés',
       dataIndex: 'name',
       key: 'name',
@@ -1729,7 +1772,13 @@ const Materials: React.FC = () => {
       title: 'Egységár',
       dataIndex: 'unit_price',
       key: 'unit_price',
-      render: (value: number) => `${Number(value).toLocaleString()} HUF`,
+      render: (value: number, record: CostItem) => `${Number(value).toLocaleString()} ${record.currency || 'HUF'}`,
+    },
+    {
+      title: 'Ár mennyiségre',
+      dataIndex: 'price_quantity',
+      key: 'price_quantity',
+      render: (value: number, record: CostItem) => record.calculation_type === 'fixed' ? 'fix' : `${Number(value || 1).toLocaleString('hu-HU')} ${record.unit || ''}`,
     },
     {
       title: 'Haszon (%)',
@@ -1741,7 +1790,12 @@ const Materials: React.FC = () => {
       title: 'Eladási ár',
       dataIndex: 'selling_price',
       key: 'selling_price',
-      render: (value: number) => `${Number(value).toLocaleString()} HUF`,
+      render: (value: number, record: CostItem) => `${Number(value).toLocaleString()} ${record.currency || 'HUF'}`,
+    },
+    {
+      title: 'Egységre jutó nettó',
+      key: 'unit_selling_contribution',
+      render: (_: any, record: CostItem) => `${getCostItemUnitAmount(record, 'selling_price').toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${record.currency || 'HUF'}`,
     },
     {
       title: 'Műveletek',
@@ -1838,6 +1892,8 @@ const Materials: React.FC = () => {
                 unit_cost_price: 0,
                 markup_percentage: 35,
                 unit_selling_price: 0,
+                price_source_mode: 'manual',
+                default_price_calculation_version: '',
                 is_internal_production: false,
               }}
             >
@@ -2137,25 +2193,120 @@ const Materials: React.FC = () => {
               </Form.Item>
 
               <Form.Item shouldUpdate noStyle>
-                {() => (
-                  <div style={{ 
-                    marginTop: 16, 
-                    marginBottom: 16, 
-                    padding: '12px 16px', 
-                    background: '#f5f5f5', 
-                    borderRadius: 4,
-                    border: '1px solid #d9d9d9'
-                  }}>
-                    <strong>1 egységre vonatkozó tájékoztató ár:</strong>
-                    <div style={{ marginTop: 8, fontSize: '13px' }}>
-                      Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
-                      {' | '}
-                      Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
-                      {' | '}
-                      Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
+                {() => {
+                  const summaries = getPriceVersionSummaries();
+                  const optimal = getOptimalPriceVersion();
+                  const priceSourceMode = form.getFieldValue('price_source_mode') || 'manual';
+                  const activeCurrency = form.getFieldValue('currency') || 'HUF';
+                  return (
+                    <div style={{ marginTop: 16, marginBottom: 16, padding: 16, background: '#fff7e6', borderRadius: 6, border: '1px solid #ffd591' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'flex-start', marginBottom: 12 }}>
+                        <strong style={{ fontSize: 15 }}>Nettó egységár</strong>
+                        <Form.Item name="currency" style={{ marginBottom: 0 }}>
+                          <Select
+                            showSearch
+                            optionFilterProp="label"
+                            style={{ width: 180 }}
+                            onChange={(newCode) => {
+                              const oldCode = activeCurrency;
+                              const converted = convertCurrencyAmount(netUnitPrice, oldCode, newCode);
+                              setNetUnitPrice(Number(converted.toFixed(2)));
+                              form.setFieldsValue({ unit_selling_price: Number(converted.toFixed(2)) });
+                            }}
+                          >
+                            {currencyList.map(c => (
+                              <Option key={c.id} value={c.code} label={`${c.code} - ${c.name}`}>
+                                {c.code} - {c.name} {c.symbol ? `(${c.symbol})` : ''}
+                              </Option>
+                            ))}
+                          </Select>
+                        </Form.Item>
+                      </div>
+
+                      <Row gutter={12} align="middle">
+                        <Col xs={24} md={8}>
+                          <NumInput
+                            style={{ width: '100%', fontWeight: 600 }}
+                            value={netUnitPrice}
+                            disabled={priceSourceMode !== 'manual'}
+                            min={0}
+                            precision={2}
+                            addonAfter={getCurrencySymbol(activeCurrency)}
+                            onChange={(value) => {
+                              const net = value || 0;
+                              setNetUnitPrice(net);
+                              form.setFieldsValue({ price_source_mode: 'manual', unit_selling_price: net });
+                              const vat = vatTypes.find(v => v.id === selectedVatTypeId);
+                              const vatPercentage = vat?.percentage || 0;
+                              setCalculatedVat(net * (Number(vatPercentage) / 100));
+                              setCalculatedGross(net * (1 + Number(vatPercentage) / 100));
+                            }}
+                          />
+                        </Col>
+                        <Col xs={24} md={16}>
+                          <Checkbox
+                            checked={priceSourceMode !== 'manual'}
+                            onChange={(e) => {
+                              const nextMode = e.target.checked ? 'default_version' : 'manual';
+                              form.setFieldsValue({ price_source_mode: nextMode });
+                              if (nextMode !== 'manual') applyCalculatedPriceMode(nextMode);
+                            }}
+                          >
+                            Ár kalkuláció alapján
+                          </Checkbox>
+                          {priceSourceMode !== 'manual' && (
+                            <Radio.Group
+                              size="small"
+                              value={priceSourceMode}
+                              onChange={(e) => applyCalculatedPriceMode(e.target.value)}
+                              style={{ marginLeft: 12 }}
+                            >
+                              <Radio.Button value="default_version">Alapértelmezett verzió</Radio.Button>
+                              <Radio.Button value="optimal_version">Optimális verzió</Radio.Button>
+                            </Radio.Group>
+                          )}
+                        </Col>
+                      </Row>
+
+                      <Form.Item name="default_price_calculation_version" label="Alapértelmezett árkalkulációs verzió" style={{ marginTop: 12, marginBottom: 8 }}>
+                        <Select
+                          allowClear
+                          placeholder={summaries.length ? 'Válassz verziót' : 'Nincs még árkalkulációs verzió'}
+                          onChange={() => {
+                            if ((form.getFieldValue('price_source_mode') || 'manual') === 'default_version') {
+                              setTimeout(() => applyCalculatedPriceMode('default_version'), 0);
+                            }
+                          }}
+                        >
+                          {summaries.map(summary => (
+                            <Option key={summary.version} value={summary.version}>
+                              {summary.version} - {summary.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {getCurrencySymbol(summary.currency)} / {form.getFieldValue('unit') || 'egység'}
+                              {optimal?.version === summary.version ? ' (optimális)' : ''}
+                            </Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+
+                      {summaries.length > 0 ? (
+                        <Table
+                          size="small"
+                          dataSource={summaries}
+                          rowKey="version"
+                          pagination={false}
+                          style={{ marginTop: 8 }}
+                          columns={[
+                            { title: 'Verzió', dataIndex: 'version', key: 'version' },
+                            { title: 'Elemek', key: 'items', render: (_: any, r: any) => r.items.length },
+                            { title: 'Bekerülési / egység', key: 'unitCost', align: 'right' as const, render: (_: any, r: any) => `${r.unitCost.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${getCurrencySymbol(r.currency)}` },
+                            { title: 'Nettó ár / egység', key: 'unitSelling', align: 'right' as const, render: (_: any, r: any) => <strong>{r.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {getCurrencySymbol(r.currency)}</strong> },
+                          ]}
+                        />
+                      ) : (
+                        <div style={{ marginTop: 8, color: '#8c8c8c' }}>Árkalkulációs verziót a Beszállítók és árkalkuláció fülön lehet rögzíteni.</div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                }}
               </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden>
@@ -2170,133 +2321,9 @@ const Materials: React.FC = () => {
                 <NumInput />
               </Form.Item>
 
-              <h4 style={{ marginTop: 16, marginBottom: 8 }}>Hozzáadott beszállítók</h4>
-              
-              <div style={{ marginBottom: 16 }}>
-                <Space>
-                <Select 
-                    style={{ width: 300 }} 
-                    placeholder="Beszállító hozzáadása..." 
-                    value={undefined}
-                    showSearch
-                    onChange={(val: number) => {
-                        // Pass ID directly
-                        if (!addedSuppliers.find(s => s.id === val && !s.is_internal)) {
-                            handleAddSupplier(val);
-                        } else {
-                            message.warning('Ez a beszállító már hozzá van adva');
-                        }
-                    }}
-                    filterOption={(input, option) => {
-                        const children = option?.children as unknown as string;
-                        return children ? children.toLowerCase().includes(input.toLowerCase()) : false;
-                    }}
-                >
-                    {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>)}
-                    </Select>
-
-                    <Button 
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                        if (!addedSuppliers.some(s => s.is_internal)) {
-                        setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
-                        message.success('Belső gyártás hozzáadva');
-                        // Auto-select if it's the first one? handled by user
-                        } else {
-                        message.warning('Belső gyártás már hozzá van adva');
-                        }
-                    }}
-                    >
-                    Belső gyártás hozzáadása
-                    </Button>
-                </Space>
-                </div>
-                
-                <Table
-                size="small"
-                dataSource={addedSuppliers}
-                rowKey={(record) => record.is_internal ? 'internal' : String(record.id)}
-                pagination={false}
-                locale={{ emptyText: 'Nincs hozzáadott beszállító' }}
-                style={{ marginBottom: 16 }}
-                columns={[
-                    {
-                    title: 'Név',
-                    dataIndex: 'name',
-                    key: 'name',
-                    },
-                    {
-                    title: 'Típus',
-                    render: (record: Supplier & { is_internal?: boolean }) => (
-                        record.is_internal ? <Tag color="blue">Belső</Tag> : <Tag color="green">Külső</Tag>
-                    ),
-                    },
-                    {
-                        title: '1 egységre jutó ár',
-                        render: (_: any, record: Supplier & { is_internal?: boolean }) => {
-                            return '-';
-                        },
-                    },
-                    {
-                    title: 'Művelet',
-                    key: 'actions',
-                    width: 100,
-                    render: (_: any, record: Supplier & { is_internal?: boolean }) => (
-                        <Popconfirm
-                        title="Biztosan törli? Az összes költségelem is törlődik!"
-                        onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
-                        okText="Igen"
-                        cancelText="Nem"
-                        >
-                        <Button type="link" danger icon={<DeleteOutlined />} />
-                        </Popconfirm>
-                    ),
-                    },
-                ]}
-                />
-
-              <h4 style={{ marginTop: 16, marginBottom: 8 }}>Alapértelmezett forrás</h4>
-              {/* Fields to be removed from payload but kept for compatibility logic if needed (or just removed) */}
-              
-              <Form.Item 
-                name="default_supplier_selection"
-                label="Alapértelmezett forrás"
-                rules={[{ required: true, message: 'Kérlek válassz alapértelmezett forrást!' }]}
-                style={{ marginBottom: 16 }}
-              >
-                  <Select 
-                    placeholder="Válassz a hozzáadott források közül" 
-                    allowClear
-                    onChange={(val) => {
-                        // Keep local state in sync just for UI if needed elsewhere
-                        setIsInternalProduction(val === 'internal');
-                    }}
-                  >
-                    {addedSuppliers.map(supplier => (
-                        <Option 
-                            key={supplier.is_internal ? 'internal' : supplier.id} 
-                            value={supplier.is_internal ? 'internal' : supplier.id}
-                        >
-                            {supplier.name}
-                        </Option>
-                    ))}
-                  </Select>
+              <Form.Item name="price_source_mode" hidden>
+                <Input />
               </Form.Item>
-
-              {isInternalProduction && (
-                <Form.Item
-                  name="internal_production_department"
-                  label="Gyártó osztály"
-                  rules={[{ required: true, message: 'Válassz osztályt' }]}
-                  style={{ marginTop: 16 }}
-                >
-                  <Select placeholder="Válassz osztályt" allowClear>
-                    {departments.map(dept => (
-                      <Option key={dept.id} value={dept.id}>{dept.name}</Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              )}
 
               <Form.Item name="is_active" label="Státusz">
                 <Select>
@@ -2315,6 +2342,75 @@ const Materials: React.FC = () => {
               children: (
             <>
             <div style={{ marginBottom: 16 }}>
+              <Card size="small" title="Beszállítók és árkalkulációs források" style={{ marginBottom: 16 }}>
+                <Space style={{ marginBottom: 12 }} wrap>
+                  <Select
+                    style={{ width: 320 }}
+                    placeholder="Beszállító hozzáadása..."
+                    value={undefined}
+                    showSearch
+                    onChange={(val: number) => {
+                      if (!addedSuppliers.find(s => s.id === val && !s.is_internal)) {
+                        handleAddSupplier(val);
+                      } else {
+                        message.warning('Ez a beszállító már hozzá van adva');
+                      }
+                    }}
+                    filterOption={(input, option) => {
+                      const children = option?.children as unknown as string;
+                      return children ? children.toLowerCase().includes(input.toLowerCase()) : false;
+                    }}
+                  >
+                    {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>)}
+                  </Select>
+                  <Button
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                      if (!addedSuppliers.some(s => s.is_internal)) {
+                        setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
+                        message.success('Belső gyártás hozzáadva');
+                      } else {
+                        message.warning('Belső gyártás már hozzá van adva');
+                      }
+                    }}
+                  >
+                    Belső gyártás hozzáadása
+                  </Button>
+                </Space>
+
+                <Table
+                  size="small"
+                  dataSource={addedSuppliers}
+                  rowKey={(record) => record.is_internal ? 'internal' : String(record.id)}
+                  pagination={false}
+                  locale={{ emptyText: 'Nincs hozzáadott beszállító' }}
+                  columns={[
+                    { title: 'Név', dataIndex: 'name', key: 'name' },
+                    {
+                      title: 'Típus',
+                      render: (record: Supplier & { is_internal?: boolean }) => (
+                        record.is_internal ? <Tag color="blue">Belső</Tag> : <Tag color="green">Külső</Tag>
+                      ),
+                    },
+                    {
+                      title: 'Művelet',
+                      key: 'actions',
+                      width: 100,
+                      render: (_: any, record: Supplier & { is_internal?: boolean }) => (
+                        <Popconfirm
+                          title="Biztosan törli? Az összes költségelem is törlődik!"
+                          onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
+                          okText="Igen"
+                          cancelText="Nem"
+                        >
+                          <Button type="link" danger icon={<DeleteOutlined />} />
+                        </Popconfirm>
+                      ),
+                    },
+                  ]}
+                />
+              </Card>
+
               <Row gutter={16} style={{ marginBottom: 16 }}>
                 <Col span={6}>
                   <Form.Item
@@ -2841,6 +2937,14 @@ const Materials: React.FC = () => {
           </Form.Item>
 
           <Form.Item
+            name="price_calculation_version"
+            label="Árkalkulációs verzió"
+            rules={[{ required: true, message: 'Kötelező mező' }]}
+          >
+            <Input placeholder="pl. 1. verzió, A+B+C" />
+          </Form.Item>
+
+          <Form.Item
             name="calculation_type"
             label="Számítás típusa"
             rules={[{ required: true, message: 'Kötelező mező' }]}
@@ -2893,6 +2997,27 @@ const Materials: React.FC = () => {
             />
           </Form.Item>
 
+          {selectedCalculationType !== 'fixed' && (
+            <Form.Item
+              name="price_quantity"
+              label="Az ár hány alapanyag mértékegységre vonatkozik?"
+              tooltip="Példa: ha a beszállító ára 10 db-ra vonatkozik, ide 10 kerül, így az egységár tizedelődik."
+              rules={[{ required: true, message: 'Kötelező mező' }]}
+            >
+              <NumInput style={{ width: '100%' }} min={0.0001} precision={4} addonAfter={costItemForm.getFieldValue('unit') || 'egység'} />
+            </Form.Item>
+          )}
+
+          <Form.Item name="currency" label="Pénznem" rules={[{ required: true, message: 'Kötelező mező' }]}>
+            <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet">
+              {currencyList.map(c => (
+                <Option key={c.id} value={c.code} label={`${c.code} - ${c.name}`}>
+                  {c.code} - {c.name} {c.symbol ? `(${c.symbol})` : ''}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
           <Form.Item
             name="markup_percentage"
             label="Haszon kulcs"
@@ -2938,9 +3063,6 @@ const Materials: React.FC = () => {
             <Input />
           </Form.Item>
 
-          <Form.Item name="currency" hidden initialValue="HUF">
-            <Input />
-          </Form.Item>
         </Form>
       </Modal>
 

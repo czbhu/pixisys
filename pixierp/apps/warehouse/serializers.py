@@ -123,7 +123,8 @@ class MaterialSerializer(serializers.ModelSerializer):
             'weight', 'weight_unit', 'volume_liter',
             'unit_cost_price', 'markup_percentage', 'unit_selling_price', 'base_price',
             'vat_type_id', 'gross_price', 'net_price', 'vat_rate', 'current_stock', 'discount_price',
-            'currency', 'default_supplier', 'default_supplier_name',
+            'currency', 'price_source_mode', 'default_price_calculation_version',
+            'default_supplier', 'default_supplier_name',
             'is_internal_production', 'internal_production_department',
             'internal_production_department_name', 'internal_production_cost',
             'internal_fixed_cost', 'internal_price_per_unit', 'internal_price_per_perimeter',
@@ -239,7 +240,8 @@ class MaterialCostItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'material', 'supplier', 'supplier_name', 'is_internal',
             'name', 'calculation_type', 'calculation_type_display', 'unit',
-            'unit_price', 'markup_percentage', 'selling_price', 'currency',
+            'price_calculation_version', 'unit_price', 'price_quantity',
+            'markup_percentage', 'selling_price', 'currency',
             'is_active', 'created_at', 'updated_at'
         ]
         read_only_fields = ['created_at', 'updated_at', 'selling_price']
