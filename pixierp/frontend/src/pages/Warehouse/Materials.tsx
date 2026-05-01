@@ -3243,18 +3243,40 @@ const Materials: React.FC = () => {
             </Select>
           </Form.Item>
 
-          <Form.Item
-            name="supplier"
-            label="Beszállító"
-          >
-            <Select placeholder="Válassz beszállítót" allowClear>
-              {addedSuppliers
-                .filter(s => !s.is_internal)
-                .map(s => (
-                  <Option key={s.id} value={s.id}>{s.name}</Option>
-                ))}
-            </Select>
-          </Form.Item>
+          <Row gutter={12}>
+            <Col span={12}>
+              <Form.Item label="Árkalkulációs verzió (opcionális)">
+                <Select
+                  allowClear
+                  placeholder="Verzió alapján előtölt..."
+                  showSearch
+                  optionFilterProp="label"
+                  options={getPriceVersionSummaries().map(s => ({
+                    label: `${s.version} – ${s.unitCost.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${getCurrencySymbol(s.currency)}`,
+                    value: s.version,
+                  }))}
+                  onChange={(ver: string | undefined) => {
+                    if (!ver) return;
+                    const summary = getPriceVersionSummaries().find(s => s.version === ver);
+                    if (summary) {
+                      receiptForm.setFieldsValue({ unit_price: Number(summary.unitCost.toFixed(2)) });
+                      const qty = receiptForm.getFieldValue('quantity') || 0;
+                      receiptForm.setFieldsValue({ invoice_value: Number((Number(summary.unitCost.toFixed(2)) * qty).toFixed(2)) });
+                    }
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={12}>
+              <Form.Item name="supplier" label="Beszállító">
+                <Select placeholder="Válassz beszállítót" allowClear showSearch optionFilterProp="children">
+                  {suppliers.map(s => (
+                    <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
 
           <Form.Item
             name="receipt_date"
@@ -3268,44 +3290,62 @@ const Materials: React.FC = () => {
             <Input placeholder="Számla szám" />
           </Form.Item>
 
-          <Form.Item
-            name="invoice_value"
-            label="Számla érték"
-            rules={[{ required: true, message: 'Add meg a számla értékét' }]}
-          >
-            <NumInput
-              style={{ width: '100%' }}
-              min={0}
-              precision={2}
-              addonAfter="HUF"
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="quantity"
-            label="Mennyiség"
-            rules={[{ required: true, message: 'Add meg a mennyiséget' }]}
-          >
-            <NumInput
-              style={{ width: '100%' }}
-              min={0}
-              precision={2}
-              addonAfter={editingMaterial?.unit}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="unit_price"
-            label="Egységár"
-            rules={[{ required: true, message: 'Add meg az egységárat' }]}
-          >
-            <NumInput
-              style={{ width: '100%' }}
-              min={0}
-              precision={2}
-              addonAfter="HUF"
-            />
-          </Form.Item>
+          <Row gutter={12}>
+            <Col span={8}>
+              <Form.Item
+                name="quantity"
+                label="Mennyiség"
+                rules={[{ required: true, message: 'Add meg a mennyiséget' }]}
+              >
+                <NumInput
+                  style={{ width: '100%' }}
+                  min={0}
+                  precision={2}
+                  addonAfter={editingMaterial?.unit}
+                  onChange={(qty) => {
+                    const up = receiptForm.getFieldValue('unit_price') || 0;
+                    if (up) receiptForm.setFieldsValue({ invoice_value: Number(((qty || 0) * up).toFixed(2)) });
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="unit_price"
+                label="Egységár"
+                rules={[{ required: true, message: 'Add meg az egységárat' }]}
+              >
+                <NumInput
+                  style={{ width: '100%' }}
+                  min={0}
+                  precision={2}
+                  addonAfter={receiptForm.getFieldValue('currency') || 'HUF'}
+                  onChange={(up) => {
+                    const qty = receiptForm.getFieldValue('quantity') || 0;
+                    receiptForm.setFieldsValue({ invoice_value: Number(((up || 0) * qty).toFixed(2)) });
+                  }}
+                />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                name="invoice_value"
+                label="Számla érték"
+                rules={[{ required: true, message: 'Add meg a számla értékét' }]}
+              >
+                <NumInput
+                  style={{ width: '100%' }}
+                  min={0}
+                  precision={2}
+                  addonAfter={receiptForm.getFieldValue('currency') || 'HUF'}
+                  onChange={(inv) => {
+                    const qty = receiptForm.getFieldValue('quantity') || 0;
+                    if (qty) receiptForm.setFieldsValue({ unit_price: Number(((inv || 0) / qty).toFixed(2)) });
+                  }}
+                />
+              </Form.Item>
+            </Col>
+          </Row>
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
             <Form.Item name="width" label="Szélesség">
