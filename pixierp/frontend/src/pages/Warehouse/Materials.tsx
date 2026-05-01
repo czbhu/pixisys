@@ -3410,11 +3410,40 @@ const Materials: React.FC = () => {
             </Col>
             <Col span={12}>
               <Form.Item name="supplier" label="Beszállító">
-                <Select placeholder="Válassz beszállítót" allowClear showSearch optionFilterProp="children">
-                  {suppliers.map(s => (
-                    <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>
-                  ))}
-                </Select>
+                {(() => {
+                  // Top 5 suppliers for this material by receipt frequency
+                  const countMap: Record<number, { count: number; name: string }> = {};
+                  receipts.forEach(r => {
+                    if (r.supplier) {
+                      if (!countMap[r.supplier]) countMap[r.supplier] = { count: 0, name: r.supplier_name || `ID: ${r.supplier}` };
+                      countMap[r.supplier].count++;
+                    }
+                  });
+                  const top5Ids = new Set(
+                    Object.entries(countMap)
+                      .sort((a, b) => b[1].count - a[1].count)
+                      .slice(0, 5)
+                      .map(([id]) => Number(id))
+                  );
+                  const top5 = suppliers.filter(s => top5Ids.has(s.id));
+                  const rest = suppliers.filter(s => !top5Ids.has(s.id));
+                  return (
+                    <Select placeholder="Válassz beszállítót" allowClear showSearch optionFilterProp="children">
+                      {top5.length > 0 && (
+                        <Select.OptGroup label="Leggyakoribb">
+                          {top5.map(s => (
+                            <Option key={`top-${s.id}`} value={s.id}>{s.name || `ID: ${s.id}`}</Option>
+                          ))}
+                        </Select.OptGroup>
+                      )}
+                      <Select.OptGroup label="Összes">
+                        {rest.map(s => (
+                          <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>
+                        ))}
+                      </Select.OptGroup>
+                    </Select>
+                  );
+                })()}
               </Form.Item>
             </Col>
           </Row>
