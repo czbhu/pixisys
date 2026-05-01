@@ -793,6 +793,9 @@ const Materials: React.FC = () => {
   };
 
   const handleSizeSubmit = async (values: any) => {
+    if (!values.name) {
+      values.name = buildSizeName(values.width, values.length, values.height, values.dimension_unit || 'mm', selectedMaterialFormat);
+    }
     try {
       if (editingSizeItem?.id) {
         await api.patch(`/warehouse/material-sizes/${editingSizeItem.id}/`, values);
