@@ -2402,6 +2402,54 @@ const Materials: React.FC = () => {
                 <Input />
               </Form.Item>
 
+              <Row gutter={12} style={{ marginTop: 8 }}>
+                <Col xs={24} md={10}>
+                  <Form.Item label="ÁFA osztály" style={{ marginBottom: 8 }}>
+                    <Select
+                      value={selectedVatTypeId}
+                      placeholder="Válassz ÁFA osztályt..."
+                      allowClear
+                      showSearch
+                      optionFilterProp="label"
+                      onChange={(vatTypeId) => {
+                        const v = vatTypeId || undefined;
+                        setSelectedVatTypeId(v);
+                        form.setFieldValue('vat_type_id', v || null);
+                        const vat = vatTypes.find(t => t.id === vatTypeId);
+                        const pct = Number(vat?.percentage || 0);
+                        setCalculatedVat(netUnitPrice * pct / 100);
+                        setCalculatedGross(netUnitPrice * (1 + pct / 100));
+                      }}
+                      options={vatTypes.map(vat => ({ label: `${vat.code} - ${vat.name} (${vat.percentage}%)`, value: vat.id }))}
+                      filterOption={(input, option) => (option?.label as string || '').toLowerCase().includes(input.toLowerCase())}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} md={7}>
+                  <Form.Item label="ÁFA összeg" style={{ marginBottom: 8 }}>
+                    <NumInput style={{ width: '100%' }} value={calculatedVat} disabled precision={2}
+                      formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')} />
+                  </Form.Item>
+                </Col>
+                <Col xs={12} md={7}>
+                  <Form.Item label="Bruttó egységár" style={{ marginBottom: 8 }}>
+                    <NumInput style={{ width: '100%' }} value={calculatedGross} precision={2}
+                      formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
+                      parser={(v) => Number(v!.replace(/\s/g, ''))}
+                      onChange={(value) => {
+                        const gross = value || 0;
+                        setCalculatedGross(gross);
+                        const vat = vatTypes.find(t => t.id === selectedVatTypeId);
+                        const pct = Number(vat?.percentage || 0);
+                        const net = gross / (1 + pct / 100);
+                        setNetUnitPrice(net);
+                        setCalculatedVat(gross - net);
+                      }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+
               <Form.Item name="is_active" label="Státusz">
                 <Select>
                   <Option value={true}>Aktív</Option>
@@ -2418,166 +2466,6 @@ const Materials: React.FC = () => {
               forceRender: true,
               children: (
             <>
-            <div style={{ marginBottom: 16 }}>
-              <Card size="small" title="Beszállítók és árkalkulációs források" style={{ marginBottom: 16 }}>
-                <Space style={{ marginBottom: 12 }} wrap>
-                  <Select
-                    style={{ width: 320 }}
-                    placeholder="Beszállító hozzáadása..."
-                    value={undefined}
-                    showSearch
-                    onChange={(val: number) => {
-                      if (!addedSuppliers.find(s => s.id === val && !s.is_internal)) {
-                        handleAddSupplier(val);
-                      } else {
-                        message.warning('Ez a beszállító már hozzá van adva');
-                      }
-                    }}
-                    filterOption={(input, option) => {
-                      const children = option?.children as unknown as string;
-                      return children ? children.toLowerCase().includes(input.toLowerCase()) : false;
-                    }}
-                  >
-                    {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>)}
-                  </Select>
-                  <Button
-                    icon={<PlusOutlined />}
-                    onClick={() => {
-                      if (!addedSuppliers.some(s => s.is_internal)) {
-                        setAddedSuppliers([{ id: -1, name: 'Belső gyártás', is_internal: true }, ...addedSuppliers]);
-                        message.success('Belső gyártás hozzáadva');
-                      } else {
-                        message.warning('Belső gyártás már hozzá van adva');
-                      }
-                    }}
-                  >
-                    Belső gyártás hozzáadása
-                  </Button>
-                </Space>
-
-                <Table
-                  size="small"
-                  dataSource={addedSuppliers}
-                  rowKey={(record) => record.is_internal ? 'internal' : String(record.id)}
-                  pagination={false}
-                  locale={{ emptyText: 'Nincs hozzáadott beszállító' }}
-                  columns={[
-                    { title: 'Név', dataIndex: 'name', key: 'name' },
-                    {
-                      title: 'Típus',
-                      render: (record: Supplier & { is_internal?: boolean }) => (
-                        record.is_internal ? <Tag color="blue">Belső</Tag> : <Tag color="green">Külső</Tag>
-                      ),
-                    },
-                    {
-                      title: 'Művelet',
-                      key: 'actions',
-                      width: 100,
-                      render: (_: any, record: Supplier & { is_internal?: boolean }) => (
-                        <Popconfirm
-                          title="Biztosan törli? Az összes költségelem is törlődik!"
-                          onConfirm={() => handleRemoveSupplier(record.id, record.is_internal || false)}
-                          okText="Igen"
-                          cancelText="Nem"
-                        >
-                          <Button type="link" danger icon={<DeleteOutlined />} />
-                        </Popconfirm>
-                      ),
-                    },
-                  ]}
-                />
-              </Card>
-
-              <Row gutter={16} style={{ marginBottom: 16 }}>
-                <Col span={6}>
-                  <Form.Item
-                    label="ÁFA osztály"
-                  >
-                   <Select
-                      value={selectedVatTypeId}
-                      placeholder="Válassz ÁFA osztályt..."
-                      allowClear
-                      showSearch
-                      optionFilterProp="label"
-                      onChange={(vatTypeId) => {
-                        const normalizedVatTypeId = vatTypeId || undefined;
-                        setSelectedVatTypeId(normalizedVatTypeId);
-                        form.setFieldValue('vat_type_id', normalizedVatTypeId || null);
-                        const vat = vatTypes.find(v => v.id === vatTypeId);
-                        const vatPercentage = vat?.percentage || 0;
-                        const vatAmount = netUnitPrice * (Number(vatPercentage) / 100);
-                        const gross = netUnitPrice + vatAmount;
-                        setCalculatedVat(vatAmount);
-                        setCalculatedGross(gross);
-                      }}
-                      options={vatTypes.map(vat => ({
-                        label: `${vat.code} - ${vat.name} (${vat.percentage}%)`,
-                        value: vat.id,
-                      }))}
-                      filterOption={(input, option) =>
-                        (option?.label as string || '').toLowerCase().includes(input.toLowerCase())
-                      }
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={6}>
-                  <Form.Item label="Nettó egységár">
-                    <NumInput
-                      style={{ width: '100%' }}
-                      value={netUnitPrice}
-                      onChange={(value) => {
-                        const net = value || 0;
-                        setNetUnitPrice(net);
-                        const vat = vatTypes.find(v => v.id === selectedVatTypeId);
-                        const vatPercentage = vat?.percentage || 0;
-                        const vatAmount = net * (Number(vatPercentage) / 100);
-                        const gross = net + vatAmount;
-                        setCalculatedVat(vatAmount);
-                        setCalculatedGross(gross);
-                      }}
-                      min={0}
-                      precision={2}
-                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                      parser={(value) => Number(value!.replace(/\s/g, ''))}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={6}>
-                  <Form.Item label="ÁFA">
-                    <NumInput
-                      style={{ width: '100%' }}
-                      value={calculatedVat}
-                      disabled
-                      precision={2}
-                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                    />
-                  </Form.Item>
-                </Col>
-                <Col span={6}>
-                  <Form.Item label="Bruttó egységár">
-                    <NumInput
-                      style={{ width: '100%' }}
-                      value={calculatedGross}
-                      onChange={(value) => {
-                        const gross = value || 0;
-                        setCalculatedGross(gross);
-                        const vat = vatTypes.find(v => v.id === selectedVatTypeId);
-                        const vatPercentage = vat?.percentage || 0;
-                        const net = gross / (1 + Number(vatPercentage) / 100);
-                        const vatAmount = gross - net;
-                        setNetUnitPrice(net);
-                        setCalculatedVat(vatAmount);
-                      }}
-                      min={0}
-                      precision={2}
-                      formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ' ')}
-                      parser={(value) => Number(value!.replace(/\s/g, ''))}
-                    />
-                  </Form.Item>
-                </Col>
-              </Row>
-            </div>
-
             {/* Version management */}
             <div style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
@@ -2642,10 +2530,9 @@ const Materials: React.FC = () => {
                     allowClear
                     onClear={() => { setSelectedSourceForCost(null); setCostItems([]); }}
                   >
-                    {addedSuppliers.map(supplier => (
-                      <Option key={supplier.is_internal ? 'internal' : supplier.id} value={supplier.is_internal ? 'internal' : supplier.id}>
-                        {supplier.name}
-                      </Option>
+                    <Option value="internal">Belső gyártás</Option>
+                    {suppliers.map(s => (
+                      <Option key={s.id} value={s.id}>{s.name || `ID: ${s.id}`}</Option>
                     ))}
                   </Select>
                   <Button
@@ -2676,9 +2563,6 @@ const Materials: React.FC = () => {
                     }}
                   >
                     Új elem
-                  </Button>
-                  <Button onClick={handleTransferPrices} disabled={!selectedSourceForCost}>
-                    Árak átvétele
                   </Button>
                 </div>
 
