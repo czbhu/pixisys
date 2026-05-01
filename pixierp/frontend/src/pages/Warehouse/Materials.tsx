@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio } from 'antd';
+import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip } from 'antd';
 import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
@@ -400,6 +400,9 @@ const Materials: React.FC = () => {
   const [costItems, setCostItems] = useState<CostItem[]>([]);
   const [allCostItems, setAllCostItems] = useState<CostItem[]>([]);
   const [selectedSourceForCost, setSelectedSourceForCost] = useState<'internal' | number | null>(null);
+  const [selectedVersionForCost, setSelectedVersionForCost] = useState<string | null>(null);
+  const [versionNameModal, setVersionNameModal] = useState<{ visible: boolean; mode: 'add' | 'copy' | 'rename'; sourceVersion?: string } | null>(null);
+  const [versionNameInput, setVersionNameInput] = useState('');
   const [costItemForm] = Form.useForm();
   const [editingCostItem, setEditingCostItem] = useState<CostItem | null>(null);
   const [costItemModalVisible, setCostItemModalVisible] = useState(false);
@@ -490,7 +493,10 @@ const Materials: React.FC = () => {
     return Array.from(grouped.entries()).map(([version, items]) => {
       const unitCost = items.reduce((sum, item) => sum + convertCurrencyAmount(getCostItemUnitAmount(item, 'unit_price'), item.currency, targetCurrency), 0);
       const unitSelling = items.reduce((sum, item) => sum + convertCurrencyAmount(getCostItemUnitAmount(item, 'selling_price'), item.currency, targetCurrency), 0);
-      return { version, items, unitCost, unitSelling, currency: targetCurrency };
+      const supplierNames = Array.from(new Set(
+        items.map(item => item.is_internal ? 'Belső gyártás' : (item.supplier_name || '')).filter(Boolean)
+      ));
+      return { version, items, unitCost, unitSelling, currency: targetCurrency, supplierNames };
     }).sort((a, b) => a.version.localeCompare(b.version, 'hu'));
   };
 
@@ -1436,6 +1442,76 @@ const Materials: React.FC = () => {
     message.success('Árak átvezetve az alapadatokhoz');
   };
 
+  const handleAddVersion = (versionName: string) => {
+    setSelectedVersionForCost(versionName);
+    setVersionNameModal(null);
+    message.info(`Verzió létrehozva: ${versionName}. Válassz forrást és adj hozzá elemeket.`);
+  };
+
+  const handleCopyVersion = async (sourceVersionName: string, newVersionName: string) => {
+    if (!editingMaterial) return;
+    const sourceItems = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === sourceVersionName
+    );
+    if (sourceItems.length === 0) {
+      message.warning('Nincs másolható elem ebben a verzióban');
+      return;
+    }
+    try {
+      for (const item of sourceItems) {
+        const { id, supplier_name, calculation_type_display, ...rest } = item as any;
+        await api.post('/warehouse/material-cost-items/', {
+          ...rest,
+          price_calculation_version: newVersionName,
+        });
+      }
+      message.success(`Verzió másolva: ${newVersionName}`);
+      await fetchAddedSuppliers(editingMaterial.id);
+      setSelectedVersionForCost(newVersionName);
+      setVersionNameModal(null);
+    } catch (error) {
+      message.error('Hiba a másolás során');
+      console.error(error);
+    }
+  };
+
+  const handleDeleteVersion = async (versionName: string) => {
+    if (!editingMaterial) return;
+    const itemsToDelete = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === versionName
+    );
+    try {
+      for (const item of itemsToDelete) {
+        if (item.id) await api.delete(`/warehouse/material-cost-items/${item.id}/`);
+      }
+      message.success('Verzió törölve');
+      await fetchAddedSuppliers(editingMaterial.id);
+      if (selectedVersionForCost === versionName) setSelectedVersionForCost(null);
+    } catch (error) {
+      message.error('Hiba a törlés során');
+      console.error(error);
+    }
+  };
+
+  const handleRenameVersion = async (oldName: string, newName: string) => {
+    if (!editingMaterial) return;
+    const itemsToRename = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === oldName
+    );
+    try {
+      for (const item of itemsToRename) {
+        if (item.id) await api.patch(`/warehouse/material-cost-items/${item.id}/`, { price_calculation_version: newName });
+      }
+      message.success('Verzió átnevezve');
+      await fetchAddedSuppliers(editingMaterial.id);
+      if (selectedVersionForCost === oldName) setSelectedVersionForCost(newName);
+      setVersionNameModal(null);
+    } catch (error) {
+      message.error('Hiba az átnevezés során');
+      console.error(error);
+    }
+  };
+
   // Stock management handlers
   const handleMoveStock = (stock: MaterialStock) => {
     setSelectedStock(stock);
@@ -2280,7 +2356,7 @@ const Materials: React.FC = () => {
                         >
                           {summaries.map(summary => (
                             <Option key={summary.version} value={summary.version}>
-                              {summary.version} - {summary.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {getCurrencySymbol(summary.currency)} / {form.getFieldValue('unit') || 'egység'}
+                              {summary.version}{(summary as any).supplierNames?.length ? ` · ${(summary as any).supplierNames.join(', ')}` : ''}{' – '}{summary.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {getCurrencySymbol(summary.currency)} / {form.getFieldValue('unit') || 'egység'}
                               {optimal?.version === summary.version ? ' (optimális)' : ''}
                             </Option>
                           ))}
@@ -2296,6 +2372,7 @@ const Materials: React.FC = () => {
                           style={{ marginTop: 8 }}
                           columns={[
                             { title: 'Verzió', dataIndex: 'version', key: 'version' },
+                            { title: 'Beszállítók', key: 'suppliers', render: (_: any, r: any) => (r as any).supplierNames?.join(', ') || '—' },
                             { title: 'Elemek', key: 'items', render: (_: any, r: any) => r.items.length },
                             { title: 'Bekerülési / egység', key: 'unitCost', align: 'right' as const, render: (_: any, r: any) => `${r.unitCost.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${getCurrencySymbol(r.currency)}` },
                             { title: 'Nettó ár / egység', key: 'unitSelling', align: 'right' as const, render: (_: any, r: any) => <strong>{r.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {getCurrencySymbol(r.currency)}</strong> },
@@ -2499,60 +2576,166 @@ const Materials: React.FC = () => {
                   </Form.Item>
                 </Col>
               </Row>
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+            </div>
+
+            {/* Version management */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <strong>Árkalkulációs verziók</strong>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => { setVersionNameInput(''); setVersionNameModal({ visible: true, mode: 'add' }); }}
+                >
+                  Új verzió
+                </Button>
+              </div>
+              <Table
+                size="small"
+                rowKey="version"
+                pagination={false}
+                dataSource={getPriceVersionSummaries()}
+                rowClassName={(record: any) => record.version === selectedVersionForCost ? 'ant-table-row-selected' : ''}
+                onRow={(record: any) => ({ onClick: () => setSelectedVersionForCost(selectedVersionForCost === record.version ? null : record.version) })}
+                locale={{ emptyText: 'Nincs árkalkulációs verzió. Kattints az "Új verzió" gombra.' }}
+                columns={[
+                  { title: 'Verzió', dataIndex: 'version', key: 'version', render: (v: string, r: any) => <span style={{ fontWeight: r.version === selectedVersionForCost ? 600 : undefined }}>{v}</span> },
+                  { title: 'Beszállítók', key: 'suppliers', render: (_: any, r: any) => (r as any).supplierNames?.join(', ') || '—' },
+                  { title: 'Elemek', key: 'items', align: 'right' as const, render: (_: any, r: any) => r.items.length },
+                  { title: 'Ár / egység', key: 'selling', align: 'right' as const, render: (_: any, r: any) => `${r.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${getCurrencySymbol(r.currency)}` },
+                  {
+                    title: '',
+                    key: 'actions',
+                    width: 110,
+                    render: (_: any, record: any) => (
+                      <Space size={0} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                        <Tooltip title="Átnevezés">
+                          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => { setVersionNameInput(record.version); setVersionNameModal({ visible: true, mode: 'rename', sourceVersion: record.version }); }} />
+                        </Tooltip>
+                        <Tooltip title="Másolás">
+                          <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => { setVersionNameInput(`${record.version} (másolat)`); setVersionNameModal({ visible: true, mode: 'copy', sourceVersion: record.version }); }} />
+                        </Tooltip>
+                        <Tooltip title="Törlés">
+                          <Popconfirm title={`Törli a(z) "${record.version}" verziót és összes elemét?`} onConfirm={() => handleDeleteVersion(record.version)} okText="Igen" cancelText="Nem">
+                            <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        </Tooltip>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
+            </div>
+
+            {selectedVersionForCost && (
+              <>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px' }}>{selectedVersionForCost}</Tag>
                   <Select
-                    style={{ width: 400 }}
-                    placeholder="Válassz beszállítót a költségelemek kezeléséhez"
+                    style={{ width: 280 }}
+                    placeholder="Forrás (beszállító / belső)"
                     onChange={handleSourceChange}
                     value={selectedSourceForCost === 'internal' ? 'internal' : selectedSourceForCost}
                     showSearch
                     optionFilterProp="children"
+                    allowClear
+                    onClear={() => { setSelectedSourceForCost(null); setCostItems([]); }}
                   >
                     {addedSuppliers.map(supplier => (
-                      <Option 
-                        key={supplier.is_internal ? 'internal' : supplier.id} 
-                        value={supplier.is_internal ? 'internal' : supplier.id}
-                      >
+                      <Option key={supplier.is_internal ? 'internal' : supplier.id} value={supplier.is_internal ? 'internal' : supplier.id}>
                         {supplier.name}
                       </Option>
                     ))}
                   </Select>
-                  
-                  <Button 
-                    type="primary" 
-                    icon={<PlusOutlined />} 
-                    onClick={handleAddCostItem}
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
                     disabled={!selectedSourceForCost}
+                    onClick={() => {
+                      if (!editingMaterial) { message.warning('Először mentsd el az alapanyagot'); return; }
+                      setEditingCostItem(null);
+                      setSelectedCalculationType('unit');
+                      costItemForm.resetFields();
+                      costItemForm.setFieldsValue({
+                        material: editingMaterial.id,
+                        is_internal: selectedSourceForCost === 'internal',
+                        supplier: selectedSourceForCost !== 'internal' ? selectedSourceForCost : undefined,
+                        name: 'Anyagköltség',
+                        calculation_type: 'unit',
+                        unit: 'db',
+                        currency: 'HUF',
+                        is_active: true,
+                        price_calculation_version: selectedVersionForCost,
+                        price_quantity: 1,
+                        unit_price: 0,
+                        markup_percentage: 35,
+                        selling_price: 0,
+                      });
+                      setCostItemModalVisible(true);
+                    }}
                   >
-                    Új költség elem
+                    Új elem
+                  </Button>
+                  <Button onClick={handleTransferPrices} disabled={!selectedSourceForCost}>
+                    Árak átvétele
                   </Button>
                 </div>
-                
-                {selectedSourceForCost && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
-                    <div style={{ flex: 1 }}>
-                      <strong>1 egységre vonatkozó összesítés:</strong> 
-                      {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
-                      {' | '}Haszon: {getAverageMarkup()}%
-                      {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
-                    </div>
-                    <Button onClick={handleTransferPrices}>
-                      Árak átvétele az alapadatokhoz
-                    </Button>
-                  </div>
-                )}
-              </Space>
-            </div>
 
-            <Table
-              size="small"
-              columns={costItemColumns}
-              dataSource={costItems}
-              rowKey="id"
-              pagination={false}
-              scroll={{ x: 800 }}
-            />
+                <Table
+                  size="small"
+                  columns={costItemColumns}
+                  dataSource={allCostItems.filter(item => (item.price_calculation_version || '1. verzió').trim() === selectedVersionForCost)}
+                  rowKey="id"
+                  pagination={false}
+                  scroll={{ x: 800 }}
+                />
+              </>
+            )}
+
+            {/* Version name modal */}
+            <Modal
+              title={
+                versionNameModal?.mode === 'add' ? 'Új verzió' :
+                versionNameModal?.mode === 'copy' ? `Másolás: ${versionNameModal.sourceVersion}` :
+                `Átnevezés: ${versionNameModal?.sourceVersion}`
+              }
+              open={!!versionNameModal?.visible}
+              onCancel={() => setVersionNameModal(null)}
+              onOk={async () => {
+                const name = versionNameInput.trim();
+                if (!name) { message.warning('Add meg a verzió nevét'); return; }
+                if (versionNameModal?.mode === 'add') {
+                  handleAddVersion(name);
+                } else if (versionNameModal?.mode === 'copy') {
+                  await handleCopyVersion(versionNameModal.sourceVersion!, name);
+                } else if (versionNameModal?.mode === 'rename') {
+                  await handleRenameVersion(versionNameModal.sourceVersion!, name);
+                }
+              }}
+              okText={versionNameModal?.mode === 'add' ? 'Létrehozás' : versionNameModal?.mode === 'copy' ? 'Másolás' : 'Átnevezés'}
+            >
+              <Form layout="vertical">
+                <Form.Item label="Verzió neve" required>
+                  <Input
+                    value={versionNameInput}
+                    onChange={(e) => setVersionNameInput(e.target.value)}
+                    onPressEnter={async () => {
+                      const name = versionNameInput.trim();
+                      if (!name) return;
+                      if (versionNameModal?.mode === 'add') { handleAddVersion(name); }
+                      else if (versionNameModal?.mode === 'copy') { await handleCopyVersion(versionNameModal.sourceVersion!, name); }
+                      else if (versionNameModal?.mode === 'rename') { await handleRenameVersion(versionNameModal.sourceVersion!, name); }
+                    }}
+                    placeholder="pl. 1. verzió, Acme árak 2026"
+                    autoFocus
+                  />
+                </Form.Item>
+                {versionNameModal?.mode === 'copy' && (
+                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>A(z) „{versionNameModal.sourceVersion}" verzió összes eleme másolódik az új verzióba.</div>
+                )}
+              </Form>
+            </Modal>
             </>
               ),
             },
