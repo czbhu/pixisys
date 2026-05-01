@@ -378,22 +378,13 @@ const ContactForm = () => {
   );
 
   const { data: customers, isLoading: customersLoading, error: customersError } = useQuery(
-    ['customers-all', { company_id: selectedCompanyId || '' }],
+    ['customers-all'],
     async () => {
-      const response = await customerAPI.getCustomers({ page_size: 10000, company_id: selectedCompanyId || undefined });
-      console.log('ContactForm - Full API response:', response);
-      console.log('ContactForm - response.data:', response.data);
-      console.log('ContactForm - response.data.results:', response.data?.results);
-      console.log('ContactForm - results length:', response.data?.results?.length);
+      const response = await customerAPI.getCustomers({ page_size: 10000 });
       return response;
     },
     {
-      select: (response) => {
-        const results = response.data?.results || [];
-        console.log('ContactForm - Selected results:', results);
-        console.log('ContactForm - Selected results length:', results.length);
-        return results;
-      }
+      select: (response) => response.data?.results || [],
     }
   );
 
