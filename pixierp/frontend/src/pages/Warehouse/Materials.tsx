@@ -1735,7 +1735,39 @@ const Materials: React.FC = () => {
 
   const handleReceiptSubmit = async (values: any) => {
     try {
-      await api.post('/warehouse/material-receipts/', values);
+      if ((selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && receiptBatchLines.some(l => l.sizeId)) {
+        // Tekercs/tábla: soronként egy bevételezés, stock_count = sor db száma
+        for (const line of receiptBatchLines) {
+          if (!line.sizeId) continue;
+          const size = materialSizes.find(s => s.id === line.sizeId);
+          if (!size) continue;
+          const lineQty = calcQtyForLine(line);
+          if (!lineQty) continue;
+
+          let rollLength: number;
+          if (selectedMaterialFormat === 'roll') {
+            const inMeters = toMeters(line.lengthPerUnit || 0, line.lengthUnit);
+            const targetUnit = size.dimension_unit;
+            if (targetUnit === 'mm') rollLength = inMeters * 1000;
+            else if (targetUnit === 'cm') rollLength = inMeters * 100;
+            else rollLength = inMeters;
+          } else {
+            rollLength = size.length || 0;
+          }
+
+          await api.post('/warehouse/material-receipts/', {
+            ...values,
+            quantity: lineQty,
+            width: size.width,
+            length: rollLength,
+            dimension_unit: size.dimension_unit,
+            stock_count: line.count,
+            invoice_value: Math.round((values.unit_price || 0) * lineQty * 100) / 100,
+          });
+        }
+      } else {
+        await api.post('/warehouse/material-receipts/', values);
+      }
       message.success('Bevételezés rögzítve');
       setReceiptModalVisible(false);
       if (editingMaterial) {

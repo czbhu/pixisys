@@ -1078,6 +1078,12 @@ class MaterialReceipt(models.Model):
         verbose_name="Méret mértékegység"
     )
     
+    # Db szám (tekercs/tábla anyagoknál: hány egyedi készlet-bejegyzés jöjjön létre)
+    stock_count = models.PositiveIntegerField(
+        default=1,
+        verbose_name="Db szám"
+    )
+
     # Megjegyzés
     notes = models.TextField(blank=True, verbose_name="Megjegyzés")
     
@@ -1108,20 +1114,24 @@ class MaterialReceipt(models.Model):
         
         # Ha új bevételezés, készlet létrehozása
         if is_new:
-            MaterialStock.objects.create(
-                material=self.material,
-                warehouse=self.warehouse,
-                quantity=self.quantity,
-                width=self.width,
-                length=self.length,
-                thickness=self.thickness,
-                dimension_unit=self.dimension_unit,
-                unit_value=self.unit_price,
-                total_value=self.quantity * self.unit_price,
-                currency=self.currency,
-                receipt=self,
-                created_by=self.created_by
-            )
+            count = max(1, int(self.stock_count or 1))
+            # Mennyiség felosztása egyenlően a db szám szerint
+            qty_per = self.quantity / count if count > 0 else self.quantity
+            for _ in range(count):
+                MaterialStock.objects.create(
+                    material=self.material,
+                    warehouse=self.warehouse,
+                    quantity=qty_per,
+                    width=self.width,
+                    length=self.length,
+                    thickness=self.thickness,
+                    dimension_unit=self.dimension_unit,
+                    unit_value=self.unit_price,
+                    total_value=qty_per * self.unit_price,
+                    currency=self.currency,
+                    receipt=self,
+                    created_by=self.created_by
+                )
 
 
 class StockMovement(models.Model):

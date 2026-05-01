@@ -312,7 +312,7 @@ class MaterialReceiptSerializer(serializers.ModelSerializer):
             'warehouse', 'warehouse_name', 'supplier', 'supplier_name',
             'receipt_date', 'invoice_number', 'invoice_value', 'currency',
             'quantity', 'unit_price', 'width', 'length', 'thickness',
-            'dimension_unit', 'notes', 'created_at', 'updated_at',
+            'dimension_unit', 'stock_count', 'notes', 'created_at', 'updated_at',
             'created_by', 'created_by_name'
         ]
         read_only_fields = ['created_at', 'updated_at']
