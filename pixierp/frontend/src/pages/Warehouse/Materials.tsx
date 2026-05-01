@@ -770,6 +770,28 @@ const Materials: React.FC = () => {
     } catch { message.error('Hiba a törlés során'); }
   };
 
+  const buildSizeName = (width: number | undefined, length: number | undefined, height: number | undefined, unit: string, format: string): string => {
+    if (!width) return '';
+    if (format === 'roll') {
+      return `${width} ${unit}`;
+    }
+    if (length) {
+      return height ? `${width}×${length}×${height} ${unit}` : `${width}×${length} ${unit}`;
+    }
+    return `${width} ${unit}`;
+  };
+
+  const autoFillSizeName = () => {
+    const currentName = sizeForm.getFieldValue('name');
+    if (currentName) return; // don't overwrite manual name
+    const w = sizeForm.getFieldValue('width');
+    const l = sizeForm.getFieldValue('length');
+    const h = sizeForm.getFieldValue('height');
+    const u = sizeForm.getFieldValue('dimension_unit') || 'mm';
+    const generated = buildSizeName(w, l, h, u, selectedMaterialFormat);
+    if (generated) sizeForm.setFieldsValue({ name: generated });
+  };
+
   const handleSizeSubmit = async (values: any) => {
     try {
       if (editingSizeItem?.id) {
@@ -2912,27 +2934,32 @@ const Materials: React.FC = () => {
           <Form.Item name="sort_order" hidden><NumInput /></Form.Item>
           <Form.Item name="is_active" hidden valuePropName="checked"><Checkbox /></Form.Item>
           <Form.Item name="name" label="Megnevezés (opcionális)">
-            <Input placeholder="pl. A4, A3, Egyedi" />
+            <Input
+              placeholder="pl. A4, A3, Egyedi – ha üres, automatikusan kitöltődik"
+              onChange={() => {/* manual edit: keep as-is */}}
+              allowClear
+              onClear={() => setTimeout(autoFillSizeName, 0)}
+            />
           </Form.Item>
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item name="width" label="Szélesség" rules={[{ required: true, message: 'Kötelező' }]}>
-                <NumInput style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} onChange={() => autoFillSizeName()} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="length" label="Hosszúság" rules={[{ required: true, message: 'Kötelező' }]}>
-                <NumInput style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} onChange={() => autoFillSizeName()} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="height" label="Magasság">
-                <NumInput style={{ width: '100%' }} min={0} />
+                <NumInput style={{ width: '100%' }} min={0} onChange={() => autoFillSizeName()} />
               </Form.Item>
             </Col>
           </Row>
           <Form.Item name="dimension_unit" label="Mértékegység">
-            <Select>
+            <Select onChange={() => setTimeout(autoFillSizeName, 0)}>
               <Option value="mm">mm</Option>
               <Option value="cm">cm</Option>
               <Option value="m">m</Option>
