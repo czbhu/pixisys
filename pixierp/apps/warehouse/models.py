@@ -927,7 +927,16 @@ class MaterialStock(models.Model):
         help_text="Mennyiség × egységérték"
     )
     currency = models.CharField(max_length=3, default="HUF", verbose_name="Pénznem")
-    
+
+    # Felhasznált hosszúság (gyártásból automatikusan töltve – később)
+    used_length = models.DecimalField(
+        max_digits=10,
+        decimal_places=3,
+        default=0,
+        validators=[MinValueValidator(0)],
+        verbose_name="Felhasznált hosszúság"
+    )
+
     # Státusz
     STATUS_CHOICES = [
         ('normal', 'Normál'),

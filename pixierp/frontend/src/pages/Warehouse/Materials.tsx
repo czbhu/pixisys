@@ -147,6 +147,7 @@ interface MaterialStock {
   currency: string;
   status: string;
   status_display: string;
+  used_length?: number;
   receipt?: number;
   receipt_info?: {
     id: number;
@@ -1703,6 +1704,15 @@ const Materials: React.FC = () => {
     receiptForm.setFieldsValue({ quantity: totalQty || undefined });
     const up = receiptForm.getFieldValue('unit_price') || 0;
     if (up && totalQty) receiptForm.setFieldsValue({ invoice_value: Math.round(up * totalQty * 100) / 100 });
+    // Persist width/length from the first complete batch line for per-roll/sheet stock tracking
+    const firstComplete = lines.find(l => l.sizeId);
+    if (firstComplete) {
+      const size = materialSizes.find(s => s.id === firstComplete.sizeId);
+      if (size) {
+        const rollLength = selectedMaterialFormat === 'roll' ? (firstComplete.lengthPerUnit || 0) : (size.length || 0);
+        receiptForm.setFieldsValue({ width: size.width, length: rollLength, dimension_unit: size.dimension_unit });
+      }
+    }
   };
 
   const updateBatchLine = (key: number, patch: Partial<{ sizeId: number | undefined; count: number; lengthPerUnit: number | undefined; lengthUnit: string }>) => {
@@ -2707,25 +2717,39 @@ const Materials: React.FC = () => {
                 </Button>
               </div>
 
-              {(selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && stocks.length > 0 && (() => {
+              {/* Tekercs/Tábla összesítő raktáranként */}
+              {(selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && (() => {
                 const label = selectedMaterialFormat === 'roll' ? 'tekercs' : 'tábla';
-                // group by warehouse
-                const warehouseMap: Record<string, { name: string; active: number; defective: number; scrapped: number }> = {};
+                // group stocks by warehouse
+                const byWarehouse: Record<string, { name: string; active: MaterialStock[]; defective: MaterialStock[]; scrapped: MaterialStock[] }> = {};
                 stocks.forEach(s => {
-                  if (!warehouseMap[s.warehouse_name]) warehouseMap[s.warehouse_name] = { name: s.warehouse_name, active: 0, defective: 0, scrapped: 0 };
-                  if (s.status === 'normal') warehouseMap[s.warehouse_name].active++;
-                  else if (s.status === 'defective') warehouseMap[s.warehouse_name].defective++;
-                  else if (s.status === 'scrapped') warehouseMap[s.warehouse_name].scrapped++;
+                  if (!byWarehouse[s.warehouse]) byWarehouse[s.warehouse] = { name: s.warehouse_name, active: [], defective: [], scrapped: [] };
+                  if (s.status === 'normal' || s.status === 'in_stock') byWarehouse[s.warehouse].active.push(s);
+                  else if (s.status === 'defective') byWarehouse[s.warehouse].defective.push(s);
+                  else if (s.status === 'scrapped') byWarehouse[s.warehouse].scrapped.push(s);
                 });
                 return (
-                  <Row gutter={[12, 12]}>
-                    {Object.values(warehouseMap).map(wh => (
-                      <Col key={wh.name} xs={24} sm={12} md={8}>
-                        <Card size="small" title={wh.name} style={{ borderColor: '#d9d9d9' }}>
+                  <Row gutter={12}>
+                    {Object.values(byWarehouse).map(wh => (
+                      <Col key={wh.name} xs={24} md={12} lg={8} style={{ marginBottom: 8 }}>
+                        <Card size="small" title={wh.name} style={{ border: '1px solid #d9d9d9' }}>
                           <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                            <span><Tag color="green">{wh.active} {label}</Tag> készleten</span>
-                            {wh.defective > 0 && <span><Tag color="orange">{wh.defective} {label}</Tag> hibás</span>}
-                            <span><Tag color="red">{wh.scrapped} {label}</Tag> selejtezett / elhasználva</span>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: '#52c41a' }}>Aktív {label}</span>
+                              <strong>{wh.active.length} db</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: '#faad14' }}>Hibás {label}</span>
+                              <strong>{wh.defective.length} db</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                              <span style={{ color: '#ff4d4f' }}>Selejtezett {label}</span>
+                              <strong>{wh.scrapped.length} db</strong>
+                            </div>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px solid #f0f0f0', paddingTop: 4 }}>
+                              <span>Összes</span>
+                              <strong>{wh.active.length + wh.defective.length + wh.scrapped.length} db</strong>
+                            </div>
                           </Space>
                         </Card>
                       </Col>
@@ -2734,6 +2758,71 @@ const Materials: React.FC = () => {
                 );
               })()}
 
+              {/* Tekercs/Tábla részletes táblázat */}
+              {(selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && stocks.some(s => s.width) && (
+                <Table
+                  size="small"
+                  title={() => <strong>{selectedMaterialFormat === 'roll' ? 'Tekercsek' : 'Táblák'} részletezése</strong>}
+                  columns={[
+                    { title: 'Raktár', dataIndex: 'warehouse_name', key: 'warehouse_name', width: 120 },
+                    {
+                      title: 'Szélesség',
+                      key: 'width',
+                      width: 100,
+                      render: (_: any, r: MaterialStock) => r.width ? `${r.width} ${r.dimension_unit}` : '-',
+                    },
+                    {
+                      title: 'Hosszúság',
+                      key: 'length',
+                      width: 110,
+                      render: (_: any, r: MaterialStock) => r.length ? `${r.length} ${r.dimension_unit}` : '-',
+                    },
+                    {
+                      title: 'Elhasznált hossz',
+                      key: 'used_length',
+                      width: 120,
+                      render: (_: any, r: MaterialStock) => `${r.used_length ?? 0} ${r.dimension_unit}`,
+                    },
+                    {
+                      title: 'Megmaradt hossz',
+                      key: 'remaining_length',
+                      width: 130,
+                      render: (_: any, r: MaterialStock) => {
+                        const rem = Math.max(0, (Number(r.length) || 0) - (Number(r.used_length) || 0));
+                        return `${rem} ${r.dimension_unit}`;
+                      },
+                    },
+                    {
+                      title: 'Megmaradt nm²',
+                      key: 'remaining_sqm',
+                      width: 120,
+                      render: (_: any, r: MaterialStock) => {
+                        if (!r.width) return '-';
+                        const rem = Math.max(0, (Number(r.length) || 0) - (Number(r.used_length) || 0));
+                        const wM = toMeters(Number(r.width), r.dimension_unit);
+                        const rM = toMeters(rem, r.dimension_unit);
+                        return `${(wM * rM).toFixed(3)} m²`;
+                      },
+                    },
+                    {
+                      title: 'Státusz',
+                      dataIndex: 'status_display',
+                      key: 'status',
+                      width: 90,
+                      render: (status: string, r: MaterialStock) => {
+                        const colorMap: Record<string, string> = { normal: 'green', in_stock: 'green', defective: 'orange', scrapped: 'red' };
+                        return <Tag color={colorMap[r.status] || 'default'}>{status}</Tag>;
+                      },
+                    },
+                  ]}
+                  dataSource={stocks.filter(s => s.width)}
+                  rowKey="id"
+                  pagination={false}
+                  scroll={{ x: 800 }}
+                />
+              )}
+
+              {/* Főtáblázat */}
               <Table
                 size="small"
                 columns={[

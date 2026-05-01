@@ -280,6 +280,7 @@ class MaterialStockSerializer(serializers.ModelSerializer):
             'warehouse', 'warehouse_name', 'quantity',
             'width', 'length', 'thickness', 'dimension_unit',
             'unit_value', 'total_value', 'currency', 'status', 'status_display',
+            'used_length',
             'receipt', 'receipt_info', 'created_at', 'updated_at',
             'created_by', 'created_by_name'
         ]
