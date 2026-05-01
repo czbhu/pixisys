@@ -1709,7 +1709,17 @@ const Materials: React.FC = () => {
     if (firstComplete) {
       const size = materialSizes.find(s => s.id === firstComplete.sizeId);
       if (size) {
-        const rollLength = selectedMaterialFormat === 'roll' ? (firstComplete.lengthPerUnit || 0) : (size.length || 0);
+        let rollLength: number;
+        if (selectedMaterialFormat === 'roll') {
+          // Convert from the user-entered unit to the size's dimension_unit
+          const inMeters = toMeters(firstComplete.lengthPerUnit || 0, firstComplete.lengthUnit);
+          const targetUnit = size.dimension_unit;
+          if (targetUnit === 'mm') rollLength = inMeters * 1000;
+          else if (targetUnit === 'cm') rollLength = inMeters * 100;
+          else rollLength = inMeters; // 'm'
+        } else {
+          rollLength = size.length || 0;
+        }
         receiptForm.setFieldsValue({ width: size.width, length: rollLength, dimension_unit: size.dimension_unit });
       }
     }
