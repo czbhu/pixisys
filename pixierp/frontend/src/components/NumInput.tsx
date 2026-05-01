@@ -60,7 +60,7 @@ function isExpression(s: string): boolean {
   return /[+*/(]/.test(s) || s.indexOf('-', 1) > 0;
 }
 
-interface FormulaInputNumberProps extends Omit<InputNumberProps<number>, 'onChange' | 'value' | 'formatter' | 'parser' | 'step' | 'controls' | 'keyboard' | 'precision' | 'decimalSeparator'> {
+interface FormulaInputNumberProps extends Omit<InputNumberProps<number>, 'onChange' | 'value' | 'formatter' | 'parser' | 'step' | 'controls' | 'keyboard' | 'decimalSeparator'> {
   value?: number;
   onChange?: (value: number | undefined) => void;
   onBlur?: React.FocusEventHandler<HTMLInputElement>;
@@ -71,6 +71,7 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
   onChange,
   min,
   max,
+  precision,
   style,
   size,
   addonAfter,
@@ -78,6 +79,7 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
   placeholder,
   onBlur: externalOnBlur,
 }) => {
+  const round = (n: number) => precision !== undefined ? Math.round(n * Math.pow(10, precision)) / Math.pow(10, precision) : n;
   const [text, setText] = useState<string>('');
   const [formula, setFormula] = useState<string | null>(null);
   const [focused, setFocused] = useState(false);
@@ -113,7 +115,7 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
     if (isExpression(trimmed)) {
       const result = evalFormula(trimmed);
       if (result !== null) {
-        let clamped = result;
+        let clamped = round(result);
         if (min !== undefined) clamped = Math.max(clamped, min as number);
         if (max !== undefined) clamped = Math.min(clamped, max as number);
         setFormula(trimmed);
@@ -125,7 +127,7 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
       setFormula(null);
       const parsed = parseFloat(String(huParser(trimmed)));
       if (!isNaN(parsed)) {
-        let clamped = parsed;
+        let clamped = round(parsed);
         if (min !== undefined) clamped = Math.max(clamped, min as number);
         if (max !== undefined) clamped = Math.min(clamped, max as number);
         prevValueRef.current = clamped;
@@ -171,7 +173,7 @@ function NumInputInner<T extends ValueType = number>(
   { formatter, parser, formula, ...rest }: InputNumberProps<T> & { formula?: boolean },
   ref: React.Ref<HTMLInputElement>
 ): React.ReactElement {
-  if (formula) {
+  if (formula !== false) {
     // FormulaInputNumber handles locale internally; strip parser/formatter
     return <FormulaInputNumber {...(rest as any)} />;
   }
