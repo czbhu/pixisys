@@ -430,6 +430,10 @@ const Materials: React.FC = () => {
   const [receipts, setReceipts] = useState<MaterialReceipt[]>([]);
   const [receiptModalVisible, setReceiptModalVisible] = useState(false);
   const [receiptForm] = Form.useForm();
+  const [receiptBatchCount, setReceiptBatchCount] = useState<number>(1);
+  const [receiptLengthPerUnit, setReceiptLengthPerUnit] = useState<number | undefined>(undefined);
+  const [receiptSelectedSizeId, setReceiptSelectedSizeId] = useState<number | undefined>(undefined);
+  const [receiptLengthUnit, setReceiptLengthUnit] = useState<string>('m');
   const [receiptFilters, setReceiptFilters] = useState({
     date_from: '',
     date_to: '',
@@ -1653,6 +1657,10 @@ const Materials: React.FC = () => {
       message.warning('Először mentsd el az alapanyagot');
       return;
     }
+    setReceiptBatchCount(1);
+    setReceiptLengthPerUnit(undefined);
+    setReceiptSelectedSizeId(undefined);
+    setReceiptLengthUnit('m');
     
     receiptForm.resetFields();
     receiptForm.setFieldsValue({
@@ -1665,6 +1673,53 @@ const Materials: React.FC = () => {
       thickness: editingMaterial.height,
     });
     setReceiptModalVisible(true);
+  };
+
+  // Converts a dimension value from dimUnit to meters
+  const toMeters = (value: number, dimUnit: string): number => {
+    if (dimUnit === 'mm') return value / 1000;
+    if (dimUnit === 'cm') return value / 100;
+    return value; // already m
+  };
+
+  const calcReceiptBatch = (
+    sizeId: number | undefined,
+    count: number,
+    lengthPerUnit: number | undefined,
+    lengthUnit: string,
+  ) => {
+    if (!editingMaterial || !sizeId || !count) return;
+    const size = materialSizes.find(s => s.id === sizeId);
+    if (!size) return;
+
+    const unit = editingMaterial.unit || 'db';
+    const wM = toMeters(size.width, size.dimension_unit);
+    const lM = size.length ? toMeters(size.length, size.dimension_unit) : 0;
+    const lpuM = lengthPerUnit ? toMeters(lengthPerUnit, lengthUnit) : 0;
+
+    let qty: number;
+    if (selectedMaterialFormat === 'roll') {
+      // roll: width × length_per_roll × count → m², or length_per_roll × count → m
+      if (unit === 'm²' || unit === 'm2') {
+        qty = wM * lpuM * count;
+      } else if (unit === 'm') {
+        qty = lpuM * count;
+      } else {
+        qty = count;
+      }
+    } else {
+      // sheet: width × length × count → m², or count → db
+      if (unit === 'm²' || unit === 'm2') {
+        qty = wM * lM * count;
+      } else {
+        qty = count;
+      }
+    }
+
+    const rounded = Math.round(qty * 1e4) / 1e4;
+    receiptForm.setFieldsValue({ quantity: rounded, width: size.width, length: selectedMaterialFormat === 'roll' ? (lengthPerUnit || 0) : size.length, dimension_unit: size.dimension_unit });
+    const up = receiptForm.getFieldValue('unit_price') || 0;
+    if (up) receiptForm.setFieldsValue({ invoice_value: Math.round(up * rounded * 100) / 100 });
   };
 
   const handleReceiptSubmit = async (values: any) => {
@@ -3242,6 +3297,64 @@ const Materials: React.FC = () => {
               ))}
             </Select>
           </Form.Item>
+
+          {(selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && materialSizes.filter(s => s.is_active !== false).length > 0 && (
+            <Card size="small" style={{ marginBottom: 16, background: '#f6ffed', border: '1px solid #b7eb8f' }}
+              title={selectedMaterialFormat === 'roll' ? 'Tekercs bevételezés' : 'Tábla bevételezés'}>
+              <Row gutter={12} align="bottom">
+                <Col xs={24} md={selectedMaterialFormat === 'roll' ? 8 : 10}>
+                  <Form.Item label={selectedMaterialFormat === 'roll' ? 'Tekercs szélessége' : 'Tábla mérete'} style={{ marginBottom: 8 }}>
+                    <Select
+                      placeholder="Válassz méretet..."
+                      allowClear
+                      value={receiptSelectedSizeId}
+                      onChange={(id: number) => {
+                        setReceiptSelectedSizeId(id);
+                        calcReceiptBatch(id, receiptBatchCount, receiptLengthPerUnit, receiptLengthUnit);
+                      }}
+                    >
+                      {materialSizes.filter(s => s.is_active !== false).map(s => (
+                        <Option key={s.id} value={s.id}>{s.name || `${s.width}${s.length ? `×${s.length}` : ''} ${s.dimension_unit}`}</Option>
+                      ))}
+                    </Select>
+                  </Form.Item>
+                </Col>
+                {selectedMaterialFormat === 'roll' && (
+                  <Col xs={12} md={8}>
+                    <Form.Item label="Hosszúság / tekercs" style={{ marginBottom: 8 }}>
+                      <NumInput
+                        style={{ width: '100%' }}
+                        min={0}
+                        precision={3}
+                        addonAfter={
+                          <Select value={receiptLengthUnit} style={{ width: 60 }}
+                            onChange={(u) => { setReceiptLengthUnit(u); calcReceiptBatch(receiptSelectedSizeId, receiptBatchCount, receiptLengthPerUnit, u); }}>
+                            <Option value="mm">mm</Option>
+                            <Option value="cm">cm</Option>
+                            <Option value="m">m</Option>
+                          </Select>
+                        }
+                        value={receiptLengthPerUnit}
+                        onChange={(v) => { setReceiptLengthPerUnit(v || undefined); calcReceiptBatch(receiptSelectedSizeId, receiptBatchCount, v || undefined, receiptLengthUnit); }}
+                      />
+                    </Form.Item>
+                  </Col>
+                )}
+                <Col xs={selectedMaterialFormat === 'roll' ? 12 : 24} md={selectedMaterialFormat === 'roll' ? 8 : 14}>
+                  <Form.Item label={selectedMaterialFormat === 'roll' ? 'Tekercsek száma' : 'Darabszám'} style={{ marginBottom: 8 }}>
+                    <NumInput
+                      style={{ width: '100%' }}
+                      min={1}
+                      precision={0}
+                      addonAfter="db"
+                      value={receiptBatchCount}
+                      onChange={(v) => { const c = v || 1; setReceiptBatchCount(c); calcReceiptBatch(receiptSelectedSizeId, c, receiptLengthPerUnit, receiptLengthUnit); }}
+                    />
+                  </Form.Item>
+                </Col>
+              </Row>
+            </Card>
+          )}
 
           <Row gutter={12}>
             <Col span={12}>
