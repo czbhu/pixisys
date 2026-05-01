@@ -2707,6 +2707,33 @@ const Materials: React.FC = () => {
                 </Button>
               </div>
 
+              {(selectedMaterialFormat === 'roll' || selectedMaterialFormat === 'sheet') && stocks.length > 0 && (() => {
+                const label = selectedMaterialFormat === 'roll' ? 'tekercs' : 'tábla';
+                // group by warehouse
+                const warehouseMap: Record<string, { name: string; active: number; defective: number; scrapped: number }> = {};
+                stocks.forEach(s => {
+                  if (!warehouseMap[s.warehouse_name]) warehouseMap[s.warehouse_name] = { name: s.warehouse_name, active: 0, defective: 0, scrapped: 0 };
+                  if (s.status === 'normal') warehouseMap[s.warehouse_name].active++;
+                  else if (s.status === 'defective') warehouseMap[s.warehouse_name].defective++;
+                  else if (s.status === 'scrapped') warehouseMap[s.warehouse_name].scrapped++;
+                });
+                return (
+                  <Row gutter={[12, 12]}>
+                    {Object.values(warehouseMap).map(wh => (
+                      <Col key={wh.name} xs={24} sm={12} md={8}>
+                        <Card size="small" title={wh.name} style={{ borderColor: '#d9d9d9' }}>
+                          <Space direction="vertical" size={2} style={{ width: '100%' }}>
+                            <span><Tag color="green">{wh.active} {label}</Tag> készleten</span>
+                            {wh.defective > 0 && <span><Tag color="orange">{wh.defective} {label}</Tag> hibás</span>}
+                            <span><Tag color="red">{wh.scrapped} {label}</Tag> selejtezett / elhasználva</span>
+                          </Space>
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                );
+              })()}
+
               <Table
                 size="small"
                 columns={[
