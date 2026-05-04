@@ -327,24 +327,32 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     }
 
     return (
-      <div style={{ maxWidth: 640, overflowX: 'auto' }}>
-        <table style={{ borderCollapse: 'collapse', minWidth: 560, width: '100%' }}>
+      <div style={{ width: '100%', maxWidth: 960 }}>
+        <table style={{ borderCollapse: 'collapse', width: '100%', tableLayout: 'fixed' }}>
+          <colgroup>
+            <col style={{ width: '44%' }} />
+            <col style={{ width: '12%' }} />
+            <col style={{ width: '14%' }} />
+            <col style={{ width: '30%' }} />
+          </colgroup>
           <thead>
             <tr>
               <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px' }}>Megnevezés</th>
               <th style={{ textAlign: 'right', borderBottom: '1px solid #ddd', padding: '4px 8px', whiteSpace: 'nowrap' }}>Mennyiség</th>
-              <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px', whiteSpace: 'nowrap' }}>Mennyiségi egység</th>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px' }}>Mennyiségi egység</th>
               <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px' }}>Beszállító</th>
             </tr>
           </thead>
           <tbody>
             {subItems.map((si: any) => (
               <tr key={si.id}>
-                <td style={{ padding: '4px 8px', verticalAlign: 'top' }}>{si.name || '-'}</td>
+                <td style={{ padding: '4px 8px', verticalAlign: 'top', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{si.name || '-'}</td>
                 <td style={{ padding: '4px 8px', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>{si.quantity ?? '-'}</td>
-                <td style={{ padding: '4px 8px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>{si.unit || '-'}</td>
+                <td style={{ padding: '4px 8px', verticalAlign: 'top', wordBreak: 'break-word', overflowWrap: 'anywhere' }}>{si.unit || '-'}</td>
                 <td style={{ padding: '4px 8px', verticalAlign: 'top' }}>
-                  {si.supplier_name || (si.department_name ? `Belső: ${si.department_name}` : '-')}
+                  <span style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}>
+                    {si.supplier_name || (si.department_name ? `Belső: ${si.department_name}` : '-')}
+                  </span>
                 </td>
               </tr>
             ))}
@@ -385,6 +393,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           <Tooltip
             title={renderSubItemsTooltip(manufacturingProductId)}
             mouseEnterDelay={0.2}
+            overlayStyle={{ maxWidth: 980, width: 'min(980px, calc(100vw - 32px))' }}
             onOpenChange={(open) => {
               if (open) loadSubItems(manufacturingProductId);
             }}
