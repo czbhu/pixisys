@@ -58,17 +58,10 @@ export const TimerModal: React.FC = () => {
                              form.setFieldsValue({ item_id: preselectedItemId });
                              const item = loadedItems.find((i: any) => i.id === preselectedItemId);
                              if (item) {
-                                 const wfName = item.suggested_workflow || ''; 
-                                 if (wfName) form.setFieldValue('workflow_name', wfName);
                                  // Load sub-items for this item
                                  loadSubItems(item).then((loadedSubItems: any[]) => {
                                      if (preselectedSubItemId) {
                                          form.setFieldsValue({ sub_item_id: preselectedSubItemId });
-                                         // Auto-fill workflow name from the preselected sub-item
-                                         const si = loadedSubItems.find((s: any) => s.id === preselectedSubItemId);
-                                         if (si && !form.getFieldValue('workflow_name')) {
-                                             form.setFieldValue('workflow_name', si.name);
-                                         }
                                      }
                                  });
                              }
@@ -225,11 +218,6 @@ export const TimerModal: React.FC = () => {
                          })()}
                          onChange={(val) => {
                              const item = items.find(i => i.id === val);
-                             if (item && !form.getFieldValue('workflow_name')) {
-                                 if (item.suggested_workflow) {
-                                     form.setFieldValue('workflow_name', item.suggested_workflow);
-                                 }
-                             }
                              // Load sub-items for the selected item
                              form.setFieldsValue({ sub_item_id: undefined });
                              if (item) {
@@ -250,12 +238,7 @@ export const TimerModal: React.FC = () => {
                                 label: si.name + (si.code ? ` [${si.code}]` : ''),
                                 value: si.id,
                             }))}
-                            onChange={(val) => {
-                                if (val && !form.getFieldValue('workflow_name')) {
-                                    const si = subItems.find(s => s.id === val);
-                                    if (si) form.setFieldValue('workflow_name', si.name);
-                                }
-                            }}
+                            onChange={() => {}}
                         />
                     </Form.Item>
                 )}
