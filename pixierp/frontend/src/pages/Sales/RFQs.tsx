@@ -79,7 +79,14 @@ const RFQs: React.FC = () => {
       return ['all_except_archived'];
     }
   });
-  const [orderStatusFilter, setOrderStatusFilter] = useState<string | undefined>(undefined);
+  const [orderStatusFilter, setOrderStatusFilter] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('rfqs_order_status_filter');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
@@ -301,14 +308,15 @@ const RFQs: React.FC = () => {
     return Array.from(new Set(names)).sort();
   }, [rfqs]);
 
-  // Save status filter to localStorage
+  // Save status filters to localStorage
   useEffect(() => {
     try {
       localStorage.setItem('rfqs_status_filter', JSON.stringify(statusFilter));
+      localStorage.setItem('rfqs_order_status_filter', JSON.stringify(orderStatusFilter));
     } catch {
       // Ignore localStorage errors
     }
-  }, [statusFilter]);
+  }, [statusFilter, orderStatusFilter]);
 
   useEffect(() => {
     let filtered = rfqs || [];
@@ -336,8 +344,8 @@ const RFQs: React.FC = () => {
     }
 
     // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
-    if (orderStatusFilter) {
-      filtered = filtered.filter(r => r.status === 'ordered' && r.effective_status === orderStatusFilter);
+    if (orderStatusFilter && orderStatusFilter.length > 0) {
+      filtered = filtered.filter(r => r.status === 'ordered' && orderStatusFilter.includes(r.effective_status));
     }
 
     // Creator filter
@@ -1279,12 +1287,13 @@ const RFQs: React.FC = () => {
                 <Select.Option value="archived">Archív</Select.Option>
               </Select>
               <Select
-                placeholder="Megrendelési státusz"
-                allowClear
-                style={{ width: 180 }}
+                mode="multiple"
+                placeholder="Megrendelési státusz szűrő"
+                style={{ width: 200 }}
                 value={orderStatusFilter}
                 onChange={(v) => setOrderStatusFilter(v)}
                 popupMatchSelectWidth={false}
+                maxTagCount="responsive"
               >
                 <Select.Option value="new">Új</Select.Option>
                 <Select.Option value="confirmed">Megerősítve</Select.Option>
