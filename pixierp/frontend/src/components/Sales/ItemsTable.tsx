@@ -57,6 +57,7 @@ interface ItemsTableProps {
   currency?: string;
   hidePrices?: boolean;
   currencySelector?: React.ReactNode;
+  showSubItemsTooltip?: boolean;
 }
 
 interface RowContextProps {
@@ -108,12 +109,14 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
   const [impositionItem, setImpositionItem] = useState<any | null>(null);
   const [dataSource, setDataSource] = useState<Item[]>([]);
+  const [subItemsCache, setSubItemsCache] = useState<Record<number, any[]>>({});
+  const [subItemsLoading, setSubItemsLoading] = useState<Record<number, boolean>>({});
 
   useEffect(() => {
     if (items) {
@@ -290,6 +293,67 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     }
   };
 
+  const loadSubItems = async (manufacturingProductId: number) => {
+    if (!manufacturingProductId) return;
+    if (subItemsCache[manufacturingProductId] !== undefined) return;
+    if (subItemsLoading[manufacturingProductId]) return;
+
+    setSubItemsLoading(prev => ({ ...prev, [manufacturingProductId]: true }));
+    try {
+      const product = await manufacturingService.getProduct(manufacturingProductId);
+      const ordered = [...(product?.cost_items || [])].sort((a: any, b: any) => {
+        const ao = Number(a?.sort_order ?? 0);
+        const bo = Number(b?.sort_order ?? 0);
+        if (ao !== bo) return ao - bo;
+        return Number(a?.id ?? 0) - Number(b?.id ?? 0);
+      });
+      setSubItemsCache(prev => ({ ...prev, [manufacturingProductId]: ordered }));
+    } catch {
+      setSubItemsCache(prev => ({ ...prev, [manufacturingProductId]: [] }));
+    } finally {
+      setSubItemsLoading(prev => ({ ...prev, [manufacturingProductId]: false }));
+    }
+  };
+
+  const renderSubItemsTooltip = (manufacturingProductId: number) => {
+    const loading = !!subItemsLoading[manufacturingProductId];
+    const subItems = subItemsCache[manufacturingProductId];
+
+    if (loading || subItems === undefined) {
+      return <span>Altételek betöltése...</span>;
+    }
+    if (!subItems.length) {
+      return <span>Nincs altétel.</span>;
+    }
+
+    return (
+      <div style={{ maxWidth: 640, overflowX: 'auto' }}>
+        <table style={{ borderCollapse: 'collapse', minWidth: 560, width: '100%' }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px' }}>Megnevezés</th>
+              <th style={{ textAlign: 'right', borderBottom: '1px solid #ddd', padding: '4px 8px', whiteSpace: 'nowrap' }}>Mennyiség</th>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px', whiteSpace: 'nowrap' }}>Mennyiségi egység</th>
+              <th style={{ textAlign: 'left', borderBottom: '1px solid #ddd', padding: '4px 8px' }}>Beszállító</th>
+            </tr>
+          </thead>
+          <tbody>
+            {subItems.map((si: any) => (
+              <tr key={si.id}>
+                <td style={{ padding: '4px 8px', verticalAlign: 'top' }}>{si.name || '-'}</td>
+                <td style={{ padding: '4px 8px', textAlign: 'right', verticalAlign: 'top', whiteSpace: 'nowrap' }}>{si.quantity ?? '-'}</td>
+                <td style={{ padding: '4px 8px', verticalAlign: 'top', whiteSpace: 'nowrap' }}>{si.unit || '-'}</td>
+                <td style={{ padding: '4px 8px', verticalAlign: 'top' }}>
+                  {si.supplier_name || (si.department_name ? `Belső: ${si.department_name}` : '-')}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  };
+
   const columns: any[] = [
     {
       key: 'sort',
@@ -301,17 +365,34 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       key: 'item_info', 
       render: (r: any) => {
         const meta = treeMeta.get(r.id);
+        const manufacturingProductId = Number(r.manufacturing_product || r.quote_item?.manufacturing_product || 0);
         // Fix display logic for code and name, falling back correctly
         const code = r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || (r.item_type === 'manufacturing' ? 'EGYEDI' : '-');
         const name = r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.description || 'Névtelen';
 
-        return (
+        const base = (
             <CostTreeGuide meta={meta}>
               <div>
                 <div style={{ fontWeight: 600 }}>{code}</div>
                 <div>{name}</div>
               </div>
             </CostTreeGuide>
+        );
+
+        if (!showSubItemsTooltip || !manufacturingProductId) return base;
+
+        return (
+          <Tooltip
+            title={renderSubItemsTooltip(manufacturingProductId)}
+            mouseEnterDelay={0.2}
+            onOpenChange={(open) => {
+              if (open) loadSubItems(manufacturingProductId);
+            }}
+          >
+            <div style={{ cursor: 'help' }} onMouseEnter={() => loadSubItems(manufacturingProductId)}>
+              {base}
+            </div>
+          </Tooltip>
         );
       }
     },

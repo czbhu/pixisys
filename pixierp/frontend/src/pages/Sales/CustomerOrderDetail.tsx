@@ -596,6 +596,7 @@ const CustomerOrderDetail: React.FC = () => {
           quoteRequestId={rfq?.id ? Number(rfq.id) : undefined}
           currency={rfq?.currency_code || 'HUF'}
           hidePrices={hidePrices}
+          showSubItemsTooltip
           onEditItem={order.status === 'new' ? (item) => {
             setEditContext({ item });
             setSelectorType(item.item_type);
