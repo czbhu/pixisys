@@ -11,6 +11,7 @@ import {
     Popover,
     Modal,
     Input,
+    Table,
 } from 'antd';
 import {
     EyeOutlined,
@@ -22,6 +23,7 @@ import {
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
+import { manufacturingService } from '../../services/manufacturingService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import api from '../../services/api';
@@ -76,6 +78,11 @@ const OrderedProducts: React.FC = () => {
     const [statusFilter, setStatusFilter] = useState<string[]>([
         'new', 'confirmed', 'in_production', 'ready', 'in_delivery',
     ]);
+    const [attachmentsByProduct, setAttachmentsByProduct] = useState<Record<number, any[]>>({});
+    const [attachmentsLoading, setAttachmentsLoading] = useState<Record<number, boolean>>({});
+    const [previewOpen, setPreviewOpen] = useState(false);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const [previewTitle, setPreviewTitle] = useState('');
 
     useEffect(() => {
         loadItems();
@@ -162,20 +169,98 @@ const OrderedProducts: React.FC = () => {
         }
     };
 
-    const loadSubItems = async (_record: OrderedManufacturingItem) => {
-        // No-op: ProductSubItemsTable loads on mount when the row expands.
+    const loadSubItems = async (record: OrderedManufacturingItem) => {
+        // ProductSubItemsTable loads sub-items on mount; we only load attachments here.
+        const productId = record.manufacturing_product_id;
+        if (!productId || attachmentsByProduct[productId] !== undefined || attachmentsLoading[productId]) return;
+        setAttachmentsLoading(prev => ({ ...prev, [productId]: true }));
+        try {
+            const atts = await manufacturingService.getProductAttachments(productId);
+            setAttachmentsByProduct(prev => ({ ...prev, [productId]: Array.isArray(atts) ? atts : [] }));
+        } catch (e) {
+            console.error(e);
+            setAttachmentsByProduct(prev => ({ ...prev, [productId]: [] }));
+        } finally {
+            setAttachmentsLoading(prev => ({ ...prev, [productId]: false }));
+        }
     };
 
-    const expandedRowRender = (record: OrderedManufacturingItem) => (
-        <div style={{ padding: '8px 0 8px 32px' }}>
-            <ProductSubItemsTable productId={record.manufacturing_product_id} />
-            <div style={{ marginTop: 8 }}>
-                <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/sales/customer-orders/${record.order_id}/items/${record.id}/subitems`)}>
-                    Megnyitás teljes lapon
-                </Button>
+    const isImageFile = (url: string) => /\.(jpg|jpeg|png|gif|bmp|webp|svg)(\?|$)/i.test(url || '');
+    const isPdfFile = (url: string) => /\.pdf(\?|$)/i.test(url || '');
+
+    const openPreview = (url: string, title: string) => {
+        setPreviewUrl(url);
+        setPreviewTitle(title || 'Előnézet');
+        setPreviewOpen(true);
+    };
+
+    const expandedRowRender = (record: OrderedManufacturingItem) => {
+        const productId = record.manufacturing_product_id;
+        const attachments = attachmentsByProduct[productId] || [];
+        const loadingAtt = !!attachmentsLoading[productId];
+
+        return (
+            <div style={{ padding: '8px 0 8px 32px' }}>
+                <ProductSubItemsTable productId={productId} />
+                <div style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>Csatolmányok</div>
+                    <Table
+                        size="small"
+                        loading={loadingAtt}
+                        dataSource={attachments}
+                        rowKey="id"
+                        pagination={false}
+                        locale={{ emptyText: 'Nincs csatolmány' }}
+                        columns={[
+                            {
+                                title: 'Fájl',
+                                key: 'file',
+                                render: (_: any, att: any) => {
+                                    const url = att.file_url || att.file || '';
+                                    const name = url ? (url.split('/').pop() || `#${att.id}`) : `#${att.id}`;
+                                    return (
+                                        <a href={url} target="_blank" rel="noopener noreferrer">{name}</a>
+                                    );
+                                },
+                            },
+                            {
+                                title: 'Megjegyzés',
+                                dataIndex: 'remark',
+                                key: 'remark',
+                                render: (v: string) => v || '-',
+                            },
+                            {
+                                title: 'Preview',
+                                key: 'preview',
+                                width: 110,
+                                render: (_: any, att: any) => {
+                                    const url = att.file_url || att.file || '';
+                                    const name = url ? (url.split('/').pop() || `#${att.id}`) : `#${att.id}`;
+                                    if (!url) return '-';
+                                    if (isImageFile(url) || isPdfFile(url)) {
+                                        return <Button size="small" onClick={() => openPreview(url, name)}>Előnézet</Button>;
+                                    }
+                                    return '-';
+                                },
+                            },
+                            {
+                                title: 'Feltöltve',
+                                dataIndex: 'created_at',
+                                key: 'created_at',
+                                width: 160,
+                                render: (v: string) => v ? new Date(v).toLocaleString('hu-HU') : '-',
+                            },
+                        ]}
+                    />
+                </div>
+                <div style={{ marginTop: 8 }}>
+                    <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/sales/customer-orders/${record.order_id}/items/${record.id}/subitems`)}>
+                        Megnyitás teljes lapon
+                    </Button>
+                </div>
             </div>
-        </div>
-    );
+        );
+    };
 
     const normalize = (s: any) =>
         (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -399,6 +484,27 @@ const OrderedProducts: React.FC = () => {
                     })}
                 />
             </Card>
+            <Modal
+                title={previewTitle || 'Előnézet'}
+                open={previewOpen}
+                onCancel={() => {
+                    setPreviewOpen(false);
+                    setPreviewUrl(null);
+                    setPreviewTitle('');
+                }}
+                footer={null}
+                width={900}
+            >
+                {previewUrl ? (
+                    isPdfFile(previewUrl) ? (
+                        <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
+                    ) : (
+                        <img alt={previewTitle} src={previewUrl} style={{ maxWidth: '100%', maxHeight: '70vh', display: 'block', margin: '0 auto' }} />
+                    )
+                ) : (
+                    <div>Nincs előnézet</div>
+                )}
+            </Modal>
         </div>
     );
 };
