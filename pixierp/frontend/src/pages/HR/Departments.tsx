@@ -295,6 +295,37 @@ const Departments: React.FC = () => {
         }
     };
 
+    const handleRemoveEmployeeFromDepartment = async (employeeId: number) => {
+        if (!viewingDepartment) return;
+
+        try {
+            const employee = employees.find(emp => emp.id === employeeId);
+            if (!employee) return;
+
+            // Az alkalmazott jelenlegi osztályaiból eltávolítjuk az aktuálist
+            const updatedDepartmentIds = (employee.department_names || [])
+                .filter(deptName => deptName !== viewingDepartment.name)
+                .map(deptName => {
+                    const dept = departments.find(d => d.name === deptName);
+                    return dept?.id;
+                })
+                .filter((id): id is number => id !== undefined);
+
+            await hrService.updateEmployee(employee.id, {
+                departments: updatedDepartmentIds
+            });
+
+            message.success('Alkalmazott sikeresen eltávolítva az osztályból!');
+            
+            // Frissítjük az osztály tagjait
+            const updatedEmployees = departmentEmployees.filter(emp => emp.id !== employeeId);
+            setDepartmentEmployees(updatedEmployees);
+        } catch (err) {
+            console.error('Error removing employee from department:', err);
+            message.error('Hiba történt az alkalmazott eltávolítása során');
+        }
+    };
+
     const persistSortOrder = async (orderedDepartments: Department[]) => {
         const updates = orderedDepartments.map((dept, index) => ({
             id: dept.id,
@@ -764,6 +795,27 @@ const Departments: React.FC = () => {
                                         dataIndex: 'position_name',
                                         key: 'position_name',
                                         render: (position: string) => position || '-',
+                                    },
+                                    {
+                                        title: 'Műveletek',
+                                        key: 'actions',
+                                        width: 100,
+                                        render: (record: Employee) => (
+                                            <Popconfirm
+                                                title="Biztosan eltávolítja ezt az alkalmazottat az osztályból?"
+                                                description="Az alkalmazott megtartja más osztályokat, csak ebből kerül eltávolításra."
+                                                onConfirm={() => handleRemoveEmployeeFromDepartment(record.id)}
+                                                okText="Igen"
+                                                cancelText="Nem"
+                                            >
+                                                <Button
+                                                    icon={<DeleteOutlined />}
+                                                    size="small"
+                                                    danger
+                                                    type="text"
+                                                />
+                                            </Popconfirm>
+                                        ),
                                     },
                                 ]}
                                 rowKey="id"
