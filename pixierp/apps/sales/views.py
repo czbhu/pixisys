@@ -2534,6 +2534,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             qr = order.quote_request
             data.append({
                 'id': item.id,
+                'quote_item_id': item.quote_item_id,
                 'order_id': order.id,
                 'order_number': order.order_number,
                 'order_date': order.order_date.isoformat() if order.order_date else None,

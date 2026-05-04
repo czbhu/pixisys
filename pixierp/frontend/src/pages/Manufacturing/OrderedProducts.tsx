@@ -50,6 +50,7 @@ const ORDER_ITEM_STATUS_LABELS: Record<string, string> = {
 
 interface OrderedManufacturingItem {
     id: number;
+    quote_item_id: number;
     order_id: number;
     order_number: string;
     order_date: string;
@@ -115,7 +116,7 @@ const OrderedProducts: React.FC = () => {
     const handlePrintWorksheet = async (record: OrderedManufacturingItem) => {
         try {
             const response = await api.get(
-                `/sales/customer-orders/${record.order_id}/item_work_sheet/?item_id=${record.id}`,
+                `/sales/customer-orders/${record.order_id}/item_work_sheet/?item_id=${record.quote_item_id}`,
                 { responseType: 'blob' }
             );
             const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
