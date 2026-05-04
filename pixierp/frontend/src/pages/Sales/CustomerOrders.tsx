@@ -12,6 +12,7 @@ import useUserPreference from '../../hooks/useUserPreference';
 import { useNavigate } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
+import { manufacturingService } from '../../services/manufacturingService';
 import dayjs from 'dayjs';
 import { OrderItemsDrawer } from './OrderItemsDrawer';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
@@ -181,6 +182,10 @@ interface CustomerOrder {
   const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
   const { addAction } = useActionHistory();
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
+
+  // Altételek cache: manufacturing_product_id -> cost_items[]
+  const [costItemsCache, setCostItemsCache] = useState<Record<number, any[]>>({});
+  const [costItemsLoading, setCostItemsLoading] = useState<Record<number, boolean>>({});
   
   // Email sending state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -1722,6 +1727,45 @@ interface CustomerOrder {
           rowKey={isItemsView ? 'uniqueId' : 'id'}
           loading={loading}
           size="small"
+          expandable={isItemsView ? {
+            rowExpandable: (record: any) => !!(record.manufacturing_product_name || record.quote_item?.manufacturing_product),
+            expandedRowRender: (record: any) => {
+              const productId = record.quote_item?.manufacturing_product as number | undefined;
+              if (!productId) return <div style={{ padding: '8px 16px', color: '#999' }}>Nincs altétel.</div>;
+              const items = costItemsCache[productId];
+              const isLoading = costItemsLoading[productId];
+              if (isLoading) return <div style={{ padding: '8px 16px', color: '#999' }}>Betöltés...</div>;
+              if (!items) return <div style={{ padding: '8px 16px', color: '#999' }}>Betöltés...</div>;
+              if (items.length === 0) return <div style={{ padding: '8px 16px', color: '#999' }}>Nincs altétel.</div>;
+              return (
+                <Table
+                  dataSource={items}
+                  rowKey="id"
+                  size="small"
+                  pagination={false}
+                  style={{ marginLeft: 32, marginBottom: 8 }}
+                  columns={[
+                    { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+                    { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity', width: 100, align: 'right' as const, render: (q: any, r: any) => `${Number(q)} ${r.unit || ''}` },
+                    { title: 'Státusz', dataIndex: 'status_display', key: 'status_display', width: 130 },
+                  ]}
+                />
+              );
+            },
+            onExpand: (expanded: boolean, record: any) => {
+              if (!expanded) return;
+              const productId = record.quote_item?.manufacturing_product as number | undefined;
+              if (!productId || costItemsCache[productId] !== undefined) return;
+              setCostItemsLoading(prev => ({ ...prev, [productId]: true }));
+              manufacturingService.getProduct(productId).then(product => {
+                setCostItemsCache(prev => ({ ...prev, [productId]: product.cost_items || [] }));
+              }).catch(() => {
+                setCostItemsCache(prev => ({ ...prev, [productId]: [] }));
+              }).finally(() => {
+                setCostItemsLoading(prev => ({ ...prev, [productId]: false }));
+              });
+            },
+          } : undefined}
           rowSelection={csvMode ? {
             selectedRowKeys: csvSelectedKeys,
             onChange: (keys) => setCsvSelectedKeys(keys),
