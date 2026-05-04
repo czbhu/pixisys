@@ -61,9 +61,14 @@ export const TimerModal: React.FC = () => {
                                  const wfName = item.suggested_workflow || ''; 
                                  if (wfName) form.setFieldValue('workflow_name', wfName);
                                  // Load sub-items for this item
-                                 loadSubItems(item).then(() => {
+                                 loadSubItems(item).then((loadedSubItems: any[]) => {
                                      if (preselectedSubItemId) {
                                          form.setFieldsValue({ sub_item_id: preselectedSubItemId });
+                                         // Auto-fill workflow name from the preselected sub-item
+                                         const si = loadedSubItems.find((s: any) => s.id === preselectedSubItemId);
+                                         if (si && !form.getFieldValue('workflow_name')) {
+                                             form.setFieldValue('workflow_name', si.name);
+                                         }
                                      }
                                  });
                              }
@@ -137,18 +142,20 @@ export const TimerModal: React.FC = () => {
         }
     };
 
-    const loadSubItems = async (item: any) => {
+    const loadSubItems = async (item: any): Promise<any[]> => {
         const productId = item?.quote_item?.manufacturing_product;
         if (!productId) {
             setSubItems([]);
-            return;
+            return [];
         }
         try {
             const product = await manufacturingService.getProduct(productId);
             const costItems = (product.cost_items || []).filter((ci: any) => ci.name);
             setSubItems(costItems);
+            return costItems;
         } catch (e) {
             setSubItems([]);
+            return [];
         }
     };
 

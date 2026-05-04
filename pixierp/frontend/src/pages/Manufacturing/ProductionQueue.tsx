@@ -109,7 +109,7 @@ const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
 };
 
 const ProductionQueue: React.FC = () => {
-    const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
+    const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId, setPreselectedSubItemId } = useTimeTracker();
     const [rows, setRows] = useState<QueueRow[]>([]);
     const [loading, setLoading] = useState(false);
     const [query, setQuery] = useState('');
@@ -229,6 +229,7 @@ const ProductionQueue: React.FC = () => {
         }
         setPreselectedOrderId(r.order_id);
         setPreselectedItemId(r.customer_order_item_id);
+        setPreselectedSubItemId(r.id);
         setTimerModalOpen(true);
     };
 
