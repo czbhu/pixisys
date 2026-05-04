@@ -71,7 +71,14 @@ const RFQs: React.FC = () => {
   const [partialLoading, setPartialLoading] = useState(false);
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatures, setSignatures] = useState<any[]>([]);
-  const [statusFilter, setStatusFilter] = useState<string>('all_except_archived');
+  const [statusFilter, setStatusFilter] = useState<string[]>(() => {
+    try {
+      const saved = localStorage.getItem('rfqs_status_filter');
+      return saved ? JSON.parse(saved) : ['all_except_archived'];
+    } catch {
+      return ['all_except_archived'];
+    }
+  });
   const [orderStatusFilter, setOrderStatusFilter] = useState<string | undefined>(undefined);
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
@@ -294,14 +301,38 @@ const RFQs: React.FC = () => {
     return Array.from(new Set(names)).sort();
   }, [rfqs]);
 
+  // Save status filter to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('rfqs_status_filter', JSON.stringify(statusFilter));
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [statusFilter]);
+
   useEffect(() => {
     let filtered = rfqs || [];
     
-    // Status filter
-    if (statusFilter === 'all_except_archived') {
+    // Status filter (multi-select support)
+    const hasAllExceptArchived = statusFilter.includes('all_except_archived');
+    const hasAll = statusFilter.includes('all');
+    
+    if (!hasAll && !hasAllExceptArchived && statusFilter.length === 0) {
+      // If no filter selected, default to all_except_archived
       filtered = filtered.filter(r => r.status !== 'archived');
-    } else if (statusFilter !== 'all') {
-      filtered = filtered.filter(r => r.status === statusFilter);
+    } else if (hasAll) {
+      // If 'all' is selected, show all
+      filtered = filtered;
+    } else if (hasAllExceptArchived && statusFilter.length === 1) {
+      // Only all_except_archived selected
+      filtered = filtered.filter(r => r.status !== 'archived');
+    } else if (statusFilter.length > 0 && !hasAll && !hasAllExceptArchived) {
+      // Specific statuses selected
+      filtered = filtered.filter(r => statusFilter.includes(r.status));
+    } else if (statusFilter.length > 0 && hasAllExceptArchived) {
+      // all_except_archived + other specific statuses: show all non-archived that match the specific ones
+      const otherStatuses = statusFilter.filter(s => s !== 'all_except_archived');
+      filtered = filtered.filter(r => r.status !== 'archived' && (otherStatuses.length === 0 || otherStatuses.includes(r.status)));
     }
 
     // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
@@ -1230,10 +1261,13 @@ const RFQs: React.FC = () => {
               )}
               <Select
                 className="rfqs-status-select"
+                mode="multiple"
+                placeholder="Státusz szűrő"
                 value={statusFilter}
                 onChange={(value) => setStatusFilter(value)}
-                style={{ width: 150 }}
+                style={{ width: 200 }}
                 popupMatchSelectWidth={false}
+                maxTagCount="responsive"
               >
                 <Select.Option value="all">Mind</Select.Option>
                 <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
