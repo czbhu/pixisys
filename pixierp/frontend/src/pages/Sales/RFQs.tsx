@@ -79,17 +79,17 @@ const RFQs: React.FC = () => {
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
   const isDemandView = searchParams.get('view') === 'demands';
-  const [rfqItemsDrawerOpen, setRfqItemsDrawerOpen] = useState(false);
-  const [rfqItemsDrawerLoading, setRfqItemsDrawerLoading] = useState(false);
-  const [rfqItemsDrawerTitle, setRfqItemsDrawerTitle] = useState('');
-  const [rfqItemsDrawerItems, setRfqItemsDrawerItems] = useState<any[]>([]);
+  const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
+  const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
+  const [rfqExpandedLoading, setRfqExpandedLoading] = useState<Record<number, boolean>>({});
 
-  const openRfqItemsDrawer = async (record: any) => {
-    setRfqItemsDrawerOpen(true);
-    setRfqItemsDrawerLoading(true);
-    setRfqItemsDrawerTitle(record?.number || record?.request_number || '');
+  const loadRfqExpandedItems = async (record: any) => {
+    const rfqId = Number(record?.id || 0);
+    if (!rfqId || rfqExpandedItems[rfqId] !== undefined || rfqExpandedLoading[rfqId]) return;
+
+    setRfqExpandedLoading(prev => ({ ...prev, [rfqId]: true }));
     try {
-      const full = await salesService.getQuoteRequest(record.id);
+      const full = await salesService.getQuoteRequest(rfqId);
       const src = Array.isArray(full?.items) ? full.items : [];
       const sorted = [...src].sort((a: any, b: any) => {
         const ao = Number(a?.sort_order ?? 0);
@@ -107,14 +107,78 @@ const RFQs: React.FC = () => {
         if (pid && map.has(pid)) map.get(pid).children.push(node);
         else roots.push(node);
       });
-      setRfqItemsDrawerItems(roots);
+      setRfqExpandedItems(prev => ({ ...prev, [rfqId]: roots }));
     } catch (e) {
       console.error(e);
       message.error('Nem sikerült betölteni az ajánlat tételeit');
-      setRfqItemsDrawerItems([]);
+      setRfqExpandedItems(prev => ({ ...prev, [rfqId]: [] }));
     } finally {
-      setRfqItemsDrawerLoading(false);
+      setRfqExpandedLoading(prev => ({ ...prev, [rfqId]: false }));
     }
+  };
+
+  const renderExpandedRfqRow = (record: any) => {
+    const rfqId = Number(record?.id || 0);
+    const loadingItems = !!rfqExpandedLoading[rfqId];
+    const treeItems = rfqExpandedItems[rfqId];
+
+    if (loadingItems) {
+      return (
+        <div style={{ padding: '12px 8px 12px 28px' }}>
+          <Spin size="small" />
+        </div>
+      );
+    }
+
+    if (!treeItems || treeItems.length === 0) {
+      return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
+    }
+
+    return (
+      <div style={{ padding: '8px 0 8px 28px' }}>
+        <Table
+          size="small"
+          pagination={false}
+          rowKey="id"
+          dataSource={treeItems}
+          columns={[
+            {
+              title: 'Megnevezés',
+              key: 'name',
+              render: (_: any, r: any) => (
+                <div>
+                  <div style={{ fontWeight: 500 }}>
+                    {r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.name || r.description || '-'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || '-'}</div>
+                </div>
+              ),
+            },
+            {
+              title: 'Mennyiség',
+              key: 'qty',
+              width: 120,
+              render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+            },
+            {
+              title: 'Leírás',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+            },
+          ]}
+          expandable={{
+            rowExpandable: (r: any) => !!(r.item_type === 'manufacturing' && r.manufacturing_product),
+            expandedRowRender: (r: any) => (
+              <div style={{ padding: '8px 0 8px 28px' }}>
+                <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
+              </div>
+            ),
+            defaultExpandAllRows: true,
+          }}
+        />
+      </div>
+    );
   };
 
   const exportCsv = () => {
@@ -393,9 +457,6 @@ const RFQs: React.FC = () => {
     {
       title: 'Műveletek', key: 'actions', width: 270, render: (record: any): React.ReactNode => (
         <Space size="small" wrap>
-          <Tooltip title="Ajánlat tételek">
-            <Button icon={<PlusCircleOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={() => openRfqItemsDrawer(record)} />
-          </Tooltip>
           <Tooltip title="Szerkesztés">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
@@ -1217,7 +1278,22 @@ const RFQs: React.FC = () => {
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined} />
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined} expandable={!isItemsView ? {
+          expandedRowKeys: expandedRfqKeys,
+          onExpand: (expanded: boolean, record: any) => {
+            if (expanded) {
+              setExpandedRfqKeys(prev => Array.from(new Set([...prev, record.id])));
+              loadRfqExpandedItems(record);
+            } else {
+              setExpandedRfqKeys(prev => prev.filter((k) => k !== record.id));
+            }
+          },
+          expandedRowRender: renderExpandedRfqRow,
+          rowExpandable: (record: any) => {
+            const count = Array.isArray(record?.items) ? record.items.length : 0;
+            return count > 0;
+          },
+        } : undefined} />
       </Card>
       <Modal 
         title={`Ajánlat kérő kiküldése: ${(() => {
@@ -1930,55 +2006,6 @@ const RFQs: React.FC = () => {
         </Form>
       </Modal>
 
-      <Modal
-        title={`Ajánlat tételei: ${rfqItemsDrawerTitle}`}
-        open={rfqItemsDrawerOpen}
-        onCancel={() => setRfqItemsDrawerOpen(false)}
-        footer={null}
-        width={1100}
-      >
-        <Table
-          loading={rfqItemsDrawerLoading}
-          dataSource={rfqItemsDrawerItems}
-          rowKey="id"
-          pagination={false}
-          size="small"
-          columns={[
-            {
-              title: 'Megnevezés',
-              key: 'name',
-              render: (_: any, r: any) => (
-                <div>
-                  <div style={{ fontWeight: 500 }}>
-                    {r.product_name || r.material_name || r.manufacturing_product_name || r.service_name || r.name || r.description || '-'}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.material_code || r.manufacturing_product_code || r.service_code || '-'}</div>
-                </div>
-              ),
-            },
-            {
-              title: 'Mennyiség',
-              key: 'qty',
-              width: 120,
-              render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
-            },
-            {
-              title: 'Leírás',
-              dataIndex: 'description',
-              key: 'description',
-              ellipsis: true,
-            },
-          ]}
-          expandable={{
-            rowExpandable: (r: any) => !!(r.item_type === 'manufacturing' && r.manufacturing_product),
-            expandedRowRender: (r: any) => (
-              <div style={{ padding: '8px 0 8px 28px' }}>
-                <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
-              </div>
-            ),
-          }}
-        />
-      </Modal>
       <Modal
         title={previewTitle}
         open={previewOpen}
