@@ -364,10 +364,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       ),
       children: [
         {
-          key: '/manufacturing/products',
-          label: 'Egyedi gyártás',
-        },
-        {
           key: '/manufacturing/ordered-products',
           label: 'Megrendelt Gyártások',
         },
