@@ -54,6 +54,97 @@ def _bump_search_stat(item_type: str, ref_id: int):
         # don't block main flow on stats errors
         pass
 
+
+def _user_can_approve_customer_orders(user):
+    if not user or not user.is_authenticated:
+        return False
+    if getattr(user, 'is_superuser', False):
+        return True
+
+    try:
+        from apps.hr.models import Employee
+
+        employee = Employee.objects.prefetch_related('departments__roles').get(user=user)
+        return employee.get_all_roles().filter(can_approve_orders=True).exists()
+    except Exception:
+        pass
+
+    if hasattr(user, 'user_roles') and user.user_roles.filter(role__can_approve_orders=True).exists():
+        return True
+    if hasattr(user, 'roles') and user.roles.filter(role__can_approve_orders=True).exists():
+        return True
+
+    return False
+
+
+def _user_can_request_customer_order_status_change(user, order):
+    if not user or not user.is_authenticated:
+        return False
+    if _user_can_approve_customer_orders(user):
+        return True
+
+    is_creator = order.created_by_id == user.id
+    is_quote_assignee = bool(
+        order.quote_request_id and order.quote_request.assignees.filter(id=user.id).exists()
+    )
+    if is_creator or is_quote_assignee:
+        return True
+
+    legacy_roles = ['Projekt vezető', 'Adminisztráció', 'Szuper Admin']
+    if hasattr(user, 'user_roles') and user.user_roles.filter(role__name__in=legacy_roles).exists():
+        return True
+    if hasattr(user, 'roles') and user.roles.filter(role__name__in=legacy_roles).exists():
+        return True
+
+    return False
+
+
+def _apply_customer_order_status(order, new_status, changed_at=None):
+    now = changed_at or timezone.now()
+    order.status = new_status
+
+    if new_status == 'confirmed':
+        order.confirmed_at = now
+    elif new_status == 'in_production':
+        order.production_started_at = now
+    elif new_status == 'ready':
+        order.ready_at = now
+    elif new_status == 'in_delivery':
+        order.delivery_started_at = now
+    elif new_status == 'delivered':
+        order.delivered_at = now
+
+    order.save()
+    return order
+
+
+def _request_customer_order_status_approval(order, requester, requested_status):
+    existing = ApprovalRequest.objects.filter(customer_order=order, status='pending').first()
+    if existing:
+        return None, Response(
+            {'error': 'Már van folyamatban lévő jóváhagyási kérelem ehhez a rendeléshez.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    approval_request = ApprovalRequest.objects.create(
+        customer_order=order,
+        previous_status=order.status,
+        requested_status=requested_status,
+        requester=requester,
+        status='pending',
+    )
+    return approval_request, Response(
+        {
+            'status': 'approval_requested',
+            'message': 'Jóváhagyásra vár',
+            'approval_request': {
+                'id': approval_request.id,
+                'requested_status': approval_request.requested_status,
+                'previous_status': approval_request.previous_status,
+            },
+        }
+    )
+
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
@@ -2697,60 +2788,18 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         new_status = request.data.get('status')
         if not new_status:
             return Response({'error': 'Státusz kötelező'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Permission check logic:
-        # 1. Superuser
-        is_allowed = request.user.is_superuser
 
-        # 2. Check Role permissions (new flag: can_approve_orders)
-        # Note: user_roles is the related_name from UserRole model
-        if not is_allowed and hasattr(request.user, 'user_roles'):
-            is_allowed = request.user.user_roles.filter(role__can_approve_orders=True).exists()
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
 
-        # 3. Check Assignees (Quote assignees or Order creator)
-        if not is_allowed:
-            is_creator = order.created_by == request.user
-            is_quote_assignee = order.quote_request and order.quote_request.assignees.filter(id=request.user.id).exists()
-            is_allowed = is_creator or is_quote_assignee
-            
-        # 4. Fallback/Legacy Roles (Projekt vezető, etc)
-        if not is_allowed:
-             legacy_roles = ['Projekt vezető', 'Adminisztráció', 'Szuper Admin']
-             if hasattr(request.user, 'user_roles'):
-                 is_allowed = request.user.user_roles.filter(role__name__in=legacy_roles).exists()
-             if not is_allowed and hasattr(request.user, 'roles'): # Try legacy related_name
-                 is_allowed = request.user.roles.filter(role__name__in=legacy_roles).exists()
-        
-        if is_allowed:
-            order.status = new_status
-            
-            now = timezone.now()
-            if new_status == 'confirmed': 
-                order.confirmed_at = now
-                if request.data.get('send_email') is True:
-                    self._send_confirmation_email(order)
-
-            elif new_status == 'in_production': order.production_started_at = now
-            elif new_status == 'ready': order.ready_at = now
-            elif new_status == 'in_delivery': order.delivery_started_at = now
-            elif new_status == 'delivered': order.delivered_at = now
-            
-            order.save()
+        if _user_can_approve_customer_orders(request.user):
+            _apply_customer_order_status(order, new_status)
+            if new_status == 'confirmed' and request.data.get('send_email') is True:
+                self._send_confirmation_email(order)
             return Response(self.get_serializer(order).data)
-        else:
-            from .models import ApprovalRequest
-            existing = ApprovalRequest.objects.filter(customer_order=order, status='pending').first()
-            if existing:
-                return Response({'error': 'Már van folyamatban lévő jóváhagyási kérelem ehhez a rendeléshez.'}, status=status.HTTP_400_BAD_REQUEST)
-                
-            ApprovalRequest.objects.create(
-                customer_order=order,
-                previous_status=order.status,
-                requested_status=new_status,
-                requester=request.user,
-                status='pending'
-            )
-            return Response({'status': 'approval_requested', 'message': 'Jóváhagyásra elküldve'})
+
+        _, approval_response = _request_customer_order_status_approval(order, request.user, new_status)
+        return approval_response
 
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
@@ -2758,10 +2807,15 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         if order.status != 'new':
             return Response({'error': 'Csak új megrendelés erősíthető meg'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        order.status = 'confirmed'
-        order.confirmed_at = timezone.now()
-        order.save()
+
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not _user_can_approve_customer_orders(request.user):
+            _, approval_response = _request_customer_order_status_approval(order, request.user, 'confirmed')
+            return approval_response
+
+        _apply_customer_order_status(order, 'confirmed')
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -2770,10 +2824,15 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         if order.status != 'confirmed':
             return Response({'error': 'Csak megerősített megrendelés indítható gyártásba'}, status=status.HTTP_400_BAD_REQUEST)
-        
-        order.status = 'in_production'
-        order.production_started_at = timezone.now()
-        order.save()
+
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not _user_can_approve_customer_orders(request.user):
+            _, approval_response = _request_customer_order_status_approval(order, request.user, 'in_production')
+            return approval_response
+
+        _apply_customer_order_status(order, 'in_production')
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -2782,6 +2841,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         if order.status != 'in_production':
             return Response({'error': 'Csak gyártásban lévő megrendelés jelölhető késznek'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not _user_can_approve_customer_orders(request.user):
+            _, approval_response = _request_customer_order_status_approval(order, request.user, 'ready')
+            return approval_response
         
         # Parse timestamp if provided
         timestamp_str = request.data.get('timestamp')
@@ -2794,10 +2860,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 ready_at = timezone.now()
         else:
             ready_at = timezone.now()
-        
-        order.status = 'ready'
-        order.ready_at = ready_at
-        order.save()
+
+        _apply_customer_order_status(order, 'ready', changed_at=ready_at)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['post'])
@@ -2814,6 +2878,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         # Ellenőrizzük, hogy kész vagy már szállítás alatt van-e
         if order.status not in ['ready', 'in_delivery']:
             return Response({'error': 'Csak kész vagy szállítás alatt lévő megrendeléshez küldhető szállítási email'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if order.status == 'ready' and not _user_can_approve_customer_orders(request.user):
+            _, approval_response = _request_customer_order_status_approval(order, request.user, 'in_delivery')
+            return approval_response
         
         # Ha még nincs token vagy lejárt, generálunk újat
         regenerate_token = False
@@ -2936,6 +3007,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         order = self.get_object()
         if order.status != 'in_delivery':
             return Response({'error': 'Csak szállítás alatt lévő megrendelés jelölhető kiszállítottnak'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not _user_can_request_customer_order_status_change(request.user, order):
+            return Response({'error': 'Nincs jogosultságod státuszt váltani ezen a megrendelésen.'}, status=status.HTTP_403_FORBIDDEN)
+
+        if not _user_can_approve_customer_orders(request.user):
+            _, approval_response = _request_customer_order_status_approval(order, request.user, 'delivered')
+            return approval_response
         
         # Parse timestamp if provided
         timestamp_str = request.data.get('timestamp')
@@ -2948,10 +3026,8 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 delivered_at = timezone.now()
         else:
             delivered_at = timezone.now()
-        
-        order.status = 'delivered'
-        order.delivered_at = delivered_at
-        order.save()
+
+        _apply_customer_order_status(order, 'delivered', changed_at=delivered_at)
         return Response(self.get_serializer(order).data)
     
     @action(detail=True, methods=['get'])
@@ -5447,6 +5523,8 @@ class ApprovalRequestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        if not _user_can_approve_customer_orders(self.request.user):
+            qs = qs.filter(requester=self.request.user)
         status_filter = self.request.query_params.get('status')
         if status_filter:
             qs = qs.filter(status=status_filter)
@@ -5454,23 +5532,16 @@ class ApprovalRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def approve(self, request, pk=None):
+        if not _user_can_approve_customer_orders(request.user):
+            return Response({'error': 'Nincs jogosultságod jóváhagyni.'}, status=status.HTTP_403_FORBIDDEN)
+
         req = self.get_object()
         if req.status != 'pending':
             return Response({'error': 'Nem függőben lévő kérelem'}, status=400)
             
         # Apply change
         order = req.customer_order
-        order.status = req.requested_status
-        
-        # Update timestamps
-        now = timezone.now()
-        if order.status == 'confirmed': order.confirmed_at = now
-        elif order.status == 'in_production': order.production_started_at = now
-        elif order.status == 'ready': order.ready_at = now
-        elif order.status == 'in_delivery': order.delivery_started_at = now
-        elif order.status == 'delivered': order.delivered_at = now
-        
-        order.save()
+        _apply_customer_order_status(order, req.requested_status)
         
         req.status = 'approved'
         req.save()
@@ -5479,6 +5550,9 @@ class ApprovalRequestViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
+        if not _user_can_approve_customer_orders(request.user):
+            return Response({'error': 'Nincs jogosultságod visszaküldeni.'}, status=status.HTTP_403_FORBIDDEN)
+
         req = self.get_object()
         note = request.data.get('note', '')
         req.status = 'rejected'

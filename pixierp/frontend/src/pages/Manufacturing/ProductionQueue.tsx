@@ -14,8 +14,6 @@ import {
     Typography,
     Tabs,
     Form,
-    Descriptions,
-    Table,
 } from 'antd';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -86,52 +84,15 @@ interface QueueRow {
     supplier_email_sent_at: string | null;
 }
 
-interface WorksheetSubItem {
-    id: number;
-    name: string;
-    quantity: string;
-    supplier: string;
-    notes: string;
-    is_self: boolean;
-}
-
-interface WorksheetDetails {
-    cost_item_id: number;
-    order_id: number | null;
-    order_number: string;
-    customer: string;
-    contact: string;
-    project: string;
-    deadline: string | null;
-    product_code: string;
-    product_name: string;
-    quantity: string;
-    description: string;
-    internal_description: string;
-    item_note: string;
-    sub_items: WorksheetSubItem[];
-}
-
 /** Drag-handle cell: long-press the order number to start a GROUP drag
  *  (moves the entire order). Long-press anywhere else on the row starts a
  *  single-row drag. */
-const DragOrderCell: React.FC<{ value: string; onClick?: () => void }> = ({ value, onClick }) => {
+const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
     const { listeners } = React.useContext(CostRowContext);
-    const pointerDownAt = React.useRef(0);
     return (
         <span
             {...(listeners || {})}
-            onPointerDownCapture={() => {
-                dragModeRef.current = 'group';
-                pointerDownAt.current = Date.now();
-            }}
-            onClick={(e) => {
-                e.stopPropagation();
-                // Keep long-press drag behavior unchanged; open modal on quick click.
-                if (onClick && Date.now() - pointerDownAt.current < 320) {
-                    onClick();
-                }
-            }}
+            onPointerDownCapture={() => { dragModeRef.current = 'group'; }}
             style={{
                 cursor: 'grab',
                 userSelect: 'none',
@@ -162,25 +123,6 @@ const ProductionQueue: React.FC = () => {
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
-    const [orderDetailsOpen, setOrderDetailsOpen] = useState(false);
-    const [orderDetailsLoading, setOrderDetailsLoading] = useState(false);
-    const [orderDetails, setOrderDetails] = useState<WorksheetDetails | null>(null);
-
-    const openOrderDetails = async (r: QueueRow) => {
-        try {
-            setOrderDetailsOpen(true);
-            setOrderDetailsLoading(true);
-            setOrderDetails(null);
-            const { data } = await api.get(`/manufacturing/cost-items/${r.id}/work_sheet_data/`);
-            setOrderDetails(data);
-        } catch (e) {
-            console.error(e);
-            message.error('Megrendelés adatok betöltése sikertelen');
-            setOrderDetailsOpen(false);
-        } finally {
-            setOrderDetailsLoading(false);
-        }
-    };
 
     const load = async () => {
         try {
@@ -516,7 +458,7 @@ const ProductionQueue: React.FC = () => {
         { title: '#', key: 'pos', width: 50, render: (_: any, __: any, idx: number) => idx + 1 },
         { title: 'Megrendelés', dataIndex: 'order_number', key: 'order_number', width: 130,
             sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || ''),
-            render: (v: string, r: QueueRow) => <DragOrderCell value={v} onClick={() => openOrderDetails(r)} /> },
+            render: (v: string) => <DragOrderCell value={v} /> },
         { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180, ellipsis: true,
             sorter: (a: QueueRow, b: QueueRow) => (a.customer_name || '').localeCompare(b.customer_name || '', 'hu') },
         { title: 'Megr. dátuma', dataIndex: 'order_date', key: 'order_date', width: 110,
@@ -778,82 +720,6 @@ const ProductionQueue: React.FC = () => {
                     setSelectedRowKeys(unsentIds);
                 }}
             />
-            <Modal
-                title={orderDetails ? `Megrendelés adatai - ${orderDetails.order_number}` : 'Megrendelés adatai'}
-                open={orderDetailsOpen}
-                onCancel={() => setOrderDetailsOpen(false)}
-                footer={null}
-                width={980}
-                destroyOnClose
-            >
-                {orderDetails ? (
-                    <Space direction="vertical" size={14} style={{ width: '100%' }}>
-                        <Descriptions bordered size="small" column={2}>
-                            <Descriptions.Item label="Megrendelő">{orderDetails.customer || '-'}</Descriptions.Item>
-                            <Descriptions.Item label="Kapcsolattartó">{orderDetails.contact || '-'}</Descriptions.Item>
-                            <Descriptions.Item label="Projekt">{orderDetails.project || '-'}</Descriptions.Item>
-                            <Descriptions.Item label="Határidő">
-                                {orderDetails.deadline ? dayjs(orderDetails.deadline).format('YYYY.MM.DD') : '-'}
-                            </Descriptions.Item>
-                            <Descriptions.Item label="Cikkszám">{orderDetails.product_code || '-'}</Descriptions.Item>
-                            <Descriptions.Item label="Mennyiség">{orderDetails.quantity || '-'}</Descriptions.Item>
-                            <Descriptions.Item label="Megnevezés" span={2}>{orderDetails.product_name || '-'}</Descriptions.Item>
-                        </Descriptions>
-
-                        {orderDetails.description && (
-                            <div>
-                                <b>Leírás:</b>
-                                <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{orderDetails.description}</div>
-                            </div>
-                        )}
-
-                        {orderDetails.internal_description && (
-                            <div>
-                                <b>Belső leírás:</b>
-                                <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{orderDetails.internal_description}</div>
-                            </div>
-                        )}
-
-                        {orderDetails.item_note && (
-                            <div>
-                                <b>Megjegyzés:</b>
-                                <div style={{ whiteSpace: 'pre-wrap', marginTop: 4 }}>{orderDetails.item_note}</div>
-                            </div>
-                        )}
-
-                        <div>
-                            <b>Altételek ({orderDetails.sub_items?.length || 0})</b>
-                            <Table
-                                size="small"
-                                pagination={false}
-                                rowKey="id"
-                                dataSource={orderDetails.sub_items || []}
-                                style={{ marginTop: 8 }}
-                                columns={[
-                                    {
-                                        title: 'Tétel',
-                                        dataIndex: 'name',
-                                        key: 'name',
-                                        render: (name: string, rec: WorksheetSubItem) => rec.is_self ? <b>{name}</b> : name,
-                                    },
-                                    { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity', width: 130 },
-                                    { title: 'Beszállító / Részleg', dataIndex: 'supplier', key: 'supplier', width: 220 },
-                                    {
-                                        title: 'Megjegyzés',
-                                        dataIndex: 'notes',
-                                        key: 'notes',
-                                        render: (v: string) => v || <span style={{ color: '#bbb' }}>-</span>,
-                                    },
-                                ]}
-                            />
-                        </div>
-                    </Space>
-                ) : (
-                    <Typography.Text type="secondary">
-                        {orderDetailsLoading ? 'Betöltés...' : 'Nincs megjeleníthető adat.'}
-                    </Typography.Text>
-                )}
-            </Modal>
         </div>
     );
 };

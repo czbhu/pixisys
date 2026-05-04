@@ -1041,6 +1041,9 @@ class ManufacturingCostItemViewSet(
         except ImportError:
             return Response({'error': 'ReportLab not installed'}, status=500)
         from django.conf import settings as dj_settings
+        from django.utils import timezone
+        from datetime import timedelta
+        import secrets
         import re as _re
         from html import unescape as _html_unescape
 
@@ -1118,23 +1121,78 @@ class ManufacturingCostItemViewSet(
         product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
         product_desc = strip_html(getattr(product, 'description', '') or '')
 
-        # QR (link back to the order page)
-        base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
+        # QR targets
+        base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu').rstrip('/')
+        internal_target_url = f"{base_url}/manufacturing/products/{product.id}" if product else f"{base_url}/manufacturing/queue"
+        external_target_url = None
+        external_status_note = ''
+
         if order:
-            target_url = f"{base_url}/sales/customer-orders/{order.id}"
-        else:
-            target_url = f"{base_url}/manufacturing/queue"
-        try:
-            qr = qrcode.QRCode(version=1, box_size=10, border=2)
-            qr.add_data(target_url)
-            qr.make(fit=True)
-            qr_pil = qr.make_image(fill_color='black', back_color='white')
-            qr_buf = BytesIO()
-            qr_pil.save(qr_buf, format='PNG')
-            qr_buf.seek(0)
-            qr_image = ImageReader(qr_buf)
-        except Exception:
-            qr_image = None
+            delivery_note = None
+            try:
+                from apps.sales.models import DeliveryNote, DeliveryNoteItem
+
+                if coi:
+                    dn_item = (
+                        DeliveryNoteItem.objects
+                        .select_related('delivery_note')
+                        .filter(customer_order_item=coi)
+                        .order_by('-delivery_note__created_at')
+                        .first()
+                    )
+                    delivery_note = dn_item.delivery_note if dn_item else None
+
+                if not delivery_note:
+                    delivery_note = (
+                        DeliveryNote.objects
+                        .filter(items__customer_order_item__customer_order=order)
+                        .distinct()
+                        .order_by('-created_at')
+                        .first()
+                    )
+            except Exception:
+                delivery_note = None
+
+            if delivery_note:
+                if not delivery_note.public_token:
+                    delivery_note.public_token = secrets.token_urlsafe(24)
+                    delivery_note.save(update_fields=['public_token'])
+                external_target_url = f"{base_url}/public/delivery-note/{delivery_note.public_token}"
+            else:
+                regenerate_token = False
+                if not order.public_delivery_token:
+                    regenerate_token = True
+                elif order.public_delivery_expires_at and timezone.now() > order.public_delivery_expires_at:
+                    regenerate_token = True
+
+                if regenerate_token:
+                    order.public_delivery_token = secrets.token_hex(20)
+                    order.public_delivery_expires_at = timezone.now() + timedelta(days=30)
+                    order.save(update_fields=['public_delivery_token', 'public_delivery_expires_at'])
+
+                if order.public_delivery_token:
+                    external_target_url = f"{base_url}/public/delivery/{order.public_delivery_token}"
+
+            if order.status not in ['ready', 'in_delivery', 'delivered']:
+                external_status_note = 'Megjegyzés: még nincs szállítandó állapotban.'
+
+        def build_qr_image(url):
+            if not url:
+                return None
+            try:
+                qr = qrcode.QRCode(version=1, box_size=10, border=2)
+                qr.add_data(url)
+                qr.make(fit=True)
+                qr_pil = qr.make_image(fill_color='black', back_color='white')
+                qr_buf = BytesIO()
+                qr_pil.save(qr_buf, format='PNG')
+                qr_buf.seek(0)
+                return ImageReader(qr_buf)
+            except Exception:
+                return None
+
+        internal_qr_image = build_qr_image(internal_target_url)
+        external_qr_image = build_qr_image(external_target_url)
 
         # Sub-items (altételek) — all cost items belonging to the same
         # ManufacturingProduct (parent of the clicked row). Ordered to
@@ -1189,12 +1247,22 @@ class ManufacturingCostItemViewSet(
             p.setFont(font_bold, 12)
             tag = 'BELSŐ' if internal else 'KÜLSŐ'
             p.drawString(left, y, f"MUNKALAP - {order_number}  ({tag})")
+            qr_image = internal_qr_image if internal else external_qr_image
             if qr_image:
                 p.drawImage(qr_image, width - right_margin - qr_size,
                             y - qr_size + 0.4 * cm, width=qr_size, height=qr_size)
             text_right_limit = width - right_margin - qr_size - 0.5 * cm
             max_text_w = text_right_limit - left
             y -= 0.8 * cm
+
+            if not internal and external_status_note:
+                p.setFont(font_bold, 8)
+                p.setFillColorRGB(0.75, 0.18, 0.18)
+                for line in wrap_to_width(external_status_note, font_bold, 8, max_text_w):
+                    p.drawString(left, y, line)
+                    y -= 0.34 * cm
+                p.setFillColorRGB(0, 0, 0)
+                y -= 0.08 * cm
 
             def header_row(label, value):
                 nonlocal y
@@ -1390,117 +1458,6 @@ class ManufacturingCostItemViewSet(
         response = HttpResponse(buffer, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
         return response
-
-    @action(detail=True, methods=['get'], url_path='work_sheet_data')
-    def work_sheet_data(self, request, pk=None):
-        """Return the same core data shown on the worksheet's BELSŐ part.
-
-        This powers the queue page order-number modal so users can inspect
-        internal worksheet details without generating a PDF.
-        """
-        import re as _re
-        from html import unescape as _html_unescape
-        from django.db.models import F
-
-        def strip_html(s):
-            if not s:
-                return ''
-            s = _re.sub(r'(?i)<\s*(br|/p|/div|/li|/h[1-6])\s*[^>]*>', '\n', s)
-            s = _re.sub(r'<[^>]+>', '', s)
-            s = _html_unescape(s)
-            s = _re.sub(r'[ \t]+', ' ', s)
-            s = _re.sub(r'\n\s*\n+', '\n', s)
-            return s.strip()
-
-        ci = self.get_object()
-        product = ci.product
-        order, coi = self._resolve_order_context(ci)
-
-        order_number = order.order_number if order else '-'
-        customer_name = '-'
-        contact_name = ''
-        project_name = ''
-        deadline = None
-        item_note = ''
-        item_qty_str = ''
-
-        if order and order.quote_request:
-            rfq = order.quote_request
-            if rfq.company:
-                customer_name = rfq.company.name
-            elif rfq.customer:
-                customer_name = rfq.customer.name
-            try:
-                c = rfq.contacts.first()
-                if c:
-                    contact_name = c.name
-                    if customer_name == '-' and getattr(c, 'company', None):
-                        customer_name = c.company.name or '-'
-            except Exception:
-                pass
-            if rfq.project:
-                project_name = rfq.project.name
-            if rfq.deadline:
-                deadline = rfq.deadline.isoformat()
-
-        if coi:
-            try:
-                item_qty_str = f"{float(coi.quantity):g}"
-                qi = coi.quote_item
-                if qi and qi.unit:
-                    item_qty_str += f" {qi.unit}"
-            except Exception:
-                pass
-            item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
-
-        product_code = getattr(product, 'code', '') or ''
-        product_name = product.name or ''
-        product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
-        product_desc = strip_html(getattr(product, 'description', '') or '')
-
-        sub_items_qs = (
-            ManufacturingCostItem.objects
-            .select_related('supplier', 'department')
-            .filter(product=product)
-            .order_by(F('queue_position').asc(nulls_last=True), 'id')
-        )
-        sub_items = []
-        for sub in sub_items_qs:
-            if sub.is_internal:
-                supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
-            elif sub.supplier:
-                supp_txt = sub.supplier.name
-            else:
-                supp_txt = '-'
-            try:
-                qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
-            except Exception:
-                qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
-            sub_items.append({
-                'id': sub.id,
-                'name': sub.name or '',
-                'quantity': qty_txt,
-                'supplier': supp_txt,
-                'notes': strip_html(sub.notes or ''),
-                'is_self': sub.id == ci.id,
-            })
-
-        return Response({
-            'cost_item_id': ci.id,
-            'order_id': order.id if order else None,
-            'order_number': order_number,
-            'customer': customer_name,
-            'contact': contact_name,
-            'project': project_name,
-            'deadline': deadline,
-            'product_code': product_code,
-            'product_name': product_name,
-            'quantity': item_qty_str,
-            'description': product_desc,
-            'internal_description': product_internal_desc,
-            'item_note': item_note,
-            'sub_items': sub_items,
-        })
 
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):

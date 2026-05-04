@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Table, Button, Space, Modal, Form, Input, message, Popconfirm, Tag, Checkbox, Collapse, Row, Col } from 'antd';
-import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined, LockOutlined } from '@ant-design/icons';
+import { Card, Table, Button, Space, Modal, Form, Input, Select, message, Popconfirm, Tag, Checkbox, Collapse, Row, Col } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined, LockOutlined, CopyOutlined } from '@ant-design/icons';
 import { rolesService, Role, Permission, ModulesAndActions } from '../../../services/rolesService';
 
 const { TextArea } = Input;
@@ -17,6 +17,7 @@ const RolesPage: React.FC = () => {
   const [modulesAndActions, setModulesAndActions] = useState<ModulesAndActions>({ modules: [], resources: {}, actions: [] });
   const [permissions, setPermissions] = useState<Record<string, string[]>>({});
   const [canApproveOrders, setCanApproveOrders] = useState(false);
+  const [copyFromRoleId, setCopyFromRoleId] = useState<number | undefined>(undefined);
 
   useEffect(() => {
     loadRoles();
@@ -66,6 +67,48 @@ const RolesPage: React.FC = () => {
     }
   };
 
+  const getDuplicateRoleName = (baseName: string) => {
+    const normalizedBase = `${baseName} másolat`;
+    const existingNames = new Set(roles.map(role => role.name));
+    if (!existingNames.has(normalizedBase)) {
+      return normalizedBase;
+    }
+
+    let counter = 2;
+    while (existingNames.has(`${normalizedBase} ${counter}`)) {
+      counter += 1;
+    }
+    return `${normalizedBase} ${counter}`;
+  };
+
+  const handleDuplicate = async (role: Role) => {
+    try {
+      const clonedRole = await rolesService.createRole({
+        name: getDuplicateRoleName(role.name),
+        description: role.description || '',
+        can_approve_orders: role.can_approve_orders || false,
+      });
+
+      const clonedPermissions = (role.permissions || [])
+        .filter(perm => perm.allowed)
+        .map(perm => ({
+          module: perm.module,
+          resource: perm.resource,
+          action: perm.action,
+          allowed: true,
+        }));
+
+      if (clonedPermissions.length > 0) {
+        await rolesService.setRolePermissions(clonedRole.id, clonedPermissions);
+      }
+
+      message.success('Szerepkör másolva');
+      loadRoles();
+    } catch (error) {
+      message.error('Nem sikerült másolni a szerepkört');
+    }
+  };
+
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
@@ -88,6 +131,7 @@ const RolesPage: React.FC = () => {
   const handleManagePermissions = async (role: Role) => {
     setSelectedRole(role);
     setCanApproveOrders(role.can_approve_orders || false);
+    setCopyFromRoleId(undefined);
     
     // Load current permissions (almodul szinten)
     const currentPermissions: Record<string, string[]> = {};
@@ -96,7 +140,7 @@ const RolesPage: React.FC = () => {
       if (!currentPermissions[key]) {
         currentPermissions[key] = [];
       }
-      if (perm.allowed) {
+      if (perm.allowed && !currentPermissions[key].includes(perm.action)) {
         currentPermissions[key].push(perm.action);
       }
     });
@@ -113,7 +157,7 @@ const RolesPage: React.FC = () => {
       if (!resourceOrModule.includes('.')) {
         // Keressük meg az összes resource-t ebben a modulban
         const moduleResources = modulesAndActions.resources[resourceOrModule];
-        if (moduleResources && moduleResources.resources) {
+        if (moduleResources && moduleResources.resources && moduleResources.resources.length > 0) {
           moduleResources.resources.forEach(resource => {
             if (!updated[resource.value]) {
               updated[resource.value] = [];
@@ -126,6 +170,18 @@ const RolesPage: React.FC = () => {
               updated[resource.value] = updated[resource.value].filter(a => a !== action);
             }
           });
+        } else {
+          // Nincs almodul: közvetlenül a modulra mentjük a jogosultságot
+          if (!updated[resourceOrModule]) {
+            updated[resourceOrModule] = [];
+          }
+          if (checked) {
+            if (!updated[resourceOrModule].includes(action)) {
+              updated[resourceOrModule].push(action);
+            }
+          } else {
+            updated[resourceOrModule] = updated[resourceOrModule].filter(a => a !== action);
+          }
         }
       } else {
         // Resource szintű változtatás
@@ -150,12 +206,41 @@ const RolesPage: React.FC = () => {
   const isModuleActionChecked = (moduleCode: string, action: string): boolean => {
     const moduleResources = modulesAndActions.resources[moduleCode];
     if (!moduleResources || !moduleResources.resources || moduleResources.resources.length === 0) {
-      return false;
+      return permissions[moduleCode]?.includes(action) || false;
     }
     
     return moduleResources.resources.every(resource => 
       permissions[resource.value]?.includes(action)
     );
+  };
+
+  const handleCopyPermissionsFromRole = () => {
+    if (!copyFromRoleId) {
+      message.warning('Válassz forrás szerepkört');
+      return;
+    }
+
+    const sourceRole = roles.find(role => role.id === copyFromRoleId);
+    if (!sourceRole) {
+      message.error('A forrás szerepkör nem található');
+      return;
+    }
+
+    const copiedPermissions: Record<string, string[]> = {};
+    sourceRole.permissions.forEach(perm => {
+      if (!perm.allowed) return;
+      const key = perm.resource || perm.module;
+      if (!copiedPermissions[key]) {
+        copiedPermissions[key] = [];
+      }
+      if (!copiedPermissions[key].includes(perm.action)) {
+        copiedPermissions[key].push(perm.action);
+      }
+    });
+
+    setPermissions(copiedPermissions);
+    setCanApproveOrders(sourceRole.can_approve_orders || false);
+    message.success(`Jogosultságok átmásolva: ${sourceRole.name}`);
   };
 
   const handleSavePermissions = async () => {
@@ -236,6 +321,11 @@ const RolesPage: React.FC = () => {
           >
             Jogosultságok
           </Button>
+          <Button
+            icon={<CopyOutlined />}
+            size="small"
+            onClick={() => handleDuplicate(record)}
+          />
           <Button
             icon={<EditOutlined />}
             size="small"
@@ -326,6 +416,27 @@ const RolesPage: React.FC = () => {
           >
             <strong>Jóváhagyó</strong> (Teljes jóváhagyási jogkör minden rendelésre)
           </Checkbox>
+        </div>
+
+        <div style={{ marginBottom: 16, padding: '12px 16px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+          <Space wrap>
+            <span>Jogosultságok másolása:</span>
+            <Select
+              allowClear
+              showSearch
+              placeholder="Válassz forrás szerepkört"
+              style={{ width: 280 }}
+              value={copyFromRoleId}
+              onChange={(value) => setCopyFromRoleId(value)}
+              options={roles
+                .filter(role => role.id !== selectedRole?.id)
+                .map(role => ({ value: role.id, label: role.name }))}
+              optionFilterProp="label"
+            />
+            <Button onClick={handleCopyPermissionsFromRole} disabled={!copyFromRoleId}>
+              Másolás
+            </Button>
+          </Space>
         </div>
 
         <Collapse>

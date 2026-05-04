@@ -542,9 +542,14 @@ interface CustomerOrder {
                 <Tag color={color} style={{ cursor: 'pointer' }}>{text}</Tag>
             </Popover>
             {record.pending_approval && (
-                <Tooltip title={`Jóváhagyásra vár: ${statusMap[record.pending_approval.requested_status]?.text || record.pending_approval.requested_status} (${record.pending_approval.requester})`}>
-                    <QuestionCircleOutlined style={{ color: '#faad14' }} />
-                </Tooltip>
+          <>
+            <Tag color="gold">
+              Jóváhagyásra vár: {statusMap[record.pending_approval.requested_status]?.text || record.pending_approval.requested_status}
+            </Tag>
+            <Tooltip title={`Kérelmező: ${record.pending_approval.requester}`}>
+              <QuestionCircleOutlined style={{ color: '#faad14' }} />
+            </Tooltip>
+          </>
             )}
             {record.last_rejection && (
                 <Tooltip title={`Visszaküldve: ${record.last_rejection.note}`}>

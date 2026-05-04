@@ -1,13 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
-import { Table, Button, Space, message, Tag, Input, Select, Modal, Tooltip } from 'antd';
+import { Button, Space, message, Tag, Input, Select, Modal, Tooltip } from 'antd';
 import { CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import dayjs from 'dayjs';
+import { useAuth } from '../../contexts/AuthContext';
 
 const { Option } = Select;
 
 const Approvals: React.FC = () => {
+    const { user } = useAuth();
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState<string[]>(['pending', 'rejected']);
@@ -21,8 +23,8 @@ const Approvals: React.FC = () => {
             const response = await api.get('/sales/approval-requests/');
             const list = response.data.results || response.data;
             setData(Array.isArray(list) ? list : []);
-        } catch (error) {
-            message.error('Hiba a kérelmek betöltésekor');
+        } catch (error: any) {
+            message.error(error?.response?.data?.error || 'Hiba a kérelmek betöltésekor');
             setData([]);
         } finally {
             setLoading(false);
@@ -38,8 +40,8 @@ const Approvals: React.FC = () => {
             await api.post(`/sales/approval-requests/${id}/approve/`);
             message.success('Jóváhagyva');
             fetchApprovals();
-        } catch (error) {
-            message.error('Hiba a jóváhagyás során');
+        } catch (error: any) {
+            message.error(error?.response?.data?.error || 'Hiba a jóváhagyás során');
         }
     };
 
@@ -51,8 +53,8 @@ const Approvals: React.FC = () => {
             setRejectModalOpen(false);
             setRejectNote('');
             fetchApprovals();
-        } catch (error) {
-            message.error('Hiba a visszaküldés során');
+        } catch (error: any) {
+            message.error(error?.response?.data?.error || 'Hiba a visszaküldés során');
         }
     };
 
@@ -122,7 +124,7 @@ const Approvals: React.FC = () => {
             title: 'Művelet',
             render: (_: any, record: any) => (
                 <Space>
-                    {record.status === 'pending' && (
+                    {record.status === 'pending' && record.requester !== user?.id && (
                         <>
                             <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>Jóváhagy</Button>
                             <Button danger size="small" icon={<CloseOutlined />} onClick={() => {

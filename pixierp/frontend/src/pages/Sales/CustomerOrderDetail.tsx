@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown } from 'antd';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
-import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, DeleteOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -169,8 +169,12 @@ const CustomerOrderDetail: React.FC = () => {
 
   const handleUpdateStatus = async (newStatus: string) => {
     try {
-      await api.post(`/sales/customer-orders/${id}/update_status/`, { status: newStatus });
-      message.success('Státusz frissítve');
+      const response = await api.post(`/sales/customer-orders/${id}/update_status/`, { status: newStatus });
+      if (response.data?.status === 'approval_requested') {
+        message.info(response.data?.message || 'Jóváhagyásra vár');
+      } else {
+        message.success('Státusz frissítve');
+      }
       load();
     } catch (err: any) {
       message.error(err?.response?.data?.error || err?.response?.data?.detail || 'Hiba történt a státuszváltáskor');
@@ -232,8 +236,12 @@ const CustomerOrderDetail: React.FC = () => {
 
   const handleStatusChange = async (action: string) => {
     try {
-      await api.post(`/sales/customer-orders/${id}/${action}/`, {});
-      message.success('Státusz frissítve');
+      const response = await api.post(`/sales/customer-orders/${id}/${action}/`, {});
+      if (response.data?.status === 'approval_requested') {
+        message.info(response.data?.message || 'Jóváhagyásra vár');
+      } else {
+        message.success('Státusz frissítve');
+      }
       load();
     } catch (error: any) {
       message.error(error?.response?.data?.error || 'Hiba történt a művelet során');
@@ -251,7 +259,16 @@ const CustomerOrderDetail: React.FC = () => {
       cancelled: { color: 'red', text: 'Törölve' },
     };
     const config = statusMap[status] || { color: 'default', text: status };
-    return <Tag color={config.color}>{config.text}</Tag>;
+    return (
+      <Space size={6} wrap>
+        <Tag color={config.color}>{config.text}</Tag>
+        {order?.pending_approval && (
+          <Tag color="gold">
+            Jóváhagyásra vár: {statusMap[order.pending_approval.requested_status]?.text || order.pending_approval.requested_status}
+          </Tag>
+        )}
+      </Space>
+    );
   };
 
   const getStepStatus = () => {
@@ -423,6 +440,16 @@ const CustomerOrderDetail: React.FC = () => {
                 </div>
             )}
         </div>
+
+        {order.pending_approval && (
+          <Alert
+            type="warning"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message={`Jóváhagyásra vár: ${order.pending_approval.requester}`}
+            description={`Kért státusz: ${order.pending_approval.requested_status}`}
+          />
+        )}
 
         <Form layout="vertical" form={formBasic}>
           <Row gutter={12}>

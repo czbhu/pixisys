@@ -1,17 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
-  Button, Card, Checkbox, Col, Dropdown, Form, Input, message, Popconfirm,
+  Button, Card, Checkbox, Col, Dropdown, Form, Input, message, Modal, Popconfirm,
   Row, Select, Space, Spin, Table, Tag, Tooltip, Upload,
 } from 'antd';
-import { CopyOutlined, DeleteOutlined, DownOutlined, LeftOutlined, PaperClipOutlined, PlusOutlined, RightOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
+import { CopyOutlined, DeleteOutlined, DownOutlined, FieldTimeOutlined, LeftOutlined, MessageOutlined, PaperClipOutlined, PlusOutlined, PrinterOutlined, RightOutlined, UpOutlined, UploadOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../../components/Manufacturing/CostDnd';
 import dayjs from 'dayjs';
-import { manufacturingService, Currency } from '../../services/manufacturingService';
+import { manufacturingService } from '../../services/manufacturingService';
 import { crmService } from '../../services/crmService';
 import { hrService } from '../../services/hrService';
+import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 import NumInput from '../../components/NumInput';
 
@@ -37,6 +38,8 @@ interface CostItem {
   // Sorrend / alá-felérendelés (mint a tételnél)
   sort_order?: number;
   parent_local_id?: number | null;
+  status?: string;
+  notes?: string;
 }
 
 // ─── Constants ───────────────────────────────────────────────────────────────
@@ -75,6 +78,32 @@ const STATUS_COLORS: Record<string, string> = {
   cancelled: 'default',
 };
 
+const COST_ITEM_STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
+  { value: 'new', label: 'Új', color: 'blue' },
+  { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
+  { value: 'in_production', label: 'Gyártásban', color: 'orange' },
+  { value: 'ready', label: 'Kész', color: 'green' },
+  { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
+  { value: 'delivered', label: 'Leszállítva', color: 'success' },
+  { value: 'cancelled', label: 'Törölve', color: 'red' },
+];
+
+const stripHtmlToText = (s: any): string => {
+  if (s == null) return '';
+  const str = String(s);
+  if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
+  if (typeof document !== 'undefined') {
+    try {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = str;
+      return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+    } catch {
+      // Fall back to regex when DOM parsing is unavailable.
+    }
+  }
+  return str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 const ManufacturingProductDetail: React.FC = () => {
@@ -106,14 +135,14 @@ const ManufacturingProductDetail: React.FC = () => {
   // Totals
   const [displayedTotals, setDisplayedTotals] = useState({ totalCost: 0, totalSelling: 0, unitCost: 0, unitSelling: 0, quantity: 1 });
 
-  // Currency + default markup
-  const [currencies, setCurrencies] = useState<Currency[]>([]);
-  const [defaultMarkup, setDefaultMarkup] = useState<number>(30);
+  // Default markup for newly inserted custom rows
+  const defaultMarkup = 30;
 
   // Status dropdown
   const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
   const watchedStatus = Form.useWatch('status', form);
   const watchedQty = Form.useWatch('quantity', form);
+  const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId, setPreselectedSubItemId } = useTimeTracker();
 
   // Attachments
   const [attachments, setAttachments] = useState<any[]>([]);
@@ -138,6 +167,8 @@ const ManufacturingProductDetail: React.FC = () => {
 
       form.setFieldsValue({
         ...p,
+        description: stripHtmlToText(p.description),
+        internal_description: stripHtmlToText(p.internal_description),
         company_id: companyId,
         contact_ids: contactIds,
       });
@@ -169,6 +200,8 @@ const ManufacturingProductDetail: React.FC = () => {
           currency: c.currency || 'HUF',
           sort_order: typeof c.sort_order === 'number' ? c.sort_order : 0,
           parent_local_id: null as number | null,
+          status: c.status || 'new',
+          notes: c.notes || '',
         } as CostItem;
       });
       // Second pass: resolve parent local ids
@@ -197,14 +230,13 @@ const ManufacturingProductDetail: React.FC = () => {
 
   const loadReferenceData = useCallback(async () => {
     try {
-      const [custs, matsRes, servsRes, suppsRes, prodsRes, deptsRes, currRes] = await Promise.all([
+      const [custs, matsRes, servsRes, suppsRes, prodsRes, deptsRes] = await Promise.all([
         crmService.getCompanies(),
         api.get('/warehouse/materials/?filter_type=all&page_size=1000'),
         manufacturingService.getServices(),
         api.get('/crm/companies/?is_supplier=true&page_size=1000'),
         api.get('/manufacturing/products/?page_size=10000'),
         hrService.getDepartments(),
-        manufacturingService.getActiveCurrencies(),
       ]);
 
       setCustomers((custs as any).results || custs);
@@ -228,7 +260,6 @@ const ManufacturingProductDetail: React.FC = () => {
       setSuppliers(suppList);
       setDepartments((deptsRes as any).results ?? deptsRes);
       setExistingProducts(((prodsRes as any).data?.results ?? (prodsRes as any).data ?? []));
-      setCurrencies(currRes);
     } catch (e) {
       console.error(e);
     }
@@ -384,6 +415,66 @@ const ManufacturingProductDetail: React.FC = () => {
     }));
   };
 
+  const handleCostStatusChange = async (itemId: number, newStatus: string) => {
+    const prev = costItems;
+    setCostItems(prev.map(i => i.id === itemId ? { ...i, status: newStatus } : i));
+    try {
+      await api.patch(`/manufacturing/cost-items/${itemId}/`, { status: newStatus });
+      message.success('Státusz frissítve');
+    } catch (e) {
+      console.error(e);
+      message.error('Státusz frissítése sikertelen');
+      setCostItems(prev);
+    }
+  };
+
+  const handleCostNoteEdit = (item: CostItem) => {
+    let value = item.notes || '';
+    Modal.confirm({
+      title: `Megjegyzés — ${item.name || 'Altétel'}`,
+      width: 600,
+      icon: <MessageOutlined />,
+      content: (
+        <Input.TextArea
+          defaultValue={item.notes || ''}
+          rows={6}
+          onChange={(e) => { value = e.target.value; }}
+          placeholder="Írja be a megjegyzést..."
+        />
+      ),
+      okText: 'Mentés',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        try {
+          await api.patch(`/manufacturing/cost-items/${item.id}/`, { notes: value });
+          setCostItems(prev => prev.map(i => i.id === item.id ? { ...i, notes: value } : i));
+          message.success('Megjegyzés mentve');
+        } catch (e) {
+          console.error(e);
+          message.error('Megjegyzés mentése sikertelen');
+        }
+      },
+    });
+  };
+
+  const handleCostPrintWorksheet = async (itemId: number) => {
+    try {
+      const response = await api.get(`/manufacturing/cost-items/${itemId}/work_sheet/`, { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+      window.open(url, '_blank');
+    } catch (e) {
+      console.error(e);
+      message.error('Hiba a munkalap letöltése során');
+    }
+  };
+
+  const handleCostStartTimer = (itemId: number) => {
+    setPreselectedOrderId(null);
+    setPreselectedItemId(null);
+    setPreselectedSubItemId(itemId);
+    setTimerModalOpen(true);
+  };
+
   // ── Cost items ordering & nesting helpers ────────────────────────────────
   const moveCostItem = (itemId: number, dir: -1 | 1) => {
     setCostItems(prev => {
@@ -462,6 +553,8 @@ const ManufacturingProductDetail: React.FC = () => {
       });
       const payload = {
         ...v,
+        description: stripHtmlToText(v.description),
+        internal_description: stripHtmlToText(v.internal_description),
         net_total_price: Number(totalSelling.toFixed(2)),
         net_unit_price: Number((productQty > 0 ? totalSelling / productQty : 0).toFixed(2)),
         is_fixed_quantity: false,
@@ -480,6 +573,9 @@ const ManufacturingProductDetail: React.FC = () => {
             cost_price: Number((Number(c.cost_price) || 0).toFixed(4)),
             markup_percent: Number((Number(c.markup_percent) || 0).toFixed(4)),
             selling_price: Number((Number(c.selling_price) || 0).toFixed(4)),
+            status: c.status || 'new',
+            notes: c.notes || '',
+            is_per_unit: c.is_per_unit || false,
             supplier: c.supplier_id || null,
             department: c.department_id || null,
             is_internal: c.is_internal || false,
@@ -545,14 +641,14 @@ const ManufacturingProductDetail: React.FC = () => {
       ),
     },
     {
-      title: 'Megnevezés', key: 'name', width: 250,
+      title: 'Megnevezés', key: 'name', width: 220,
       render: (_: any, r: CostItem) => {
         const meta = costTreeMeta.get(r.id);
         const wrap = (content: React.ReactNode) => (
           <CostTreeGuide meta={meta}>{content}</CostTreeGuide>
         );
         if (r.type === 'other') return wrap(<Input value={r.name} onChange={e => updateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} />);
-        if (r.name && !r.ref_id) return wrap(<Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 230 }}>{r.name}</span></Tooltip>);
+        if (r.name && !r.ref_id) return wrap(<Tooltip title={r.name}><span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{r.name}</span></Tooltip>);
         const isMat = r.type === 'material';
         const list = isMat ? materials : services;
         return wrap(
@@ -579,30 +675,11 @@ const ManufacturingProductDetail: React.FC = () => {
         );
       },
     },
-    { title: 'Típus', dataIndex: 'type', key: 'type', width: 90, render: (t: string) => t === 'material' ? 'Alapanyag' : t === 'service' ? 'Szolgáltatás' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput value={r.quantity} onChange={v => updateCostItem(r.id, 'quantity', v)} min={0} controls={false} /> },
-    { title: 'Egység', key: 'unit', width: 70, render: (_: any, r: CostItem) => r.type === 'other' ? <Input value={r.unit} onChange={e => updateCostItem(r.id, 'unit', e.target.value)} /> : r.unit },
-    { title: 'Beker. ár', key: 'cost_price', width: 90, render: (_: any, r: CostItem) => <NumInput value={r.cost_price} onChange={v => updateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} /> },
-    { title: 'Haszon %', key: 'markup_percent', width: 70, render: (_: any, r: CostItem) => <NumInput value={r.markup_percent} onChange={v => updateCostItem(r.id, 'markup_percent', v)} disabled={r.type !== 'other'} controls={false} precision={2} /> },
-    { title: 'Eladási e.ár', key: 'selling_unit_price', width: 90, render: (_: any, r: CostItem) => <NumInput value={r.selling_unit_price} onChange={v => updateCostItem(r.id, 'selling_unit_price', v)} disabled={r.type !== 'other'} controls={false} /> },
+    { title: 'Típus', dataIndex: 'type', key: 'type', width: 72, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szolg.' : 'Egyéb' },
+    { title: 'Menny.', key: 'quantity', width: 64, render: (_: any, r: CostItem) => <NumInput value={r.quantity} onChange={v => updateCostItem(r.id, 'quantity', v)} min={0} controls={false} /> },
+    { title: 'Egység', key: 'unit', width: 60, render: (_: any, r: CostItem) => r.type === 'other' ? <Input value={r.unit} onChange={e => updateCostItem(r.id, 'unit', e.target.value)} /> : r.unit },
     {
-      title: 'Pénznem', key: 'currency', width: 80,
-      render: (_: any, r: CostItem) => (
-        <Select
-          value={r.currency || 'HUF'}
-          onChange={v => updateCostItem(r.id, 'currency', v)}
-          size="small"
-          style={{ width: '100%' }}
-        >
-          {currencies.length > 0
-            ? currencies.map(c => <Select.Option key={c.id} value={c.code}>{c.code}</Select.Option>)
-            : ['HUF', 'EUR', 'USD'].map(c => <Select.Option key={c} value={c}>{c}</Select.Option>)
-          }
-        </Select>
-      ),
-    },
-    {
-      title: 'Beszállító', key: 'supplier_id', width: 260,
+      title: 'Beszállító', key: 'supplier_id', width: 130,
       render: (_: any, r: CostItem) => (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Checkbox checked={r.is_internal} onChange={e => { updateCostItem(r.id, 'is_internal', e.target.checked); updateCostItem(r.id, 'department_id', null); updateCostItem(r.id, 'supplier_id', null); }}>Belső</Checkbox>
@@ -619,6 +696,43 @@ const ManufacturingProductDetail: React.FC = () => {
         </div>
       ),
     },
+    {
+      title: 'Státusz', key: 'status', width: 110,
+      render: (_: any, r: CostItem) => {
+        const cur = r.status || 'new';
+        const opt = COST_ITEM_STATUS_OPTIONS.find(o => o.value === cur) || COST_ITEM_STATUS_OPTIONS[0];
+        return (
+          <Dropdown
+            trigger={['click']}
+            menu={{
+              items: COST_ITEM_STATUS_OPTIONS.map(o => ({
+                key: o.value,
+                label: <Tag color={o.color}>{o.label}</Tag>,
+              })),
+              onClick: ({ key }) => handleCostStatusChange(r.id, String(key)),
+            }}
+          >
+            <Tag color={opt.color} style={{ cursor: 'pointer' }}>{opt.label}</Tag>
+          </Dropdown>
+        );
+      },
+    },
+    {
+      title: 'Műveletek', key: 'work_actions', width: 120,
+      render: (_: any, r: CostItem) => (
+        <Space size="small">
+          <Tooltip title="Munkaóra indítása">
+            <Button size="small" icon={<FieldTimeOutlined />} onClick={() => handleCostStartTimer(r.id)} />
+          </Tooltip>
+          <Tooltip title="Megjegyzés szerkesztése">
+            <Button size="small" type={r.notes ? 'primary' : 'default'} icon={<MessageOutlined />} onClick={() => handleCostNoteEdit(r)} />
+          </Tooltip>
+          <Tooltip title="Munkalap nyomtatása">
+            <Button size="small" icon={<PrinterOutlined />} onClick={() => handleCostPrintWorksheet(r.id)} />
+          </Tooltip>
+        </Space>
+      ),
+    },
     { title: '', key: 'dup', width: 40, render: (_: any, r: CostItem) => <Button size="small" icon={<CopyOutlined />} title="Másolás" onClick={() => setCostItems(prev => {
       const idx = prev.findIndex(x => x.id === r.id);
       if (idx < 0) return prev;
@@ -628,15 +742,14 @@ const ManufacturingProductDetail: React.FC = () => {
       return next;
     })} /> },
     { title: '', key: 'action', width: 50, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
-  ], [materials, services, suppliers, departments, currencies, costItems, costTreeMeta]);
+  ], [materials, services, suppliers, departments, costItems, costTreeMeta, handleCostStatusChange, handleCostNoteEdit, handleCostPrintWorksheet, handleCostStartTimer]);
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) return <div style={{ padding: 40, textAlign: 'center' }}><Spin size="large" /></div>;
   if (!product) return <div style={{ padding: 40 }}>Termék nem található.</div>;
 
-  const { totalCost, totalSelling, unitCost, unitSelling, quantity } = displayedTotals;
-  const totalProfit = totalSelling - totalCost;
+  const { quantity } = displayedTotals;
 
   const statusMenuItems = Object.entries(STATUS_LABELS)
     .filter(([key]) => key !== watchedStatus)
@@ -762,12 +875,12 @@ const ManufacturingProductDetail: React.FC = () => {
             <Row gutter={[8, 4]}>
               <Col span={12}>
                 <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
-                  <Input.TextArea rows={3} />
+                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('description', stripHtmlToText(e.target.value))} />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
-                  <Input.TextArea rows={3} />
+                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('internal_description', stripHtmlToText(e.target.value))} />
                 </Form.Item>
               </Col>
             </Row>
@@ -834,42 +947,10 @@ const ManufacturingProductDetail: React.FC = () => {
             )}
           </div>
 
-          {/* ── Árösszesítő ───────────────────────────────────────────────── */}
-          <div style={{ background: '#fafafa', border: '1px solid #d9d9d9', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#595959', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Árösszesítő</div>
-            <Row gutter={16}>
-              <Col span={6}><span style={{ display: 'block', color: '#666', fontSize: 12 }}>Egységár (Bekerülési):</span><span style={{ fontSize: 15, fontWeight: 600 }}>{unitCost.toFixed(2)} HUF</span></Col>
-              <Col span={6}><span style={{ display: 'block', color: '#666', fontSize: 12 }}>Egységár (Eladási):</span><span style={{ fontSize: 15, fontWeight: 600 }}>{unitSelling.toFixed(2)} HUF</span></Col>
-              <Col span={6}><span style={{ display: 'block', color: '#666', fontSize: 12 }}>Összesen (Eladási):</span><span style={{ fontSize: 15, fontWeight: 600 }}>{totalSelling.toFixed(2)} HUF</span></Col>
-              <Col span={6}><span style={{ display: 'block', color: '#666', fontSize: 12 }}>Haszon:</span><span style={{ fontSize: 15, fontWeight: 600, color: totalProfit >= 0 ? 'green' : 'red' }}>{totalProfit.toFixed(2)} HUF</span></Col>
-            </Row>
-          </div>
-
           {/* ── Anyaglista / Műveletek ─────────────────────────────────────── */}
           <div style={{ background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Anyaglista / Műveletek</div>
             <Row gutter={[16, 0]} style={{ marginBottom: 10 }} align="middle">
-              <Col>
-                <span style={{ fontSize: 12, color: '#555' }}>Pénznem:</span>
-                <Form.Item name="currency" noStyle>
-                  <Select style={{ width: 90, marginLeft: 6 }} placeholder="HUF" allowClear size="small">
-                    {currencies.map(c => <Select.Option key={c.id} value={c.id}>{c.code}</Select.Option>)}
-                  </Select>
-                </Form.Item>
-              </Col>
-              <Col>
-                <span style={{ fontSize: 12, color: '#555' }}>Alap haszonkulcs %:</span>
-                <NumInput
-                  formula
-                  value={defaultMarkup}
-                  onChange={v => setDefaultMarkup(Number(v) || 0)}
-                  min={0}
-                  max={9999}
-                  controls={false}
-                  size="small"
-                  style={{ width: 90, marginLeft: 6 }}
-                />
-              </Col>
               <Col flex="auto" />
               <Col>
                 <Space>
@@ -886,7 +967,6 @@ const ManufacturingProductDetail: React.FC = () => {
                   columns={costColumns}
                   pagination={false}
                   rowKey="id"
-                  scroll={{ x: 1000 }}
                   size="small"
                   components={{ body: { row: CostDraggableRow } }}
                 />
