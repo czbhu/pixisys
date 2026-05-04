@@ -3,6 +3,7 @@ import { Drawer, Table, Button, Checkbox, Space, Tooltip, Tag, message, Select }
 import { PrinterOutlined, MailOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { salesService } from '../../services/salesService';
 import api from '../../services/api';
+import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 
 interface OrderItemsDrawerProps {
   open: boolean;
@@ -48,37 +49,13 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
     setLoading(true);
     try {
       const data = await salesService.getCustomerOrderDetailedItems(orderId!);
-      setItems(buildTree(data));
+      setItems(data);
     } catch (e) {
       console.error(e);
       message.error('Hiba a tételek betöltésekor');
     } finally {
       setLoading(false);
     }
-  };
-
-  const buildTree = (flatItems: DetailedItem[]): DetailedItem[] => {
-    const map = new Map<number, DetailedItem>();
-    
-    // First pass: initialize map and children array
-    flatItems.forEach(item => {
-        map.set(item.id, { ...item, children: [] });
-    });
-
-    const roots: DetailedItem[] = [];
-    
-    // Second pass: link children
-    flatItems.forEach(item => {
-        const node = map.get(item.id)!;
-        if (item.parent_id && map.has(item.parent_id)) {
-            const parent = map.get(item.parent_id)!;
-            parent.children!.push(node);
-        } else {
-            roots.push(node);
-        }
-    });
-
-    return roots;
   };
 
   const handlePrintWorksheet = async (item: DetailedItem) => {
@@ -218,6 +195,24 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
       )
   });
 
+      const expandedRowRender = (record: DetailedItem) => {
+        if (!record.manufacturing_product_id || !orderId) return null;
+        return (
+          <div style={{ padding: '8px 0 8px 32px' }}>
+            <ProductSubItemsTable productId={record.manufacturing_product_id} />
+            <div style={{ marginTop: 8 }}>
+              <Button
+                size="small"
+                icon={<AppstoreOutlined />}
+                onClick={() => window.open(`/sales/customer-orders/${orderId}/items/${record.id}/subitems`, '_blank', 'noopener,noreferrer')}
+              >
+                Megnyitás teljes lapon
+              </Button>
+            </div>
+          </div>
+        );
+      };
+
   return (
     <Drawer
       title={`Megrendelés tételek: ${orderNumber || ''}`}
@@ -237,7 +232,8 @@ export const OrderItemsDrawer: React.FC<OrderItemsDrawerProps> = ({ open, onClos
         rowKey="id"
         pagination={false}
         expandable={{
-            defaultExpandAllRows: true
+            expandedRowRender,
+            rowExpandable: (record: DetailedItem) => !!record.manufacturing_product_id,
         }}
       />
     </Drawer>
