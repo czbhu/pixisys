@@ -1391,6 +1391,117 @@ class ManufacturingCostItemViewSet(
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
         return response
 
+    @action(detail=True, methods=['get'], url_path='work_sheet_data')
+    def work_sheet_data(self, request, pk=None):
+        """Return the same core data shown on the worksheet's BELSŐ part.
+
+        This powers the queue page order-number modal so users can inspect
+        internal worksheet details without generating a PDF.
+        """
+        import re as _re
+        from html import unescape as _html_unescape
+        from django.db.models import F
+
+        def strip_html(s):
+            if not s:
+                return ''
+            s = _re.sub(r'(?i)<\s*(br|/p|/div|/li|/h[1-6])\s*[^>]*>', '\n', s)
+            s = _re.sub(r'<[^>]+>', '', s)
+            s = _html_unescape(s)
+            s = _re.sub(r'[ \t]+', ' ', s)
+            s = _re.sub(r'\n\s*\n+', '\n', s)
+            return s.strip()
+
+        ci = self.get_object()
+        product = ci.product
+        order, coi = self._resolve_order_context(ci)
+
+        order_number = order.order_number if order else '-'
+        customer_name = '-'
+        contact_name = ''
+        project_name = ''
+        deadline = None
+        item_note = ''
+        item_qty_str = ''
+
+        if order and order.quote_request:
+            rfq = order.quote_request
+            if rfq.company:
+                customer_name = rfq.company.name
+            elif rfq.customer:
+                customer_name = rfq.customer.name
+            try:
+                c = rfq.contacts.first()
+                if c:
+                    contact_name = c.name
+                    if customer_name == '-' and getattr(c, 'company', None):
+                        customer_name = c.company.name or '-'
+            except Exception:
+                pass
+            if rfq.project:
+                project_name = rfq.project.name
+            if rfq.deadline:
+                deadline = rfq.deadline.isoformat()
+
+        if coi:
+            try:
+                item_qty_str = f"{float(coi.quantity):g}"
+                qi = coi.quote_item
+                if qi and qi.unit:
+                    item_qty_str += f" {qi.unit}"
+            except Exception:
+                pass
+            item_note = strip_html(coi.description or (coi.quote_item.description if coi.quote_item else '') or '')
+
+        product_code = getattr(product, 'code', '') or ''
+        product_name = product.name or ''
+        product_internal_desc = strip_html(getattr(product, 'internal_description', '') or '')
+        product_desc = strip_html(getattr(product, 'description', '') or '')
+
+        sub_items_qs = (
+            ManufacturingCostItem.objects
+            .select_related('supplier', 'department')
+            .filter(product=product)
+            .order_by(F('queue_position').asc(nulls_last=True), 'id')
+        )
+        sub_items = []
+        for sub in sub_items_qs:
+            if sub.is_internal:
+                supp_txt = f"Belső: {sub.department.name}" if sub.department else "Belső"
+            elif sub.supplier:
+                supp_txt = sub.supplier.name
+            else:
+                supp_txt = '-'
+            try:
+                qty_txt = f"{float(sub.quantity):g} {sub.unit or ''}".strip()
+            except Exception:
+                qty_txt = f"{sub.quantity} {sub.unit or ''}".strip()
+            sub_items.append({
+                'id': sub.id,
+                'name': sub.name or '',
+                'quantity': qty_txt,
+                'supplier': supp_txt,
+                'notes': strip_html(sub.notes or ''),
+                'is_self': sub.id == ci.id,
+            })
+
+        return Response({
+            'cost_item_id': ci.id,
+            'order_id': order.id if order else None,
+            'order_number': order_number,
+            'customer': customer_name,
+            'contact': contact_name,
+            'project': project_name,
+            'deadline': deadline,
+            'product_code': product_code,
+            'product_name': product_name,
+            'quantity': item_qty_str,
+            'description': product_desc,
+            'internal_description': product_internal_desc,
+            'item_note': item_note,
+            'sub_items': sub_items,
+        })
+
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):
     """Termék sablonok CRUD"""
