@@ -16,6 +16,22 @@ import ActivityLogModal from '../../components/ActivityLogModal';
 
 const { TextArea } = Input;
 
+const stripHtmlToText = (s: any): string => {
+  if (s == null) return '';
+  const str = String(s);
+  if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
+  if (typeof document !== 'undefined') {
+    try {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = str;
+      return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+    } catch {
+      // fall back to regex when DOM parsing is unavailable
+    }
+  }
+  return str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
 
 const CustomerOrderDetail: React.FC = () => {
   const { id } = useParams();
@@ -85,8 +101,8 @@ const CustomerOrderDetail: React.FC = () => {
           contact_ids: rfq?.contact_names || '',
           title: rfq?.title || '',
           project_id: orderData.project_name || rfq?.project?.name || '',
-          description: rfq?.description || '',
-          internal_description: rfq?.internal_description || '',
+          description: stripHtmlToText(rfq?.description),
+          internal_description: stripHtmlToText(rfq?.internal_description),
           currency_code: rfq?.currency_code || 'HUF',
         });
       } catch {}
