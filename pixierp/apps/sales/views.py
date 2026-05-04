@@ -133,7 +133,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         # Új ajánlat száma: yyyymmdd + növekvő sorszám
         today_str = timezone.now().strftime('%Y%m%d')
         daily_count = QuoteRequest.objects.filter(issue_date=timezone.now().date()).count() + 1
-        number = f"{today_str}{daily_count:03d}"
+        number = f"{today_str}{daily_count:02d}"
 
         # Kapcsolódó CRM cég és kapcsolattartók
         company_id = self.request.data.get('company_id')
@@ -213,7 +213,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             dt = timezone.now().date()
         today_str = dt.strftime('%Y%m%d')
         daily_count = QuoteRequest.objects.filter(issue_date=dt).count() + 1
-        number = f"{today_str}{daily_count:03d}"
+        number = f"{today_str}{daily_count:02d}"
         return Response({
             'date': dt.isoformat(),
             'count': daily_count,
@@ -1144,7 +1144,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
         daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        new_number = f"{today_str}{daily_count:03d}"
+        new_number = f"{today_str}{daily_count:02d}"
 
         dst = QuoteRequest.objects.create(
             number=new_number,
@@ -1248,7 +1248,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
         daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        number = f"{today_str}{daily_count:03d}"
+        number = f"{today_str}{daily_count:02d}"
         title = request.data.get('title') or f"Ajánlat {number}"
         description = request.data.get('description') or ''
         deadline = request.data.get('deadline')
@@ -1548,7 +1548,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def create_quote(self, request, pk=None):
         """Create a Quote from RFQ (demand), preserving company and contacts on RFQ."""
         qr = self.get_object()
-        quote_number = f"Q{timezone.now().strftime('%Y%m%d')}-{Quote.objects.count() + 1:04d}"
+        quote_number = f"Q{timezone.now().strftime('%Y%m%d')}{Quote.objects.count() + 1:02d}"
         creator = request.user if getattr(request, 'user', None) and request.user.is_authenticated else None
         if not creator:
             from django.contrib.auth import get_user_model
@@ -1593,7 +1593,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def _create_order_from_items(self, request, qr, items, set_status: str):
         from .models import CustomerOrder, CustomerOrderItem
         
-        # Generate unique order number in Oyyyymmddxxxx format
+        # Generate unique order number in Oyyyymmddxx format
         today = timezone.now()
         date_prefix = today.strftime('%Y%m%d')
         prefix = f"O{date_prefix}"
@@ -1612,11 +1612,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 last_seq = 0
         else:
             last_seq = 0
-        order_number = f"{prefix}{last_seq + 1:04d}"
+        order_number = f"{prefix}{last_seq + 1:02d}"
         # Extra safety: keep incrementing if still collides
         while CustomerOrder.objects.filter(order_number=order_number).exists():
             last_seq += 1
-            order_number = f"{prefix}{last_seq + 1:04d}"
+            order_number = f"{prefix}{last_seq + 1:02d}"
         
         # Create CustomerOrder
         order = CustomerOrder.objects.create(
@@ -1844,12 +1844,12 @@ def public_submit_order(request, token: str):
     ).order_by('-order_number').first()
     
     if last_order:
-        last_seq = int(last_order.order_number[-4:])
+        last_seq = int(last_order.order_number[len(f'O{date_str}'):])
         new_seq = last_seq + 1
     else:
         new_seq = 1
     
-    order_number = f'O{date_str}{new_seq:04d}'
+    order_number = f'O{date_str}{new_seq:02d}'
     
     order_details = []
     
@@ -1947,7 +1947,7 @@ A megrendelést a publikus linken keresztül küldték be.
         """Ajánlat kérésből ajánlat létrehozása"""
         quote_request = self.get_object()
 
-        quote_number = f"Q{timezone.now().strftime('%Y%m%d')}-{Quote.objects.count() + 1:04d}"
+        quote_number = f"Q{timezone.now().strftime('%Y%m%d')}{Quote.objects.count() + 1:02d}"
 
         quote = Quote.objects.create(
             quote_request=quote_request,
@@ -2075,7 +2075,7 @@ class QuoteViewSet(viewsets.ModelViewSet):
                           status=status.HTTP_400_BAD_REQUEST)
         
         # Megrendelés szám generálása
-        order_number = f"O{timezone.now().strftime('%Y%m%d')}-{Order.objects.count() + 1:04d}"
+        order_number = f"O{timezone.now().strftime('%Y%m%d')}{Order.objects.count() + 1:02d}"
         
         order = Order.objects.create(
             quote=quote,
@@ -2327,12 +2327,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         ).order_by('-order_number').first()
         
         if last_order:
-            last_seq = int(last_order.order_number[-4:])
+            last_seq = int(last_order.order_number[len(f'O{date_str}'):])
             new_seq = last_seq + 1
         else:
             new_seq = 1
         
-        order_number = f'O{date_str}{new_seq:04d}'
+        order_number = f'O{date_str}{new_seq:02d}'
         
         with transaction.atomic():
             # Megrendelés létrehozása
