@@ -1,15 +1,17 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Form, Select, Button, Statistic, Input, AutoComplete } from 'antd';
+import { Modal, Form, Select, Button, Statistic, AutoComplete } from 'antd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { salesService } from '../../services/salesService';
+import { manufacturingService } from '../../services/manufacturingService';
 
 export const TimerModal: React.FC = () => {
     const { 
         activeLog, elapsedSeconds, stopTimer, startTimer, modalOpen, setModalOpen, 
-        preselectedOrderId, preselectedItemId 
+        preselectedOrderId, preselectedItemId, preselectedSubItemId,
     } = useTimeTracker();
     const [orders, setOrders] = useState<any[]>([]);
     const [items, setItems] = useState<any[]>([]);
+    const [subItems, setSubItems] = useState<any[]>([]);
     const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
     const [workflowOptions, setWorkflowOptions] = useState<string[]>([]);
     const [form] = Form.useForm();
@@ -56,11 +58,14 @@ export const TimerModal: React.FC = () => {
                              form.setFieldsValue({ item_id: preselectedItemId });
                              const item = loadedItems.find((i: any) => i.id === preselectedItemId);
                              if (item) {
-                                 // Use suggested workflow if available
                                  const wfName = item.suggested_workflow || ''; 
-                                 // User requested: Do NOT use generic description. 
-                                 // If suggested_workflow is empty, leave it empty.
                                  if (wfName) form.setFieldValue('workflow_name', wfName);
+                                 // Load sub-items for this item
+                                 loadSubItems(item).then(() => {
+                                     if (preselectedSubItemId) {
+                                         form.setFieldsValue({ sub_item_id: preselectedSubItemId });
+                                     }
+                                 });
                              }
                         }
                     });
@@ -69,12 +74,13 @@ export const TimerModal: React.FC = () => {
                     form.resetFields();
                     setSelectedOrderId(null);
                     setItems([]);
+                    setSubItems([]);
                 }
             } else {
                 // If activeLog, populate it (already handled in another useEffect, but safe to keep clean state logic)
             }
         }
-    }, [modalOpen, preselectedOrderId, preselectedItemId, activeLog]);
+    }, [modalOpen, preselectedOrderId, preselectedItemId, preselectedSubItemId, activeLog]);
 
     useEffect(() => {
         if (activeLog) {
@@ -95,7 +101,14 @@ export const TimerModal: React.FC = () => {
 
             setSelectedOrderId(activeLog.customer_order);
             // Load items for valid display
-            if (activeLog.customer_order) loadItems(activeLog.customer_order);
+            if (activeLog.customer_order) {
+                loadItems(activeLog.customer_order).then(loadedItems => {
+                    if (activeLog.item) {
+                        const item = loadedItems.find((i: any) => i.id === activeLog.item);
+                        if (item) loadSubItems(item);
+                    }
+                });
+            }
         }
     }, [activeLog, form]);
 
@@ -124,10 +137,25 @@ export const TimerModal: React.FC = () => {
         }
     };
 
+    const loadSubItems = async (item: any) => {
+        const productId = item?.quote_item?.manufacturing_product;
+        if (!productId) {
+            setSubItems([]);
+            return;
+        }
+        try {
+            const product = await manufacturingService.getProduct(productId);
+            const costItems = (product.cost_items || []).filter((ci: any) => ci.name);
+            setSubItems(costItems);
+        } catch (e) {
+            setSubItems([]);
+        }
+    };
+
     const handleStart = async () => {
         try {
             const vals = await form.validateFields();
-            await startTimer(vals.order_id, vals.item_id, vals.workflow_name);
+            await startTimer(vals.order_id, vals.item_id, vals.workflow_name, vals.sub_item_id ?? null);
         } catch (e) {}
     };
 
@@ -189,18 +217,41 @@ export const TimerModal: React.FC = () => {
                              });
                          })()}
                          onChange={(val) => {
-                             // Use Form.setFieldsValue only for side effects, rely on Form.Item binding for the value itself
                              const item = items.find(i => i.id === val);
                              if (item && !form.getFieldValue('workflow_name')) {
-                                 // Prefer suggested_workflow (from backend costs)
-                                 // Fallback: Do NOT use item.description as generic placeholder per user request.
                                  if (item.suggested_workflow) {
                                      form.setFieldValue('workflow_name', item.suggested_workflow);
                                  }
                              }
+                             // Load sub-items for the selected item
+                             form.setFieldsValue({ sub_item_id: undefined });
+                             if (item) {
+                                 loadSubItems(item);
+                             } else {
+                                 setSubItems([]);
+                             }
                          }}
                     />
                 </Form.Item>
+                {subItems.length > 0 && (
+                    <Form.Item name="sub_item_id" label="Altétel">
+                        <Select
+                            disabled={!!activeLog}
+                            allowClear
+                            placeholder="Válassz altételt..."
+                            options={subItems.map(si => ({
+                                label: si.name + (si.code ? ` [${si.code}]` : ''),
+                                value: si.id,
+                            }))}
+                            onChange={(val) => {
+                                if (val && !form.getFieldValue('workflow_name')) {
+                                    const si = subItems.find(s => s.id === val);
+                                    if (si) form.setFieldValue('workflow_name', si.name);
+                                }
+                            }}
+                        />
+                    </Form.Item>
+                )}
                 <Form.Item name="workflow_name" label="Munkafolyamat">
                     <AutoComplete
                         disabled={!!activeLog}

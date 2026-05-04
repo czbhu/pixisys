@@ -4477,6 +4477,7 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         order_id = request.data.get('order_id')
         item_id = request.data.get('item_id')
         workflow_name = request.data.get('workflow_name')
+        sub_item_id = request.data.get('sub_item_id')
         
         if not order_id:
             return Response({'error': 'order_id required'}, status=400)
@@ -4485,6 +4486,7 @@ class WorkLogViewSet(viewsets.ModelViewSet):
             user=request.user,
             customer_order_id=order_id,
             item_id=item_id,
+            sub_item_id=sub_item_id if sub_item_id else None,
             workflow_name=workflow_name,
             started_at=timezone.now()
         )

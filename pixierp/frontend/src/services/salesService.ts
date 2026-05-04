@@ -501,7 +501,7 @@ export const salesService = {
         const response = await api.get('/sales/work-logs/active/');
         return response.data;
     },
-    async startWorkLog(data: { order_id: number; item_id?: number | null; workflow_name?: string }) {
+    async startWorkLog(data: { order_id: number; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null }) {
         const response = await api.post('/sales/work-logs/start/', data);
         return response.data;
     },

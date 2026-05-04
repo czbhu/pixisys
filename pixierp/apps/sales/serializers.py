@@ -1013,6 +1013,7 @@ class WorkLogSerializer(serializers.ModelSerializer):
     customer_order_number = serializers.CharField(source='customer_order.order_number', read_only=True)
     customer_name = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
+    sub_item_name = serializers.SerializerMethodField()
 
     class Meta:
         model = WorkLog
@@ -1031,6 +1032,14 @@ class WorkLogSerializer(serializers.ModelSerializer):
         try:
             if obj.item:
                 return obj.item.description
+        except Exception:
+            pass
+        return None
+
+    def get_sub_item_name(self, obj):
+        try:
+            if obj.sub_item:
+                return obj.sub_item.name
         except Exception:
             pass
         return None

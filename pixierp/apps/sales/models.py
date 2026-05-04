@@ -635,6 +635,12 @@ class WorkLog(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Felhasználó")
     customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Megrendelés")
     item = models.ForeignKey(CustomerOrderItem, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Tétel")
+    sub_item = models.ForeignKey(
+        'manufacturing.ManufacturingCostItem',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        verbose_name="Altétel"
+    )
     workflow_name = models.CharField(max_length=200, verbose_name="Munkafolyamat")
     started_at = models.DateTimeField(verbose_name="Kezdés")
     ended_at = models.DateTimeField(null=True, blank=True, verbose_name="Befejezés")

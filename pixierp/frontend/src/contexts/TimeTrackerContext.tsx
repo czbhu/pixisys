@@ -18,7 +18,7 @@ interface TimeTrackerContextType {
   activeLog: WorkLog | null;
   elapsedSeconds: number;
   refreshActiveLog: () => Promise<void>;
-  startTimer: (orderId: number, itemId?: number | null, workflowName?: string) => Promise<void>;
+  startTimer: (orderId: number, itemId?: number | null, workflowName?: string, subItemId?: number | null) => Promise<void>;
   stopTimer: () => Promise<void>;
   modalOpen: boolean;
   setModalOpen: (open: boolean) => void;
@@ -26,6 +26,8 @@ interface TimeTrackerContextType {
   setPreselectedOrderId: (id: number | null) => void;
   preselectedItemId: number | null;
   setPreselectedItemId: (id: number | null) => void;
+  preselectedSubItemId: number | null;
+  setPreselectedSubItemId: (id: number | null) => void;
 }
 
 const TimeTrackerContext = createContext<TimeTrackerContextType | undefined>(undefined);
@@ -37,6 +39,7 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
   const [modalOpen, setModalOpen] = useState(false);
   const [preselectedOrderId, setPreselectedOrderId] = useState<number | null>(null);
   const [preselectedItemId, setPreselectedItemId] = useState<number | null>(null);
+  const [preselectedSubItemId, setPreselectedSubItemId] = useState<number | null>(null);
 
   const refreshActiveLog = async () => {
     if (!user) {
@@ -78,9 +81,9 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return () => clearInterval(interval);
   }, [activeLog]);
 
-  const startTimer = async (orderId: number, itemId?: number | null, workflowName?: string) => {
+  const startTimer = async (orderId: number, itemId?: number | null, workflowName?: string, subItemId?: number | null) => {
     try {
-      await salesService.startWorkLog({ order_id: orderId, item_id: itemId, workflow_name: workflowName });
+      await salesService.startWorkLog({ order_id: orderId, item_id: itemId, workflow_name: workflowName, sub_item_id: subItemId });
       await refreshActiveLog();
       message.success('Stopper elindítva');
     } catch (e) {
@@ -112,7 +115,9 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
         preselectedOrderId, 
         setPreselectedOrderId,
         preselectedItemId,
-        setPreselectedItemId
+        setPreselectedItemId,
+        preselectedSubItemId,
+        setPreselectedSubItemId,
     }}>
       {children}
     </TimeTrackerContext.Provider>
