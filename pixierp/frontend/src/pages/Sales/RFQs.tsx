@@ -674,6 +674,9 @@ const RFQs: React.FC = () => {
     const res: any[] = [];
     filtered.forEach((rfq: any) => {
       (rfq.items || []).forEach((item: any, idx: number) => {
+        const itemStatus = rfq.status === 'ordered'
+          ? (item.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
+          : rfq.status;
         res.push({
           ...item,
           uniqueId: `${rfq.id}_${item.id ?? idx}`,
@@ -685,7 +688,7 @@ const RFQs: React.FC = () => {
           is_private: !rfq.company?.name && !rfq.company_name,
           issue_date: rfq.issue_date,
           deadline: rfq.deadline,
-          status: rfq.status,
+          status: itemStatus,
           currency_symbol: rfq.currency_symbol || 'Ft',
           created_by_name: rfq.created_by_name,
         });
