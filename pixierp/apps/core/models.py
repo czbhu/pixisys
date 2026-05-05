@@ -1010,6 +1010,10 @@ class StorageFile(models.Model):
         verbose_name='Mappa'
     )
     file = models.FileField(upload_to=storage_upload_path, verbose_name='Fájl')
+    alias_of = models.ForeignKey(
+        'self', null=True, blank=True, on_delete=models.CASCADE,
+        related_name='aliases', verbose_name='Eredeti fájl (alias)'
+    )
     size = models.BigIntegerField(default=0, verbose_name='Méret (byte)')
     content_type = models.CharField(max_length=255, blank=True, verbose_name='MIME típus')
     owner = models.ForeignKey(
@@ -1028,8 +1032,8 @@ class StorageFile(models.Model):
         return self.name
 
     def delete(self, *args, **kwargs):
-        # Remove physical file on delete
-        if self.file and hasattr(self.file, 'path'):
+        # Remove physical file on delete only if this is NOT a virtual alias
+        if not self.alias_of_id and self.file and hasattr(self.file, 'path'):
             try:
                 if os.path.isfile(self.file.path):
                     os.remove(self.file.path)

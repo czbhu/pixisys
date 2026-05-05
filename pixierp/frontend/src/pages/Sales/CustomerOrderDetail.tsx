@@ -658,7 +658,7 @@ const CustomerOrderDetail: React.FC = () => {
 
         <Card
           size="small"
-          title="Megrendelés csatolmányok"
+          title="Csatolmányok"
           extra={
             <Space>
               <Input
@@ -699,101 +699,57 @@ const CustomerOrderDetail: React.FC = () => {
           <List
             size="small"
             bordered
-            dataSource={orderAttachments}
             locale={{ emptyText: 'Nincs csatolmány' }}
+            dataSource={[
+              ...orderAttachments.map((a: any) => ({ ...a, _source: 'order' })),
+              ...(orderFiles || []).map((f: any) => ({
+                id: `rfq-${f.uid}`,
+                original_filename: f.name,
+                file_url: f.url,
+                remark: f.response?.remark || '',
+                uploaded_by_name: f.response?.uploaded_by_name || '',
+                created_at: f.response?.created_at || '',
+                _source: 'rfq',
+              })),
+            ]}
             renderItem={(att: any) => {
               const isImage = (att.original_filename || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
+              const fileBtn = isImage && att.file_url ? (
+                <Popover content={<img src={att.file_url} alt={att.original_filename} style={{ maxWidth: 300, maxHeight: 300, objectFit: 'contain' }} />} title={att.original_filename}>
+                  <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                </Popover>
+              ) : (
+                <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+              );
               return (
                 <List.Item>
                   <Space style={{ width: '100%', justifyContent: 'space-between' }}>
                     <Space>
                       <PaperClipOutlined />
-                      {isImage && att.file_url ? (
-                        <Popover content={<img src={att.file_url} alt={att.original_filename} style={{ maxWidth: 300, maxHeight: 300, objectFit: 'contain' }} />} title={att.original_filename}>
-                          <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
-                        </Popover>
-                      ) : (
-                        <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
-                      )}
+                      {fileBtn}
+                      {att._source === 'rfq' && <Tag color="blue" style={{ fontSize: 10 }}>Ajánlat</Tag>}
                       {att.remark && <span style={{ color: '#595959', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>}
                       <span style={{ color: '#888', fontSize: 12 }}>{att.uploaded_by_name}</span>
                       <span style={{ color: '#aaa', fontSize: 12 }}>{att.created_at ? new Date(att.created_at).toLocaleString('hu-HU') : ''}</span>
                     </Space>
-                    <Tooltip title="Törlés">
-                      <Button
-                        type="text" danger icon={<DeleteOutlined />} size="small"
-                        onClick={async () => {
-                          try {
-                            await api.delete(`/sales/customer-orders/${id}/attachments/${att.id}/`);
-                            setOrderAttachments(prev => prev.filter(a => a.id !== att.id));
-                            message.success('Törölve');
-                          } catch { message.error('Törlés sikertelen'); }
-                        }}
-                      />
-                    </Tooltip>
+                    {att._source === 'order' && (
+                      <Tooltip title="Törlés">
+                        <Button
+                          type="text" danger icon={<DeleteOutlined />} size="small"
+                          onClick={async () => {
+                            try {
+                              await api.delete(`/sales/customer-orders/${id}/attachments/${att.id}/`);
+                              setOrderAttachments(prev => prev.filter((a: any) => a.id !== att.id));
+                              message.success('Törölve');
+                            } catch { message.error('Törlés sikertelen'); }
+                          }}
+                        />
+                      </Tooltip>
+                    )}
                   </Space>
                 </List.Item>
               );
             }}
-          />
-        </Card>
-
-        <Divider />
-
-        <Card size="small" title="Ajánlat csatolmányok">
-          <List
-            size="small"
-            bordered
-            dataSource={(orderFiles || [])}
-            locale={{ emptyText: 'Nincs csatolmány' }}
-            renderItem={(f: UploadFile & { response?: any }) => {
-              const isImage = (f.name || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
-              
-              const handleDownload = async () => {
-                const url = f.url;
-                if (!url) return;
-                try {
-                  const response = await fetch(url);
-                  const blob = await response.blob();
-                  const blobUrl = window.URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = blobUrl;
-                  const orderNum = order?.order_number || 'Megrendeles';
-                  link.download = `${orderNum}_${f.name}`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  window.URL.revokeObjectURL(blobUrl);
-                } catch (e) {
-                  console.error('Download error:', e);
-                  window.open(url, '_blank');
-                }
-              };
-
-              const linkBtn = (
-                <Button type="link" style={{ padding: 0 }} onClick={handleDownload}>{f.name}</Button>
-              );
-
-              return (
-              <List.Item>
-                <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                  <Space>
-                    {isImage && f.url ? (
-                      <Popover 
-                        content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
-                        title={f.name}
-                      >
-                        {linkBtn}
-                      </Popover>
-                    ) : linkBtn}
-                    <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
-                  </Space>
-                  <Space>
-                    <span style={{ color: '#666' }}>{f.response?.remark || ''}</span>
-                  </Space>
-                </Space>
-              </List.Item>
-            );}}
           />
         </Card>
 

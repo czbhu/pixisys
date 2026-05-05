@@ -381,6 +381,26 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             sf.save()
             att.storage_file_id = sf.id
             att.save(update_fields=['storage_file_id'])
+            # Alias-ok létrehozása az összes kapcsolódó megrendelés mappájában
+            orders_root, _ = StorageFolder.objects.get_or_create(
+                name='orders', parent=None, defaults={'owner': request.user}
+            )
+            for linked_order in qr.customer_orders.all():
+                order_folder, _ = StorageFolder.objects.get_or_create(
+                    name=linked_order.order_number,
+                    parent=orders_root,
+                    defaults={'owner': request.user}
+                )
+                alias = StorageFile(
+                    name=file_obj.name,
+                    folder=order_folder,
+                    alias_of=sf,
+                    size=sf.size,
+                    content_type=sf.content_type,
+                    owner=request.user,
+                )
+                alias.file.name = sf.file.name
+                alias.save()
         except Exception:
             pass
         return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
@@ -2532,6 +2552,31 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             content_type=file_obj.content_type or '',
             owner=system_user
         )
+
+        # 2b. Alias az RFQ mappában
+        try:
+            rfq = order.quote_request
+            if rfq:
+                rfq_root, _ = StorageFolder.objects.get_or_create(
+                    name='rfq', parent=None, defaults={'owner': system_user}
+                )
+                rfq_folder, _ = StorageFolder.objects.get_or_create(
+                    name=rfq.request_number or str(rfq.id),
+                    parent=rfq_root,
+                    defaults={'owner': system_user}
+                )
+                alias = StorageFile(
+                    name=file_obj.name,
+                    folder=rfq_folder,
+                    alias_of=storage_file,
+                    size=file_obj.size,
+                    content_type=file_obj.content_type or '',
+                    owner=system_user,
+                )
+                alias.file.name = storage_file.file.name
+                alias.save()
+        except Exception:
+            pass
 
         # 3. CustomerOrderAttachment létrehozása
         att = CustomerOrderAttachment.objects.create(
