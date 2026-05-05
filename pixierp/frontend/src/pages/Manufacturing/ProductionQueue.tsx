@@ -38,7 +38,7 @@ import {
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
-import { CostDraggableRow, CostRowContext, dragModeRef } from '../../components/Manufacturing/CostDnd';
+import { CostDraggableRow, CostDragHandle } from '../../components/Manufacturing/CostDnd';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import useUserPreference from '../../hooks/useUserPreference';
@@ -91,30 +91,6 @@ interface QueueRow {
     unit: string;
     supplier_email_sent_at: string | null;
 }
-
-/** Drag-handle cell: long-press the order number to start a GROUP drag
- *  (moves the entire order). Long-press anywhere else on the row starts a
- *  single-row drag. */
-const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
-    const { listeners } = React.useContext(CostRowContext);
-    return (
-        <span
-            {...(listeners || {})}
-            onPointerDownCapture={() => { dragModeRef.current = 'group'; }}
-            style={{
-                cursor: 'grab',
-                userSelect: 'none',
-                touchAction: 'none',
-                display: 'inline-block',
-                width: '100%',
-                fontWeight: 500,
-            }}
-            title="Tartsa nyomva 0,4 mp-ig: az egész megrendelést mozgatja"
-        >
-            {value}
-        </span>
-    );
-};
 
 const ProductionQueue: React.FC = () => {
     const [searchParams] = useSearchParams();
@@ -382,11 +358,9 @@ const ProductionQueue: React.FC = () => {
 
     // ── Drag & drop reorder ──────────────────────────────────────────────
     /**
-     * Two activation modes (chosen by which DOM element the user grabbed):
-     *  - 'single' (default): only this one cost-item moves.
-     *  - 'group':            all cost-items belonging to the same order_id
-     *                        move together (used when the user long-presses
-     *                        the order-number cell).
+     * Drag via the handle icon (☰) at the row start.
+     * If multiple rows are selected and the dragged row is one of them,
+     * all selected rows move together as a contiguous block.
      */
     const onRowReorder = async (activeId: string | number, overId: string | number) => {
         const activeRow = filtered.find(r => r.id === Number(activeId));
@@ -394,17 +368,14 @@ const ProductionQueue: React.FC = () => {
         if (!activeRow || !overRow) return;
         if (activeRow.id === overRow.id) return;
 
-        const mode: 'single' | 'group' = dragModeRef.current;
         let reorderedFiltered: QueueRow[];
 
         // ── Multi-select drag ──────────────────────────────────────────
         // If the user has multiple rows selected via the row checkboxes
         // and starts dragging one of them, move ALL selected rows as a
         // contiguous block to the drop position (preserving their
-        // relative order). Group-mode (long-press the order column)
-        // keeps its old behaviour.
-        const isMulti = mode !== 'group'
-            && selectedRowKeys.length > 1
+        // relative order).
+        const isMulti = selectedRowKeys.length > 1
             && selectedRowKeys.map(Number).includes(activeRow.id);
 
         if (isMulti) {
@@ -424,21 +395,6 @@ const ProductionQueue: React.FC = () => {
                 ...moved,
                 ...remaining.slice(insertIdx),
             ];
-        } else if (mode === 'group' && activeRow.order_id !== overRow.order_id) {
-            const groupKeys: number[] = [];
-            const groupMap = new Map<number, QueueRow[]>();
-            filtered.forEach(r => {
-                if (!groupMap.has(r.order_id)) {
-                    groupMap.set(r.order_id, []);
-                    groupKeys.push(r.order_id);
-                }
-                groupMap.get(r.order_id)!.push(r);
-            });
-            const fromIdx = groupKeys.indexOf(activeRow.order_id);
-            const toIdx = groupKeys.indexOf(overRow.order_id);
-            if (fromIdx < 0 || toIdx < 0) return;
-            const movedKeys = arrayMove(groupKeys, fromIdx, toIdx);
-            reorderedFiltered = movedKeys.flatMap(k => groupMap.get(k)!);
         } else {
             const oldIdx = filtered.findIndex(r => r.id === activeRow.id);
             const newIdx = filtered.findIndex(r => r.id === overRow.id);
@@ -457,9 +413,7 @@ const ProductionQueue: React.FC = () => {
             await api.post('/manufacturing/cost-items/reorder/', { ids: afterIds });
             const desc = isMulti
                 ? `${selectedRowKeys.length} tétel mozgatás`
-                : mode === 'group'
-                    ? `Megrendelés mozgatás: ${activeRow.order_number}`
-                    : `Tétel mozgatás: ${activeRow.item_name}`;
+                : `Tétel mozgatás: ${activeRow.item_name}`;
             registerReorderAction(desc, beforeIds, afterIds);
         } catch (e) {
             console.error(e);
@@ -497,10 +451,19 @@ const ProductionQueue: React.FC = () => {
     };
 
     const columns: any[] = [
+        { title: '', key: 'drag', width: 32, render: () => <CostDragHandle /> },
         { title: '#', key: 'pos', width: 50, render: (_: any, __: any, idx: number) => idx + 1 },
         { title: 'Megrendelés', dataIndex: 'order_number', key: 'order_number', width: 130,
             sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || ''),
-            render: (v: string) => <DragOrderCell value={v} /> },
+            render: (v: string, r: QueueRow) => (
+                <a
+                    href={`https://erp.pixisys.eu/manufacturing/ordered-products?order=${r.order_id}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontWeight: 500 }}
+                    onClick={e => e.stopPropagation()}
+                >{v}</a>
+            ) },
         { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180, ellipsis: true,
             sorter: (a: QueueRow, b: QueueRow) => (a.customer_name || '').localeCompare(b.customer_name || '', 'hu') },
         { title: 'Kapcsolattartó', dataIndex: 'contact_name', key: 'contact_name', width: 170, ellipsis: true,

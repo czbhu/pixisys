@@ -131,7 +131,6 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
         ref={setNodeRef}
         style={style}
         {...attributes}
-        {...(listeners || {})}
         onPointerDownCapture={(e) => {
           // Default to single-row drag. A more specific activator deeper in
           // the row (e.g. the order-number cell) can overwrite this in its
