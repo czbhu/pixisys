@@ -17,6 +17,7 @@ import {
     Form,
     Switch,
     Checkbox,
+    Collapse,
 } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -1159,6 +1160,43 @@ const OrderedProducts: React.FC = () => {
                         }))}
                     />
                 )}
+                {sendModalGroups.length > 0 && (() => {
+                    const g = sendModalGroups.find((grp) => grp.key === sendActiveKey);
+                    if (!g) return null;
+                    const previewHtml = renderTemplateText(g.body, {
+                        recipient_label: g.label,
+                        item_count: g.cost_item_ids.length,
+                        item_table_html: g.item_table_html,
+                        internal_worksheet_table_html: g.internal_worksheet_table_html,
+                        queue_links_html: g.queue_links_html,
+                        selected_attachments_table_html: buildSelectedAttachmentsTableHtml(g),
+                    });
+                    return (
+                        <Collapse
+                            key={g.key}
+                            style={{ marginTop: 16 }}
+                            items={[{
+                                key: 'preview',
+                                label: `Előnézet — ${g.label}`,
+                                children: (
+                                    <div
+                                        style={{
+                                            maxHeight: 420,
+                                            overflowY: 'auto',
+                                            border: '1px solid #f0f0f0',
+                                            borderRadius: 4,
+                                            padding: 16,
+                                            background: '#fff',
+                                            fontSize: 13,
+                                        }}
+                                        // eslint-disable-next-line react/no-danger
+                                        dangerouslySetInnerHTML={{ __html: previewHtml }}
+                                    />
+                                ),
+                            }]}
+                        />
+                    );
+                })()}
             </Modal>
         </div>
     );
