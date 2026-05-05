@@ -1544,6 +1544,92 @@ class ManufacturingCostItemViewSet(
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
         return response
 
+    @action(detail=True, methods=['get', 'post'], url_path='attachments')
+    def attachments(self, request, pk=None):
+        """GET: list attachments; POST: upload a new attachment."""
+        from apps.manufacturing.models import ManufacturingCostItemAttachment
+        ci = self.get_object()
+        if request.method == 'GET':
+            atts = ManufacturingCostItemAttachment.objects.filter(cost_item=ci).order_by('-created_at')
+            data = []
+            for a in atts:
+                data.append({
+                    'id': a.id,
+                    'file_url': request.build_absolute_uri(a.file.url) if a.file else None,
+                    'original_filename': a.file.name.split('/')[-1] if a.file else '',
+                    'remark': a.remark,
+                    'storage_file_id': a.storage_file_id,
+                    'uploaded_by_name': a.uploaded_by.get_full_name() if a.uploaded_by else '',
+                    'created_at': a.created_at.isoformat() if a.created_at else '',
+                })
+            return Response(data)
+        # POST
+        file_obj = request.FILES.get('file')
+        remark = request.data.get('remark', '')
+        if not file_obj:
+            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = ManufacturingCostItemAttachment.objects.create(
+            cost_item=ci, file=file_obj, remark=remark,
+            uploaded_by=request.user if request.user and request.user.is_authenticated else None
+        )
+        # Storage bejegyzés
+        try:
+            from apps.core.models import StorageFolder, StorageFile as SF
+            from apps.sales.models import QuoteRequestItem, CustomerOrderItem
+            owner = request.user
+            orders_root, _ = StorageFolder.objects.get_or_create(name='orders', parent=None, defaults={'owner': owner})
+            mp = ci.product
+            qris = QuoteRequestItem.objects.filter(manufacturing_product=mp)
+            for qri in qris:
+                for coi in CustomerOrderItem.objects.filter(quote_item=qri).exclude(status='cancelled'):
+                    order = coi.customer_order
+                    folder, _ = StorageFolder.objects.get_or_create(
+                        name=order.order_number, parent=orders_root, defaults={'owner': owner}
+                    )
+                    sf = SF(name=file_obj.name, folder=folder, size=att.file.size if att.file else 0,
+                            content_type=file_obj.content_type or '', owner=owner)
+                    sf.file.name = att.file.name
+                    sf.save()
+                    if not att.storage_file_id:
+                        att.storage_file_id = sf.id
+                        att.save(update_fields=['storage_file_id'])
+        except Exception:
+            pass
+        return Response({
+            'id': att.id,
+            'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
+            'original_filename': att.file.name.split('/')[-1] if att.file else '',
+            'remark': att.remark,
+            'storage_file_id': att.storage_file_id,
+            'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',
+            'created_at': att.created_at.isoformat() if att.created_at else '',
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<att_id>\d+)')
+    def delete_attachment(self, request, pk=None, att_id=None):
+        """Delete a cost item attachment."""
+        from apps.manufacturing.models import ManufacturingCostItemAttachment
+        ci = self.get_object()
+        att = get_object_or_404(ManufacturingCostItemAttachment, id=att_id, cost_item=ci)
+        if att.storage_file_id:
+            try:
+                from apps.core.models import StorageFile as SF
+                SF.objects.filter(id=att.storage_file_id).delete()
+            except Exception:
+                pass
+        att.file.delete(save=False)
+        att.delete()
+        return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['patch'], url_path='notes')
+    def update_notes(self, request, pk=None):
+        """PATCH notes field on a cost item."""
+        ci = self.get_object()
+        notes = request.data.get('notes', '')
+        ci.notes = notes
+        ci.save(update_fields=['notes'])
+        return Response({'notes': ci.notes})
+
 
 class ProductTemplateViewSet(viewsets.ModelViewSet):
     """Termék sablonok CRUD"""

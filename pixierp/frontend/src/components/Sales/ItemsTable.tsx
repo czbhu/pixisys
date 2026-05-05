@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
-import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag } from 'antd';
-import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined } from '@ant-design/icons';
+import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag, Input, Upload } from 'antd';
+import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -8,6 +8,8 @@ import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { buildTreeMetaBy, CostTreeGuide } from '../Manufacturing/CostDnd';
+import ProductSubItemsTable from '../Manufacturing/ProductSubItemsTable';
+import api from '../../services/api';
 import ImpositionHelperModal from './ImpositionHelperModal';
 
 const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -45,6 +47,7 @@ interface Item {
   sort_order?: number;
   parent?: number | null;
   attachments?: any[];
+  remark?: string;
 }
 
 interface ItemsTableProps {
@@ -58,6 +61,10 @@ interface ItemsTableProps {
   hidePrices?: boolean;
   currencySelector?: React.ReactNode;
   showSubItemsTooltip?: boolean;
+  /** Ha true, nem jelenik meg az "Adatlap megnyitása" gomb */
+  hideDetailLink?: boolean;
+  /** Ha true, a manufacturing tételek inline kinyithatók altételekkel, megjegyzéssel, csatolmányokkal */
+  showInlineSubItems?: boolean;
 }
 
 interface RowContextProps {
@@ -109,7 +116,7 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, showInlineSubItems = false }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
@@ -117,6 +124,14 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
   const [dataSource, setDataSource] = useState<Item[]>([]);
   const [subItemsCache, setSubItemsCache] = useState<Record<number, any[]>>({});
   const [subItemsLoading, setSubItemsLoading] = useState<Record<number, boolean>>({});
+  // Inline expand: item-level remark state (coiId -> remark)
+  const [itemRemarks, setItemRemarks] = useState<Record<number, string>>({});
+  const [editingItemRemark, setEditingItemRemark] = useState<number | null>(null);
+  const [editingItemRemarkVal, setEditingItemRemarkVal] = useState('');
+  // Inline expand: item-level attachments (coiId -> att[])
+  const [itemAttachments, setItemAttachments] = useState<Record<number, any[]>>({});
+  const [itemAttUploading, setItemAttUploading] = useState<Record<number, boolean>>({});
+  const [itemAttRemark, setItemAttRemark] = useState<Record<number, string>>({});
 
   useEffect(() => {
     if (items) {
@@ -507,7 +522,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
             <Tooltip title="Szint növelés (alárendel)">
                 <Button size="small" icon={<RightOutlined />} onClick={() => onIndent(record)} />
             </Tooltip>
-          {(() => { const url = getDetailUrl(record); return url ? (
+          {!hideDetailLink && (() => { const url = getDetailUrl(record); return url ? (
             <Tooltip title="Adatlap megnyitása">
               <Button size="small" icon={<LinkOutlined />} onClick={() => navigate(url)} />
             </Tooltip>
@@ -576,6 +591,125 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     return summary;
   }, [dataSource]);
 
+  const loadItemAttachments = async (coiId: number) => {
+    if (itemAttachments[coiId] !== undefined) return;
+    try {
+      const res = await api.get(`/sales/customer-order-items/${coiId}/attachments/`);
+      setItemAttachments(prev => ({ ...prev, [coiId]: res.data || [] }));
+    } catch {
+      setItemAttachments(prev => ({ ...prev, [coiId]: [] }));
+    }
+  };
+
+  const renderInlineExpand = (record: any) => {
+    const coiId: number = record.id;
+    const manuProductId = Number(record.manufacturing_product || record.quote_item?.manufacturing_product || 0);
+    const currentRemark = itemRemarks[coiId] !== undefined ? itemRemarks[coiId] : (record.remark || '');
+    const atts: any[] = itemAttachments[coiId] || [];
+    const uploading = !!itemAttUploading[coiId];
+    const attRemark = itemAttRemark[coiId] || '';
+
+    return (
+      <div style={{ padding: '12px 24px', background: '#fafafa', borderRadius: 4 }}>
+        {/* Altételek fa */}
+        {manuProductId > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 600, marginBottom: 8, color: '#555' }}>Altételek</div>
+            <ProductSubItemsTable productId={manuProductId} showNotesAndAttachments />
+          </div>
+        )}
+
+        {/* Megjegyzés */}
+        <div style={{ marginBottom: 12 }}>
+          <div style={{ fontWeight: 600, marginBottom: 4, color: '#555' }}>Tétel megjegyzése</div>
+          {editingItemRemark === coiId ? (
+            <Space>
+              <Input.TextArea
+                autoFocus
+                rows={2}
+                style={{ width: 400 }}
+                value={editingItemRemarkVal}
+                onChange={e => setEditingItemRemarkVal(e.target.value)}
+              />
+              <Button size="small" type="primary" onClick={async () => {
+                try {
+                  await api.patch(`/sales/customer-order-items/${coiId}/remark/`, { remark: editingItemRemarkVal });
+                  setItemRemarks(prev => ({ ...prev, [coiId]: editingItemRemarkVal }));
+                  setEditingItemRemark(null);
+                } catch { message.error('Mentés sikertelen'); }
+              }}>Mentés</Button>
+              <Button size="small" onClick={() => setEditingItemRemark(null)}>Mégsem</Button>
+            </Space>
+          ) : (
+            <span
+              style={{ color: currentRemark ? '#595959' : '#bbb', fontSize: 13, cursor: 'pointer' }}
+              onClick={() => { setEditingItemRemark(coiId); setEditingItemRemarkVal(currentRemark); }}
+              title="Kattints szerkesztéshez"
+            >
+              {currentRemark || '+ megjegyzés hozzáadása'}
+            </span>
+          )}
+        </div>
+
+        {/* Csatolmányok */}
+        <div>
+          <div style={{ fontWeight: 600, marginBottom: 6, color: '#555' }}>Csatolmányok</div>
+          <Space style={{ marginBottom: 8 }}>
+            <Input
+              placeholder="Megjegyzés (opcionális)"
+              size="small"
+              value={attRemark}
+              onChange={e => setItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
+              style={{ width: 200 }}
+            />
+            <Upload
+              showUploadList={false}
+              beforeUpload={async (file) => {
+                setItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                try {
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  if (attRemark) fd.append('remark', attRemark);
+                  const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                  setItemAttachments(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                  setItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                  message.success('Feltöltve');
+                } catch { message.error('Feltöltés sikertelen'); }
+                finally { setItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                return false;
+              }}
+            >
+              <Button size="small" icon={<UploadOutlined />} loading={uploading}>Feltöltés</Button>
+            </Upload>
+          </Space>
+          {atts.length === 0 ? (
+            <div style={{ color: '#aaa', fontSize: 12 }}>Nincs csatolmány</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+              {atts.map((att: any) => (
+                <Space key={att.id} size={6}>
+                  <PaperClipOutlined style={{ color: '#888' }} />
+                  <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13 }}>{att.original_filename}</a>
+                  {att.remark && <span style={{ color: '#888', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>}
+                  <span style={{ color: '#bbb', fontSize: 11 }}>{att.uploaded_by_name}</span>
+                  <Button
+                    type="text" danger size="small" icon={<DeleteOutlined />}
+                    onClick={async () => {
+                      try {
+                        await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
+                        setItemAttachments(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
+                      } catch { message.error('Törlés sikertelen'); }
+                    }}
+                  />
+                </Space>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   return (
     <Card size="small" title="Tételek">
       <div style={{ position: 'relative', zIndex: 0 }}>
@@ -598,7 +732,20 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                     dataSource={dataSource} 
                     rowKey="id" 
                     pagination={false} 
-                    scroll={{ x: 'max-content' }} 
+                    scroll={{ x: 'max-content' }}
+                    expandable={showInlineSubItems ? {
+                      rowExpandable: () => true,
+                      onExpand: (expanded, record) => {
+                        if (expanded) {
+                          loadItemAttachments(record.id);
+                          // init remark from record
+                          if (itemRemarks[record.id] === undefined) {
+                            setItemRemarks(prev => ({ ...prev, [record.id]: record.remark || '' }));
+                          }
+                        }
+                      },
+                      expandedRowRender: renderInlineExpand,
+                    } : undefined}
                 />
             </SortableContext>
         </DndContext>

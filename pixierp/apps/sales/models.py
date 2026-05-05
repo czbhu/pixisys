@@ -222,6 +222,7 @@ class CustomerOrderItem(models.Model):
     vat_rate = models.DecimalField(max_digits=5, decimal_places=2, default=27, verbose_name="ÁFA %")
     discount_percent = models.DecimalField(max_digits=5, decimal_places=2, default=0, verbose_name="Kedvezmény %")
     description = models.TextField(blank=True, default='', verbose_name="Leírás")
+    remark = models.TextField(blank=True, default='', verbose_name="Belső megjegyzés")
 
     class Meta:
         verbose_name = "Megrendelés tétel"

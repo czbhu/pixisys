@@ -4250,9 +4250,86 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 class CustomerOrderItemViewSet(viewsets.ModelViewSet):
     queryset = CustomerOrderItem.objects.all()
     serializer_class = CustomerOrderItemSerializer
-    permission_classes = [IsAuthenticated]
-
     permission_classes = [AllowAny]
+
+    @action(detail=True, methods=['patch'], url_path='remark')
+    def update_remark(self, request, pk=None):
+        """PATCH remark field on a customer order item."""
+        item = self.get_object()
+        item.remark = request.data.get('remark', '')
+        item.save(update_fields=['remark'])
+        return Response({'remark': item.remark})
+
+    @action(detail=True, methods=['get', 'post'], url_path='attachments')
+    def attachments(self, request, pk=None):
+        """GET: list QRI attachments for this COI; POST: upload."""
+        from .models import QuoteRequestItemAttachment
+        from .serializers import QuoteRequestItemAttachmentSerializer
+        item = self.get_object()
+        qi = item.quote_item
+        if request.method == 'GET':
+            atts = QuoteRequestItemAttachment.objects.filter(quote_item=qi).order_by('-created_at')
+            data = []
+            for a in atts:
+                data.append({
+                    'id': a.id,
+                    'file_url': request.build_absolute_uri(a.file.url) if a.file else None,
+                    'original_filename': a.file.name.split('/')[-1] if a.file else '',
+                    'remark': a.remark,
+                    'storage_file_id': a.storage_file_id,
+                    'uploaded_by_name': a.uploaded_by.get_full_name() if a.uploaded_by else '',
+                    'created_at': a.created_at.isoformat() if a.created_at else '',
+                })
+            return Response(data)
+        # POST
+        file_obj = request.FILES.get('file')
+        remark = request.data.get('remark', '')
+        if not file_obj:
+            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        att = QuoteRequestItemAttachment.objects.create(
+            quote_item=qi, file=file_obj, remark=remark,
+            uploaded_by=request.user if request.user and request.user.is_authenticated else None
+        )
+        # Storage bejegyzés
+        try:
+            from apps.core.models import StorageFolder, StorageFile as SF
+            owner = request.user
+            orders_root, _ = StorageFolder.objects.get_or_create(name='orders', parent=None, defaults={'owner': owner})
+            order = item.customer_order
+            folder, _ = StorageFolder.objects.get_or_create(name=order.order_number, parent=orders_root, defaults={'owner': owner})
+            sf = SF(name=file_obj.name, folder=folder, size=att.file.size if att.file else 0,
+                    content_type=file_obj.content_type or '', owner=owner)
+            sf.file.name = att.file.name
+            sf.save()
+            att.storage_file_id = sf.id
+            att.save(update_fields=['storage_file_id'])
+        except Exception:
+            pass
+        return Response({
+            'id': att.id,
+            'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
+            'original_filename': att.file.name.split('/')[-1] if att.file else '',
+            'remark': att.remark,
+            'storage_file_id': att.storage_file_id,
+            'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',
+            'created_at': att.created_at.isoformat() if att.created_at else '',
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<att_id>\d+)')
+    def delete_attachment(self, request, pk=None, att_id=None):
+        from .models import QuoteRequestItemAttachment
+        item = self.get_object()
+        qi = item.quote_item
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
+        if att.storage_file_id:
+            try:
+                from apps.core.models import StorageFile as SF
+                SF.objects.filter(id=att.storage_file_id).delete()
+            except Exception:
+                pass
+        att.file.delete(save=False)
+        att.delete()
+        return Response({'status': 'ok'})
 
 
 @api_view(['GET'])
