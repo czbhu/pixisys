@@ -14,6 +14,9 @@ import {
     Typography,
     Tabs,
     Form,
+    Upload,
+    Spin,
+    Badge,
 } from 'antd';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -29,6 +32,9 @@ import {
     AlertOutlined,
     SendOutlined,
     FileTextOutlined,
+    PaperClipOutlined,
+    DeleteOutlined,
+    DownloadOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { arrayMove } from '@dnd-kit/sortable';
@@ -126,6 +132,15 @@ const ProductionQueue: React.FC = () => {
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
+
+    // ── Cost-item attachments ─────────────────────────────────────────────
+    const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
+    const [costItemAtts, setCostItemAtts] = useState<Record<number, any[]>>({});
+    const [costItemAttsLoaded, setCostItemAttsLoaded] = useState<Record<number, boolean>>({});
+    const [costItemAttUploading, setCostItemAttUploading] = useState<Record<number, boolean>>({});
+    const [costItemAttRemark, setCostItemAttRemark] = useState<Record<number, string>>({});
+    const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
+    const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
 
     const load = async () => {
         try {
@@ -259,6 +274,23 @@ const ProductionQueue: React.FC = () => {
         } catch (e) {
             console.error(e);
             message.error('Hiba a munkalap letöltése során');
+        }
+    };
+
+    const loadCostItemAtts = (ciId: number) => {
+        if (costItemAttsLoaded[ciId]) return;
+        api.get(`/manufacturing/cost-items/${ciId}/attachments/`)
+            .then(res => setCostItemAtts(prev => ({ ...prev, [ciId]: res.data || [] })))
+            .catch(() => setCostItemAtts(prev => ({ ...prev, [ciId]: [] })))
+            .finally(() => setCostItemAttsLoaded(prev => ({ ...prev, [ciId]: true })));
+    };
+
+    const toggleRow = (ciId: number) => {
+        if (expandedRowKeys.includes(ciId)) {
+            setExpandedRowKeys(prev => prev.filter(id => id !== ciId));
+        } else {
+            setExpandedRowKeys(prev => [...prev, ciId]);
+            loadCostItemAtts(ciId);
         }
     };
 
@@ -502,39 +534,224 @@ const ProductionQueue: React.FC = () => {
         ) },
         { title: 'Megjegyzés', dataIndex: 'notes', key: 'notes', width: 220, ellipsis: true,
             render: (n: string) => n
-                ? <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{n}</span>}><span>{n}</span></Tooltip>
+                ? <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{n}</span>}><span style={{ color: '#595959', fontStyle: 'italic' }}>{n}</span></Tooltip>
                 : <span style={{ color: '#bbb' }}>—</span> },
         { title: 'Beszállító', key: 'supplier', width: 180,
             render: (_: any, r: QueueRow) => r.is_internal
                 ? <Tag color="blue">{r.department_name ? `Belső: ${r.department_name}` : 'Belső'}</Tag>
                 : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>) },
         {
-            title: 'Műveletek', key: 'actions', width: 230, fixed: 'right' as const,
-            render: (_: any, r: QueueRow) => (
-                <Space size="small" onClick={(e) => e.stopPropagation()}>
-                    <Tooltip title="Munkaóra indítása">
-                        <Button icon={<FieldTimeOutlined />} size="small" onClick={() => handleStartTimer(r)} />
-                    </Tooltip>
-                    <Tooltip title="Megjegyzés hozzáadása">
-                        <Button icon={<MessageOutlined />} size="small" onClick={() => handleAddNote(r)} />
-                    </Tooltip>
-                    <Tooltip title="Munkalap nyomtatása">
-                        <Button icon={<PrinterOutlined />} size="small" onClick={() => handlePrintWorksheet(r)} />
-                    </Tooltip>
-                    <Tooltip title={r.is_paused ? 'Folytatás' : 'Szünet (sor végére)'}>
-                        <Button
-                            icon={r.is_paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
-                            size="small"
-                            onClick={() => handlePauseToggle(r)}
-                        />
-                    </Tooltip>
-                    <Tooltip title="SOS – sor elejére">
-                        <Button danger icon={<AlertOutlined />} size="small" onClick={() => handleSos(r)} />
-                    </Tooltip>
-                </Space>
-            ),
+            title: 'Műveletek', key: 'actions', width: 260, fixed: 'right' as const,
+            render: (_: any, r: QueueRow) => {
+                const atts: any[] = costItemAtts[r.id] || [];
+                const attsLoaded = !!costItemAttsLoaded[r.id];
+                const attCount = attsLoaded ? atts.length : 0;
+                const isExpanded = expandedRowKeys.includes(r.id);
+                return (
+                    <Space size="small" onClick={(e) => e.stopPropagation()}>
+                        <Tooltip title="Munkaóra indítása">
+                            <Button icon={<FieldTimeOutlined />} size="small" onClick={() => handleStartTimer(r)} />
+                        </Tooltip>
+                        <Tooltip title={r.notes ? 'Megjegyzés megtekintése/szerkesztése' : 'Megjegyzés hozzáadása'}>
+                            <Badge dot={!!r.notes} offset={[-2, 2]}>
+                                <Button
+                                    icon={<MessageOutlined />}
+                                    size="small"
+                                    type={r.notes ? 'default' : 'default'}
+                                    style={r.notes ? { borderColor: '#faad14', color: '#faad14' } : {}}
+                                    onClick={() => handleAddNote(r)}
+                                />
+                            </Badge>
+                        </Tooltip>
+                        <Tooltip title={attCount > 0 ? `Csatolmányok (${attCount})` : 'Csatolmányok'}>
+                            <Button
+                                icon={<PaperClipOutlined />}
+                                size="small"
+                                type={isExpanded ? 'primary' : 'default'}
+                                style={!isExpanded && attCount > 0 ? { borderColor: '#1677ff', color: '#1677ff' } : {}}
+                                onClick={() => toggleRow(r.id)}
+                            >
+                                {attCount > 0 ? attCount : ''}
+                            </Button>
+                        </Tooltip>
+                        <Tooltip title="Munkalap nyomtatása">
+                            <Button icon={<PrinterOutlined />} size="small" onClick={() => handlePrintWorksheet(r)} />
+                        </Tooltip>
+                        <Tooltip title={r.is_paused ? 'Folytatás' : 'Szünet (sor végére)'}>
+                            <Button
+                                icon={r.is_paused ? <PlayCircleOutlined /> : <PauseCircleOutlined />}
+                                size="small"
+                                onClick={() => handlePauseToggle(r)}
+                            />
+                        </Tooltip>
+                        <Tooltip title="SOS – sor elejére">
+                            <Button danger icon={<AlertOutlined />} size="small" onClick={() => handleSos(r)} />
+                        </Tooltip>
+                    </Space>
+                );
+            },
         },
     ];
+
+    // ── Cost-item attachment expanded row ────────────────────────────────
+    const renderAttachmentRow = (r: QueueRow) => {
+        const ciId = r.id;
+        const atts: any[] = costItemAtts[ciId] || [];
+        const loaded = !!costItemAttsLoaded[ciId];
+        const uploading = !!costItemAttUploading[ciId];
+        const attRemark = costItemAttRemark[ciId] || '';
+
+        const handleDownloadAll = async () => {
+            if (atts.length === 0) return;
+            if (atts.length === 1) {
+                window.open(atts[0].file_url, '_blank');
+                return;
+            }
+            // Download each individually in sequence
+            for (const att of atts) {
+                const a = document.createElement('a');
+                a.href = att.file_url;
+                a.download = att.original_filename || att.file_url.split('/').pop() || `att_${att.id}`;
+                a.target = '_blank';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                await new Promise(res => setTimeout(res, 300));
+            }
+        };
+
+        return (
+            <div style={{ padding: '10px 16px 14px 48px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
+                    Csatolmányok
+                    {loaded && atts.length > 0 && (
+                        <Tooltip title="Összes letöltése">
+                            <Button
+                                size="small"
+                                icon={<DownloadOutlined />}
+                                style={{ marginLeft: 10 }}
+                                onClick={handleDownloadAll}
+                            >
+                                Összes letöltése ({atts.length})
+                            </Button>
+                        </Tooltip>
+                    )}
+                </div>
+                <Space direction="vertical" style={{ width: '100%', maxWidth: 680 }} size={6}>
+                    <Input
+                        placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                        size="small"
+                        value={attRemark}
+                        style={{ width: 340 }}
+                        onChange={e => setCostItemAttRemark(prev => ({ ...prev, [ciId]: e.target.value }))}
+                    />
+                    <Upload.Dragger
+                        multiple
+                        showUploadList={false}
+                        disabled={uploading}
+                        style={{ padding: '6px 0' }}
+                        beforeUpload={async (file) => {
+                            setCostItemAttUploading(prev => ({ ...prev, [ciId]: true }));
+                            try {
+                                const fd = new FormData();
+                                fd.append('file', file);
+                                if (attRemark) fd.append('remark', attRemark);
+                                const res = await api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                                setCostItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
+                                setCostItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
+                                message.success('Feltöltve');
+                            } catch { message.error('Feltöltés sikertelen'); }
+                            finally { setCostItemAttUploading(prev => ({ ...prev, [ciId]: false })); }
+                            return false;
+                        }}
+                    >
+                        {uploading
+                            ? <><Spin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                            : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                        }
+                    </Upload.Dragger>
+                    {!loaded ? (
+                        <Spin size="small" />
+                    ) : atts.length === 0 ? (
+                        <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {atts.map((att: any) => (
+                                <Space key={att.id} size={6} align="center">
+                                    <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
+                                    <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
+                                        {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
+                                    </a>
+                                    <Tooltip title="Letöltés">
+                                        <Button
+                                            type="text"
+                                            size="small"
+                                            icon={<DownloadOutlined />}
+                                            onClick={() => {
+                                                const a = document.createElement('a');
+                                                a.href = att.file_url;
+                                                a.download = att.original_filename || att.file_url.split('/').pop() || `att_${att.id}`;
+                                                a.target = '_blank';
+                                                document.body.appendChild(a);
+                                                a.click();
+                                                document.body.removeChild(a);
+                                            }}
+                                        />
+                                    </Tooltip>
+                                    {editingAttRemarkId === att.id ? (
+                                        <Space size={4}>
+                                            <Input
+                                                size="small"
+                                                autoFocus
+                                                value={editingAttRemarkVal}
+                                                style={{ width: 200 }}
+                                                onChange={e => setEditingAttRemarkVal(e.target.value)}
+                                                onPressEnter={async () => {
+                                                    try {
+                                                        const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                                        setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                                        setEditingAttRemarkId(null);
+                                                    } catch { message.error('Mentés sikertelen'); }
+                                                }}
+                                            />
+                                            <Button size="small" type="primary" onClick={async () => {
+                                                try {
+                                                    const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                                    setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                                    setEditingAttRemarkId(null);
+                                                } catch { message.error('Mentés sikertelen'); }
+                                            }}>Mentés</Button>
+                                            <Button size="small" onClick={() => setEditingAttRemarkId(null)}>Mégsem</Button>
+                                        </Space>
+                                    ) : (
+                                        <span
+                                            style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 11, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                                            title="Kattints a megjegyzés szerkesztéséhez"
+                                            onClick={() => { setEditingAttRemarkId(att.id); setEditingAttRemarkVal(att.remark || ''); }}
+                                        >
+                                            {att.remark || '+ megjegyzés'}
+                                        </span>
+                                    )}
+                                    <Button
+                                        type="text"
+                                        danger
+                                        size="small"
+                                        icon={<DeleteOutlined />}
+                                        onClick={async () => {
+                                            try {
+                                                await api.delete(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/`);
+                                                setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).filter((a: any) => a.id !== att.id) }));
+                                            } catch { message.error('Törlés sikertelen'); }
+                                        }}
+                                    />
+                                </Space>
+                            ))}
+                        </div>
+                    )}
+                </Space>
+            </div>
+        );
+    };
 
     // ── CSV export of selected (or all visible) rows ──────────────────────
     // CSV column descriptors keyed by the same `key` used in the AntD
@@ -712,6 +929,19 @@ const ProductionQueue: React.FC = () => {
                     loading={loading}
                     bodyComponents={{ body: { row: CostDraggableRow } }}
                     rowDnd={{ items: filtered.map(r => r.id), onReorder: onRowReorder }}
+                    expandable={{
+                        expandedRowKeys,
+                        onExpand: (expanded: boolean, record: QueueRow) => {
+                            if (expanded) {
+                                setExpandedRowKeys(prev => [...prev, record.id]);
+                                loadCostItemAtts(record.id);
+                            } else {
+                                setExpandedRowKeys(prev => prev.filter(id => id !== record.id));
+                            }
+                        },
+                        expandedRowRender: (record: QueueRow) => renderAttachmentRow(record),
+                        rowExpandable: () => true,
+                    }}
                     rowSelection={{
                         selectedRowKeys,
                         onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as number[]),
