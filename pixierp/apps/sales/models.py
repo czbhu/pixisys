@@ -402,6 +402,27 @@ class QuoteRequestItem(models.Model):
         except Exception:
             pass
         super().save(*args, **kwargs)
+        # Szinkronizálja a már létező megrendelés tételeket
+        self._sync_customer_order_items()
+
+    def _sync_customer_order_items(self):
+        """Az ajánlat tétel változásait tükrözze az összes aktív megrendelés tételbe.
+        Nem érintett állapotok: delivered, cancelled."""
+        SKIP_STATUSES = ('delivered', 'cancelled')
+        order_items = self.customerorderitem_set.exclude(
+            customer_order__status__in=SKIP_STATUSES
+        ).exclude(status__in=SKIP_STATUSES)
+        if not order_items.exists():
+            return
+        for oi in order_items:
+            changed_fields = []
+            for field in ('quantity', 'unit', 'net_unit_price', 'vat_rate', 'discount_percent', 'description'):
+                new_val = getattr(self, field, None)
+                if getattr(oi, field, None) != new_val:
+                    setattr(oi, field, new_val)
+                    changed_fields.append(field)
+            if changed_fields:
+                oi.save(update_fields=changed_fields)
 
 
 class Service(models.Model):
