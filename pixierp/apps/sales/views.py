@@ -2943,6 +2943,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'code': mp.code or '',
                 'description': strip_html(item.description or mp.description or ''),
                 'internal_description': strip_html(mp.internal_description or ''),
+                'remark': item.remark or '',
                 'quantity': float(item.quantity),
                 'unit': item.unit,
                 'net_unit_price': float(item.net_unit_price),

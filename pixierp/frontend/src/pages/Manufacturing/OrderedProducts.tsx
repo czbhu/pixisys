@@ -18,6 +18,8 @@ import {
     Switch,
     Checkbox,
     Collapse,
+    Upload,
+    Spin,
 } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -29,6 +31,8 @@ import {
     FieldTimeOutlined,
     MessageOutlined,
     SendOutlined,
+    PaperClipOutlined,
+    DeleteOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
@@ -77,6 +81,7 @@ interface OrderedManufacturingItem {
     quantity: number;
     unit: string;
     net_unit_price: number;
+    remark?: string;
 }
 
 interface RenderedSendGroup {
@@ -175,6 +180,12 @@ const OrderedProducts: React.FC = () => {
     ]);
     const [attachmentsByProduct, setAttachmentsByProduct] = useState<Record<number, any[]>>({});
     const [attachmentsLoading, setAttachmentsLoading] = useState<Record<number, boolean>>({});
+    const [orderItemAtts, setOrderItemAtts] = useState<Record<number, any[]>>({});
+    const [orderItemAttsLoaded, setOrderItemAttsLoaded] = useState<Record<number, boolean>>({});
+    const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
+    const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
+    const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
+    const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [previewTitle, setPreviewTitle] = useState('');
@@ -625,42 +636,46 @@ const OrderedProducts: React.FC = () => {
     };
 
     const handleAddNote = async (record: OrderedManufacturingItem) => {
-        try {
-            const { data } = await api.get(`/sales/customer-order-items/${record.id}/`);
-            const existing: string = data.notes || '';
-            let value = existing;
-            Modal.confirm({
-                title: `Megjegyzés — ${record.name}`,
-                width: 600,
-                icon: <MessageOutlined />,
-                content: (
-                    <Input.TextArea
-                        defaultValue={existing}
-                        rows={6}
-                        onChange={(e) => { value = e.target.value; }}
-                        placeholder="Írja be a megjegyzést..."
-                    />
-                ),
-                okText: 'Mentés',
-                cancelText: 'Mégse',
-                onOk: async () => {
-                    try {
-                        await api.patch(`/sales/customer-order-items/${record.id}/`, { notes: value });
-                        message.success('Megjegyzés mentve');
-                    } catch (e) {
-                        console.error(e);
-                        message.error('Megjegyzés mentése sikertelen');
-                    }
-                },
-            });
-        } catch (e) {
-            console.error(e);
-            message.error('Tétel betöltése sikertelen');
-        }
+        const existing: string = record.remark || '';
+        let value = existing;
+        Modal.confirm({
+            title: `Megjegyzés — ${record.name}`,
+            width: 600,
+            icon: <MessageOutlined />,
+            content: (
+                <Input.TextArea
+                    defaultValue={existing}
+                    rows={6}
+                    onChange={(e) => { value = e.target.value; }}
+                    placeholder="Írja be a megjegyzést..."
+                />
+            ),
+            okText: 'Mentés',
+            cancelText: 'Mégse',
+            onOk: async () => {
+                try {
+                    await api.patch(`/sales/customer-order-items/${record.id}/`, { remark: value });
+                    setItems(prev => prev.map(it => it.id === record.id ? { ...it, remark: value } : it));
+                    message.success('Megjegyzés mentve');
+                } catch (e) {
+                    console.error(e);
+                    message.error('Megjegyzés mentése sikertelen');
+                }
+            },
+        });
+    };
+
+    const loadOrderItemAtts = (coiId: number) => {
+        if (orderItemAttsLoaded[coiId]) return;
+        api.get(`/sales/customer-order-items/${coiId}/attachments/`)
+            .then(res => setOrderItemAtts(prev => ({ ...prev, [coiId]: res.data || [] })))
+            .catch(() => setOrderItemAtts(prev => ({ ...prev, [coiId]: [] })))
+            .finally(() => setOrderItemAttsLoaded(prev => ({ ...prev, [coiId]: true })));
     };
 
     const loadSubItems = async (record: OrderedManufacturingItem) => {
-        // ProductSubItemsTable loads sub-items on mount; we only load attachments here.
+        // Also load order-item level attachments
+        loadOrderItemAtts(record.id);
         const productId = record.manufacturing_product_id;
         if (!productId || attachmentsByProduct[productId] !== undefined || attachmentsLoading[productId]) return;
         setAttachmentsLoading(prev => ({ ...prev, [productId]: true }));
@@ -686,14 +701,114 @@ const OrderedProducts: React.FC = () => {
 
     const expandedRowRender = (record: OrderedManufacturingItem) => {
         const productId = record.manufacturing_product_id;
+        const coiId = record.id;
         const attachments = attachmentsByProduct[productId] || [];
         const loadingAtt = !!attachmentsLoading[productId];
+        const itemAtts: any[] = orderItemAtts[coiId] || [];
+        const itemAttsLoaded = !!orderItemAttsLoaded[coiId];
+        const itemAttUploading = !!orderItemAttUploading[coiId];
+        const attRemark = orderItemAttRemark[coiId] || '';
 
         return (
             <div style={{ padding: '8px 0 8px 32px' }}>
                 <ProductSubItemsTable productId={productId} />
+
+                {/* Order-item level attachments */}
+                <div style={{ marginTop: 14, maxWidth: 700 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 8 }}>Csatolmányok</div>
+                    <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                        <Input
+                            placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                            size="small"
+                            value={attRemark}
+                            style={{ width: 340 }}
+                            onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
+                        />
+                        <Upload.Dragger
+                            multiple
+                            showUploadList={false}
+                            disabled={itemAttUploading}
+                            style={{ padding: '8px 0' }}
+                            beforeUpload={async (file) => {
+                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                                try {
+                                    const fd = new FormData();
+                                    fd.append('file', file);
+                                    if (attRemark) fd.append('remark', attRemark);
+                                    const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                                    setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                                    setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                                    message.success('Feltöltve');
+                                } catch { message.error('Feltöltés sikertelen'); }
+                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                                return false;
+                            }}
+                        >
+                            {itemAttUploading
+                                ? <><Spin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                                : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                            }
+                        </Upload.Dragger>
+                        {!itemAttsLoaded ? <Spin size="small" /> : itemAtts.length === 0 ? (
+                            <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+                        ) : (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {itemAtts.map((att: any) => (
+                                    <Space key={att.id} size={4} align="center">
+                                        <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
+                                        <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
+                                        {editingAttRemarkId === att.id ? (
+                                            <Space size={4}>
+                                                <Input
+                                                    size="small"
+                                                    autoFocus
+                                                    value={editingAttRemarkVal}
+                                                    style={{ width: 200 }}
+                                                    onChange={e => setEditingAttRemarkVal(e.target.value)}
+                                                    onPressEnter={async () => {
+                                                        try {
+                                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                                            setEditingAttRemarkId(null);
+                                                        } catch { message.error('Mentés sikertelen'); }
+                                                    }}
+                                                />
+                                                <Button size="small" type="primary" onClick={async () => {
+                                                    try {
+                                                        const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                                        setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                                        setEditingAttRemarkId(null);
+                                                    } catch { message.error('Mentés sikertelen'); }
+                                                }}>Mentés</Button>
+                                                <Button size="small" onClick={() => setEditingAttRemarkId(null)}>Mégsem</Button>
+                                            </Space>
+                                        ) : (
+                                            <span
+                                                style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 11, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                                                title="Kattints a megjegyzés szerkesztéséhez"
+                                                onClick={() => { setEditingAttRemarkId(att.id); setEditingAttRemarkVal(att.remark || ''); }}
+                                            >
+                                                {att.remark || '+ megjegyzés'}
+                                            </span>
+                                        )}
+                                        <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                                            onClick={async () => {
+                                                try {
+                                                    await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
+                                                    setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
+                                                } catch { message.error('Törlés sikertelen'); }
+                                            }}
+                                        />
+                                    </Space>
+                                ))}
+                            </div>
+                        )}
+                    </Space>
+                </div>
+
+                {/* Product-level attachments */}
                 <div style={{ marginTop: 12 }}>
-                    <div style={{ fontWeight: 600, marginBottom: 6 }}>Csatolmányok</div>
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>Termék szintű csatolmányok</div>
                     <Table
                         size="small"
                         loading={loadingAtt}
@@ -865,6 +980,23 @@ const OrderedProducts: React.FC = () => {
             width: 220,
             ellipsis: true,
             render: (text: string) => <Tooltip title={text}><span>{text}</span></Tooltip>,
+        },
+        {
+            title: 'Megjegyzés',
+            dataIndex: 'remark',
+            key: 'remark',
+            width: 180,
+            ellipsis: true,
+            render: (text: string, record: OrderedManufacturingItem) => (
+                <Tooltip title={text}>
+                    <span
+                        style={{ color: text ? '#595959' : '#bbb', cursor: 'pointer', fontSize: 12, fontStyle: text ? 'italic' : 'normal' }}
+                        onClick={(e) => { e.stopPropagation(); handleAddNote(record); }}
+                    >
+                        {text || '+ megjegyzés'}
+                    </span>
+                </Tooltip>
+            ),
         },
         {
             title: 'Mennyiség',
