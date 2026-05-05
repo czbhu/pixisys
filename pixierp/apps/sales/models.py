@@ -1044,3 +1044,31 @@ class POSPayment(models.Model):
 
     def __str__(self):
         return f"{self.transaction.transaction_number} - {self.amount} - {self.get_status_display()}"
+
+
+def order_attachment_upload_path(instance, filename):
+    order_num = instance.customer_order.order_number if instance.customer_order_id else 'unknown'
+    return f'order_attachments/{order_num}/{filename}'
+
+
+class CustomerOrderAttachment(models.Model):
+    customer_order = models.ForeignKey(
+        CustomerOrder, on_delete=models.CASCADE,
+        related_name='attachments', verbose_name='Megrendelés'
+    )
+    file = models.FileField(upload_to=order_attachment_upload_path, verbose_name='Fájl')
+    original_filename = models.CharField(max_length=255, verbose_name='Eredeti fájlnév')
+    storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
+    uploaded_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name='Feltöltötte'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Megrendelés csatolmány'
+        verbose_name_plural = 'Megrendelés csatolmányok'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.customer_order.order_number} - {self.original_filename}"

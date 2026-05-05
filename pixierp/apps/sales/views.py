@@ -2463,7 +2463,78 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         
         serializer = self.get_serializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
-    
+
+    @action(detail=True, methods=['get'])
+    def attachments(self, request, pk=None):
+        """Megrendelés csatolmányainak listázása."""
+        order = self.get_object()
+        from .models import CustomerOrderAttachment
+        from .serializers import CustomerOrderAttachmentSerializer
+        atts = CustomerOrderAttachment.objects.filter(customer_order=order).order_by('-created_at')
+        return Response(CustomerOrderAttachmentSerializer(atts, many=True, context={'request': request}).data)
+
+    @attachments.mapping.post
+    def upload_attachment(self, request, pk=None):
+        """Fájl feltöltése megrendeléshez + Storage bejegyzés létrehozása."""
+        order = self.get_object()
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+
+        from .models import CustomerOrderAttachment
+        from .serializers import CustomerOrderAttachmentSerializer
+        from apps.core.models import StorageFolder, StorageFile
+
+        # 1. Mappa struktúra: orders / {order_number}
+        system_user = request.user
+        orders_folder, _ = StorageFolder.objects.get_or_create(
+            name='orders',
+            parent=None,
+            defaults={'owner': system_user}
+        )
+        order_folder, _ = StorageFolder.objects.get_or_create(
+            name=order.order_number,
+            parent=orders_folder,
+            defaults={'owner': system_user}
+        )
+
+        # 2. StorageFile létrehozása
+        storage_file = StorageFile.objects.create(
+            name=file_obj.name,
+            folder=order_folder,
+            file=file_obj,
+            size=file_obj.size,
+            content_type=file_obj.content_type or '',
+            owner=system_user
+        )
+
+        # 3. CustomerOrderAttachment létrehozása
+        att = CustomerOrderAttachment.objects.create(
+            customer_order=order,
+            file=storage_file.file,
+            original_filename=file_obj.name,
+            storage_file_id=storage_file.id,
+            uploaded_by=request.user if request.user.is_authenticated else None
+        )
+        return Response(CustomerOrderAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path='attachments/(?P<att_id>[0-9]+)')
+    def delete_attachment(self, request, pk=None, att_id=None):
+        """Csatolmány törlése (attachment + storage fájl is)."""
+        order = self.get_object()
+        from .models import CustomerOrderAttachment
+        from apps.core.models import StorageFile
+        att = get_object_or_404(CustomerOrderAttachment, id=att_id, customer_order=order)
+        # Remove associated storage file
+        if att.storage_file_id:
+            try:
+                sf = StorageFile.objects.get(id=att.storage_file_id)
+                sf.delete()  # physical file removed in StorageFile.delete()
+            except StorageFile.DoesNotExist:
+                pass
+        att.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
     def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None):
         if extra_context is None: extra_context = {}
         cfg = EmailServerConfig.objects.filter(is_active=True).first()

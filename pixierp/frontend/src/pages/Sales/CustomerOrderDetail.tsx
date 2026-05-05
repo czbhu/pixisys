@@ -1,11 +1,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
-import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert } from 'antd';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert, Upload, Tooltip } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
-import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined } from '@ant-design/icons';
+import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined, UploadOutlined, DeleteOutlined, PaperClipOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
 import { useAuth } from '../../contexts/AuthContext';
@@ -43,6 +43,8 @@ const CustomerOrderDetail: React.FC = () => {
   const [order, setOrder] = useState<any>();
   const [formBasic] = Form.useForm();
   const [orderFiles, setOrderFiles] = useState<UploadFile<any>[]>([]);
+  const [orderAttachments, setOrderAttachments] = useState<any[]>([]);
+  const [attachUploading, setAttachUploading] = useState(false);
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -109,6 +111,10 @@ const CustomerOrderDetail: React.FC = () => {
       try {
         const atts = rfq?.attachments || [];
         setOrderFiles(atts.map((a: any) => ({ uid: String(a.id), name: a.file?.split('/').pop() || `#${a.id}`, status: 'done', url: a.file_url || a.file, response: a })));
+      try {
+        const attRes = await api.get(`/sales/customer-orders/${id}/attachments/`);
+        setOrderAttachments(attRes.data || []);
+      } catch {}
       } catch {}
     } catch (error: any) {
       message.error(error?.response?.data?.detail || 'Hiba a megrendelés betöltésekor');
@@ -646,6 +652,78 @@ const CustomerOrderDetail: React.FC = () => {
             setSelectorOpen(true);
           } : undefined}
         />
+
+        <Divider />
+
+        <Card
+          size="small"
+          title="Megrendelés csatolmányok"
+          extra={
+            <Upload
+              showUploadList={false}
+              beforeUpload={async (file) => {
+                setAttachUploading(true);
+                try {
+                  const fd = new FormData();
+                  fd.append('file', file);
+                  await api.post(`/sales/customer-orders/${id}/attachments/`, fd, {
+                    headers: { 'Content-Type': 'multipart/form-data' },
+                  });
+                  message.success('Fájl feltöltve');
+                  const attRes = await api.get(`/sales/customer-orders/${id}/attachments/`);
+                  setOrderAttachments(attRes.data || []);
+                } catch {
+                  message.error('Feltöltés sikertelen');
+                } finally {
+                  setAttachUploading(false);
+                }
+                return false;
+              }}
+            >
+              <Button icon={<UploadOutlined />} loading={attachUploading} size="small">Feltöltés</Button>
+            </Upload>
+          }
+        >
+          <List
+            size="small"
+            bordered
+            dataSource={orderAttachments}
+            locale={{ emptyText: 'Nincs csatolmány' }}
+            renderItem={(att: any) => {
+              const isImage = (att.original_filename || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
+              return (
+                <List.Item>
+                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+                    <Space>
+                      <PaperClipOutlined />
+                      {isImage && att.file_url ? (
+                        <Popover content={<img src={att.file_url} alt={att.original_filename} style={{ maxWidth: 300, maxHeight: 300, objectFit: 'contain' }} />} title={att.original_filename}>
+                          <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                        </Popover>
+                      ) : (
+                        <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                      )}
+                      <span style={{ color: '#888', fontSize: 12 }}>{att.uploaded_by_name}</span>
+                      <span style={{ color: '#aaa', fontSize: 12 }}>{att.created_at ? new Date(att.created_at).toLocaleString('hu-HU') : ''}</span>
+                    </Space>
+                    <Tooltip title="Törlés">
+                      <Button
+                        type="text" danger icon={<DeleteOutlined />} size="small"
+                        onClick={async () => {
+                          try {
+                            await api.delete(`/sales/customer-orders/${id}/attachments/${att.id}/`);
+                            setOrderAttachments(prev => prev.filter(a => a.id !== att.id));
+                            message.success('Törölve');
+                          } catch { message.error('Törlés sikertelen'); }
+                        }}
+                      />
+                    </Tooltip>
+                  </Space>
+                </List.Item>
+              );
+            }}
+          />
+        </Card>
 
         <Divider />
 

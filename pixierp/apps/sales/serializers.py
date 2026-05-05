@@ -5,7 +5,7 @@ from .models import (
     Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
     CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog,
-    ApprovalRequest,
+    ApprovalRequest, CustomerOrderAttachment,
     POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
@@ -1357,3 +1357,25 @@ class POSTransactionCreateSerializer(serializers.ModelSerializer):
         transaction.calculate_totals()
         
         return transaction
+
+
+class CustomerOrderAttachmentSerializer(serializers.ModelSerializer):
+    file_url = serializers.SerializerMethodField()
+    uploaded_by_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = CustomerOrderAttachment
+        fields = ['id', 'customer_order', 'file', 'file_url', 'original_filename',
+                  'storage_file_id', 'uploaded_by', 'uploaded_by_name', 'created_at']
+        read_only_fields = ['id', 'file_url', 'uploaded_by_name', 'created_at']
+
+    def get_file_url(self, obj):
+        request = self.context.get('request')
+        if obj.file and request:
+            return request.build_absolute_uri(obj.file.url)
+        return None
+
+    def get_uploaded_by_name(self, obj):
+        if obj.uploaded_by:
+            return f"{obj.uploaded_by.last_name} {obj.uploaded_by.first_name}".strip() or obj.uploaded_by.username
+        return None
