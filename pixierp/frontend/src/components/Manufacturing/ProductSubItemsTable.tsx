@@ -476,7 +476,6 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         },
         expandedRowRender: renderSubItemExpanded,
         rowExpandable: () => true,
-        showExpandColumn: false,
       } : undefined}
     />
   );
