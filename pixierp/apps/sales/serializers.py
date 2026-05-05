@@ -86,12 +86,15 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         if not mp:
             return None
         try:
+            product_qty = float(mp.quantity) or 1
             total = sum(
-                float(ci.cost_price) * float(ci.quantity)
+                float(ci.cost_price) * float(ci.quantity) * (product_qty if ci.is_per_unit else 1)
                 for ci in mp.cost_items.all()
-                if not ci.parent_id  # only top-level items to avoid double counting
             )
-            return round(total, 2) if total else None
+            if not total:
+                return None
+            # Return cost per 1 unit of the product so frontend can multiply by order quantity
+            return round(total / product_qty, 2)
         except Exception:
             return None
 
