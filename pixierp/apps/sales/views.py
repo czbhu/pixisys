@@ -2606,6 +2606,17 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         att.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+    @action(detail=True, methods=['patch'], url_path='attachments/(?P<att_id>[0-9]+)/remark')
+    def update_attachment_remark(self, request, pk=None, att_id=None):
+        """Csatolmány megjegyzésének utólagos módosítása."""
+        order = self.get_object()
+        from .models import CustomerOrderAttachment
+        from .serializers import CustomerOrderAttachmentSerializer
+        att = get_object_or_404(CustomerOrderAttachment, id=att_id, customer_order=order)
+        att.remark = request.data.get('remark', '')
+        att.save(update_fields=['remark'])
+        return Response(CustomerOrderAttachmentSerializer(att, context={'request': request}).data)
+
     def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None):
         if extra_context is None: extra_context = {}
         cfg = EmailServerConfig.objects.filter(is_active=True).first()

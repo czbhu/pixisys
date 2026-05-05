@@ -46,6 +46,8 @@ const CustomerOrderDetail: React.FC = () => {
   const [orderAttachments, setOrderAttachments] = useState<any[]>([]);
   const [attachUploading, setAttachUploading] = useState(false);
   const [attachRemark, setAttachRemark] = useState('');
+  const [editingRemarkId, setEditingRemarkId] = useState<number | null>(null);
+  const [editingRemarkValue, setEditingRemarkValue] = useState('');
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -728,7 +730,44 @@ const CustomerOrderDetail: React.FC = () => {
                       <PaperClipOutlined />
                       {fileBtn}
                       {att._source === 'rfq' && <Tag color="blue" style={{ fontSize: 10 }}>Ajánlat</Tag>}
-                      {att.remark && <span style={{ color: '#595959', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>}
+                      {att._source === 'order' ? (
+                        editingRemarkId === att.id ? (
+                          <Input.Group compact style={{ display: 'inline-flex' }}>
+                            <Input
+                              size="small"
+                              value={editingRemarkValue}
+                              onChange={e => setEditingRemarkValue(e.target.value)}
+                              onPressEnter={async () => {
+                                try {
+                                  const res = await api.patch(`/sales/customer-orders/${id}/attachments/${att.id}/remark/`, { remark: editingRemarkValue });
+                                  setOrderAttachments(prev => prev.map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a));
+                                  setEditingRemarkId(null);
+                                } catch { message.error('Mentés sikertelen'); }
+                              }}
+                              style={{ width: 200 }}
+                              autoFocus
+                            />
+                            <Button size="small" type="primary" onClick={async () => {
+                              try {
+                                const res = await api.patch(`/sales/customer-orders/${id}/attachments/${att.id}/remark/`, { remark: editingRemarkValue });
+                                setOrderAttachments(prev => prev.map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a));
+                                setEditingRemarkId(null);
+                              } catch { message.error('Mentés sikertelen'); }
+                            }}>Mentés</Button>
+                            <Button size="small" onClick={() => setEditingRemarkId(null)}>Mégsem</Button>
+                          </Input.Group>
+                        ) : (
+                          <span
+                            style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 12, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                            onClick={() => { setEditingRemarkId(att.id); setEditingRemarkValue(att.remark || ''); }}
+                            title="Kattints a megjegyzés szerkesztéséhez"
+                          >
+                            {att.remark || '+ megjegyzés'}
+                          </span>
+                        )
+                      ) : (
+                        att.remark && <span style={{ color: '#595959', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>
+                      )}
                       <span style={{ color: '#888', fontSize: 12 }}>{att.uploaded_by_name}</span>
                       <span style={{ color: '#aaa', fontSize: 12 }}>{att.created_at ? new Date(att.created_at).toLocaleString('hu-HU') : ''}</span>
                     </Space>
