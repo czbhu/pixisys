@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown, Popover, Grid, Form, Pagination } from 'antd';
+import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown, Popover, Grid, Form, Pagination, Upload } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
@@ -193,6 +193,12 @@ interface CustomerOrder {
   const [expandedOrderKeys, setExpandedOrderKeys] = useState<React.Key[]>([]);
   const [orderExpandedItems, setOrderExpandedItems] = useState<Record<number, any[]>>({});
   const [orderExpandedLoading, setOrderExpandedLoading] = useState<Record<number, boolean>>({});
+  // Tétel csatolmányok a listán
+  const [orderItemAtts, setOrderItemAtts] = useState<Record<number, any[]>>({});
+  const [orderItemAttsLoaded, setOrderItemAttsLoaded] = useState<Record<number, boolean>>({});
+  const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
+  const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
+  const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
   
   // Email sending state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -463,6 +469,23 @@ interface CustomerOrder {
       return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
     }
 
+    const loadItemAtts = (coiId: number) => {
+      if (orderItemAttsLoaded[coiId]) return;
+      api.get(`/sales/customer-order-items/${coiId}/attachments/`)
+        .then(res => setOrderItemAtts(prev => ({ ...prev, [coiId]: res.data || [] })))
+        .catch(() => setOrderItemAtts(prev => ({ ...prev, [coiId]: [] })))
+        .finally(() => setOrderItemAttsLoaded(prev => ({ ...prev, [coiId]: true })));
+    };
+
+    const toggleItemAtt = (coiId: number) => {
+      if (orderItemAttExpanded.includes(coiId)) {
+        setOrderItemAttExpanded(prev => prev.filter(id => id !== coiId));
+      } else {
+        setOrderItemAttExpanded(prev => [...prev, coiId]);
+        loadItemAtts(coiId);
+      }
+    };
+
     return (
       <div style={{ padding: '8px 0 8px 28px' }}>
         <Table
@@ -495,22 +518,119 @@ interface CustomerOrder {
               key: 'description',
               ellipsis: true,
             },
+            {
+              title: 'Csatolmányok',
+              key: 'attachments',
+              width: 140,
+              render: (_: any, r: any) => {
+                const coiId = Number(r.id);
+                if (!coiId) return null;
+                const atts: any[] = orderItemAtts[coiId] || [];
+                const loaded = !!orderItemAttsLoaded[coiId];
+                const isOpen = orderItemAttExpanded.includes(coiId);
+                return (
+                  <Button
+                    size="small"
+                    icon={<PaperClipOutlined />}
+                    type={isOpen ? 'primary' : 'default'}
+                    onClick={() => toggleItemAtt(coiId)}
+                  >
+                    {loaded && atts.length > 0 ? atts.length : ''}
+                  </Button>
+                );
+              },
+            },
           ]}
           expandable={{
-            rowExpandable: (r: any) => !!(
-              (r.item_type === 'manufacturing' || r.manufacturing_product_name || r.quote_item?.manufacturing_product) &&
-              Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0) > 0
-            ),
+            expandedRowKeys: orderItemAttExpanded,
+            onExpand: (expanded, r) => {
+              const coiId = Number(r.id);
+              if (expanded) {
+                setOrderItemAttExpanded(prev => [...prev, coiId]);
+                loadItemAtts(coiId);
+              } else {
+                setOrderItemAttExpanded(prev => prev.filter(id => id !== coiId));
+              }
+            },
+            rowExpandable: () => true,
+            showExpandColumn: false,
             expandedRowRender: (r: any) => {
+              const coiId = Number(r.id);
               const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
-              if (!productId) return null;
+              const atts: any[] = orderItemAtts[coiId] || [];
+              const loaded = !!orderItemAttsLoaded[coiId];
+              const uploading = !!orderItemAttUploading[coiId];
+              const attRemark = orderItemAttRemark[coiId] || '';
               return (
-                <div style={{ padding: '8px 0 8px 28px' }}>
-                  <ProductSubItemsTable productId={productId} readOnly />
+                <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                  <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                    {productId > 0 && (
+                      <div>
+                        <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Altételek</div>
+                        <div style={{ paddingLeft: 8 }}>
+                          <ProductSubItemsTable productId={productId} readOnly />
+                        </div>
+                      </div>
+                    )}
+                    <div>
+                      <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
+                      <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                        <Input
+                          placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                          size="small" value={attRemark} style={{ width: 340 }}
+                          onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
+                        />
+                        <Upload.Dragger
+                          multiple
+                          showUploadList={false}
+                          disabled={uploading}
+                          style={{ padding: '8px 0' }}
+                          beforeUpload={async (file) => {
+                            setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                            try {
+                              const fd = new FormData();
+                              fd.append('file', file);
+                              if (attRemark) fd.append('remark', attRemark);
+                              const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                              setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                              setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                              message.success('Feltöltve');
+                            } catch { message.error('Feltöltés sikertelen'); }
+                            finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                            return false;
+                          }}
+                        >
+                          {uploading
+                            ? <><AntSpin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                            : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                          }
+                        </Upload.Dragger>
+                        {!loaded ? <AntSpin size="small" /> : atts.length === 0 ? (
+                          <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+                        ) : (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {atts.map((att: any) => (
+                              <Space key={att.id} size={4}>
+                                <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
+                                {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
+                                <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                                  onClick={async () => {
+                                    try {
+                                      await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
+                                      setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
+                                    } catch { message.error('Törlés sikertelen'); }
+                                  }}
+                                />
+                              </Space>
+                            ))}
+                          </div>
+                        )}
+                      </Space>
+                    </div>
+                  </Space>
                 </div>
               );
             },
-            defaultExpandAllRows: true,
           }}
         />
       </div>
