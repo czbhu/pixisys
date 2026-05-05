@@ -832,9 +832,18 @@ class ManufacturingCostItemViewSet(
                 label = ci.department.name if ci.department else f"Belső #{ci.department_id}"
                 default_email = ''
                 if ci.department:
-                    mgr = ci.department.managers.exclude(email='').first()
-                    if mgr:
-                        default_email = mgr.email
+                    emp_emails = list(
+                        ci.department.employees
+                        .filter(is_active=True)
+                        .exclude(user__email='')
+                        .values_list('user__email', flat=True)
+                    )
+                    if emp_emails:
+                        default_email = ', '.join(emp_emails)
+                    else:
+                        mgr = ci.department.managers.exclude(email='').first()
+                        if mgr:
+                            default_email = mgr.email
             elif ci.supplier_id:
                 key = f"sup:{ci.supplier_id}"
                 label = ci.supplier.name if ci.supplier else f"Beszállító #{ci.supplier_id}"
@@ -1009,9 +1018,18 @@ class ManufacturingCostItemViewSet(
                 label = ci.department.name if ci.department else f"Belső #{ci.department_id}"
                 default_email = ''
                 if ci.department:
-                    mgr = ci.department.managers.exclude(email='').first()
-                    if mgr:
-                        default_email = mgr.email
+                    emp_emails = list(
+                        ci.department.employees
+                        .filter(is_active=True)
+                        .exclude(user__email='')
+                        .values_list('user__email', flat=True)
+                    )
+                    if emp_emails:
+                        default_email = ', '.join(emp_emails)
+                    else:
+                        mgr = ci.department.managers.exclude(email='').first()
+                        if mgr:
+                            default_email = mgr.email
             elif ci.supplier_id:
                 key = f"sup:{ci.supplier_id}"
                 label = ci.supplier.name if ci.supplier else f"Beszállító #{ci.supplier_id}"
