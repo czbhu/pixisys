@@ -597,9 +597,12 @@ interface CustomerOrder {
                 },
                 {
                   title: 'Megjegyzés',
-                  dataIndex: 'description',
                   key: 'description',
                   ellipsis: true,
+                  render: (_: any, r: any) => {
+                    const raw = r.description || r.quote_item?.description || '';
+                    return <span title={stripHtml(raw)}>{stripHtml(raw)}</span>;
+                  },
                 },
                 {
                   title: 'Hierarchia', key: 'hier', width: 80,

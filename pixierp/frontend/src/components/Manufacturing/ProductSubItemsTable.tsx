@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload } from 'antd';
+import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select } from 'antd';
 import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
   DndContext,
@@ -101,6 +101,31 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [expandedSubItems, setExpandedSubItems] = useState<number[]>([]);
   const [editingSubAttRemarkId, setEditingSubAttRemarkId] = useState<number | null>(null);
   const [editingSubAttRemarkVal, setEditingSubAttRemarkVal] = useState<string>('');
+  // suppliers
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
+
+  useEffect(() => {
+    api.get('/crm/companies/?is_supplier=true&page_size=1000')
+      .then(res => setSuppliers(Array.isArray(res.data?.results) ? res.data.results : (Array.isArray(res.data) ? res.data : [])))
+      .catch(() => {});
+  }, []);
+
+  const handleSupplierChange = async (id: number, supplierId: number | null) => {
+    const prev = items;
+    setItems(items.map(it => {
+      if (it.id !== id) return it;
+      const sup = suppliers.find(s => s.id === supplierId);
+      return { ...it, supplier: supplierId, supplier_name: sup?.name || '' };
+    }));
+    setSupplierPopoverOpen(null);
+    try {
+      await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
+    } catch {
+      message.error('Beszállító frissítése sikertelen');
+      setItems(prev);
+    }
+  };
 
   const treeMeta = useMemo(() => buildCostTreeMeta(items), [items]);
 
@@ -260,9 +285,38 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     { title: 'Bek. egységár', dataIndex: 'cost_price', key: 'cost_price', width: 130, align: 'right' as const,
       render: (v: number, r: ProductSubItem) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_code || 'HUF'}` },
     { title: 'Beszállító', key: 'supplier', width: 180,
-      render: (_: any, r: ProductSubItem) => r.is_internal
-        ? <Tag color="blue">{r.department_name || 'Belső'}</Tag>
-        : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>),
+      render: (_: any, r: ProductSubItem) => {
+        if (r.is_internal) return <Tag color="blue">{r.department_name || 'Belső'}</Tag>;
+        const tag = r.supplier_name
+          ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
+          : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
+        return (
+          <Popover
+            open={supplierPopoverOpen === r.id}
+            onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
+            trigger="click"
+            title="Beszállító változtatás"
+            content={
+              <div style={{ width: 280 }}>
+                <Select
+                  autoFocus
+                  showSearch
+                  allowClear
+                  placeholder="Beszállító kiválasztása…"
+                  style={{ width: '100%' }}
+                  value={r.supplier ?? undefined}
+                  optionFilterProp="label"
+                  options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+                  onChange={val => handleSupplierChange(r.id, val ?? null)}
+                />
+              </div>
+            }
+            overlayInnerStyle={{ padding: '10px 12px' }}
+          >
+            <span onClick={e => e.stopPropagation()}>{tag}</span>
+          </Popover>
+        );
+      },
     },
     {
       title: 'Státusz', key: 'status', width: 140,

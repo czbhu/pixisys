@@ -25,6 +25,20 @@ import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItems
 
 // Ékezet-független + kis/nagybetű-független filter a Select komponensekhez
 // (a default `optionFilterProp="label"` csak case-insensitive substring match-et csinál).
+const stripHtml = (s: any): string => {
+  if (s == null) return '';
+  const str = String(s);
+  if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
+  if (typeof document !== 'undefined') {
+    try {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = str;
+      return tmp.textContent || tmp.innerText || '';
+    } catch { /* fall through */ }
+  }
+  return str.replace(/<[^>]*>/g, '');
+};
+
 const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
   if (!input) return true;
   const label = (option?.label ?? option?.children ?? '').toString();
@@ -176,9 +190,12 @@ const RFQs: React.FC = () => {
             },
             {
               title: 'Leírás',
-              dataIndex: 'description',
               key: 'description',
               ellipsis: true,
+              render: (_: any, r: any) => {
+                const raw = r.description || '';
+                return <span title={stripHtml(raw)}>{stripHtml(raw)}</span>;
+              },
             },
           ]}
           expandable={{
