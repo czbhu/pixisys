@@ -647,7 +647,6 @@ interface CustomerOrder {
                   }
                 },
                 rowExpandable: () => true,
-                showExpandColumn: false,
                 expandedRowRender: (r: any) => {
                   const coiId = Number(r.id);
                   const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
