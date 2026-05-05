@@ -471,7 +471,7 @@ const OrderedProducts: React.FC = () => {
                         });
                     });
                     const wsCostItemId = ids.find((cid) => costItemMetaById[cid]?.orderedItem?.id === oi.id) || ids[0];
-                    const wsUrl = `${window.location.origin}/api/manufacturing/cost-items/${wsCostItemId}/work_sheet/`;
+                    const wsUrl = `${window.location.origin}/api/v1/manufacturing/cost-items/${wsCostItemId}/work_sheet/`;
                     const wsKey = `worksheet_${oi.id}`;
                     if (!attachmentMap.has(wsKey)) {
                         attachmentMap.set(wsKey, {
