@@ -1404,6 +1404,28 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         local_now = timezone.localtime(now)
         today = local_now.date() 
 
+        # --- QR LOGIN (munkaállomás bejelentkezési QR — plain, nem aláírt) ---
+        if qr_code and str(qr_code).startswith("LOGIN_QR:"):
+            session_id = str(qr_code)[len("LOGIN_QR:"):]
+            from django.core.cache import cache
+            data = cache.get(f'qr_login:{session_id}')
+            if data is None:
+                return Response({'error': 'A bejelentkezési QR kód lejárt.'}, status=404)
+            if data.get('status') != 'pending':
+                return Response({'error': 'Ez a QR kód már fel lett használva.'}, status=400)
+            from rest_framework_simplejwt.tokens import RefreshToken
+            from apps.core.serializers import UserSerializer
+            refresh = RefreshToken.for_user(user)
+            cache.set(f'qr_login:{session_id}', {
+                'status': 'approved',
+                'tokens': {
+                    'access': str(refresh.access_token),
+                    'refresh': str(refresh),
+                },
+                'user': UserSerializer(user).data,
+            }, timeout=30)
+            return Response({'message': f'Bejelentkezés jóváhagyva: {user.get_full_name() or user.username}'})
+
         # --- 1. Identify Kiosk (User scans Kiosk ID) ---
         if qr_code:
             from django.core.signing import TimestampSigner, BadSignature, SignatureExpired
@@ -1422,28 +1444,6 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     parts = original_value.split(':', 1)
                     if len(parts) >= 2 and parts[0] == "KIOSK_ID":
                         return self._initiate_kiosk_challenge(request, parts[1])
-
-                # --- QR LOGIN (munkaállomáson megjelenő bejelentkezési QR kód) ---
-                if original_value.startswith("LOGIN_QR:"):
-                    session_id = original_value[len("LOGIN_QR:"):]
-                    from django.core.cache import cache
-                    data = cache.get(f'qr_login:{session_id}')
-                    if data is None:
-                        return Response({'error': 'A bejelentkezési QR kód lejárt.'}, status=404)
-                    if data.get('status') != 'pending':
-                        return Response({'error': 'Ez a QR kód már fel lett használva.'}, status=400)
-                    from rest_framework_simplejwt.tokens import RefreshToken
-                    from apps.core.serializers import UserSerializer
-                    refresh = RefreshToken.for_user(user)
-                    cache.set(f'qr_login:{session_id}', {
-                        'status': 'approved',
-                        'tokens': {
-                            'access': str(refresh.access_token),
-                            'refresh': str(refresh),
-                        },
-                        'user': UserSerializer(user).data,
-                    }, timeout=30)
-                    return Response({'message': f'Bejelentkezés jóváhagyva: {user.get_full_name() or user.username}'})
 
                 # --- 2. Check-In/Out Action (Kiosk scans User Token) OR User scans Challenge Token ---
                 
