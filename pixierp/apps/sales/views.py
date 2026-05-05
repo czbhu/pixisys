@@ -2265,6 +2265,43 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
             remark=remark,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
+        # Storage bejegyzés létrehozása az RFQ és összes kapcsolódó megrendelés mappájában
+        try:
+            from apps.core.models import StorageFolder, StorageFile as SF
+            qr = item.quote_request
+            owner = request.user
+            # Részletek megállapítása: tétel neve
+            item_label = item.description[:40] if item.description else f'item-{item.id}'
+
+            # 1. Fő bejegyzés az RFQ mappában
+            rfq_root, _ = StorageFolder.objects.get_or_create(name='rfq', parent=None, defaults={'owner': owner})
+            rfq_folder, _ = StorageFolder.objects.get_or_create(
+                name=qr.request_number or str(qr.id), parent=rfq_root, defaults={'owner': owner}
+            )
+            sf = SF(
+                name=file_obj.name,
+                folder=rfq_folder,
+                size=att.file.size if att.file else 0,
+                content_type=file_obj.content_type or '',
+                owner=owner,
+            )
+            sf.file.name = att.file.name
+            sf.save()
+            att.storage_file_id = sf.id
+            att.save(update_fields=['storage_file_id'])
+
+            # 2. Alias-ok minden kapcsolódó megrendelés mappájában
+            orders_root, _ = StorageFolder.objects.get_or_create(name='orders', parent=None, defaults={'owner': owner})
+            for linked_order in qr.customer_orders.all():
+                order_folder, _ = StorageFolder.objects.get_or_create(
+                    name=linked_order.order_number, parent=orders_root, defaults={'owner': owner}
+                )
+                alias = SF(name=file_obj.name, folder=order_folder, alias_of=sf,
+                           size=sf.size, content_type=sf.content_type, owner=owner)
+                alias.file.name = sf.file.name
+                alias.save()
+        except Exception:
+            pass
         return Response(QuoteRequestItemAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -2510,12 +2547,54 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
-        """Megrendelés csatolmányainak listázása."""
+        """Megrendelés csatolmányainak listázása (tétel-szintűeket is)."""
         order = self.get_object()
-        from .models import CustomerOrderAttachment
-        from .serializers import CustomerOrderAttachmentSerializer
-        atts = CustomerOrderAttachment.objects.filter(customer_order=order).order_by('-created_at')
-        return Response(CustomerOrderAttachmentSerializer(atts, many=True, context={'request': request}).data)
+        from .models import CustomerOrderAttachment, QuoteRequestItemAttachment
+        from .serializers import CustomerOrderAttachmentSerializer, QuoteRequestItemAttachmentSerializer
+
+        result = []
+
+        # 1. Megrendelés-szintű csatolmányok
+        for att in CustomerOrderAttachment.objects.filter(customer_order=order).order_by('-created_at'):
+            d = CustomerOrderAttachmentSerializer(att, context={'request': request}).data
+            d['_source'] = 'order'
+            d['_source_label'] = 'Megrendelés'
+            result.append(d)
+
+        # 2. Tétel-szintű csatolmányok (a kötődő QuoteRequestItem-ek révén)
+        for oi in order.items.select_related('quote_item').all():
+            qi = oi.quote_item
+            item_name = oi.description or (qi.description if qi else '') or f'Tétel #{oi.id}'
+            item_name = item_name[:50]
+            for att in QuoteRequestItemAttachment.objects.filter(quote_item=qi).order_by('-created_at'):
+                d = QuoteRequestItemAttachmentSerializer(att, context={'request': request}).data
+                d['_source'] = 'item'
+                d['_source_label'] = f'Tétel: {item_name}'
+                d['original_filename'] = att.file.name.split('/')[-1] if att.file else ''
+                d['order_item_id'] = oi.id
+                result.append(d)
+
+            # 3. Altételek (ManufacturingCostItem) csatolmányai, ha vannak
+            try:
+                from apps.manufacturing.models import ManufacturingCostItem
+                for ci in ManufacturingCostItem.objects.filter(quote_request_item=qi):
+                    ci_name = ci.description[:40] if ci.description else f'Altétel #{ci.id}'
+                    for ci_att in ci.attachments.all():
+                        d = {
+                            '_source': 'subitem',
+                            '_source_label': f'Altétel: {ci_name}',
+                            'id': ci_att.id,
+                            'original_filename': ci_att.file.name.split('/')[-1] if ci_att.file else '',
+                            'file_url': request.build_absolute_uri(ci_att.file.url) if ci_att.file else None,
+                            'remark': getattr(ci_att, 'remark', ''),
+                            'uploaded_by_name': '',
+                            'created_at': str(ci_att.created_at) if hasattr(ci_att, 'created_at') else '',
+                        }
+                        result.append(d)
+            except Exception:
+                pass
+
+        return Response(result)
 
     @attachments.mapping.post
     def upload_attachment(self, request, pk=None):

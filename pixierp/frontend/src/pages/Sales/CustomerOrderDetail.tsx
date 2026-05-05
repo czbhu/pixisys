@@ -703,7 +703,7 @@ const CustomerOrderDetail: React.FC = () => {
             bordered
             locale={{ emptyText: 'Nincs csatolmány' }}
             dataSource={[
-              ...orderAttachments.map((a: any) => ({ ...a, _source: 'order' })),
+              ...orderAttachments,
               ...(orderFiles || []).map((f: any) => ({
                 id: `rfq-${f.uid}`,
                 original_filename: f.name,
@@ -712,6 +712,7 @@ const CustomerOrderDetail: React.FC = () => {
                 uploaded_by_name: f.response?.uploaded_by_name || '',
                 created_at: f.response?.created_at || '',
                 _source: 'rfq',
+                _source_label: 'Ajánlat',
               })),
             ]}
             renderItem={(att: any) => {
@@ -730,6 +731,8 @@ const CustomerOrderDetail: React.FC = () => {
                       <PaperClipOutlined />
                       {fileBtn}
                       {att._source === 'rfq' && <Tag color="blue" style={{ fontSize: 10 }}>Ajánlat</Tag>}
+                      {att._source === 'item' && <Tag color="green" style={{ fontSize: 10 }}>{att._source_label || 'Tétel'}</Tag>}
+                      {att._source === 'subitem' && <Tag color="orange" style={{ fontSize: 10 }}>{att._source_label || 'Altétel'}</Tag>}
                       {att._source === 'order' ? (
                         editingRemarkId === att.id ? (
                           <Input.Group compact style={{ display: 'inline-flex' }}>
