@@ -99,6 +99,8 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [subItemAttRemark, setSubItemAttRemark] = useState<Record<number, string>>({});
   const [subItemAttUploading, setSubItemAttUploading] = useState<Record<number, boolean>>({});
   const [expandedSubItems, setExpandedSubItems] = useState<number[]>([]);
+  const [editingSubAttRemarkId, setEditingSubAttRemarkId] = useState<number | null>(null);
+  const [editingSubAttRemarkVal, setEditingSubAttRemarkVal] = useState<string>('');
 
   const treeMeta = useMemo(() => buildCostTreeMeta(items), [items]);
 
@@ -429,9 +431,42 @@ export const ProductSubItemsTable: React.FC<Props> = ({
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {atts.map((att: any) => (
-                    <Space key={att.id} size={4}>
+                    <Space key={att.id} size={4} align="center">
                       <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
-                      {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
+                      {editingSubAttRemarkId === att.id ? (
+                        <Space size={4}>
+                          <Input
+                            size="small"
+                            autoFocus
+                            value={editingSubAttRemarkVal}
+                            style={{ width: 200 }}
+                            onChange={e => setEditingSubAttRemarkVal(e.target.value)}
+                            onPressEnter={async () => {
+                              try {
+                                const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingSubAttRemarkVal });
+                                setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                setEditingSubAttRemarkId(null);
+                              } catch { message.error('Mentés sikertelen'); }
+                            }}
+                          />
+                          <Button size="small" type="primary" onClick={async () => {
+                            try {
+                              const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/remark/`, { remark: editingSubAttRemarkVal });
+                              setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                              setEditingSubAttRemarkId(null);
+                            } catch { message.error('Mentés sikertelen'); }
+                          }}>Mentés</Button>
+                          <Button size="small" onClick={() => setEditingSubAttRemarkId(null)}>Mégsem</Button>
+                        </Space>
+                      ) : (
+                        <span
+                          style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 11, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                          title="Kattints a megjegyzés szerkesztéséhez"
+                          onClick={() => { setEditingSubAttRemarkId(att.id); setEditingSubAttRemarkVal(att.remark || ''); }}
+                        >
+                          {att.remark || '+ megjegyzés'}
+                        </span>
+                      )}
                       <Button type="text" danger size="small" icon={<DeleteOutlined />}
                         onClick={async () => {
                           try {

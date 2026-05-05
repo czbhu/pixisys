@@ -4351,6 +4351,16 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
             'created_at': att.created_at.isoformat() if att.created_at else '',
         }, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/remark')
+    def update_attachment_remark(self, request, pk=None, att_id=None):
+        from .models import QuoteRequestItemAttachment
+        item = self.get_object()
+        qi = item.quote_item
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
+        att.remark = request.data.get('remark', '')
+        att.save(update_fields=['remark'])
+        return Response({'remark': att.remark})
+
     @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<att_id>\d+)')
     def delete_attachment(self, request, pk=None, att_id=None):
         from .models import QuoteRequestItemAttachment

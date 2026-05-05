@@ -215,6 +215,8 @@ interface CustomerOrder {
   const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
   const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
   const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
+  const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
+  const [editingAttRemarkVal, setEditingAttRemarkVal] = useState<string>('');
   
   // Email sending state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -703,9 +705,42 @@ interface CustomerOrder {
                             ) : (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 {atts.map((att: any) => (
-                                  <Space key={att.id} size={4}>
+                                  <Space key={att.id} size={4} align="center">
                                     <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
-                                    {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
+                                    {editingAttRemarkId === att.id ? (
+                                      <Space size={4}>
+                                        <Input
+                                          size="small"
+                                          autoFocus
+                                          value={editingAttRemarkVal}
+                                          style={{ width: 200 }}
+                                          onChange={e => setEditingAttRemarkVal(e.target.value)}
+                                          onPressEnter={async () => {
+                                            try {
+                                              const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                              setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                              setEditingAttRemarkId(null);
+                                            } catch { message.error('Mentés sikertelen'); }
+                                          }}
+                                        />
+                                        <Button size="small" type="primary" onClick={async () => {
+                                          try {
+                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/remark/`, { remark: editingAttRemarkVal });
+                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, remark: res.data.remark } : a) }));
+                                            setEditingAttRemarkId(null);
+                                          } catch { message.error('Mentés sikertelen'); }
+                                        }}>Mentés</Button>
+                                        <Button size="small" onClick={() => setEditingAttRemarkId(null)}>Mégsem</Button>
+                                      </Space>
+                                    ) : (
+                                      <span
+                                        style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 11, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                                        title="Kattints a megjegyzés szerkesztéséhez"
+                                        onClick={() => { setEditingAttRemarkId(att.id); setEditingAttRemarkVal(att.remark || ''); }}
+                                      >
+                                        {att.remark || '+ megjegyzés'}
+                                      </span>
+                                    )}
                                     <Button type="text" danger size="small" icon={<DeleteOutlined />}
                                       onClick={async () => {
                                         try {

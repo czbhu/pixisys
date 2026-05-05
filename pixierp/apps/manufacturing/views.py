@@ -1605,6 +1605,16 @@ class ManufacturingCostItemViewSet(
             'created_at': att.created_at.isoformat() if att.created_at else '',
         }, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/remark')
+    def update_attachment_remark(self, request, pk=None, att_id=None):
+        """PATCH remark on a cost item attachment."""
+        from apps.manufacturing.models import ManufacturingCostItemAttachment
+        ci = self.get_object()
+        att = get_object_or_404(ManufacturingCostItemAttachment, id=att_id, cost_item=ci)
+        att.remark = request.data.get('remark', '')
+        att.save(update_fields=['remark'])
+        return Response({'remark': att.remark})
+
     @action(detail=True, methods=['delete'], url_path=r'attachments/(?P<att_id>\d+)')
     def delete_attachment(self, request, pk=None, att_id=None):
         """Delete a cost item attachment."""
