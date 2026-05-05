@@ -2545,6 +2545,42 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(order)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
+    @action(detail=True, methods=['post'])
+    def reorder_items(self, request, pk=None):
+        """Tételek sorrendjének és szülő-kapcsolatának frissítése.
+        Expects a list of {id (CustomerOrderItem id), sort_order, parent_id}."""
+        order = self.get_object()
+        items_data = request.data
+        if not isinstance(items_data, list):
+            return Response({"error": "List expected"}, status=status.HTTP_400_BAD_REQUEST)
+
+        valid_coi_ids = set(order.items.values_list('id', flat=True))
+        with transaction.atomic():
+            for item in items_data:
+                coi_id = item.get('id')
+                if coi_id not in valid_coi_ids:
+                    continue
+                sort_order = item.get('sort_order', 0)
+                parent_id = item.get('parent_id')
+                # parent_id here is a CustomerOrderItem id — resolve to QuoteRequestItem id
+                qi_parent_id = None
+                if parent_id and parent_id != coi_id:
+                    try:
+                        parent_coi = CustomerOrderItem.objects.get(id=parent_id, customer_order=order)
+                        qi_parent_id = parent_coi.quote_item_id
+                    except CustomerOrderItem.DoesNotExist:
+                        pass
+                # Update the underlying QuoteRequestItem
+                try:
+                    coi = CustomerOrderItem.objects.get(id=coi_id)
+                    QuoteRequestItem.objects.filter(id=coi.quote_item_id).update(
+                        sort_order=sort_order,
+                        parent_id=qi_parent_id,
+                    )
+                except CustomerOrderItem.DoesNotExist:
+                    pass
+        return Response({'status': 'ok'})
+
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
         """Megrendelés csatolmányainak listázása (tétel-szintűeket is)."""

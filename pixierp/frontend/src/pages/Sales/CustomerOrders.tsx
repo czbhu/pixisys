@@ -3,10 +3,10 @@ import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined, PaperClipOutlined, MenuOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
-import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable';
+import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import useUserPreference from '../../hooks/useUserPreference';
 import { useNavigate } from 'react-router-dom';
@@ -22,6 +22,22 @@ import { deepSearchMatch } from '../../utils/searchUtils';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import { Spin as AntSpin } from 'antd';
 import './CustomerOrders.css';
+
+// Row context + DnD helpers for order-item expand rows
+const OrderItemRowContext = React.createContext<{ setActivatorNodeRef?: any; listeners?: any }>({});
+const OrderItemDragHandle = () => {
+  const { setActivatorNodeRef, listeners } = React.useContext(OrderItemRowContext);
+  return <Button type="text" size="small" icon={<MenuOutlined style={{ cursor: 'grab', color: '#999' }} />} ref={setActivatorNodeRef} {...listeners} />;
+};
+const OrderItemDraggableRow = ({ children, ...props }: any) => {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({ id: props['data-row-key'] });
+  const style: React.CSSProperties = { ...props.style, transform: CSS.Transform.toString(transform && { ...transform, scaleY: 1 }), transition, ...(isDragging ? { position: 'relative', zIndex: 9999, background: '#e6f7ff' } : {}) };
+  return (
+    <OrderItemRowContext.Provider value={{ setActivatorNodeRef, listeners }}>
+      <tr {...props} ref={setNodeRef} style={style} {...attributes}>{children}</tr>
+    </OrderItemRowContext.Provider>
+  );
+};
 
 const { useBreakpoint } = Grid;
 
@@ -428,21 +444,23 @@ interface CustomerOrder {
       const res = await api.get(`/sales/customer-orders/${orderId}/`, { params: { include_items: 'true' } });
       const src: any[] = Array.isArray(res.data?.items) ? res.data.items : [];
       const sorted = [...src].sort((a: any, b: any) => {
-        const ao = Number(a?.sort_order ?? 0);
-        const bo = Number(b?.sort_order ?? 0);
+        const ao = Number(a?.quote_item?.sort_order ?? a?.sort_order ?? 0);
+        const bo = Number(b?.quote_item?.sort_order ?? b?.sort_order ?? 0);
         if (ao !== bo) return ao - bo;
         return Number(a?.id ?? 0) - Number(b?.id ?? 0);
       });
-      const map = new Map<number, any>();
-      sorted.forEach((it: any) => map.set(it.id, { ...it, children: [] }));
-      const roots: any[] = [];
+      // Build COI id -> QuoteRequestItem id map to resolve parent relationships
+      const qiIdToCoiId = new Map<number, number>();
       sorted.forEach((it: any) => {
-        const node = map.get(it.id);
-        const pid = it.parent;
-        if (pid && map.has(pid)) map.get(pid).children.push(node);
-        else roots.push(node);
+        if (it.quote_item?.id) qiIdToCoiId.set(it.quote_item.id, it.id);
       });
-      setOrderExpandedItems(prev => ({ ...prev, [orderId]: roots }));
+      // Store as flat list with _parent_coi_id resolved
+      const flat = sorted.map((it: any) => {
+        const parentQiId = it.quote_item?.parent;
+        const parentCoiId = parentQiId ? (qiIdToCoiId.get(parentQiId) || null) : null;
+        return { ...it, _parent_coi_id: parentCoiId };
+      });
+      setOrderExpandedItems(prev => ({ ...prev, [orderId]: flat }));
     } catch (e) {
       console.error(e);
       message.error('Nem sikerült betölteni a megrendelés tételeit');
@@ -455,7 +473,7 @@ interface CustomerOrder {
   const renderExpandedOrderRow = (record: any) => {
     const orderId = Number(record?.id || 0);
     const loadingItems = !!orderExpandedLoading[orderId];
-    const treeItems = orderExpandedItems[orderId];
+    const flatItems: any[] = orderExpandedItems[orderId] || [];
 
     if (loadingItems) {
       return (
@@ -465,7 +483,7 @@ interface CustomerOrder {
       );
     }
 
-    if (!treeItems || treeItems.length === 0) {
+    if (!flatItems || flatItems.length === 0) {
       return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
     }
 
@@ -486,153 +504,231 @@ interface CustomerOrder {
       }
     };
 
+    // Build depth map for indentation display (parent is COI id stored as quote_item.parent => need COI id mapping)
+    const getDepth = (item: any, items: any[], visited = new Set<number>()): number => {
+      const parentCoiId = item._parent_coi_id;
+      if (!parentCoiId || visited.has(item.id)) return 0;
+      visited.add(item.id);
+      const parent = items.find(i => i.id === parentCoiId);
+      if (!parent) return 0;
+      return 1 + getDepth(parent, items, visited);
+    };
+
+    const persistOrder = async (newItems: any[]) => {
+      try {
+        const payload = newItems.map((it, idx) => ({
+          id: it.id,
+          sort_order: idx,
+          parent_id: it._parent_coi_id || null,
+        }));
+        await api.post(`/sales/customer-orders/${orderId}/reorder_items/`, payload);
+      } catch { message.error('Sorrend mentése sikertelen'); }
+    };
+
+    const handleDragEnd = (event: DragEndEvent) => {
+      const { active, over } = event;
+      if (!over || active.id === over.id) return;
+      const oldIdx = flatItems.findIndex((i: any) => i.id === active.id);
+      const newIdx = flatItems.findIndex((i: any) => i.id === over.id);
+      const newItems = arrayMove(flatItems, oldIdx, newIdx);
+      setOrderExpandedItems(prev => ({ ...prev, [orderId]: newItems }));
+      persistOrder(newItems);
+    };
+
+    const onIndent = (item: any) => {
+      const idx = flatItems.findIndex((i: any) => i.id === item.id);
+      if (idx <= 0) return;
+      const prev = flatItems[idx - 1];
+      const newItems = flatItems.map((it: any) => it.id === item.id ? { ...it, _parent_coi_id: prev.id } : it);
+      setOrderExpandedItems(prevState => ({ ...prevState, [orderId]: newItems }));
+      persistOrder(newItems);
+    };
+
+    const onOutdent = (item: any) => {
+      if (!item._parent_coi_id) return;
+      const parent = flatItems.find((i: any) => i.id === item._parent_coi_id);
+      const newParentId = parent?._parent_coi_id || null;
+      const newItems = flatItems.map((it: any) => it.id === item.id ? { ...it, _parent_coi_id: newParentId } : it);
+      setOrderExpandedItems(prevState => ({ ...prevState, [orderId]: newItems }));
+      persistOrder(newItems);
+    };
+
     return (
       <div style={{ padding: '8px 0 8px 28px' }}>
-        <Table
-          size="small"
-          pagination={false}
-          rowKey="id"
-          dataSource={treeItems}
-          columns={[
-            {
-              title: 'Megnevezés',
-              key: 'name',
-              render: (_: any, r: any) => (
-                <div>
-                  <div style={{ fontWeight: 500 }}>
-                    {r.product_name || r.manufacturing_product_name || r.material_name || r.service_name || r.name || r.description || '-'}
-                  </div>
-                  <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.manufacturing_product_code || r.material_code || r.service_code || ''}</div>
-                </div>
-              ),
-            },
-            {
-              title: 'Mennyiség',
-              key: 'qty',
-              width: 120,
-              render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
-            },
-            {
-              title: 'Megjegyzés',
-              dataIndex: 'description',
-              key: 'description',
-              ellipsis: true,
-            },
-            {
-              title: 'Csatolmányok',
-              key: 'attachments',
-              width: 140,
-              render: (_: any, r: any) => {
-                const coiId = Number(r.id);
-                if (!coiId) return null;
-                const atts: any[] = orderItemAtts[coiId] || [];
-                const loaded = !!orderItemAttsLoaded[coiId];
-                const isOpen = orderItemAttExpanded.includes(coiId);
-                return (
-                  <Button
-                    size="small"
-                    icon={<PaperClipOutlined />}
-                    type={isOpen ? 'primary' : 'default'}
-                    onClick={() => toggleItemAtt(coiId)}
-                  >
-                    {loaded && atts.length > 0 ? atts.length : ''}
-                  </Button>
-                );
-              },
-            },
-          ]}
-          expandable={{
-            expandedRowKeys: orderItemAttExpanded,
-            onExpand: (expanded, r) => {
-              const coiId = Number(r.id);
-              if (expanded) {
-                setOrderItemAttExpanded(prev => [...prev, coiId]);
-                loadItemAtts(coiId);
-              } else {
-                setOrderItemAttExpanded(prev => prev.filter(id => id !== coiId));
-              }
-            },
-            rowExpandable: () => true,
-            showExpandColumn: false,
-            expandedRowRender: (r: any) => {
-              const coiId = Number(r.id);
-              const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
-              const atts: any[] = orderItemAtts[coiId] || [];
-              const loaded = !!orderItemAttsLoaded[coiId];
-              const uploading = !!orderItemAttUploading[coiId];
-              const attRemark = orderItemAttRemark[coiId] || '';
-              return (
-                <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
-                  <Space direction="vertical" style={{ width: '100%' }} size={10}>
-                    {productId > 0 && (
-                      <div>
-                        <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Altételek</div>
-                        <div style={{ paddingLeft: 8 }}>
-                          <ProductSubItemsTable productId={productId} readOnly />
+        <DndContext
+          sensors={dndSensors}
+          collisionDetection={closestCenter}
+          onDragEnd={handleDragEnd}
+        >
+          <SortableContext items={flatItems.map((i: any) => i.id)} strategy={verticalListSortingStrategy}>
+            <Table
+              size="small"
+              pagination={false}
+              rowKey="id"
+              dataSource={flatItems}
+              components={{ body: { row: OrderItemDraggableRow } }}
+              columns={[
+                {
+                  title: '', key: 'drag', width: 28,
+                  render: () => <OrderItemDragHandle />,
+                },
+                {
+                  title: 'Megnevezés',
+                  key: 'name',
+                  render: (_: any, r: any) => {
+                    const depth = getDepth(r, flatItems);
+                    return (
+                      <div style={{ paddingLeft: depth * 20 }}>
+                        <div style={{ fontWeight: 500 }}>
+                          {r.product_name || r.manufacturing_product_name || r.material_name || r.service_name || r.name || r.description || '-'}
                         </div>
+                        <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.manufacturing_product_code || r.material_code || r.service_code || ''}</div>
                       </div>
-                    )}
-                    <div>
-                      <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
-                      <Space direction="vertical" style={{ width: '100%' }} size={6}>
-                        <Input
-                          placeholder="Megjegyzés a feltöltéshez (opcionális)"
-                          size="small" value={attRemark} style={{ width: 340 }}
-                          onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
-                        />
-                        <Upload.Dragger
-                          multiple
-                          showUploadList={false}
-                          disabled={uploading}
-                          style={{ padding: '8px 0' }}
-                          beforeUpload={async (file) => {
-                            setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
-                            try {
-                              const fd = new FormData();
-                              fd.append('file', file);
-                              if (attRemark) fd.append('remark', attRemark);
-                              const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-                              setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
-                              setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
-                              message.success('Feltöltve');
-                            } catch { message.error('Feltöltés sikertelen'); }
-                            finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
-                            return false;
-                          }}
-                        >
-                          {uploading
-                            ? <><AntSpin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
-                            : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
-                          }
-                        </Upload.Dragger>
-                        {!loaded ? <AntSpin size="small" /> : atts.length === 0 ? (
-                          <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {atts.map((att: any) => (
-                              <Space key={att.id} size={4}>
-                                <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
-                                {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
-                                <Button type="text" danger size="small" icon={<DeleteOutlined />}
-                                  onClick={async () => {
-                                    try {
-                                      await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
-                                      setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
-                                    } catch { message.error('Törlés sikertelen'); }
-                                  }}
-                                />
-                              </Space>
-                            ))}
+                    );
+                  },
+                },
+                {
+                  title: 'Mennyiség',
+                  key: 'qty',
+                  width: 120,
+                  render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+                },
+                {
+                  title: 'Megjegyzés',
+                  dataIndex: 'description',
+                  key: 'description',
+                  ellipsis: true,
+                },
+                {
+                  title: 'Hierarchia', key: 'hier', width: 80,
+                  render: (_: any, r: any) => (
+                    <Space size={2}>
+                      <Tooltip title="Kijjebb (outdent)">
+                        <Button size="small" icon={<LeftOutlined />} onClick={() => onOutdent(r)} disabled={!r._parent_coi_id} />
+                      </Tooltip>
+                      <Tooltip title="Beljebb (indent)">
+                        <Button size="small" icon={<RightOutlined />} onClick={() => onIndent(r)} />
+                      </Tooltip>
+                    </Space>
+                  ),
+                },
+                {
+                  title: 'Csatolmányok',
+                  key: 'attachments',
+                  width: 140,
+                  render: (_: any, r: any) => {
+                    const coiId = Number(r.id);
+                    if (!coiId) return null;
+                    const atts: any[] = orderItemAtts[coiId] || [];
+                    const loaded = !!orderItemAttsLoaded[coiId];
+                    const isOpen = orderItemAttExpanded.includes(coiId);
+                    return (
+                      <Button
+                        size="small"
+                        icon={<PaperClipOutlined />}
+                        type={isOpen ? 'primary' : 'default'}
+                        onClick={() => toggleItemAtt(coiId)}
+                      >
+                        {loaded && atts.length > 0 ? atts.length : ''}
+                      </Button>
+                    );
+                  },
+                },
+              ]}
+              expandable={{
+                expandedRowKeys: orderItemAttExpanded,
+                onExpand: (expanded, r) => {
+                  const coiId = Number(r.id);
+                  if (expanded) {
+                    setOrderItemAttExpanded(prev => [...prev, coiId]);
+                    loadItemAtts(coiId);
+                  } else {
+                    setOrderItemAttExpanded(prev => prev.filter(id => id !== coiId));
+                  }
+                },
+                rowExpandable: () => true,
+                showExpandColumn: false,
+                expandedRowRender: (r: any) => {
+                  const coiId = Number(r.id);
+                  const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
+                  const atts: any[] = orderItemAtts[coiId] || [];
+                  const loaded = !!orderItemAttsLoaded[coiId];
+                  const uploading = !!orderItemAttUploading[coiId];
+                  const attRemark = orderItemAttRemark[coiId] || '';
+                  return (
+                    <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+                      <Space direction="vertical" style={{ width: '100%' }} size={10}>
+                        {productId > 0 && (
+                          <div>
+                            <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Altételek</div>
+                            <div style={{ paddingLeft: 8 }}>
+                              <ProductSubItemsTable productId={productId} readOnly />
+                            </div>
                           </div>
                         )}
+                        <div>
+                          <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
+                          <Space direction="vertical" style={{ width: '100%' }} size={6}>
+                            <Input
+                              placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                              size="small" value={attRemark} style={{ width: 340 }}
+                              onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
+                            />
+                            <Upload.Dragger
+                              multiple
+                              showUploadList={false}
+                              disabled={uploading}
+                              style={{ padding: '8px 0' }}
+                              beforeUpload={async (file) => {
+                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                                try {
+                                  const fd = new FormData();
+                                  fd.append('file', file);
+                                  if (attRemark) fd.append('remark', attRemark);
+                                  const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                                  setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                                  setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                                  message.success('Feltöltve');
+                                } catch { message.error('Feltöltés sikertelen'); }
+                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                                return false;
+                              }}
+                            >
+                              {uploading
+                                ? <><AntSpin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                                : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                              }
+                            </Upload.Dragger>
+                            {!loaded ? <AntSpin size="small" /> : atts.length === 0 ? (
+                              <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                {atts.map((att: any) => (
+                                  <Space key={att.id} size={4}>
+                                    <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
+                                    {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
+                                    <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                                      onClick={async () => {
+                                        try {
+                                          await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
+                                          setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
+                                        } catch { message.error('Törlés sikertelen'); }
+                                      }}
+                                    />
+                                  </Space>
+                                ))}
+                              </div>
+                            )}
+                          </Space>
+                        </div>
                       </Space>
                     </div>
-                  </Space>
-                </div>
-              );
-            },
-          }}
-        />
+                  );
+                },
+              }}
+            />
+          </SortableContext>
+        </DndContext>
       </div>
     );
   };
