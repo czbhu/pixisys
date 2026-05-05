@@ -666,7 +666,7 @@ interface CustomerOrder {
                           <div>
                             <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Altételek</div>
                             <div style={{ paddingLeft: 8 }}>
-                              <ProductSubItemsTable productId={productId} readOnly showNotesAndAttachments />
+                              <ProductSubItemsTable productId={productId} showNotesAndAttachments />
                             </div>
                           </div>
                         )}
