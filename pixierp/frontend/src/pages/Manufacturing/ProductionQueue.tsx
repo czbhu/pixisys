@@ -37,6 +37,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import useUserPreference from '../../hooks/useUserPreference';
 import api from '../../services/api';
+import { useSearchParams } from 'react-router-dom';
 
 const STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -67,6 +68,7 @@ interface QueueRow {
     deadline: string | null;
     customer_id: number | null;
     customer_name: string;
+    contact_name: string;
     customer_order_item_id: number | null;
     manufacturing_product_id: number;
     product_name: string;
@@ -109,6 +111,7 @@ const DragOrderCell: React.FC<{ value: string }> = ({ value }) => {
 };
 
 const ProductionQueue: React.FC = () => {
+    const [searchParams] = useSearchParams();
     const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId, setPreselectedSubItemId } = useTimeTracker();
     const [rows, setRows] = useState<QueueRow[]>([]);
     const [loading, setLoading] = useState(false);
@@ -138,6 +141,13 @@ const ProductionQueue: React.FC = () => {
     };
 
     useEffect(() => { load(); }, []);
+
+    useEffect(() => {
+        const orderParam = Number(searchParams.get('order') || 0);
+        if (orderParam > 0) {
+            setFilterOrder(orderParam);
+        }
+    }, [searchParams]);
 
     const customerOptions = useMemo(() => {
         const map = new Map<number, string>();
@@ -461,6 +471,9 @@ const ProductionQueue: React.FC = () => {
             render: (v: string) => <DragOrderCell value={v} /> },
         { title: 'Ügyfél', dataIndex: 'customer_name', key: 'customer_name', width: 180, ellipsis: true,
             sorter: (a: QueueRow, b: QueueRow) => (a.customer_name || '').localeCompare(b.customer_name || '', 'hu') },
+        { title: 'Kapcsolattartó', dataIndex: 'contact_name', key: 'contact_name', width: 170, ellipsis: true,
+            sorter: (a: QueueRow, b: QueueRow) => (a.contact_name || '').localeCompare(b.contact_name || '', 'hu'),
+            render: (v: string) => v || '—' },
         { title: 'Megr. dátuma', dataIndex: 'order_date', key: 'order_date', width: 110,
             render: (d: string) => d ? dayjs(d).format('YYYY.MM.DD') : '-',
             sorter: (a: QueueRow, b: QueueRow) => new Date(a.order_date || 0).getTime() - new Date(b.order_date || 0).getTime() },

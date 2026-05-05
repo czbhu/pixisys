@@ -547,18 +547,18 @@ class ManufacturingCostItemViewSet(
             company = (qr.company if qr else None) or (qr.customer if qr else None)
             cust_name = company.name if company else ''
             cust_id = company.id if company else None
-            # For private persons the company name is often blank or a generic
-            # placeholder – use the first contact's own name instead
-            is_private = (company and getattr(company, 'vat_status', None) == 'PRIVATE_PERSON')
-            if qr and (not cust_name or is_private):
+            contact_name = ''
+            if qr:
                 try:
                     first_contact = qr.contacts.first()
                     if first_contact and first_contact.name:
-                        cust_name = first_contact.name
+                        contact_name = first_contact.name
                         if not cust_id and getattr(first_contact, 'company', None):
                             cust_id = first_contact.company.id
                 except Exception:
                     pass
+            # In queue list, customer column must show customer/company name,
+            # not contact person. Keep contact separately in `contact_name`.
             # Legacy fallback: first contact's company (legacy data with no FK)
             if not cust_name and qr:
                 try:
@@ -600,6 +600,7 @@ class ManufacturingCostItemViewSet(
                 'deadline': qr.deadline.isoformat() if qr and qr.deadline else None,
                 'customer_id': cust_id,
                 'customer_name': cust_name,
+                'contact_name': contact_name,
                 'customer_order_item_id': coi.id if coi else None,
                 'manufacturing_product_id': ci.product_id,
                 'product_name': ci.product.name if ci.product else '',
@@ -756,6 +757,60 @@ class ManufacturingCostItemViewSet(
             'item_list_text': '\n'.join(text_rows),
         }
 
+    def _build_work_sheet_pdf_bytes(self, ci):
+        """Build a compact worksheet PDF attachment for a single cost-item."""
+        try:
+            from reportlab.pdfgen import canvas
+            from reportlab.lib.pagesizes import A4
+            from io import BytesIO
+            import re as _re
+            from html import unescape as _html_unescape
+        except Exception:
+            return None
+
+        def _strip_html(text):
+            if not text:
+                return ''
+            t = _re.sub(r'<\s*br\s*/?\s*>', '\n', str(text), flags=_re.IGNORECASE)
+            t = _re.sub(r'</\s*(p|div|li|tr)\s*>', '\n', t, flags=_re.IGNORECASE)
+            t = _re.sub(r'<[^>]+>', '', t)
+            t = _html_unescape(t)
+            t = _re.sub(r'\n{3,}', '\n\n', t).strip()
+            return t
+
+        order, _coi = self._resolve_order_context(ci)
+        product = ci.product
+        buffer = BytesIO()
+        p = canvas.Canvas(buffer, pagesize=A4)
+        width, height = A4
+        y = height - 50
+
+        p.setFont('Helvetica-Bold', 13)
+        p.drawString(40, y, 'Gyartasi munkalap')
+        y -= 24
+
+        p.setFont('Helvetica', 10)
+        lines = [
+            f"Megrendeles: {getattr(order, 'order_number', '-')}",
+            f"Termek: {getattr(product, 'name', '-')}",
+            f"Kod: {getattr(product, 'code', '') or '-'}",
+            f"Altetel: {ci.name or '-'}",
+            f"Mennyiseg: {float(ci.quantity):g} {ci.unit or ''}",
+            f"Belső leiras: {_strip_html(getattr(product, 'internal_description', '') or '-')}",
+            f"Megjegyzes: {_strip_html(ci.notes or '-')}",
+        ]
+        for line in lines:
+            if y < 80:
+                p.showPage()
+                p.setFont('Helvetica', 10)
+                y = height - 50
+            p.drawString(40, y, str(line)[:180])
+            y -= 16
+
+        p.showPage()
+        p.save()
+        return buffer.getvalue()
+
     @action(detail=False, methods=['post'], url_path='render_supplier_order')
     def render_supplier_order(self, request):
         """Body: { cost_item_ids: [int, ...] }
@@ -868,6 +923,8 @@ class ManufacturingCostItemViewSet(
                 subject = g.get('subject') or 'Gyártási megrendelés'
                 body = g.get('body') or ''
                 is_html = bool(g.get('is_html', True))
+                attach_worksheet_pdf = bool(g.get('attach_worksheet_pdf', False))
+                worksheet_cost_item_ids = g.get('worksheet_cost_item_ids') or []
 
                 # Substitute placeholders (the frontend leaves
                 # `{item_table_html}` in the body because Quill strips
@@ -904,6 +961,18 @@ class ManufacturingCostItemViewSet(
                     )
                     if is_html and body:
                         msg.attach_alternative(body, 'text/html')
+
+                    if attach_worksheet_pdf and isinstance(worksheet_cost_item_ids, list):
+                        for ws_id in worksheet_cost_item_ids[:5]:
+                            try:
+                                ws_item = ManufacturingCostItem.objects.select_related('product').get(id=ws_id)
+                                pdf_bytes = self._build_work_sheet_pdf_bytes(ws_item)
+                                if pdf_bytes:
+                                    file_name = f"munkalap_{ws_item.id}.pdf"
+                                    msg.attach(file_name, pdf_bytes, 'application/pdf')
+                            except Exception:
+                                continue
+
                     msg.send()
                     try:
                         from apps.core.email_utils import archive_to_imap_sent

@@ -12,23 +12,32 @@ import {
     Modal,
     Input,
     Table,
+    Typography,
+    Tabs,
+    Form,
+    Switch,
+    Checkbox,
 } from 'antd';
+// @ts-ignore
+import ReactQuill from 'react-quill';
+import 'react-quill/dist/quill.snow.css';
 import {
     EyeOutlined,
     ReloadOutlined,
     PrinterOutlined,
     FieldTimeOutlined,
     MessageOutlined,
+    SendOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
+import { useAuth } from '../../contexts/AuthContext';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import api from '../../services/api';
-
-const { Option } = Select;
+import { settingsService } from '../../services/settingsService';
 
 const ORDER_ITEM_STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -69,8 +78,93 @@ interface OrderedManufacturingItem {
     net_unit_price: number;
 }
 
+interface RenderedSendGroup {
+    key: string;
+    label: string;
+    recipient: string;
+    item_ids: number[];
+    item_table_html: string;
+}
+
+interface ProductionSendGroup {
+    key: string;
+    label: string;
+    enabled: boolean;
+    signature_key: string;
+    recipients: string;
+    cc: string;
+    reply_to: string;
+    subject: string;
+    body: string;
+    is_html: boolean;
+    cost_item_ids: number[];
+    related_ordered_item_ids: number[];
+    item_table_html: string;
+    internal_worksheet_table_html: string;
+    queue_links_html: string;
+    attachments: Array<{
+        id: string;
+        source: 'product_attachment' | 'worksheet_pdf';
+        include: boolean;
+        file_url: string;
+        file_name: string;
+        product_name: string;
+        remark: string;
+        original_remark: string;
+        worksheet_cost_item_id?: number;
+    }>;
+}
+
+const renderTemplateText = (
+    text: string,
+    ctx: {
+        recipient_label: string;
+        item_count: number;
+        item_table_html: string;
+        internal_worksheet_table_html: string;
+        queue_links_html: string;
+        selected_attachments_table_html: string;
+    }
+) => {
+    if (!text) return '';
+    return text
+        .replace(/\{recipient_label\}/g, ctx.recipient_label)
+        .replace(/\{item_count\}/g, String(ctx.item_count))
+        .replace(/\{item_table_html\}/g, ctx.item_table_html)
+        .replace(/\{internal_worksheet_table_html\}/g, ctx.internal_worksheet_table_html)
+        .replace(/\{queue_links_html\}/g, ctx.queue_links_html)
+        .replace(/\{selected_attachments_table_html\}/g, ctx.selected_attachments_table_html);
+};
+
+const renderTemplateTextForEditor = (
+    text: string,
+    ctx: {
+        recipient_label: string;
+        item_count: number;
+    }
+) => {
+    if (!text) return '';
+    return text
+        .replace(/\{recipient_label\}/g, ctx.recipient_label)
+        .replace(/\{item_count\}/g, String(ctx.item_count));
+};
+
+const renderSignature = (sig: any, user: any) => {
+    if (!sig?.body_html) return '';
+    let s: string = sig.body_html;
+    const uName = user?.last_name && user?.first_name
+        ? `${user.last_name} ${user.first_name}`
+        : (user?.username || user?.name || '');
+    s = s.replace(/\{user_name\}/g, uName);
+    s = s.replace(/\{user_email\}/g, user?.email || '');
+    s = s.replace(/\{user_phonenumber\}/g, user?.employee_profile?.phone || user?.phone || '');
+    s = s.replace(/\{user_position\}/g, user?.employee_profile?.position?.title || user?.position || '');
+    return s;
+};
+
 const OrderedProducts: React.FC = () => {
     const navigate = useNavigate();
+    const { user } = useAuth();
     const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
     const [items, setItems] = useState<OrderedManufacturingItem[]>([]);
     const [loading, setLoading] = useState(false);
@@ -83,6 +177,14 @@ const OrderedProducts: React.FC = () => {
     const [previewOpen, setPreviewOpen] = useState(false);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
     const [previewTitle, setPreviewTitle] = useState('');
+    const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
+    const [sendingProduction, setSendingProduction] = useState(false);
+    const [sendModalOpen, setSendModalOpen] = useState(false);
+    const [sendModalLoading, setSendModalLoading] = useState(false);
+    const [sendModalGroups, setSendModalGroups] = useState<ProductionSendGroup[]>([]);
+    const [sendActiveKey, setSendActiveKey] = useState('');
+    const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
+    const [signatures, setSignatures] = useState<any[]>([]);
 
     useEffect(() => {
         loadItems();
@@ -122,8 +224,14 @@ const OrderedProducts: React.FC = () => {
 
     const handlePrintWorksheet = async (record: OrderedManufacturingItem) => {
         try {
+            const product = await manufacturingService.getProduct(record.manufacturing_product_id);
+            const firstCostItemId = Number(product?.cost_items?.[0]?.id || 0);
+            if (!firstCostItemId) {
+                message.warning('Ehhez a termékhez nincs nyomtatható altétel munkalap.');
+                return;
+            }
             const response = await api.get(
-                `/sales/customer-orders/${record.order_id}/item_work_sheet/?item_id=${record.quote_item_id}`,
+                `/manufacturing/cost-items/${firstCostItemId}/work_sheet/`,
                 { responseType: 'blob' }
             );
             const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
@@ -131,6 +239,387 @@ const OrderedProducts: React.FC = () => {
         } catch (e) {
             console.error(e);
             message.error('Hiba a munkalap letöltése során');
+        }
+    };
+
+    const escapeHtml = (text: string) =>
+        (text || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+
+    const updateSendGroup = (key: string, patch: Partial<ProductionSendGroup>) => {
+        setSendModalGroups((groups) => groups.map((g) => (g.key === key ? { ...g, ...patch } : g)));
+    };
+
+    const updateGroupAttachment = (
+        groupKey: string,
+        attachmentId: string,
+        patch: Partial<ProductionSendGroup['attachments'][number]>
+    ) => {
+        setSendModalGroups((groups) =>
+            groups.map((g) => {
+                if (g.key !== groupKey) return g;
+                return {
+                    ...g,
+                    attachments: g.attachments.map((att) =>
+                        att.id === attachmentId ? { ...att, ...patch } : att
+                    ),
+                };
+            })
+        );
+    };
+
+    const buildSelectedAttachmentsTableHtml = (group: ProductionSendGroup) => {
+        const selected = group.attachments.filter((att) => att.include);
+        if (selected.length === 0) return '<p>Nincs kiválasztott csatolmány.</p>';
+        const rows = selected
+            .map((att) => {
+                const remark = escapeHtml(att.remark || '-');
+                const link = `<a href="${escapeHtml(att.file_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(att.file_name)}</a>`;
+                return `<tr><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(att.product_name)}</td><td style="border:1px solid #ddd;padding:4px 8px">${link}</td><td style="border:1px solid #ddd;padding:4px 8px">${remark}</td></tr>`;
+            })
+            .join('');
+        return `<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px"><thead><tr><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Termék</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Csatolmány link</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Megjegyzés</th></tr></thead><tbody>${rows}</tbody></table>`;
+    };
+
+    const handleApplyTemplate = (group: ProductionSendGroup, templateKey: string) => {
+        const tpl = emailTemplates.find((t) => t.key === templateKey);
+        if (!tpl) return;
+        const ctx = {
+            recipient_label: group.label,
+            item_count: group.cost_item_ids.length,
+        };
+        const subject = renderTemplateTextForEditor(tpl.subject_template || '', ctx);
+        const body = renderTemplateTextForEditor(tpl.body_template || '', ctx);
+        updateSendGroup(group.key, {
+            subject,
+            body,
+            is_html: !!tpl.is_html,
+            cc: tpl.default_cc || '',
+            reply_to: tpl.default_reply_to || '',
+        });
+    };
+
+    const handleApplySignature = (group: ProductionSendGroup, signatureKey: string) => {
+        const signature = signatures.find((s) => s.key === signatureKey);
+        if (!signature) return;
+        const sigHtml = renderSignature(signature, user);
+        if (!sigHtml) return;
+        updateSendGroup(group.key, {
+            signature_key: signatureKey,
+            body: `${group.body}${group.is_html ? '' : '\n\n'}${sigHtml}`,
+        });
+    };
+
+    const handleSendToProduction = async () => {
+        if (selectedRowKeys.length === 0) {
+            message.warning('Nincs kijelölt tétel.');
+            return;
+        }
+
+        try {
+            setSendModalLoading(true);
+            setSendingProduction(true);
+
+            const selectedItems = items.filter((it) => selectedRowKeys.includes(it.id));
+            const productCache = new Map<number, any>();
+            const productAttachmentsMap = new Map<number, any[]>();
+            const costItemMetaById: Record<number, { orderedItem: OrderedManufacturingItem; costItem: any }> = {};
+            const costItemIds: number[] = [];
+
+            for (const orderedItem of selectedItems) {
+                let product = productCache.get(orderedItem.manufacturing_product_id);
+                if (!product) {
+                    product = await manufacturingService.getProduct(orderedItem.manufacturing_product_id);
+                    productCache.set(orderedItem.manufacturing_product_id, product);
+                }
+
+                const productCostItems = Array.isArray(product?.cost_items) ? product.cost_items : [];
+                if (!productAttachmentsMap.has(orderedItem.manufacturing_product_id)) {
+                    let atts = attachmentsByProduct[orderedItem.manufacturing_product_id];
+                    if (atts === undefined) {
+                        try {
+                            atts = await manufacturingService.getProductAttachments(orderedItem.manufacturing_product_id);
+                            setAttachmentsByProduct((prev) => ({
+                                ...prev,
+                                [orderedItem.manufacturing_product_id]: Array.isArray(atts) ? atts : [],
+                            }));
+                        } catch {
+                            atts = [];
+                        }
+                    }
+                    productAttachmentsMap.set(orderedItem.manufacturing_product_id, Array.isArray(atts) ? atts : []);
+                }
+                productCostItems.forEach((ci: any) => {
+                    const ciId = Number(ci?.id || 0);
+                    if (!ciId) return;
+                    if (!costItemMetaById[ciId]) {
+                        costItemMetaById[ciId] = { orderedItem, costItem: ci };
+                        costItemIds.push(ciId);
+                    }
+                });
+            }
+
+            if (costItemIds.length === 0) {
+                message.warning('A kijelölt termékekhez nem tartozik kiküldhető gyártási altétel.');
+                return;
+            }
+
+            const { data: rendered } = await api.post('/manufacturing/cost-items/render_supplier_order/', {
+                cost_item_ids: costItemIds,
+            });
+
+            const groups: RenderedSendGroup[] = Array.isArray(rendered?.groups) ? rendered.groups : [];
+            if (groups.length === 0) {
+                message.warning('Nem találtam címzettet a kijelölt gyártási tételekhez.');
+                return;
+            }
+
+            let templates: any[] = [];
+            let sigs: any[] = [];
+            try {
+                const [tplRes, sigRes] = await Promise.all([
+                    settingsService.getEmailTemplates(),
+                    settingsService.getSignatures(),
+                ]);
+                templates = Array.isArray(tplRes) ? tplRes : [];
+                sigs = Array.isArray(sigRes) ? sigRes : [];
+            } catch {
+                templates = [];
+                sigs = [];
+            }
+            setEmailTemplates(templates);
+            setSignatures(sigs);
+
+            const defaultTemplate = templates.find((t) => t.key === 'manufacturing_ordered_products_send')
+                || templates.find((t) => t.key === 'manufacturing_supplier_order');
+            const defaultSignature = sigs.find((s) => s.key === 'default') || sigs[0];
+
+            const modalGroups: ProductionSendGroup[] = [];
+
+            groups.forEach((group) => {
+                const ids = Array.isArray(group.item_ids) ? group.item_ids : [];
+                const orderRows = Array.from(new Set(
+                    ids
+                        .map((id) => costItemMetaById[id]?.orderedItem)
+                        .filter(Boolean)
+                )) as OrderedManufacturingItem[];
+                const relatedOrderedItemIds = Array.from(new Set(
+                    ids
+                        .map((id) => costItemMetaById[id]?.orderedItem?.id)
+                        .filter(Boolean)
+                )) as number[];
+                const internalWorksheetRows = ids
+                    .map((id) => {
+                        const meta = costItemMetaById[id];
+                        if (!meta) return '';
+                        const oi = meta.orderedItem;
+                        const ci = meta.costItem;
+                        const ciQty = Number(ci?.quantity || 0);
+                        const ciUnit = ci?.unit || '';
+                        const ciName = ci?.name || 'Altétel';
+                        const ciNotes = ci?.notes || '';
+                        return `<tr><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(oi.order_number)}</td><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(oi.name)}</td><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(oi.internal_description || '-')}</td><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(ciName)}</td><td style="border:1px solid #ddd;padding:4px 8px;text-align:right">${escapeHtml(ciQty.toLocaleString('hu-HU', { maximumFractionDigits: 3 }))} ${escapeHtml(ciUnit)}</td><td style="border:1px solid #ddd;padding:4px 8px">${escapeHtml(ciNotes || '-')}</td></tr>`;
+                    })
+                    .filter(Boolean)
+                    .join('');
+
+                const internalWorksheetTableHtml = `<table style="border-collapse:collapse;font-family:Arial,sans-serif;font-size:13px"><thead><tr><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Megrendelés</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Termék</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Belső leírás</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Altétel</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Mennyiség</th><th style="border:1px solid #ddd;padding:4px 8px;background:#f5f5f5">Megjegyzés</th></tr></thead><tbody>${internalWorksheetRows || '<tr><td colspan="6" style="border:1px solid #ddd;padding:4px 8px">Nincs adat</td></tr>'}</tbody></table>`;
+
+                const queueLinksHtml = orderRows.length > 0
+                    ? `<ul style="margin:0;padding-left:18px">${orderRows.map((oi) => {
+                        const orderId = Number(oi.order_id || 0);
+                        const href = `${window.location.origin}/manufacturing/queue?order=${orderId}`;
+                        return `<li><a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(oi.order_number)} - gyártási sor</a></li>`;
+                    }).join('')}</ul>`
+                    : '<p>Nincs gyártási sor link.</p>';
+
+                const attachmentMap = new Map<string, {
+                    id: string;
+                    source: 'product_attachment' | 'worksheet_pdf';
+                    include: boolean;
+                    file_url: string;
+                    file_name: string;
+                    product_name: string;
+                    remark: string;
+                    original_remark: string;
+                    worksheet_cost_item_id?: number;
+                }>();
+
+                orderRows.forEach((oi) => {
+                    const atts = productAttachmentsMap.get(oi.manufacturing_product_id)
+                        || attachmentsByProduct[oi.manufacturing_product_id]
+                        || [];
+                    atts.forEach((att: any) => {
+                        const url = att.file_url || att.file || '';
+                        if (!url) return;
+                        const idKey = `att_${att.id}_${oi.manufacturing_product_id}`;
+                        if (attachmentMap.has(idKey)) return;
+                        attachmentMap.set(idKey, {
+                            id: idKey,
+                            source: 'product_attachment',
+                            include: false,
+                            file_url: url,
+                            file_name: (url.split('/').pop() || `#${att.id}`),
+                            product_name: oi.name,
+                            remark: att.remark || '',
+                            original_remark: att.remark || '',
+                            worksheet_cost_item_id: undefined,
+                        });
+                    });
+                    const wsCostItemId = ids.find((cid) => costItemMetaById[cid]?.orderedItem?.id === oi.id) || ids[0];
+                    const wsUrl = `${window.location.origin}/api/manufacturing/cost-items/${wsCostItemId}/work_sheet/`;
+                    const wsKey = `worksheet_${oi.id}`;
+                    if (!attachmentMap.has(wsKey)) {
+                        attachmentMap.set(wsKey, {
+                            id: wsKey,
+                            source: 'worksheet_pdf',
+                            include: true,
+                            file_url: wsUrl,
+                            file_name: `munkalap_${oi.order_number}.pdf`,
+                            product_name: oi.name,
+                            remark: 'Belső munkalap PDF',
+                            original_remark: 'Belső munkalap PDF',
+                            worksheet_cost_item_id: wsCostItemId,
+                        });
+                    }
+                });
+
+                let subject = `Új megrendelés érkezett - ${group.label}`;
+                let bodyHtml = [
+                    `<p>Tisztelt ${escapeHtml(group.label || 'Partner')}!</p>`,
+                    `<p>Új megrendelés érkezett.</p>`,
+                    `<p>Kérjük, az alábbi tételek gyártását indítsák el:</p>`,
+                    '{item_table_html}',
+                    `<p><strong>Gyártási sor link(ek):</strong></p>`,
+                    '{queue_links_html}',
+                    `<p><strong>Belső munkalap:</strong></p>`,
+                    '{internal_worksheet_table_html}',
+                    `<p><strong>Kiválasztott csatolmányok:</strong></p>`,
+                    '{selected_attachments_table_html}',
+                    `<p>Köszönettel,<br>PixiERP</p>`,
+                ].join('');
+
+                if (defaultTemplate) {
+                    const ctx = {
+                        recipient_label: group.label,
+                        item_count: ids.length,
+                    };
+                    subject = renderTemplateTextForEditor(defaultTemplate.subject_template || subject, ctx);
+                    bodyHtml = renderTemplateTextForEditor(defaultTemplate.body_template || bodyHtml, ctx);
+                }
+
+                if (defaultSignature) {
+                    const sigHtml = renderSignature(defaultSignature, user);
+                    if (sigHtml) {
+                        bodyHtml += sigHtml;
+                    }
+                }
+
+                modalGroups.push({
+                    key: group.key,
+                    label: group.label,
+                    enabled: true,
+                    signature_key: defaultSignature?.key || '',
+                    recipients: group.recipient || '',
+                    cc: defaultTemplate?.default_cc || '',
+                    reply_to: defaultTemplate?.default_reply_to || '',
+                    subject,
+                    body: bodyHtml,
+                    is_html: true,
+                    cost_item_ids: ids,
+                    related_ordered_item_ids: relatedOrderedItemIds,
+                    item_table_html: group.item_table_html || '',
+                    internal_worksheet_table_html: internalWorksheetTableHtml,
+                    queue_links_html: queueLinksHtml,
+                    attachments: Array.from(attachmentMap.values()),
+                });
+            });
+
+            setSendModalGroups(modalGroups);
+            setSendActiveKey(modalGroups[0]?.key || '');
+            setSendModalOpen(true);
+        } catch (err: any) {
+            console.error(err);
+            message.error(err?.response?.data?.error || 'Gyártási megrendelés kiküldése sikertelen.');
+        } finally {
+            setSendingProduction(false);
+            setSendModalLoading(false);
+        }
+    };
+
+    const handleConfirmSendFromModal = async () => {
+        const groupsToSend = sendModalGroups.filter((g) => g.enabled);
+        if (groupsToSend.length === 0) {
+            message.warning('Nincs bekapcsolt csoport a küldéshez.');
+            return;
+        }
+        const missing = groupsToSend.filter((g) => !g.recipients.trim());
+        if (missing.length > 0) {
+            message.warning(`Hiányzó címzett: ${missing.map((g) => g.label).join(', ')}`);
+            return;
+        }
+        try {
+            setSendingProduction(true);
+            const payload = {
+                groups: groupsToSend.map((g) => ({
+                    key: g.key,
+                    label: g.label,
+                    cost_item_ids: g.cost_item_ids,
+                    recipients: g.recipients.trim(),
+                    cc: g.cc.trim(),
+                    reply_to: g.reply_to.trim(),
+                    subject: g.subject,
+                    body: renderTemplateText(g.body, {
+                        recipient_label: g.label,
+                        item_count: g.cost_item_ids.length,
+                        item_table_html: g.item_table_html,
+                        internal_worksheet_table_html: g.internal_worksheet_table_html,
+                        queue_links_html: g.queue_links_html,
+                        selected_attachments_table_html: buildSelectedAttachmentsTableHtml(g),
+                    }),
+                    is_html: g.is_html,
+                    attach_worksheet_pdf: g.attachments.some((att) => att.include && att.source === 'worksheet_pdf'),
+                    worksheet_cost_item_ids: g.attachments
+                        .filter((att) => att.include && att.source === 'worksheet_pdf')
+                        .map((att) => Number(att.worksheet_cost_item_id || 0))
+                        .filter(Boolean),
+                })),
+            };
+            const { data: sendRes } = await api.post('/manufacturing/cost-items/send_supplier_order/', payload);
+            const results = Array.isArray(sendRes?.results) ? sendRes.results : [];
+            const failedKeys = new Set(results.filter((r: any) => !r.sent).map((r: any) => r.key));
+            const failedOrderedItemIds = Array.from(new Set(
+                sendModalGroups
+                    .filter((g) => failedKeys.has(g.key))
+                    .flatMap((g) => g.related_ordered_item_ids)
+            ));
+            const sentCount = results.filter((r: any) => r.sent).length;
+            const failedCount = results.length - sentCount;
+            if (sentCount > 0) {
+                message.success(`${sentCount} gyártási e-mail elküldve.`);
+            }
+            if (failedCount > 0) {
+                const errors = results
+                    .filter((r: any) => !r.sent)
+                    .map((r: any) => `${r.label}: ${r.error || 'ismeretlen hiba'}`)
+                    .join('\n');
+                Modal.error({
+                    title: 'Néhány e-mail nem ment ki',
+                    content: <pre style={{ whiteSpace: 'pre-wrap' }}>{errors}</pre>,
+                });
+            }
+            setSelectedRowKeys(failedOrderedItemIds as number[]);
+            setSendModalOpen(false);
+            await loadItems();
+        } catch (err: any) {
+            console.error(err);
+            message.error(err?.response?.data?.error || 'Gyártási megrendelés kiküldése sikertelen.');
+        } finally {
+            setSendingProduction(false);
         }
     };
 
@@ -452,6 +941,15 @@ const OrderedProducts: React.FC = () => {
                         >
                             Frissítés
                         </Button>
+                        <Button
+                            type="primary"
+                            icon={<SendOutlined />}
+                            disabled={selectedRowKeys.length === 0}
+                            loading={sendModalLoading}
+                            onClick={handleSendToProduction}
+                        >
+                            Gyártásra kiküldés{selectedRowKeys.length ? ` (${selectedRowKeys.length})` : ''}
+                        </Button>
                     </Space>
                 }
             >
@@ -474,6 +972,11 @@ const OrderedProducts: React.FC = () => {
                     cardBreakpoint={950}
                     size="small"
                     loading={loading}
+                    rowSelection={{
+                        selectedRowKeys,
+                        onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as number[]),
+                        columnWidth: 42,
+                    }}
                     expandable={{
                         expandedRowRender,
                         onExpand: (expanded, record) => { if (expanded) loadSubItems(record); },
@@ -503,6 +1006,158 @@ const OrderedProducts: React.FC = () => {
                     )
                 ) : (
                     <div>Nincs előnézet</div>
+                )}
+            </Modal>
+            <Modal
+                title="Gyártásra kiküldés"
+                open={sendModalOpen}
+                onCancel={() => setSendModalOpen(false)}
+                onOk={handleConfirmSendFromModal}
+                confirmLoading={sendingProduction}
+                okText="Küldés"
+                cancelText="Mégse"
+                width={840}
+                okButtonProps={{
+                    icon: <SendOutlined />,
+                    disabled: sendModalGroups.length === 0,
+                }}
+            >
+                <Typography.Paragraph type="secondary" style={{ marginTop: 0 }}>
+                    Küldés előtt minden csoportnál szerkeszthető a címzett, tárgy és törzs.
+                </Typography.Paragraph>
+                {sendModalGroups.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center' }}>Nincs küldhető tétel.</div>
+                ) : (
+                    <Tabs
+                        activeKey={sendActiveKey}
+                        onChange={setSendActiveKey}
+                        items={sendModalGroups.map((g) => ({
+                            key: g.key,
+                            label: (
+                                <Space size={6}>
+                                    <span>{`${g.label} (${g.cost_item_ids.length})`}</span>
+                                    <Switch
+                                        size="small"
+                                        checked={g.enabled}
+                                        onChange={(checked) => updateSendGroup(g.key, { enabled: checked })}
+                                    />
+                                </Space>
+                            ),
+                            children: (
+                                <Form layout="vertical" size="small">
+                                    <Form.Item label="Címzettek" required>
+                                        <Input
+                                            placeholder="email1@example.com, email2@example.com"
+                                            value={g.recipients}
+                                            onChange={(e) => updateSendGroup(g.key, { recipients: e.target.value })}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="Másolat (CC)">
+                                        <Input
+                                            placeholder="cc@example.com"
+                                            value={g.cc}
+                                            onChange={(e) => updateSendGroup(g.key, { cc: e.target.value })}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="Válaszcím (Reply-To)">
+                                        <Input
+                                            placeholder="reply@example.com"
+                                            value={g.reply_to}
+                                            onChange={(e) => updateSendGroup(g.key, { reply_to: e.target.value })}
+                                        />
+                                    </Form.Item>
+                                    <div style={{ display: 'flex', gap: 12 }}>
+                                        <Form.Item label="E-mail sablon" style={{ flex: 1 }}>
+                                            <Select
+                                                placeholder="Válassz sablont"
+                                                allowClear
+                                                showSearch
+                                                optionFilterProp="label"
+                                                onChange={(value: string) => value && handleApplyTemplate(g, value)}
+                                                options={emailTemplates.map((t) => ({
+                                                    label: `${t.name} (${t.key})`,
+                                                    value: t.key,
+                                                }))}
+                                            />
+                                        </Form.Item>
+                                        <Form.Item label="Aláírás" style={{ flex: 1 }}>
+                                            <Select
+                                                placeholder="Válassz aláírást"
+                                                allowClear
+                                                value={g.signature_key || undefined}
+                                                showSearch
+                                                optionFilterProp="label"
+                                                onChange={(value: string) => value && handleApplySignature(g, value)}
+                                                options={signatures.map((s) => ({
+                                                    label: `${s.name} (${s.key})`,
+                                                    value: s.key,
+                                                }))}
+                                            />
+                                        </Form.Item>
+                                    </div>
+                                    <Form.Item label="Tárgy">
+                                        <Input
+                                            value={g.subject}
+                                            onChange={(e) => updateSendGroup(g.key, { subject: e.target.value })}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="Törzs">
+                                        <ReactQuill
+                                            theme="snow"
+                                            value={g.body}
+                                            onChange={(value) => updateSendGroup(g.key, { body: value })}
+                                            style={{ height: 280, marginBottom: 50 }}
+                                        />
+                                    </Form.Item>
+                                    <Form.Item label="Csatolmányok kiválasztása (link + megjegyzés)">
+                                        <Table
+                                            size="small"
+                                            rowKey="id"
+                                            pagination={false}
+                                            dataSource={g.attachments}
+                                            columns={[
+                                                {
+                                                    title: 'Küld',
+                                                    key: 'include',
+                                                    width: 70,
+                                                    render: (_: any, att: any) => (
+                                                        <Checkbox
+                                                            checked={!!att.include}
+                                                            onChange={(e) => updateGroupAttachment(g.key, att.id, { include: e.target.checked })}
+                                                        />
+                                                    ),
+                                                },
+                                                {
+                                                    title: 'Fájl',
+                                                    key: 'file_name',
+                                                    render: (_: any, att: any) => (
+                                                        <a href={att.file_url} target="_blank" rel="noopener noreferrer">{att.file_name}</a>
+                                                    ),
+                                                },
+                                                {
+                                                    title: 'Termék',
+                                                    dataIndex: 'product_name',
+                                                    key: 'product_name',
+                                                    width: 180,
+                                                },
+                                                {
+                                                    title: 'Megjegyzés',
+                                                    key: 'remark',
+                                                    render: (_: any, att: any) => (
+                                                        <Input
+                                                            value={att.remark}
+                                                            placeholder="Megjegyzés a linkhez"
+                                                            onChange={(e) => updateGroupAttachment(g.key, att.id, { remark: e.target.value })}
+                                                        />
+                                                    ),
+                                                },
+                                            ]}
+                                        />
+                                    </Form.Item>
+                                </Form>
+                            ),
+                        }))}
+                    />
                 )}
             </Modal>
         </div>
