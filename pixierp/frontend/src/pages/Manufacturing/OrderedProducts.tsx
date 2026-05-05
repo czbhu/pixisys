@@ -180,6 +180,7 @@ const OrderedProducts: React.FC = () => {
     ]);
     const [attachmentsByProduct, setAttachmentsByProduct] = useState<Record<number, any[]>>({});
     const [attachmentsLoading, setAttachmentsLoading] = useState<Record<number, boolean>>({});
+    const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
     const [orderItemAtts, setOrderItemAtts] = useState<Record<number, any[]>>({});
     const [orderItemAttsLoaded, setOrderItemAttsLoaded] = useState<Record<number, boolean>>({});
     const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
@@ -711,7 +712,7 @@ const OrderedProducts: React.FC = () => {
 
         return (
             <div style={{ padding: '8px 0 8px 32px' }}>
-                <ProductSubItemsTable productId={productId} />
+                <ProductSubItemsTable productId={productId} showNotesAndAttachments />
 
                 {/* Order-item level attachments */}
                 <div style={{ marginTop: 14, maxWidth: 700 }}>
@@ -1015,7 +1016,7 @@ const OrderedProducts: React.FC = () => {
         {
             title: 'Műveletek',
             key: 'actions',
-            width: 200,
+            width: 240,
             fixed: 'right' as const,
             render: (_: any, record: OrderedManufacturingItem) => (
                 <Space size="small" onClick={(e) => e.stopPropagation()}>
@@ -1032,6 +1033,25 @@ const OrderedProducts: React.FC = () => {
                             size="small"
                             onClick={() => handleAddNote(record)}
                         />
+                    </Tooltip>
+                    <Tooltip title="Csatolmányok">
+                        <Button
+                            icon={<PaperClipOutlined />}
+                            size="small"
+                            type={expandedRowKeys.includes(record.id) ? 'primary' : 'default'}
+                            onClick={() => {
+                                if (expandedRowKeys.includes(record.id)) {
+                                    setExpandedRowKeys(prev => prev.filter(id => id !== record.id));
+                                } else {
+                                    setExpandedRowKeys(prev => [...prev, record.id]);
+                                    loadSubItems(record);
+                                }
+                            }}
+                        >
+                            {orderItemAttsLoaded[record.id] && (orderItemAtts[record.id] || []).length > 0
+                                ? (orderItemAtts[record.id] || []).length
+                                : ''}
+                        </Button>
                     </Tooltip>
                     <Tooltip title="Munkalap nyomtatása">
                         <Button
@@ -1112,7 +1132,15 @@ const OrderedProducts: React.FC = () => {
                     }}
                     expandable={{
                         expandedRowRender,
-                        onExpand: (expanded, record) => { if (expanded) loadSubItems(record); },
+                        expandedRowKeys,
+                        onExpand: (expanded, record) => {
+                            if (expanded) {
+                                setExpandedRowKeys(prev => [...prev, record.id]);
+                                loadSubItems(record);
+                            } else {
+                                setExpandedRowKeys(prev => prev.filter(id => id !== record.id));
+                            }
+                        },
                     }}
                     onRow={(record: OrderedManufacturingItem) => ({
                         onDoubleClick: () => navigate(`/manufacturing/products/${record.manufacturing_product_id}`),
