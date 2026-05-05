@@ -20,6 +20,7 @@ import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+import { Spin as AntSpin } from 'antd';
 import './CustomerOrders.css';
 
 const { useBreakpoint } = Grid;
@@ -187,6 +188,11 @@ interface CustomerOrder {
   // Altételek cache: manufacturing_product_id -> cost_items[]
   const [costItemsCache, setCostItemsCache] = useState<Record<number, any[]>>({});
   const [costItemsLoading, setCostItemsLoading] = useState<Record<number, boolean>>({});
+
+  // Megrendelés lista kibontható sorok
+  const [expandedOrderKeys, setExpandedOrderKeys] = useState<React.Key[]>([]);
+  const [orderExpandedItems, setOrderExpandedItems] = useState<Record<number, any[]>>({});
+  const [orderExpandedLoading, setOrderExpandedLoading] = useState<Record<number, boolean>>({});
   
   // Email sending state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -406,6 +412,110 @@ interface CustomerOrder {
 
     return () => clearTimeout(timeoutId);
   }, [searchText]);
+
+  const loadOrderExpandedItems = async (record: any) => {
+    const orderId = Number(record?.id || 0);
+    if (!orderId || orderExpandedItems[orderId] !== undefined || orderExpandedLoading[orderId]) return;
+
+    setOrderExpandedLoading(prev => ({ ...prev, [orderId]: true }));
+    try {
+      const res = await api.get(`/sales/customer-orders/${orderId}/`, { params: { include_items: 'true' } });
+      const src: any[] = Array.isArray(res.data?.items) ? res.data.items : [];
+      const sorted = [...src].sort((a: any, b: any) => {
+        const ao = Number(a?.sort_order ?? 0);
+        const bo = Number(b?.sort_order ?? 0);
+        if (ao !== bo) return ao - bo;
+        return Number(a?.id ?? 0) - Number(b?.id ?? 0);
+      });
+      const map = new Map<number, any>();
+      sorted.forEach((it: any) => map.set(it.id, { ...it, children: [] }));
+      const roots: any[] = [];
+      sorted.forEach((it: any) => {
+        const node = map.get(it.id);
+        const pid = it.parent;
+        if (pid && map.has(pid)) map.get(pid).children.push(node);
+        else roots.push(node);
+      });
+      setOrderExpandedItems(prev => ({ ...prev, [orderId]: roots }));
+    } catch (e) {
+      console.error(e);
+      message.error('Nem sikerült betölteni a megrendelés tételeit');
+      setOrderExpandedItems(prev => ({ ...prev, [orderId]: [] }));
+    } finally {
+      setOrderExpandedLoading(prev => ({ ...prev, [orderId]: false }));
+    }
+  };
+
+  const renderExpandedOrderRow = (record: any) => {
+    const orderId = Number(record?.id || 0);
+    const loadingItems = !!orderExpandedLoading[orderId];
+    const treeItems = orderExpandedItems[orderId];
+
+    if (loadingItems) {
+      return (
+        <div style={{ padding: '12px 8px 12px 28px' }}>
+          <AntSpin size="small" />
+        </div>
+      );
+    }
+
+    if (!treeItems || treeItems.length === 0) {
+      return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
+    }
+
+    return (
+      <div style={{ padding: '8px 0 8px 28px' }}>
+        <Table
+          size="small"
+          pagination={false}
+          rowKey="id"
+          dataSource={treeItems}
+          columns={[
+            {
+              title: 'Megnevezés',
+              key: 'name',
+              render: (_: any, r: any) => (
+                <div>
+                  <div style={{ fontWeight: 500 }}>
+                    {r.product_name || r.manufacturing_product_name || r.material_name || r.service_name || r.name || r.description || '-'}
+                  </div>
+                  <div style={{ fontSize: 12, color: '#666' }}>{r.product_code || r.manufacturing_product_code || r.material_code || r.service_code || ''}</div>
+                </div>
+              ),
+            },
+            {
+              title: 'Mennyiség',
+              key: 'qty',
+              width: 120,
+              render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+            },
+            {
+              title: 'Megjegyzés',
+              dataIndex: 'description',
+              key: 'description',
+              ellipsis: true,
+            },
+          ]}
+          expandable={{
+            rowExpandable: (r: any) => !!(
+              (r.item_type === 'manufacturing' || r.manufacturing_product_name || r.quote_item?.manufacturing_product) &&
+              Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0) > 0
+            ),
+            expandedRowRender: (r: any) => {
+              const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
+              if (!productId) return null;
+              return (
+                <div style={{ padding: '8px 0 8px 28px' }}>
+                  <ProductSubItemsTable productId={productId} readOnly />
+                </div>
+              );
+            },
+            defaultExpandAllRows: true,
+          }}
+        />
+      </div>
+    );
+  };
 
   const handleWorkflowStatusChange = async (orderId: number, newStatus: string, record?: CustomerOrder) => {
     const doUpdate = async (sendEmail: boolean = false) => {
@@ -1747,7 +1857,22 @@ interface CustomerOrder {
                 </div>
               );
             },
-          } : undefined}
+          } : {
+            expandedRowKeys: expandedOrderKeys,
+            onExpand: (expanded: boolean, record: any) => {
+              if (expanded) {
+                setExpandedOrderKeys(prev => Array.from(new Set([...prev, record.id])));
+                loadOrderExpandedItems(record);
+              } else {
+                setExpandedOrderKeys(prev => prev.filter((k) => k !== record.id));
+              }
+            },
+            expandedRowRender: renderExpandedOrderRow,
+            rowExpandable: (record: any) => {
+              const count = Array.isArray(record?.items) ? record.items.length : 0;
+              return count > 0;
+            },
+          }}
           rowSelection={csvMode ? {
             selectedRowKeys: csvSelectedKeys,
             onChange: (keys) => setCsvSelectedKeys(keys),
