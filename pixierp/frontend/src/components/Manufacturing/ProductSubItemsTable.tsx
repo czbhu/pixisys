@@ -76,6 +76,8 @@ interface Props {
   size?: 'small' | 'middle' | 'large';
   /** Ha true, megjegyzés és csatolmány oszlopok meg jelennek */
   showNotesAndAttachments?: boolean;
+  /** Ha false, beker./eladási ár oszlopok rejtve (jogosultság alapján). Default: true */
+  showPrices?: boolean;
 }
 
 export const ProductSubItemsTable: React.FC<Props> = ({
@@ -85,6 +87,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   readOnly = false,
   size = 'small',
   showNotesAndAttachments = false,
+  showPrices = true,
 }) => {
   const [loading, setLoading] = useState(!initialProduct);
   const [saving, setSaving] = useState(false);
@@ -282,19 +285,21 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     { title: 'Mennyiség', dataIndex: 'quantity', key: 'quantity', width: 90, align: 'right' as const,
       render: (q: number) => Number(q).toLocaleString('hu-HU', { maximumFractionDigits: 4 }) },
     { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 80 },
-    { title: 'Beker. nettó ár', dataIndex: 'cost_price', key: 'cost_price', width: 140, align: 'right' as const,
-      render: (v: number, r: ProductSubItem) => {
-        const total = Number(v || 0) * Number(r.quantity || 1);
-        if (!total) return <span style={{ color: '#bbb' }}>—</span>;
-        return `${total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_code || 'HUF'}`;
-      } },
-    { title: 'Nettó eladási ár', dataIndex: 'selling_unit_price', key: 'selling_unit_price', width: 140, align: 'right' as const,
-      render: (v: number, r: ProductSubItem) => {
-        const unitP = Number(v || r.selling_price || 0);
-        if (!unitP) return <span style={{ color: '#bbb' }}>—</span>;
-        const total = unitP * Number(r.quantity || 1);
-        return <span style={{ fontWeight: 500 }}>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {r.currency_code || 'HUF'}</span>;
-      } },
+    ...(showPrices ? [
+      { title: 'Beker. nettó ár', dataIndex: 'cost_price', key: 'cost_price', width: 140, align: 'right' as const,
+        render: (v: number, r: ProductSubItem) => {
+          const total = Number(v || 0) * Number(r.quantity || 1);
+          if (!total) return <span style={{ color: '#bbb' }}>—</span>;
+          return `${total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_code || 'HUF'}`;
+        } },
+      { title: 'Nettó eladási ár', dataIndex: 'selling_unit_price', key: 'selling_unit_price', width: 140, align: 'right' as const,
+        render: (v: number, r: ProductSubItem) => {
+          const unitP = Number(v || r.selling_price || 0);
+          if (!unitP) return <span style={{ color: '#bbb' }}>—</span>;
+          const total = unitP * Number(r.quantity || 1);
+          return <span style={{ fontWeight: 500 }}>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {r.currency_code || 'HUF'}</span>;
+        } },
+    ] : []),
     { title: 'Beszállító', key: 'supplier', width: 180,
       render: (_: any, r: ProductSubItem) => {
         if (r.is_internal) return <Tag color="blue">{r.department_name || 'Belső'}</Tag>;

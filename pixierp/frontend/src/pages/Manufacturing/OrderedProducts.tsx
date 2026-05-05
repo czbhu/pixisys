@@ -172,6 +172,15 @@ const OrderedProducts: React.FC = () => {
     const navigate = useNavigate();
     const { user } = useAuth();
     const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
+
+    // Árak csak Ügyvezető és Adminisztráció osztályoknak láthatók (+ superuser/staff)
+    const PRICE_ALLOWED_DEPARTMENTS = ['Ügyvezető', 'Adminisztráció'];
+    const canViewPrices: boolean = !!(
+        user?.is_superuser ||
+        user?.is_staff ||
+        (user?.department_names || []).some((d: string) => PRICE_ALLOWED_DEPARTMENTS.includes(d))
+    );
+
     const [items, setItems] = useState<OrderedManufacturingItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [query, setQuery] = useState('');
@@ -712,7 +721,7 @@ const OrderedProducts: React.FC = () => {
 
         return (
             <div style={{ padding: '8px 0 8px 32px' }}>
-                <ProductSubItemsTable productId={productId} showNotesAndAttachments />
+                <ProductSubItemsTable productId={productId} showNotesAndAttachments showPrices={canViewPrices} />
 
                 {/* Order-item level attachments */}
                 <div style={{ marginTop: 14, maxWidth: 700 }}>

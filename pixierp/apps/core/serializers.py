@@ -19,13 +19,14 @@ class UserSerializer(serializers.ModelSerializer):
     roles = serializers.SerializerMethodField()
     permissions = serializers.SerializerMethodField()
     employee_id = serializers.SerializerMethodField()
+    department_names = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login',
-            'roles', 'permissions', 'employee_id'
+            'roles', 'permissions', 'employee_id', 'department_names'
         ]
         read_only_fields = ['id', 'date_joined']
 
@@ -35,6 +36,14 @@ class UserSerializer(serializers.ModelSerializer):
             return Employee.objects.get(user=obj).id
         except Employee.DoesNotExist:
             return None
+
+    def get_department_names(self, obj):
+        from apps.hr.models import Employee
+        try:
+            employee = Employee.objects.get(user=obj)
+            return [dept.name for dept in employee.departments.all()]
+        except Employee.DoesNotExist:
+            return []
 
     def get_roles(self, obj):
         """Get user roles from department assignments (Employee → Department → Role)"""
