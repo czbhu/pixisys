@@ -26,6 +26,8 @@ interface FolderNode {
   name: string;
   owner: string;
   owner_id: number;
+  size: number;
+  total_size: number;
   children: FolderNode[];
 }
 
@@ -71,6 +73,7 @@ function folderNodesToAntd(nodes: FolderNode[]): DataNode[] {
       <span>
         <FolderOutlined style={{ marginRight: 6, color: '#faad14' }} />
         {n.name}
+        {n.total_size > 0 && <span style={{ marginLeft: 6, fontSize: 11, color: '#aaa' }}>{formatBytes(n.total_size)}</span>}
       </span>
     ),
     children: folderNodesToAntd(n.children),
@@ -100,8 +103,10 @@ const StoragePage: React.FC = () => {
   ]);
 
   const [files, setFiles] = useState<StorageFile[]>([]);
-  const [subFolders, setSubFolders] = useState<{ id: number; name: string; owner_username: string }[]>([]);
+  const [subFolders, setSubFolders] = useState<{ id: number; name: string; owner_username: string; size?: number; total_size?: number }[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
+
+  const [diskSpace, setDiskSpace] = useState<{ total: number; used: number; free: number } | null>(null);
 
   const [newFolderModal, setNewFolderModal] = useState(false);
   const [newFolderForm] = Form.useForm();
@@ -130,6 +135,11 @@ const StoragePage: React.FC = () => {
 
   useEffect(() => { loadTree(); }, [loadTree]);
 
+  // ── Load disk space ────────────────────────────────────────────────────────
+  useEffect(() => {
+    api.get('/storage/folders/disk_space/').then(res => setDiskSpace(res.data)).catch(() => {});
+  }, []);
+
   // ── Load folder contents ───────────────────────────────────────────────────
   const loadFolder = useCallback(async (folderId: number | null) => {
     setFilesLoading(true);
@@ -140,13 +150,27 @@ const StoragePage: React.FC = () => {
         api.get(`/storage/folders/?parent=${folderParam}`),
       ]);
       setFiles(Array.isArray(filesRes.data) ? filesRes.data : (filesRes.data.results ?? []));
-      setSubFolders(Array.isArray(foldersRes.data) ? foldersRes.data : (foldersRes.data.results ?? []));
+      // Enrich subfolders with size from tree data
+      const rawFolders: any[] = Array.isArray(foldersRes.data) ? foldersRes.data : (foldersRes.data.results ?? []);
+      // find matching node in tree to get sizes
+      const findNode = (nodes: FolderNode[], id: number): FolderNode | null => {
+        for (const n of nodes) {
+          if (n.id === id) return n;
+          const found = findNode(n.children, id);
+          if (found) return found;
+        }
+        return null;
+      };
+      setSubFolders(rawFolders.map(f => {
+        const node = findNode(tree, f.id);
+        return { ...f, size: node?.size ?? 0, total_size: node?.total_size ?? 0 };
+      }));
     } catch {
       message.error('Nem sikerült betölteni a tartalmakat.');
     } finally {
       setFilesLoading(false);
     }
-  }, []);
+  }, [tree]);
 
   useEffect(() => { loadFolder(selectedFolderId); }, [selectedFolderId, loadFolder]);
 
@@ -402,7 +426,16 @@ const StoragePage: React.FC = () => {
   return (
     <div style={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '16px 24px 8px', borderBottom: '1px solid #f0f0f0', background: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Title level={4} style={{ margin: 0 }}>Tárhely</Title>
+        <Space align="center">
+          <Title level={4} style={{ margin: 0 }}>Tárhely</Title>
+          {diskSpace && (
+            <span style={{ fontSize: 12, color: '#888', marginLeft: 12 }}>
+              Szabad: <b style={{ color: diskSpace.free / diskSpace.total < 0.1 ? '#ff4d4f' : '#52c41a' }}>{formatBytes(diskSpace.free)}</b>
+              {' / '}{formatBytes(diskSpace.total)}
+              {' — Foglalt: '}{formatBytes(diskSpace.used)}
+            </span>
+          )}
+        </Space>
         <Space>
           <Tooltip title="Frissítés">
             <Button icon={<ReloadOutlined />} onClick={() => { loadTree(); loadFolder(selectedFolderId); }} />
@@ -517,7 +550,12 @@ const StoragePage: React.FC = () => {
                       }}
                     >
                       <FolderOutlined style={{ color: '#faad14', fontSize: 18 }} />
-                      <Text style={{ flex: 1 }}>{f.name}</Text>
+                      <span style={{ flex: 1 }}>
+                        <Text>{f.name}</Text>
+                        {(f.total_size ?? 0) > 0 && (
+                          <Text type="secondary" style={{ fontSize: 11, marginLeft: 6 }}>{formatBytes(f.total_size ?? 0)}</Text>
+                        )}
+                      </span>
                       {isAdmin && (
                         <Text type="secondary" style={{ fontSize: 11 }}>{f.owner_username}</Text>
                       )}

@@ -45,6 +45,7 @@ const CustomerOrderDetail: React.FC = () => {
   const [orderFiles, setOrderFiles] = useState<UploadFile<any>[]>([]);
   const [orderAttachments, setOrderAttachments] = useState<any[]>([]);
   const [attachUploading, setAttachUploading] = useState(false);
+  const [attachRemark, setAttachRemark] = useState('');
   const [filePreviewOpen, setFilePreviewOpen] = useState(false);
   const [filePreviewTitle, setFilePreviewTitle] = useState('');
   const [filePreviewUrl, setFilePreviewUrl] = useState<string | null>(null);
@@ -659,29 +660,40 @@ const CustomerOrderDetail: React.FC = () => {
           size="small"
           title="Megrendelés csatolmányok"
           extra={
-            <Upload
-              showUploadList={false}
-              beforeUpload={async (file) => {
-                setAttachUploading(true);
-                try {
-                  const fd = new FormData();
-                  fd.append('file', file);
-                  await api.post(`/sales/customer-orders/${id}/attachments/`, fd, {
-                    headers: { 'Content-Type': 'multipart/form-data' },
-                  });
-                  message.success('Fájl feltöltve');
-                  const attRes = await api.get(`/sales/customer-orders/${id}/attachments/`);
-                  setOrderAttachments(attRes.data || []);
-                } catch {
-                  message.error('Feltöltés sikertelen');
-                } finally {
-                  setAttachUploading(false);
-                }
-                return false;
-              }}
-            >
-              <Button icon={<UploadOutlined />} loading={attachUploading} size="small">Feltöltés</Button>
-            </Upload>
+            <Space>
+              <Input
+                placeholder="Megjegyzés (opcionális)"
+                size="small"
+                value={attachRemark}
+                onChange={e => setAttachRemark(e.target.value)}
+                style={{ width: 200 }}
+              />
+              <Upload
+                showUploadList={false}
+                beforeUpload={async (file) => {
+                  setAttachUploading(true);
+                  try {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    if (attachRemark) fd.append('remark', attachRemark);
+                    await api.post(`/sales/customer-orders/${id}/attachments/`, fd, {
+                      headers: { 'Content-Type': 'multipart/form-data' },
+                    });
+                    message.success('Fájl feltöltve');
+                    setAttachRemark('');
+                    const attRes = await api.get(`/sales/customer-orders/${id}/attachments/`);
+                    setOrderAttachments(attRes.data || []);
+                  } catch {
+                    message.error('Feltöltés sikertelen');
+                  } finally {
+                    setAttachUploading(false);
+                  }
+                  return false;
+                }}
+              >
+                <Button icon={<UploadOutlined />} loading={attachUploading} size="small">Feltöltés</Button>
+              </Upload>
+            </Space>
           }
         >
           <List
@@ -703,6 +715,7 @@ const CustomerOrderDetail: React.FC = () => {
                       ) : (
                         <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
                       )}
+                      {att.remark && <span style={{ color: '#595959', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>}
                       <span style={{ color: '#888', fontSize: 12 }}>{att.uploaded_by_name}</span>
                       <span style={{ color: '#aaa', fontSize: 12 }}>{att.created_at ? new Date(att.created_at).toLocaleString('hu-HU') : ''}</span>
                     </Space>

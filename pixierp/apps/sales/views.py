@@ -359,6 +359,30 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             remark=remark,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
+        # Egyidejűleg Storage bejegyzés létrehozása rfq/{request_number}/ alá
+        try:
+            from apps.core.models import StorageFolder, StorageFile
+            rfq_root, _ = StorageFolder.objects.get_or_create(
+                name='rfq', parent=None, defaults={'owner': request.user}
+            )
+            rfq_folder, _ = StorageFolder.objects.get_or_create(
+                name=qr.request_number or str(qr.id),
+                parent=rfq_root,
+                defaults={'owner': request.user}
+            )
+            sf = StorageFile(
+                name=file_obj.name,
+                folder=rfq_folder,
+                size=att.file.size if att.file else 0,
+                content_type=file_obj.content_type or '',
+                owner=request.user,
+            )
+            sf.file.name = att.file.name  # point to already-saved file
+            sf.save()
+            att.storage_file_id = sf.id
+            att.save(update_fields=['storage_file_id'])
+        except Exception:
+            pass
         return Response(QuoteRequestAttachmentSerializer(att, context={'request': request}).data, status=status.HTTP_201_CREATED)
 
     @action(detail=True, methods=['post'])
@@ -2478,6 +2502,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         """Fájl feltöltése megrendeléshez + Storage bejegyzés létrehozása."""
         order = self.get_object()
         file_obj = request.FILES.get('file')
+        remark = request.data.get('remark', '')
         if not file_obj:
             return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -2513,6 +2538,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             customer_order=order,
             file=storage_file.file,
             original_filename=file_obj.name,
+            remark=remark,
             storage_file_id=storage_file.id,
             uploaded_by=request.user if request.user.is_authenticated else None
         )

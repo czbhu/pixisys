@@ -492,6 +492,7 @@ class QuoteRequestAttachment(models.Model):
     quote_request = models.ForeignKey(QuoteRequest, on_delete=models.CASCADE, related_name='attachments')
     file = models.FileField(upload_to='quote_requests/%Y/%m/%d/')
     remark = models.CharField(max_length=255, blank=True)
+    storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -1058,6 +1059,7 @@ class CustomerOrderAttachment(models.Model):
     )
     file = models.FileField(upload_to=order_attachment_upload_path, verbose_name='Fájl')
     original_filename = models.CharField(max_length=255, verbose_name='Eredeti fájlnév')
+    remark = models.CharField(max_length=500, blank=True, verbose_name='Megjegyzés')
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(
         User, on_delete=models.SET_NULL, null=True, blank=True,

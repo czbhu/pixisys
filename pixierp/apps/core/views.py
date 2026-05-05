@@ -26,7 +26,7 @@ from django.utils.encoding import force_bytes
 from django.core.management import call_command
 from django.db import transaction
 from django.db.models import Q
-from django.db.models import Avg, Count, F
+from django.db.models import Avg, Count, F, Sum
 from django.http import HttpResponse
 from .serializers import (
     UserSerializer,
@@ -3585,18 +3585,42 @@ class StorageFolderViewSet(viewsets.ModelViewSet):
             ids = _folder_accessible_ids(user)
             folders = StorageFolder.objects.select_related('owner').filter(id__in=ids).order_by('name')
 
+        # Pre-calculate file sizes per folder (own files only)
+        folder_ids = list(folders.values_list('id', flat=True))
+        size_rows = StorageFile.objects.filter(folder_id__in=folder_ids).values('folder_id').annotate(s=Sum('size'))
+        own_sizes = {row['folder_id']: row['s'] or 0 for row in size_rows}
+
         def build_node(folder):
             children_qs = folders.filter(parent=folder)
+            child_nodes = [build_node(c) for c in children_qs]
+            own_size = own_sizes.get(folder.id, 0)
+            total_size = own_size + sum(c.get('total_size', 0) for c in child_nodes)
             return {
                 'id': folder.id,
                 'name': folder.name,
                 'owner': folder.owner.username,
                 'owner_id': folder.owner_id,
-                'children': [build_node(c) for c in children_qs],
+                'size': own_size,
+                'total_size': total_size,
+                'children': child_nodes,
             }
 
         roots = [f for f in folders if f.parent_id is None]
         return Response([build_node(r) for r in roots])
+
+    @action(detail=False, methods=['get'])
+    def disk_space(self, request):
+        """Return disk usage of MEDIA_ROOT."""
+        import shutil
+        try:
+            usage = shutil.disk_usage(settings.MEDIA_ROOT)
+            return Response({
+                'total': usage.total,
+                'used': usage.used,
+                'free': usage.free,
+            })
+        except Exception as e:
+            return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class StorageFileViewSet(viewsets.ModelViewSet):

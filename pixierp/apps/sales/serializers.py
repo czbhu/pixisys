@@ -1366,7 +1366,7 @@ class CustomerOrderAttachmentSerializer(serializers.ModelSerializer):
     class Meta:
         model = CustomerOrderAttachment
         fields = ['id', 'customer_order', 'file', 'file_url', 'original_filename',
-                  'storage_file_id', 'uploaded_by', 'uploaded_by_name', 'created_at']
+                  'remark', 'storage_file_id', 'uploaded_by', 'uploaded_by_name', 'created_at']
         read_only_fields = ['id', 'file_url', 'uploaded_by_name', 'created_at']
 
     def get_file_url(self, obj):
