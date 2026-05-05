@@ -3753,3 +3753,96 @@ class StorageShareViewSet(viewsets.ModelViewSet):
         from apps.hr.models import Department
         depts = Department.objects.order_by('name').values('id', 'name')
         return Response(list(depts))
+
+
+# ── QR Login ─────────────────────────────────────────────────────────────────
+
+QR_LOGIN_TTL = 120  # seconds a pending session lives
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def qr_login_create(request):
+    """Create a pending QR-login session. Anonymous — called by the login page.
+
+    Returns: { session_id, qr_data, ttl }
+    """
+    import uuid
+    from django.core.cache import cache
+
+    session_id = uuid.uuid4().hex
+    cache.set(f'qr_login:{session_id}', {'status': 'pending'}, timeout=QR_LOGIN_TTL)
+    return Response({
+        'session_id': session_id,
+        'qr_data': f'LOGIN_QR:{session_id}',
+        'ttl': QR_LOGIN_TTL,
+    })
+
+
+@api_view(['GET'])
+@permission_classes([AllowAny])
+def qr_login_poll(request):
+    """Poll for QR-login session status. Anonymous — called by the login page.
+
+    Returns:
+      { status: 'pending' }  — still waiting
+      { status: 'approved', tokens: {...}, user: {...} }  — scan accepted
+      { status: 'expired' }  — session not found / timed out
+    """
+    from django.core.cache import cache
+
+    session_id = (request.query_params.get('session_id') or '').strip()
+    if not session_id:
+        return Response({'error': 'session_id required'}, status=400)
+
+    data = cache.get(f'qr_login:{session_id}')
+    if data is None:
+        return Response({'status': 'expired'})
+
+    if data.get('status') == 'approved':
+        cache.delete(f'qr_login:{session_id}')
+        return Response({
+            'status': 'approved',
+            'tokens': data['tokens'],
+            'user': data['user'],
+        })
+
+    return Response({'status': 'pending'})
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def qr_login_approve(request):
+    """Approve a QR-login session. Called by an already-authenticated user who scanned
+    the login QR code displayed on the workstation.
+
+    Body: { session_id: str }
+    Returns: { status: 'ok', user: 'Teljes Név' }
+    """
+    from django.core.cache import cache
+
+    session_id = (request.data.get('session_id') or '').strip()
+    if not session_id:
+        return Response({'error': 'session_id required'}, status=400)
+
+    data = cache.get(f'qr_login:{session_id}')
+    if data is None:
+        return Response({'error': 'A munkamenet lejárt vagy nem létezik.'}, status=404)
+    if data.get('status') != 'pending':
+        return Response({'error': 'A munkamenet már felhasznált.'}, status=400)
+
+    user = request.user
+    refresh = RefreshToken.for_user(user)
+
+    approved_data = {
+        'status': 'approved',
+        'tokens': {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        },
+        'user': UserSerializer(user).data,
+    }
+    # Keep approved result for 30 s so the poll loop can pick it up
+    cache.set(f'qr_login:{session_id}', approved_data, timeout=30)
+
+    return Response({'status': 'ok', 'user': user.get_full_name() or user.username})
