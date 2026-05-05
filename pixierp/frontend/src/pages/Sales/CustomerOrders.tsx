@@ -603,10 +603,11 @@ interface CustomerOrder {
                   align: 'right' as const,
                   render: (_: any, r: any) => {
                     const qi = r.quote_item;
-                    const cp = Number(qi?.material_unit_cost_price || qi?.service_unit_cost_price || 0);
-                    if (!cp) return <span style={{ color: '#bbb' }}>—</span>;
+                    const unitCp = Number(qi?.material_unit_cost_price || qi?.service_unit_cost_price || 0);
+                    if (!unitCp) return <span style={{ color: '#bbb' }}>—</span>;
+                    const total = unitCp * Number(r.quantity || 1);
                     const cur = r._currency_code || 'HUF';
-                    return <span>{cp.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                    return <span>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
                   },
                 },
                 {
@@ -615,10 +616,11 @@ interface CustomerOrder {
                   width: 140,
                   align: 'right' as const,
                   render: (_: any, r: any) => {
-                    const p = Number(r.net_unit_price || 0);
-                    if (!p) return <span style={{ color: '#bbb' }}>—</span>;
+                    const unitP = Number(r.net_unit_price || 0);
+                    if (!unitP) return <span style={{ color: '#bbb' }}>—</span>;
+                    const total = unitP * Number(r.quantity || 1);
                     const cur = r._currency_code || 'HUF';
-                    return <span style={{ fontWeight: 500 }}>{p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                    return <span style={{ fontWeight: 500 }}>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
                   },
                 },
                 {
