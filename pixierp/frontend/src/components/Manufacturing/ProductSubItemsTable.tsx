@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload } from 'antd';
-import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons';
+import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
   DndContext,
   closestCenter,
@@ -98,6 +98,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [subItemAttsLoaded, setSubItemAttsLoaded] = useState<Record<number, boolean>>({});
   const [subItemAttRemark, setSubItemAttRemark] = useState<Record<number, string>>({});
   const [subItemAttUploading, setSubItemAttUploading] = useState<Record<number, boolean>>({});
+  const [expandedSubItems, setExpandedSubItems] = useState<number[]>([]);
 
   const treeMeta = useMemo(() => buildCostTreeMeta(items), [items]);
 
@@ -304,119 +305,34 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     }]),
     ...(showNotesAndAttachments ? [
       {
-        title: 'Megjegyzés', key: 'notes', width: 220,
+        title: 'Megj. / Csatolmányok', key: 'att_trigger', width: 160,
         render: (_: any, r: ProductSubItem) => {
           const ciId = r.id;
-          if (editingNotesId === ciId) {
-            return (
-              <Space direction="vertical" size={2} style={{ width: '100%' }}>
-                <Input.TextArea
-                  autoFocus rows={2} style={{ width: 200 }}
-                  value={editingNotesVal}
-                  onChange={e => setEditingNotesVal(e.target.value)}
-                />
-                <Space>
-                  <Button size="small" type="primary" onClick={async () => {
-                    try {
-                      await api.patch(`/manufacturing/cost-items/${ciId}/notes/`, { notes: editingNotesVal });
-                      setItems(prev => prev.map(it => it.id === ciId ? { ...it, notes: editingNotesVal } as any : it));
-                      setEditingNotesId(null);
-                    } catch { message.error('Mentés sikertelen'); }
-                  }}>Mentés</Button>
-                  <Button size="small" onClick={() => setEditingNotesId(null)}>Mégsem</Button>
-                </Space>
-              </Space>
-            );
-          }
-          const notes = (r as any).notes || '';
-          return (
-            <span
-              style={{ color: notes ? '#595959' : '#bbb', fontSize: 12, cursor: 'pointer' }}
-              onClick={() => { setEditingNotesId(ciId); setEditingNotesVal(notes); }}
-              title="Kattints szerkesztéshez"
-            >
-              {notes || '+ megjegyzés'}
-            </span>
-          );
-        },
-      },
-      {
-        title: 'Csatolmányok', key: 'attachments', width: 200,
-        render: (_: any, r: ProductSubItem) => {
-          const ciId = r.id;
-          const loaded = !!subItemAttsLoaded[ciId];
           const atts: any[] = subItemAtts[ciId] || [];
-          const uploading = !!subItemAttUploading[ciId];
-          const attRemark = subItemAttRemark[ciId] || '';
-
-          const loadAtts = async () => {
-            if (subItemAttsLoaded[ciId]) return;
-            try {
-              const res = await api.get(`/manufacturing/cost-items/${ciId}/attachments/`);
-              setSubItemAtts(prev => ({ ...prev, [ciId]: res.data || [] }));
-            } catch { setSubItemAtts(prev => ({ ...prev, [ciId]: [] })); }
-            finally { setSubItemAttsLoaded(prev => ({ ...prev, [ciId]: true })); }
-          };
-
+          const loaded = !!subItemAttsLoaded[ciId];
+          const notes = (r as any).notes || '';
+          const isOpen = expandedSubItems.includes(ciId);
           return (
-            <Popover
-              trigger="click"
-              onOpenChange={open => { if (open) loadAtts(); }}
-              content={
-                <div style={{ width: 320 }}>
-                  <Space style={{ marginBottom: 8 }}>
-                    <Input
-                      placeholder="Megjegyzés"
-                      size="small" value={attRemark} style={{ width: 150 }}
-                      onChange={e => setSubItemAttRemark(prev => ({ ...prev, [ciId]: e.target.value }))}
-                    />
-                    <Upload
-                      showUploadList={false}
-                      beforeUpload={async (file) => {
-                        setSubItemAttUploading(prev => ({ ...prev, [ciId]: true }));
-                        try {
-                          const fd = new FormData();
-                          fd.append('file', file);
-                          if (attRemark) fd.append('remark', attRemark);
-                          const res = await api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-                          setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
-                          setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
-                          message.success('Feltöltve');
-                        } catch { message.error('Feltöltés sikertelen'); }
-                        finally { setSubItemAttUploading(prev => ({ ...prev, [ciId]: false })); }
-                        return false;
-                      }}
-                    >
-                      <Button size="small" icon={<UploadOutlined />} loading={uploading}>Feltöltés</Button>
-                    </Upload>
-                  </Space>
-                  {!loaded ? <Spin size="small" /> : atts.length === 0 ? (
-                    <div style={{ color: '#aaa', fontSize: 12 }}>Nincs csatolmány</div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {atts.map((att: any) => (
-                        <Space key={att.id} size={4}>
-                          <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
-                          {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>{att.remark}</span>}
-                          <Button type="text" danger size="small" icon={<DeleteOutlined />}
-                            onClick={async () => {
-                              try {
-                                await api.delete(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/`);
-                                setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).filter((a: any) => a.id !== att.id) }));
-                              } catch { message.error('Törlés sikertelen'); }
-                            }}
-                          />
-                        </Space>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              }
+            <Button
+              size="small"
+              icon={<PaperClipOutlined />}
+              type={isOpen ? 'primary' : 'default'}
+              onClick={() => {
+                if (!isOpen) {
+                  setExpandedSubItems(prev => [...prev, ciId]);
+                  if (!subItemAttsLoaded[ciId]) {
+                    api.get(`/manufacturing/cost-items/${ciId}/attachments/`)
+                      .then(res => setSubItemAtts(prev => ({ ...prev, [ciId]: res.data || [] })))
+                      .catch(() => setSubItemAtts(prev => ({ ...prev, [ciId]: [] })))
+                      .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [ciId]: true })));
+                  }
+                } else {
+                  setExpandedSubItems(prev => prev.filter(id => id !== ciId));
+                }
+              }}
             >
-              <Button size="small" icon={<PaperClipOutlined />}>
-                {loaded && atts.length > 0 ? atts.length : ''}
-              </Button>
-            </Popover>
+              {notes ? '📝 ' : ''}{loaded && atts.length > 0 ? atts.length : ''}
+            </Button>
           );
         },
       },
@@ -431,6 +347,110 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     return <div style={{ padding: 16, color: '#999' }}>Nincsenek altételek.</div>;
   }
 
+  const renderSubItemExpanded = (r: ProductSubItem) => {
+    const ciId = r.id;
+    const atts: any[] = subItemAtts[ciId] || [];
+    const loaded = !!subItemAttsLoaded[ciId];
+    const uploading = !!subItemAttUploading[ciId];
+    const attRemark = subItemAttRemark[ciId] || '';
+    const notes = (r as any).notes || '';
+
+    return (
+      <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+        <Space direction="vertical" style={{ width: '100%' }} size={12}>
+          {/* Megjegyzés */}
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 4 }}>Belső megjegyzés</div>
+            {editingNotesId === ciId ? (
+              <Space direction="vertical" size={4}>
+                <Input.TextArea
+                  autoFocus rows={2} style={{ width: 400 }}
+                  value={editingNotesVal}
+                  onChange={e => setEditingNotesVal(e.target.value)}
+                />
+                <Space>
+                  <Button size="small" type="primary" onClick={async () => {
+                    try {
+                      await api.patch(`/manufacturing/cost-items/${ciId}/notes/`, { notes: editingNotesVal });
+                      setItems(prev => prev.map(it => it.id === ciId ? { ...it, notes: editingNotesVal } as any : it));
+                      setEditingNotesId(null);
+                    } catch { message.error('Mentés sikertelen'); }
+                  }}>Mentés</Button>
+                  <Button size="small" onClick={() => setEditingNotesId(null)}>Mégsem</Button>
+                </Space>
+              </Space>
+            ) : (
+              <span
+                style={{ color: notes ? '#333' : '#bbb', fontSize: 13, cursor: 'pointer', display: 'inline-block', minWidth: 120 }}
+                onClick={() => { setEditingNotesId(ciId); setEditingNotesVal(notes); }}
+              >
+                {notes || '+ megjegyzés hozzáadása'}
+              </span>
+            )}
+          </div>
+
+          {/* Csatolmányok */}
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
+            <Space direction="vertical" style={{ width: '100%' }} size={6}>
+              <Input
+                placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                size="small" value={attRemark} style={{ width: 340 }}
+                onChange={e => setSubItemAttRemark(prev => ({ ...prev, [ciId]: e.target.value }))}
+              />
+              <Upload.Dragger
+                multiple
+                showUploadList={false}
+                disabled={uploading}
+                style={{ padding: '8px 0' }}
+                beforeUpload={async (file) => {
+                  setSubItemAttUploading(prev => ({ ...prev, [ciId]: true }));
+                  try {
+                    const fd = new FormData();
+                    fd.append('file', file);
+                    if (attRemark) fd.append('remark', attRemark);
+                    const res = await api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
+                    setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
+                    setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
+                    message.success('Feltöltve');
+                  } catch { message.error('Feltöltés sikertelen'); }
+                  finally { setSubItemAttUploading(prev => ({ ...prev, [ciId]: false })); }
+                  return false;
+                }}
+              >
+                {uploading
+                  ? <><Spin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                  : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                }
+              </Upload.Dragger>
+
+              {!loaded ? <Spin size="small" /> : atts.length === 0 ? (
+                <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {atts.map((att: any) => (
+                    <Space key={att.id} size={4}>
+                      <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
+                      {att.remark && <span style={{ color: '#888', fontSize: 11, fontStyle: 'italic' }}>— {att.remark}</span>}
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                        onClick={async () => {
+                          try {
+                            await api.delete(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/`);
+                            setSubItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).filter((a: any) => a.id !== att.id) }));
+                          } catch { message.error('Törlés sikertelen'); }
+                        }}
+                      />
+                    </Space>
+                  ))}
+                </div>
+              )}
+            </Space>
+          </div>
+        </Space>
+      </div>
+    );
+  };
+
   const table = (
     <Table
       rowKey="id"
@@ -439,6 +459,25 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       dataSource={items}
       columns={columns}
       components={readOnly ? undefined : { body: { row: CostDraggableRow } }}
+      expandable={showNotesAndAttachments ? {
+        expandedRowKeys: expandedSubItems,
+        onExpand: (expanded, record) => {
+          if (expanded) {
+            setExpandedSubItems(prev => [...prev, record.id]);
+            if (!subItemAttsLoaded[record.id]) {
+              api.get(`/manufacturing/cost-items/${record.id}/attachments/`)
+                .then(res => setSubItemAtts(prev => ({ ...prev, [record.id]: res.data || [] })))
+                .catch(() => setSubItemAtts(prev => ({ ...prev, [record.id]: [] })))
+                .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [record.id]: true })));
+            }
+          } else {
+            setExpandedSubItems(prev => prev.filter(id => id !== record.id));
+          }
+        },
+        expandedRowRender: renderSubItemExpanded,
+        rowExpandable: () => true,
+        showExpandColumn: false,
+      } : undefined}
     />
   );
 
