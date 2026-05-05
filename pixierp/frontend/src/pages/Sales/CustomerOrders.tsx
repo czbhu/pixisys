@@ -445,6 +445,7 @@ interface CustomerOrder {
     try {
       const res = await api.get(`/sales/customer-orders/${orderId}/`, { params: { include_items: 'true' } });
       const src: any[] = Array.isArray(res.data?.items) ? res.data.items : [];
+      const currencyCode: string = res.data?.quote_request?.currency_code || 'HUF';
       const sorted = [...src].sort((a: any, b: any) => {
         const ao = Number(a?.quote_item?.sort_order ?? a?.sort_order ?? 0);
         const bo = Number(b?.quote_item?.sort_order ?? b?.sort_order ?? 0);
@@ -460,7 +461,7 @@ interface CustomerOrder {
       const flat = sorted.map((it: any) => {
         const parentQiId = it.quote_item?.parent;
         const parentCoiId = parentQiId ? (qiIdToCoiId.get(parentQiId) || null) : null;
-        return { ...it, _parent_coi_id: parentCoiId };
+        return { ...it, _parent_coi_id: parentCoiId, _currency_code: currencyCode };
       });
       setOrderExpandedItems(prev => ({ ...prev, [orderId]: flat }));
     } catch (e) {
@@ -594,6 +595,31 @@ interface CustomerOrder {
                   key: 'qty',
                   width: 120,
                   render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+                },
+                {
+                  title: 'Beker. nettó ár',
+                  key: 'cost_price',
+                  width: 140,
+                  align: 'right' as const,
+                  render: (_: any, r: any) => {
+                    const qi = r.quote_item;
+                    const cp = Number(qi?.material_unit_cost_price || qi?.service_unit_cost_price || 0);
+                    if (!cp) return <span style={{ color: '#bbb' }}>—</span>;
+                    const cur = r._currency_code || 'HUF';
+                    return <span>{cp.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                  },
+                },
+                {
+                  title: 'Nettó eladási ár',
+                  key: 'net_unit_price',
+                  width: 140,
+                  align: 'right' as const,
+                  render: (_: any, r: any) => {
+                    const p = Number(r.net_unit_price || 0);
+                    if (!p) return <span style={{ color: '#bbb' }}>—</span>;
+                    const cur = r._currency_code || 'HUF';
+                    return <span style={{ fontWeight: 500 }}>{p.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                  },
                 },
                 {
                   title: 'Megjegyzés',
