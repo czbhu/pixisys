@@ -975,7 +975,7 @@ class ManufacturingCostItemViewSet(
                         for ws_id in worksheet_cost_item_ids[:5]:
                             try:
                                 ws_item = ManufacturingCostItem.objects.select_related('product').get(id=ws_id)
-                                pdf_bytes = self._build_work_sheet_pdf_bytes(ws_item)
+                                pdf_bytes = self._render_full_work_sheet_pdf_bytes(ws_item)
                                 if pdf_bytes:
                                     file_name = f"munkalap_{ws_item.id}.pdf"
                                     msg.attach(file_name, pdf_bytes, 'application/pdf')
@@ -1104,29 +1104,18 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
-    @action(detail=True, methods=['get'], url_path='work_sheet')
-    def work_sheet(self, request, pk=None):
-        """Per-item worksheet PDF — A4, két részes (külső + belső).
-
-        Felül a KÜLSŐ rész: csak az alap információk + tételnév + leírás
-        + altételek lista (checkbox + név + mennyiség, beszállító nélkül).
-        Alul a BELSŐ rész: minden látszik (belső leírás, megjegyzés,
-        beszállító/részleg oszlop, altétel megjegyzések). A két részt
-        szaggatott vonal választja el, mint a sales/customer-orders
-        munkalapját.
-        """
-        from django.http import HttpResponse
+    def _render_full_work_sheet_pdf_bytes(self, ci):
+        """Generate the full two-section (KÜLSŐ + BELSŐ) worksheet PDF for a
+        cost item and return the raw bytes.  Raises ImportError if ReportLab /
+        qrcode are not installed."""
         from io import BytesIO
-        try:
-            from reportlab.pdfgen import canvas
-            from reportlab.lib.pagesizes import A4
-            from reportlab.lib.units import cm
-            from reportlab.lib.utils import ImageReader
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
-            import qrcode
-        except ImportError:
-            return Response({'error': 'ReportLab not installed'}, status=500)
+        from reportlab.pdfgen import canvas
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.units import cm
+        from reportlab.lib.utils import ImageReader
+        from reportlab.pdfbase import pdfmetrics
+        from reportlab.pdfbase.ttfonts import TTFont
+        import qrcode
         from django.conf import settings as dj_settings
         from django.utils import timezone
         from datetime import timedelta
@@ -1137,17 +1126,13 @@ class ManufacturingCostItemViewSet(
         def strip_html(s):
             if not s:
                 return ''
-            # Replace block-level tags with newlines so multi-paragraph text
-            # doesn't run together, then strip remaining tags.
             s = _re.sub(r'(?i)<\s*(br|/p|/div|/li|/h[1-6])\s*[^>]*>', '\n', s)
             s = _re.sub(r'<[^>]+>', '', s)
             s = _html_unescape(s)
-            # Collapse excessive whitespace, keep paragraph breaks
             s = _re.sub(r'[ \t]+', ' ', s)
             s = _re.sub(r'\n\s*\n+', '\n', s)
             return s.strip()
 
-        ci = self.get_object()
         product = ci.product
         order, coi = self._resolve_order_context(ci)
 
@@ -1542,7 +1527,20 @@ class ManufacturingCostItemViewSet(
         p.showPage()
         p.save()
         buffer.seek(0)
-        response = HttpResponse(buffer, content_type='application/pdf')
+        return buffer.getvalue()
+
+    @action(detail=True, methods=['get'], url_path='work_sheet')
+    def work_sheet(self, request, pk=None):
+        """Per-item worksheet PDF — A4, két részes (külső + belső)."""
+        from django.http import HttpResponse
+        ci = self.get_object()
+        try:
+            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci)
+        except ImportError:
+            return Response({'error': 'ReportLab not installed'}, status=500)
+        if not pdf_bytes:
+            return Response({'error': 'PDF generation failed'}, status=500)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
         return response
 
