@@ -604,10 +604,17 @@ interface CustomerOrder {
                   render: (_: any, r: any) => {
                     const qi = r.quote_item;
                     const unitCp = Number(qi?.material_unit_cost_price || qi?.service_unit_cost_price || 0);
-                    if (!unitCp) return <span style={{ color: '#bbb' }}>—</span>;
-                    const total = unitCp * Number(r.quantity || 1);
+                    const manuTotal = Number(qi?.manufacturing_total_cost || 0);
                     const cur = r._currency_code || 'HUF';
-                    return <span>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                    if (unitCp) {
+                      const total = unitCp * Number(r.quantity || 1);
+                      return <span>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                    }
+                    if (manuTotal) {
+                      const total = manuTotal * Number(r.quantity || 1);
+                      return <span>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {cur}</span>;
+                    }
+                    return <span style={{ color: '#bbb' }}>—</span>;
                   },
                 },
                 {

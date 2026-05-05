@@ -2478,6 +2478,44 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             
         return qs
     
+    def retrieve(self, request, *args, **kwargs):
+        from django.db.models import Prefetch as _Prefetch
+        from apps.manufacturing.models import ManufacturingCostItem
+        instance = CustomerOrder.objects.select_related(
+            'created_by',
+            'quote_request',
+            'quote_request__company',
+            'quote_request__customer',
+            'quote_request__project',
+            'quote_request__created_by',
+            'quote_request__requested_by',
+            'quote_request__currency',
+        ).prefetch_related(
+            'quote_request__contacts',
+            'quote_request__assignees',
+            _Prefetch(
+                'items',
+                queryset=CustomerOrderItem.objects.select_related(
+                    'quote_item',
+                    'quote_item__product',
+                    'quote_item__material',
+                    'quote_item__manufacturing_product',
+                    'quote_item__service',
+                ).prefetch_related(
+                    _Prefetch(
+                        'quote_item__manufacturing_product__cost_items',
+                        queryset=ManufacturingCostItem.objects.all(),
+                    )
+                )
+            ),
+            _Prefetch(
+                'approval_requests',
+                queryset=ApprovalRequest.objects.select_related('requester').order_by('-created_at')
+            ),
+        ).get(pk=kwargs['pk'])
+        serializer = self.get_serializer(instance)
+        return Response(serializer.data)
+
     def create(self, request, *args, **kwargs):
         """Megrendelés létrehozása árajánlatból"""
         quote_request_id = request.data.get('quote_request_id')

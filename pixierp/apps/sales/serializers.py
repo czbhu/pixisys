@@ -79,6 +79,22 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     is_ordered = serializers.SerializerMethodField()
     ordered_at = serializers.SerializerMethodField()
 
+    manufacturing_total_cost = serializers.SerializerMethodField()
+
+    def get_manufacturing_total_cost(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if not mp:
+            return None
+        try:
+            total = sum(
+                float(ci.cost_price) * float(ci.quantity)
+                for ci in mp.cost_items.all()
+                if not ci.parent_id  # only top-level items to avoid double counting
+            )
+            return round(total, 2) if total else None
+        except Exception:
+            return None
+
     def get_is_ordered(self, obj):
         return obj.customerorderitem_set.exclude(customer_order__status='cancelled').exists()
 
