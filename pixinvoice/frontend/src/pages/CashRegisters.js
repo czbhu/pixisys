@@ -307,11 +307,13 @@ export default function CashRegisters() {
   const [selectedYears, setSelectedYears] = useState([currentYear]);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  const [directionFilter, setDirectionFilter] = useState('all'); // 'all' | 'income' | 'expense'
 
   const clearFilters = () => {
     setSelectedYears([currentYear]);
     setDateFrom('');
     setDateTo('');
+    setDirectionFilter('all');
   };
 
   useEffect(() => {
@@ -380,7 +382,11 @@ export default function CashRegisters() {
     return out;
   }, [currentYear]);
 
-  const rows = useMemo(() => allRows, [allRows]);
+  const rows = useMemo(() => {
+    if (directionFilter === 'income') return allRows.filter((r) => r.amountSigned > 0);
+    if (directionFilter === 'expense') return allRows.filter((r) => r.amountSigned < 0);
+    return allRows;
+  }, [allRows, directionFilter]);
 
   const totals = useMemo(() => {
     const income = rows.filter((r) => r.amountSigned > 0).reduce((sum, r) => sum + Number(r.amountSigned || 0), 0);
@@ -453,6 +459,19 @@ export default function CashRegisters() {
                 min={dateFrom || undefined}
                 max={availableYears.length > 0 ? `${Math.max(...availableYears)}-12-31` : undefined}
               />
+            </FilterGroup>
+
+            <FilterGroup>
+              <FilterLabel>Típus</FilterLabel>
+              <FilterSelect
+                value={directionFilter}
+                onChange={(e) => setDirectionFilter(e.target.value)}
+                style={{ height: 36 }}
+              >
+                <option value="all">Mindkettő</option>
+                <option value="income">Csak bevétel</option>
+                <option value="expense">Csak kiadás</option>
+              </FilterSelect>
             </FilterGroup>
 
             <FilterActions>
