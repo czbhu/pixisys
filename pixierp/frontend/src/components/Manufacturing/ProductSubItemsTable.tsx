@@ -496,20 +496,21 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                 multiple
                 showUploadList={false}
                 style={{ padding: '8px 0' }}
-                customRequest={() => {}}
-                beforeUpload={async (file) => {
+                customRequest={({ file, onSuccess, onError }) => {
+                  const f = file as File;
                   setSubItemAttUploading(prev => ({ ...prev, [ciId]: (prev[ciId] || 0) + 1 }));
-                  try {
-                    const fd = new FormData();
-                    fd.append('file', file);
-                    if (attRemark) fd.append('remark', attRemark);
-                    const res = await api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-                    setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
-                    setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
-                    message.success('Feltöltve');
-                  } catch { message.error('Feltöltés sikertelen'); }
-                  finally { setSubItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })); }
-                  return false;
+                  const fd = new FormData();
+                  fd.append('file', f);
+                  if (attRemark) fd.append('remark', attRemark);
+                  api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+                    .then(res => {
+                      setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
+                      setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
+                      message.success('Feltöltve');
+                      onSuccess?.(res.data);
+                    })
+                    .catch(e => { message.error('Feltöltés sikertelen'); onError?.(e); })
+                    .finally(() => setSubItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })));
                 }}
               >
                 {uploading

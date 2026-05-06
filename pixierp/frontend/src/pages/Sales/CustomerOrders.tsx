@@ -717,20 +717,21 @@ interface CustomerOrder {
                               multiple
                               showUploadList={false}
                               style={{ padding: '8px 0' }}
-                              customRequest={() => {}}
-                              beforeUpload={async (file) => {
+                              customRequest={({ file, onSuccess, onError }) => {
+                                const f = file as File;
                                 setOrderItemAttUploading(prev => ({ ...prev, [coiId]: (prev[coiId] || 0) + 1 }));
-                                try {
-                                  const fd = new FormData();
-                                  fd.append('file', file);
-                                  if (attRemark) fd.append('remark', attRemark);
-                                  const res = await api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } });
-                                  setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
-                                  setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
-                                  message.success('Feltöltve');
-                                } catch { message.error('Feltöltés sikertelen'); }
-                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })); }
-                                return false;
+                                const fd = new FormData();
+                                fd.append('file', f);
+                                if (attRemark) fd.append('remark', attRemark);
+                                api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+                                  .then(res => {
+                                    setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                                    setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                                    message.success('Feltöltve');
+                                    onSuccess?.(res.data);
+                                  })
+                                  .catch(e => { message.error('Feltöltés sikertelen'); onError?.(e); })
+                                  .finally(() => setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })));
                               }}
                             >
                               {uploading
