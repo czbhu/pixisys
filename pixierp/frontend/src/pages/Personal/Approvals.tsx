@@ -124,6 +124,8 @@ const Approvals: React.FC = () => {
         },
         {
             title: 'Műveletek',
+            fixed: 'right' as const,
+            width: 260,
             render: (_: any, record: any) => (
                 <Space>
                     {record.customer_order && (
