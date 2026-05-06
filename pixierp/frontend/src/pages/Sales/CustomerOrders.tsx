@@ -938,7 +938,7 @@ interface CustomerOrder {
 
     return (
         <Space>
-            <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }}>
+            <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
                 <Tag color={color} style={{ cursor: 'pointer' }}>{text}</Tag>
             </Popover>
             {record.pending_approval && (
