@@ -70,6 +70,33 @@ const Approvals: React.FC = () => {
 
     const columns = [
         {
+            title: 'Műveletek',
+            key: 'actions',
+            width: 240,
+            render: (_: any, record: any) => (
+                <Space>
+                    {record.customer_order && (
+                        <Button
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => navigate(`/sales/customer-orders/${record.customer_order}`)}
+                        >
+                            Megtekint
+                        </Button>
+                    )}
+                    {record.status === 'pending' && record.requester !== user?.id && (
+                        <>
+                            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>Jóváhagyom</Button>
+                            <Button danger size="small" icon={<CloseOutlined />} onClick={() => {
+                                setSelectedRequest(record);
+                                setRejectModalOpen(true);
+                            }}>Visszaküld</Button>
+                        </>
+                    )}
+                </Space>
+            )
+        },
+        {
             title: 'Dátum',
             dataIndex: 'created_at',
             render: (text: string) => dayjs(text).format('YYYY.MM.DD HH:mm')
@@ -122,33 +149,6 @@ const Approvals: React.FC = () => {
                 return <Tag color={map[status]?.color}>{map[status]?.text}</Tag>;
             }
         },
-        {
-            title: 'Műveletek',
-            fixed: 'right' as const,
-            width: 260,
-            render: (_: any, record: any) => (
-                <Space>
-                    {record.customer_order && (
-                        <Button
-                            size="small"
-                            icon={<EyeOutlined />}
-                            onClick={() => navigate(`/sales/customer-orders/${record.customer_order}`)}
-                        >
-                            Megtekint
-                        </Button>
-                    )}
-                    {record.status === 'pending' && record.requester !== user?.id && (
-                        <>
-                            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>Jóváhagyom</Button>
-                            <Button danger size="small" icon={<CloseOutlined />} onClick={() => {
-                                setSelectedRequest(record);
-                                setRejectModalOpen(true);
-                            }}>Visszaküld</Button>
-                        </>
-                    )}
-                </Space>
-            )
-        }
     ];
 
     return (
