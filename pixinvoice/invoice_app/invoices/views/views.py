@@ -1029,11 +1029,16 @@ class InvoiceViewSet(viewsets.ModelViewSet):
         if company_filter:
             queryset = queryset.filter(company_id=company_filter)
         if search:
-            queryset = queryset.filter(
-                Q(invoice_number__icontains=search) |
-                Q(customer__name__icontains=search) |
-                Q(notes__icontains=search)
-            )
+            search_terms = [t for t in search.split() if t]
+            for term in search_terms:
+                term_regex = get_fuzzy_search_regex(term)
+                queryset = queryset.filter(
+                    Q(invoice_number__icontains=term) |
+                    Q(customer__name__iregex=term_regex) |
+                    Q(notes__iregex=term_regex) |
+                    Q(items__description__iregex=term_regex) |
+                    Q(items__note__iregex=term_regex)
+                ).distinct()
         if payment_method_filter and payment_method_filter != 'all':
             queryset = queryset.filter(payment_method__iexact=payment_method_filter.upper())
 
@@ -5743,20 +5748,35 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             qs = qs.filter(Q(invoice_issue_date__lte=date_to) | Q(ins_date__date__lte=date_to))
         # Search filter
         if search:
-            if external_outgoing:
-                # In external outgoing mode: supplier = the company itself;
-                # the user searches by invoice number, customer name or customer tax number
-                qs = qs.filter(
-                    Q(invoice_number__icontains=search)
-                    | Q(customer_name__icontains=search)
-                    | Q(customer_tax_number__icontains=search)
+            search_terms = [t for t in search.split() if t]
+            for term in search_terms:
+                term_regex = get_fuzzy_search_regex(term)
+                # IncomingDocument.comment matching invoice numbers for this company
+                doc_inv_numbers = set(
+                    IncomingDocument.objects.filter(
+                        company_id=company_id,
+                        comment__iregex=term_regex,
+                    ).values_list('invoice_number', flat=True)
                 )
-            else:
-                qs = qs.filter(
-                    Q(invoice_number__icontains=search)
-                    | Q(supplier_name__icontains=search)
-                    | Q(supplier_tax_number__icontains=search)
-                )
+                if external_outgoing:
+                    term_filter = (
+                        Q(invoice_number__icontains=term)
+                        | Q(customer_name__iregex=term_regex)
+                        | Q(customer_tax_number__icontains=term)
+                        | Q(original_invoice_number__icontains=term)
+                        | Q(payment_reference__icontains=term)
+                    )
+                else:
+                    term_filter = (
+                        Q(invoice_number__icontains=term)
+                        | Q(supplier_name__iregex=term_regex)
+                        | Q(supplier_tax_number__icontains=term)
+                        | Q(original_invoice_number__icontains=term)
+                        | Q(payment_reference__icontains=term)
+                    )
+                if doc_inv_numbers:
+                    term_filter |= Q(invoice_number__in=doc_inv_numbers)
+                qs = qs.filter(term_filter)
 
         # Amount filter
         if amount_from or amount_to:
