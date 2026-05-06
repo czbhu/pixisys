@@ -4531,11 +4531,11 @@ const InvoiceForm = () => {
           <ItemsTable>
             <TableHeader>
               <tr>
-                <TableHeaderCell>Név</TableHeaderCell>
+                <TableHeaderCell style={{ minWidth: 220 }}>Név</TableHeaderCell>
                 {isSimplified && <TableHeaderCell>Cikkszám</TableHeaderCell>}
                 <TableHeaderCell>Mennyiség</TableHeaderCell>
-                <TableHeaderCell style={{ minWidth: 120 }}>Me. egység</TableHeaderCell>
-                <TableHeaderCell style={{ minWidth: 150 }}>
+                <TableHeaderCell style={{ minWidth: 144 }}>Me. egység</TableHeaderCell>
+                <TableHeaderCell style={{ minWidth: 174 }}>
                   <InlineGroup>
                     <span>ÁFA %</span>
                     <IconGhostButton type="button" onClick={() => setShowVatHelp(true)} title="ÁFA típus súgó">
@@ -4631,7 +4631,6 @@ const InvoiceForm = () => {
                         ]}
                         value={watch(`items.${index}.unit_of_measure`) ? { value: watch(`items.${index}.unit_of_measure`), label: watch(`items.${index}.unit_of_measure`) } : null}
                         onChange={(opt) => setValue(`items.${index}.unit_of_measure`, opt ? opt.value : '')}
-                        isClearable
                         placeholder="egység"
                       />
                       )}
@@ -4682,7 +4681,6 @@ const InvoiceForm = () => {
                             styles={{ container: (base) => ({ ...base, minWidth: 0, width: '100%' }), menuPortal: base => ({ ...base, zIndex: 9999 }) }}
                             components={{ DropdownIndicator: () => null, ClearIndicator: () => null, IndicatorSeparator: () => null }}
                             menuPortalTarget={document.body}
-                            isClearable
                             isSearchable
                             filterOption={(option, raw) => {
                               const norm = (s)=> (s||'').toString().normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
