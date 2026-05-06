@@ -4534,8 +4534,8 @@ const InvoiceForm = () => {
                 <TableHeaderCell style={{ minWidth: 220 }}>Név</TableHeaderCell>
                 {isSimplified && <TableHeaderCell>Cikkszám</TableHeaderCell>}
                 <TableHeaderCell>Mennyiség</TableHeaderCell>
-                <TableHeaderCell style={{ minWidth: 128 }}>Me. egység</TableHeaderCell>
-                <TableHeaderCell style={{ minWidth: 158 }}>
+                <TableHeaderCell style={{ minWidth: 109 }}>Me. egység</TableHeaderCell>
+                <TableHeaderCell style={{ minWidth: 134 }}>
                   <InlineGroup>
                     <span>ÁFA %</span>
                     <IconGhostButton type="button" onClick={() => setShowVatHelp(true)} title="ÁFA típus súgó">
