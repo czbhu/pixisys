@@ -113,7 +113,7 @@ const ProductionQueue: React.FC = () => {
     const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
     const [costItemAtts, setCostItemAtts] = useState<Record<number, any[]>>({});
     const [costItemAttsLoaded, setCostItemAttsLoaded] = useState<Record<number, boolean>>({});
-    const [costItemAttUploading, setCostItemAttUploading] = useState<Record<number, boolean>>({});
+    const [costItemAttUploading, setCostItemAttUploading] = useState<Record<number, number>>({});
     const [costItemAttRemark, setCostItemAttRemark] = useState<Record<number, string>>({});
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
@@ -561,7 +561,7 @@ const ProductionQueue: React.FC = () => {
         const ciId = r.id;
         const atts: any[] = costItemAtts[ciId] || [];
         const loaded = !!costItemAttsLoaded[ciId];
-        const uploading = !!costItemAttUploading[ciId];
+        const uploading = (costItemAttUploading[ciId] || 0) > 0;
         const attRemark = costItemAttRemark[ciId] || '';
 
         const handleDownloadAll = async () => {
@@ -611,10 +611,10 @@ const ProductionQueue: React.FC = () => {
                     <Upload.Dragger
                         multiple
                         showUploadList={false}
-                        disabled={uploading}
                         style={{ padding: '6px 0' }}
+                        customRequest={() => {}}
                         beforeUpload={async (file) => {
-                            setCostItemAttUploading(prev => ({ ...prev, [ciId]: true }));
+                            setCostItemAttUploading(prev => ({ ...prev, [ciId]: (prev[ciId] || 0) + 1 }));
                             try {
                                 const fd = new FormData();
                                 fd.append('file', file);
@@ -624,7 +624,7 @@ const ProductionQueue: React.FC = () => {
                                 setCostItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
                                 message.success('Feltöltve');
                             } catch { message.error('Feltöltés sikertelen'); }
-                            finally { setCostItemAttUploading(prev => ({ ...prev, [ciId]: false })); }
+                            finally { setCostItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })); }
                             return false;
                         }}
                     >

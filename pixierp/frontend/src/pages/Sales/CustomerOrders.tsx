@@ -213,7 +213,7 @@ interface CustomerOrder {
   const [orderItemAtts, setOrderItemAtts] = useState<Record<number, any[]>>({});
   const [orderItemAttsLoaded, setOrderItemAttsLoaded] = useState<Record<number, boolean>>({});
   const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
-  const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
+  const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, number>>({});
   const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
   const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
   const [editingAttRemarkVal, setEditingAttRemarkVal] = useState<string>('');
@@ -692,7 +692,7 @@ interface CustomerOrder {
                   const productId = Number(r.quote_item?.manufacturing_product || r.manufacturing_product || 0);
                   const atts: any[] = orderItemAtts[coiId] || [];
                   const loaded = !!orderItemAttsLoaded[coiId];
-                  const uploading = !!orderItemAttUploading[coiId];
+                  const uploading = (orderItemAttUploading[coiId] || 0) > 0;
                   const attRemark = orderItemAttRemark[coiId] || '';
                   return (
                     <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
@@ -716,10 +716,10 @@ interface CustomerOrder {
                             <Upload.Dragger
                               multiple
                               showUploadList={false}
-                              disabled={uploading}
                               style={{ padding: '8px 0' }}
+                              customRequest={() => {}}
                               beforeUpload={async (file) => {
-                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: (prev[coiId] || 0) + 1 }));
                                 try {
                                   const fd = new FormData();
                                   fd.append('file', file);
@@ -729,7 +729,7 @@ interface CustomerOrder {
                                   setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
                                   message.success('Feltöltve');
                                 } catch { message.error('Feltöltés sikertelen'); }
-                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })); }
                                 return false;
                               }}
                             >

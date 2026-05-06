@@ -100,7 +100,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [subItemAtts, setSubItemAtts] = useState<Record<number, any[]>>({});
   const [subItemAttsLoaded, setSubItemAttsLoaded] = useState<Record<number, boolean>>({});
   const [subItemAttRemark, setSubItemAttRemark] = useState<Record<number, string>>({});
-  const [subItemAttUploading, setSubItemAttUploading] = useState<Record<number, boolean>>({});
+  const [subItemAttUploading, setSubItemAttUploading] = useState<Record<number, number>>({});
   const [expandedSubItems, setExpandedSubItems] = useState<number[]>([]);
   const [editingSubAttRemarkId, setEditingSubAttRemarkId] = useState<number | null>(null);
   const [editingSubAttRemarkVal, setEditingSubAttRemarkVal] = useState<string>('');
@@ -473,10 +473,10 @@ export const ProductSubItemsTable: React.FC<Props> = ({
               <Upload.Dragger
                 multiple
                 showUploadList={false}
-                disabled={uploading}
                 style={{ padding: '8px 0' }}
+                customRequest={() => {}}
                 beforeUpload={async (file) => {
-                  setSubItemAttUploading(prev => ({ ...prev, [ciId]: true }));
+                  setSubItemAttUploading(prev => ({ ...prev, [ciId]: (prev[ciId] || 0) + 1 }));
                   try {
                     const fd = new FormData();
                     fd.append('file', file);
@@ -486,7 +486,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                     setSubItemAttRemark(prev => ({ ...prev, [ciId]: '' }));
                     message.success('Feltöltve');
                   } catch { message.error('Feltöltés sikertelen'); }
-                  finally { setSubItemAttUploading(prev => ({ ...prev, [ciId]: false })); }
+                  finally { setSubItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })); }
                   return false;
                 }}
               >

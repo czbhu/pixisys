@@ -192,7 +192,7 @@ const OrderedProducts: React.FC = () => {
     const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
     const [orderItemAtts, setOrderItemAtts] = useState<Record<number, any[]>>({});
     const [orderItemAttsLoaded, setOrderItemAttsLoaded] = useState<Record<number, boolean>>({});
-    const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, boolean>>({});
+    const [orderItemAttUploading, setOrderItemAttUploading] = useState<Record<number, number>>({});
     const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
@@ -716,7 +716,7 @@ const OrderedProducts: React.FC = () => {
         const loadingAtt = !!attachmentsLoading[productId];
         const itemAtts: any[] = orderItemAtts[coiId] || [];
         const itemAttsLoaded = !!orderItemAttsLoaded[coiId];
-        const itemAttUploading = !!orderItemAttUploading[coiId];
+        const itemAttUploading = (orderItemAttUploading[coiId] || 0) > 0;
         const attRemark = orderItemAttRemark[coiId] || '';
 
         return (
@@ -737,10 +737,10 @@ const OrderedProducts: React.FC = () => {
                         <Upload.Dragger
                             multiple
                             showUploadList={false}
-                            disabled={itemAttUploading}
                             style={{ padding: '8px 0' }}
+                            customRequest={() => {}}
                             beforeUpload={async (file) => {
-                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: true }));
+                                setOrderItemAttUploading(prev => ({ ...prev, [coiId]: (prev[coiId] || 0) + 1 }));
                                 try {
                                     const fd = new FormData();
                                     fd.append('file', file);
@@ -750,7 +750,7 @@ const OrderedProducts: React.FC = () => {
                                     setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
                                     message.success('Feltöltve');
                                 } catch { message.error('Feltöltés sikertelen'); }
-                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: false })); }
+                                finally { setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })); }
                                 return false;
                             }}
                         >
