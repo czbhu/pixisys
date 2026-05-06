@@ -1,6 +1,6 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert, Popover } from 'antd';
+import { Card, Table, Space, Button, Tooltip, Tag, message, Spin, Breadcrumb, Alert, Popover, Select } from 'antd';
 import {
   ShoppingCartOutlined,
   ToolOutlined,
@@ -81,6 +81,47 @@ const OrderItemSubItems: React.FC = () => {
   const [productInfo, setProductInfo] = useState<any | null>(null);
   const [parentItem, setParentItem] = useState<{ name: string; code?: string } | null>(null);
   const [orderNumber, setOrderNumber] = useState<string>('');
+  const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
+  const supplierPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const supplierLongFired = useRef(false);
+
+  useEffect(() => {
+    api.get('/crm/companies/?is_supplier=true&page_size=1000')
+      .then(res => setSuppliers(Array.isArray(res.data?.results) ? res.data.results : (Array.isArray(res.data) ? res.data : [])))
+      .catch(() => {});
+  }, []);
+
+  const handleSupplierChange = async (id: number, supplierId: number | null) => {
+    const prev = items;
+    setItems(items.map(it => {
+      if (it.id !== id) return it;
+      const sup = suppliers.find(s => s.id === supplierId);
+      return { ...it, supplier: supplierId, supplier_name: sup?.name || '' };
+    }));
+    setSupplierPopoverOpen(null);
+    try {
+      await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
+    } catch {
+      message.error('Beszállító frissítése sikertelen');
+      setItems(prev);
+    }
+  };
+
+  const startSupplierLongPress = (id: number) => {
+    supplierLongFired.current = false;
+    supplierPressTimer.current = setTimeout(() => {
+      supplierLongFired.current = true;
+      setSupplierPopoverOpen(id);
+    }, 500);
+  };
+
+  const endSupplierLongPress = () => {
+    if (supplierPressTimer.current) {
+      clearTimeout(supplierPressTimer.current);
+      supplierPressTimer.current = null;
+    }
+  };
 
   const treeMeta = useMemo(() => buildCostTreeMeta(items), [items]);
 
@@ -291,9 +332,43 @@ const OrderItemSubItems: React.FC = () => {
     { title: 'Bek. egységár', dataIndex: 'cost_price', key: 'cost_price', width: 120, align: 'right' as const,
       render: (v: number, r: SubItem) => `${Number(v).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_code || 'HUF'}` },
     { title: 'Beszállító', key: 'supplier', width: 200,
-      render: (_: any, r: SubItem) => r.is_internal
-        ? <Tag color="blue">{r.department_name || 'Belső'}</Tag>
-        : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>),
+      render: (_: any, r: SubItem) => {
+        if (r.is_internal) return <Tag color="blue">{r.department_name || 'Belső'}</Tag>;
+        const tag = r.supplier_name
+          ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
+          : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
+        return (
+          <Popover
+            open={supplierPopoverOpen === r.id}
+            onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
+            trigger="click"
+            title="Beszállító változtatás"
+            content={
+              <div style={{ width: 280 }}>
+                <Select
+                  autoFocus
+                  showSearch
+                  allowClear
+                  placeholder="Beszállító kiválasztása…"
+                  style={{ width: '100%' }}
+                  value={r.supplier ?? undefined}
+                  optionFilterProp="label"
+                  options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+                  onChange={val => handleSupplierChange(r.id, val ?? null)}
+                />
+              </div>
+            }
+            overlayInnerStyle={{ padding: '10px 12px' }}
+          >
+            <span
+              onClick={e => e.stopPropagation()}
+              onPointerDown={e => { e.stopPropagation(); startSupplierLongPress(r.id); }}
+              onPointerUp={endSupplierLongPress}
+              onPointerLeave={endSupplierLongPress}
+            >{tag}</span>
+          </Popover>
+        );
+      },
     },
     {
       title: 'Státusz', key: 'status', width: 140,
