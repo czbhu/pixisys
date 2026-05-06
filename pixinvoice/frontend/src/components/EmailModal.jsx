@@ -49,8 +49,7 @@ export default function EmailModal({
       setStatusModalOpen(false);
       setStatusLog([]);
       setStatusError(null);
-      // Auto-switch to HTML source if body contains a table
-      setHtmlMode(/(<table|<tr|<td|<th)/i.test(defaultBody || ''));
+      setHtmlMode(false);
       // Load contacts for customer
       if (customerId) {
         contactAPI.getContacts({ customer_id: customerId, is_active: true })
