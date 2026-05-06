@@ -566,6 +566,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
   const [lastSelectedIndex, setLastSelectedIndex] = useState(null);
   const [preselectApplied, setPreselectApplied] = useState(false);
   const [batchTab, setBatchTab] = useState('pending');
+  const [batchesLoading, setBatchesLoading] = useState(false);
   const [batchItemSaving, setBatchItemSaving] = useState({});
   const [itemAmountDrafts, setItemAmountDrafts] = useState({});
   const [showPaymentHistory, setShowPaymentHistory] = useState(false);
@@ -1445,6 +1446,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
 
   const fetchBatchLists = async () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
+    setBatchesLoading(true);
     try {
       const [pendingRes, completedRes] = await Promise.all([
         api.post('/api/payment-batches/list-pending/', { company_id: companyId }),
@@ -1455,6 +1457,8 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
       setPendingCount(pendingRes.data?.length || 0);
     } catch (e) {
       toast.error('Csomagok lekérdezési hiba');
+    } finally {
+      setBatchesLoading(false);
     }
   };
 
@@ -1535,11 +1539,11 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
     }
   };
 
-  const openBatches = async () => {
+  const openBatches = () => {
     if (!companyId) { toast.error('Válassz céget'); return; }
     setBatchTab('pending');
-    await fetchBatchLists();
     setShowBatches(true);
+    fetchBatchLists();
   };
 
   const deleteBatch = async (id) => {
@@ -2742,7 +2746,9 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                 <SecondaryButton onClick={()=>setBatchTab('pending')} style={batchTab==='pending'? { background:'#dbeafe', color:'#0f172a' } : {}}>Függő ({pendingBatches.length})</SecondaryButton>
                 <SecondaryButton onClick={()=>setBatchTab('completed')} style={batchTab==='completed'? { background:'#dbeafe', color:'#0f172a' } : {}}>Kifizetett ({completedBatches.length})</SecondaryButton>
               </div>
-              {((batchTab==='pending'? pendingBatches : completedBatches) || []).length === 0 ? (
+              {batchesLoading ? (
+                <div style={{ textAlign:'center', padding:32 }}><Spin size="large" tip="Betöltés..." /></div>
+              ) : ((batchTab==='pending'? pendingBatches : completedBatches) || []).length === 0 ? (
                 <div>{batchTab==='pending' ? 'Nincs függő csomag.' : 'Nincs kifizetett csomag.'}</div>
               ) : (
                 (batchTab==='pending' ? pendingBatches : completedBatches).map(b => {

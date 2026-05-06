@@ -13934,9 +13934,42 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
 
         return acct_type, account, swift_bic
 
+    def _pick_from_prefetched_accounts(self, bank_accounts_list, preferred_currency=None):
+        """Select best bank account from a pre-fetched list without extra DB queries."""
+        if not bank_accounts_list:
+            return None
+
+        def has_acct_num(ba):
+            return bool((ba.account_number or '').strip())
+
+        if preferred_currency:
+            for predicate in [
+                lambda ba: ba.currency == preferred_currency and ba.is_primary and has_acct_num(ba),
+                lambda ba: ba.currency == preferred_currency and ba.is_primary,
+                lambda ba: ba.currency == preferred_currency and has_acct_num(ba),
+                lambda ba: ba.currency == preferred_currency,
+            ]:
+                cand = next((ba for ba in bank_accounts_list if predicate(ba)), None)
+                if cand:
+                    return cand
+        for predicate in [
+            lambda ba: ba.is_primary and has_acct_num(ba),
+            lambda ba: ba.is_primary,
+            lambda ba: True,
+        ]:
+            cand = next((ba for ba in bank_accounts_list if predicate(ba)), None)
+            if cand:
+                return cand
+        return None
+
     def _enrich_batch_export_accounts(self, batch_queryset, serialized_batches):
+        """Bulk-optimized: fetches all needed customers + bank accounts in 2 queries instead of N*M."""
         try:
+            from django.db.models import Prefetch
             batch_map = {str(b.id): b for b in batch_queryset}
+
+            # Collect all (batch_obj, item_obj, item_data) triples
+            all_triples = []
             for batch_data in serialized_batches:
                 batch_obj = batch_map.get(str(batch_data.get('id')))
                 if not batch_obj:
@@ -13944,14 +13977,110 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 item_map = {str(it.id): it for it in batch_obj.items.all()}
                 for item_data in (batch_data.get('items') or []):
                     item_obj = item_map.get(str(item_data.get('id')))
-                    if not item_obj:
+                    if item_obj:
+                        all_triples.append((batch_obj, item_obj, item_data))
+
+            if not all_triples:
+                return serialized_batches
+
+            # Collect all unique tax number variants and supplier names
+            tax_variants = set()
+            name_set = set()
+            for _, item_obj, _ in all_triples:
+                tax_raw = str(item_obj.supplier_tax_number or '').strip()
+                name_raw = str(item_obj.supplier_name or '').strip()
+                if tax_raw:
+                    tax_variants.add(tax_raw.upper())
+                    norm = re.sub(r'[^A-Za-z0-9]', '', tax_raw).upper()
+                    if norm:
+                        tax_variants.add(norm)
+                    digits = ''.join(ch for ch in tax_raw if ch.isdigit())
+                    if len(digits) >= 8:
+                        tax_variants.add(digits[:8])
+                if name_raw:
+                    name_set.add(name_raw)
+
+            # Bulk fetch customers by tax number (single query, all prefetched)
+            customers_by_tax = {}
+            if tax_variants:
+                tax_q = Q()
+                for v in tax_variants:
+                    tax_q |= (Q(tax_number__iexact=v) | Q(full_tax_number__iexact=v) |
+                               Q(vat_group_member_tax_number__iexact=v) | Q(eu_tax_number__iexact=v))
+                bulk_customers = list(
+                    Customer.objects.filter(tax_q)
+                    .prefetch_related(Prefetch('bank_accounts'))
+                    .distinct()
+                )
+                for c in bulk_customers:
+                    for attr in ('tax_number', 'full_tax_number', 'vat_group_member_tax_number', 'eu_tax_number'):
+                        val = str(getattr(c, attr, '') or '').strip().upper()
+                        if not val:
+                            continue
+                        for key in [val, re.sub(r'[^A-Za-z0-9]', '', val)]:
+                            if key:
+                                lst = customers_by_tax.setdefault(key, [])
+                                if c not in lst:
+                                    lst.append(c)
+                        digits = ''.join(ch for ch in val if ch.isdigit())
+                        if len(digits) >= 8:
+                            lst = customers_by_tax.setdefault(digits[:8], [])
+                            if c not in lst:
+                                lst.append(c)
+
+            # Bulk fetch customers by name (fallback, single query)
+            customers_by_name = {}
+            if name_set:
+                name_q = Q()
+                for n in name_set:
+                    name_q |= Q(name__iexact=n)
+                for c in Customer.objects.filter(name_q).prefetch_related(Prefetch('bank_accounts')).distinct():
+                    key = c.name.strip().lower()
+                    lst = customers_by_name.setdefault(key, [])
+                    if c not in lst:
+                        lst.append(c)
+
+            # Resolve each item in memory (no extra DB queries)
+            for batch_obj, item_obj, item_data in all_triples:
+                tax_raw = str(item_obj.supplier_tax_number or '').strip()
+                name_raw = str(item_obj.supplier_name or '').strip()
+                preferred_currency = item_obj.currency or (batch_obj.currency if batch_obj else None)
+
+                candidates = []
+                if tax_raw:
+                    seen_ids = set()
+                    digits = ''.join(ch for ch in tax_raw if ch.isdigit())
+                    for key in [
+                        tax_raw.upper(),
+                        re.sub(r'[^A-Za-z0-9]', '', tax_raw).upper(),
+                        digits[:8] if len(digits) >= 8 else '',
+                    ]:
+                        if key:
+                            for c in customers_by_tax.get(key, []):
+                                if c.id not in seen_ids:
+                                    seen_ids.add(c.id)
+                                    candidates.append(c)
+                if not candidates and name_raw:
+                    candidates = customers_by_name.get(name_raw.lower(), [])
+
+                acct_type, account, swift_bic = None, None, None
+                for customer in candidates:
+                    bank_acc = self._pick_from_prefetched_accounts(
+                        list(customer.bank_accounts.all()), preferred_currency
+                    )
+                    if not bank_acc:
                         continue
-                    acct_type, account, swift_bic = self._resolve_payment_batch_item_account(batch_obj, item_obj)
-                    item_data['export_account'] = account
-                    item_data['export_account_type'] = acct_type
-                    item_data['export_account_missing'] = not bool(account)
-                    item_data['export_swift_bic'] = swift_bic
-                    item_data['export_missing_swift'] = (acct_type not in ('IBAN', None) and not swift_bic)
+                    raw = (bank_acc.account_number or '').strip() or (bank_acc.iban or '').strip()
+                    acct_type, account = self._normalize_export_account(raw)
+                    if account:
+                        swift_bic = (bank_acc.swift_bic or '').strip() or None
+                        break
+
+                item_data['export_account'] = account
+                item_data['export_account_type'] = acct_type
+                item_data['export_account_missing'] = not bool(account)
+                item_data['export_swift_bic'] = swift_bic
+                item_data['export_missing_swift'] = (acct_type not in ('IBAN', None) and not swift_bic)
         except Exception:
             pass
         return serialized_batches
@@ -14362,11 +14491,26 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             pass
         return None, None
 
+    @staticmethod
+    def _sanitize_xml_text(text):
+        """Normalize non-standard whitespace/control chars to safe ASCII for SEPA XML."""
+        if not text:
+            return text or ''
+        # Replace all non-standard Unicode whitespace with regular space
+        sanitized = re.sub(r'[\u00a0\u2000-\u200b\u202f\u205f\u3000\ufeff]+', ' ', text)
+        # Remove control characters (keep printable ASCII + extended Latin)
+        sanitized = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', sanitized)
+        # Collapse multiple spaces
+        sanitized = re.sub(r' {2,}', ' ', sanitized)
+        return sanitized.strip()
+
     def _build_pain_001(self, batch: PaymentBatch, items: list, execution_date: date, debtor_account):
         ns = 'urn:iso:std:iso:20022:tech:xsd:pain.001.001.03'
         ET.register_namespace('', ns)
         d = ET.Element(ET.QName(ns, 'Document'))
         c = ET.SubElement(d, ET.QName(ns, 'CstmrCdtTrfInitn'))
+
+        company_name = self._sanitize_xml_text(batch.company.name)
 
         # Group Header
         gh = ET.SubElement(c, ET.QName(ns, 'GrpHdr'))
@@ -14377,7 +14521,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         ctrl_sum = sum(decimal.Decimal(it['amount']) for it in items)
         ET.SubElement(gh, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
         initg = ET.SubElement(gh, ET.QName(ns, 'InitgPty'))
-        ET.SubElement(initg, ET.QName(ns, 'Nm')).text = batch.company.name
+        ET.SubElement(initg, ET.QName(ns, 'Nm')).text = company_name
 
         # Payment Info
         pi = ET.SubElement(c, ET.QName(ns, 'PmtInf'))
@@ -14388,7 +14532,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         ET.SubElement(pi, ET.QName(ns, 'CtrlSum')).text = f"{ctrl_sum:.2f}"
         ET.SubElement(pi, ET.QName(ns, 'ReqdExctnDt')).text = execution_date.strftime('%Y-%m-%d')
         dbtr = ET.SubElement(pi, ET.QName(ns, 'Dbtr'))
-        ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = batch.company.name
+        ET.SubElement(dbtr, ET.QName(ns, 'Nm')).text = company_name
 
         dbtr_acct = ET.SubElement(pi, ET.QName(ns, 'DbtrAcct'))
         dbtr_id = ET.SubElement(dbtr_acct, ET.QName(ns, 'Id'))
@@ -14405,13 +14549,13 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         for it in items:
             tx = ET.SubElement(pi, ET.QName(ns, 'CdtTrfTxInf'))
             pmtid = ET.SubElement(tx, ET.QName(ns, 'PmtId'))
-            ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = it['end_to_end']
+            ET.SubElement(pmtid, ET.QName(ns, 'EndToEndId')).text = self._sanitize_xml_text(it['end_to_end'])
             amt = ET.SubElement(tx, ET.QName(ns, 'Amt'))
             instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
             instd.set('Ccy', it['currency'])
             instd.text = f"{decimal.Decimal(it['amount']):.2f}"
             cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
-            ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = it['name']
+            ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = self._sanitize_xml_text(it['name'])
             cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
             cdtr_id = ET.SubElement(cdtr_acct, ET.QName(ns, 'Id'))
             if it['acct_type'] == 'IBAN':
@@ -14420,7 +14564,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
                 othr = ET.SubElement(cdtr_id, ET.QName(ns, 'Othr'))
                 ET.SubElement(othr, ET.QName(ns, 'Id')).text = it['account'].replace(' ', '').replace('-', '')
             rmt = ET.SubElement(tx, ET.QName(ns, 'RmtInf'))
-            ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = it['remittance']
+            ET.SubElement(rmt, ET.QName(ns, 'Ustrd')).text = self._sanitize_xml_text(it['remittance'])
 
         return ET.tostring(d, encoding='utf-8', xml_declaration=True)
 
