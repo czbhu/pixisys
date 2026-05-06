@@ -264,6 +264,19 @@ class ContactViewSet(viewsets.ViewSet):
                     if str((it or {}).get('customer') or (it or {}).get('customer_id') or (it or {}).get('company') or (it or {}).get('company_id')) == str(customer_id)
                 ]
             items = _filter_by_query(items, request.query_params.get('q'))
+            # Enrich with customer_name so the frontend can display "Name — Company"
+            try:
+                customers = client.list_customers(company_id=company_id)
+                customer_map = {
+                    str(c.get('id') or c.get('customer_id') or ''): c.get('name') or c.get('full_name') or ''
+                    for c in (customers or []) if c.get('id') or c.get('customer_id')
+                }
+                for it in items:
+                    cid = str((it or {}).get('customer') or (it or {}).get('customer_id') or (it or {}).get('company') or (it or {}).get('company_id') or '')
+                    if cid and not it.get('customer_name'):
+                        it['customer_name'] = customer_map.get(cid) or ''
+            except Exception:
+                pass
             return Response(items)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)

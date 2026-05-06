@@ -92,7 +92,7 @@ const RFQDetail: React.FC = () => {
       p.customer_name ||
       p.id
     );
-    const compName = p.company_name || p.customer_name;
+    const compName = p.customer_name || p.company_name;
     return (showCompany && compName) ? `${baseName} — ${compName}` : baseName;
   };
 
@@ -711,9 +711,10 @@ const RFQDetail: React.FC = () => {
                           if (!companyId && Array.isArray(val) && val.length > 0) {
                             const lastId = val[val.length - 1];
                             const chosen = contacts.find((c: any) => String(c.id) === String(lastId));
-                            if (chosen?.company) {
-                              formBasic.setFieldsValue({ company_id: chosen.company });
-                              const cl = await crmService.getContactsByCompany(chosen.company);
+                            const chosenCompanyId = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
+                            if (chosenCompanyId) {
+                              formBasic.setFieldsValue({ company_id: chosenCompanyId });
+                              const cl = await crmService.getContactsByCompany(chosenCompanyId);
                               const loaded: any[] = ((cl as any).results ?? cl) || [];
                               // Merge already selected contacts
                               const merged = [...loaded];
@@ -724,10 +725,11 @@ const RFQDetail: React.FC = () => {
                                 }
                               });
                               setContacts(merged);
-                              if (chosen.company_name) {
+                              const chosenCompanyName = chosen?.customer_name || chosen?.company_name;
+                              if (chosenCompanyName) {
                                 setCompanies((prev: any[]) => {
-                                  if (prev.find((c: any) => c.id === chosen.company)) return prev;
-                                  return [{ id: chosen.company, name: chosen.company_name }, ...prev];
+                                  if (prev.find((c: any) => String(c.id) === String(chosenCompanyId))) return prev;
+                                  return [{ id: chosenCompanyId, name: chosenCompanyName }, ...prev];
                                 });
                               }
                             }

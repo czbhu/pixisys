@@ -1796,9 +1796,10 @@ const RFQs: React.FC = () => {
                       if (!companyId && Array.isArray(val) && val.length > 0) {
                         const lastId = val[val.length - 1];
                         const chosen = contacts.find((c: any) => c.id === lastId || String(c.id) === String(lastId));
-                        if (chosen?.company) {
-                          form.setFieldsValue({ company_id: chosen.company });
-                          const cl = await crmService.getContactsByCompany(chosen.company);
+                        const chosenCompanyId = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
+                        if (chosenCompanyId) {
+                          form.setFieldsValue({ company_id: chosenCompanyId });
+                          const cl = await crmService.getContactsByCompany(chosenCompanyId);
                           const loaded: any[] = (cl.results ?? cl) || [];
                           const merged = [...loaded];
                           (val as any[]).forEach((selId: any) => {
@@ -1808,10 +1809,11 @@ const RFQs: React.FC = () => {
                             }
                           });
                           setContacts(merged);
-                          if (chosen.company_name) {
+                          const chosenCompanyName = chosen?.customer_name || chosen?.company_name;
+                          if (chosenCompanyName) {
                             setCompanies((prev: any[]) => {
-                              if (prev.find((c: any) => c.id === chosen.company)) return prev;
-                              return [{ id: chosen.company, name: chosen.company_name }, ...prev];
+                              if (prev.find((c: any) => String(c.id) === String(chosenCompanyId))) return prev;
+                              return [{ id: chosenCompanyId, name: chosenCompanyName }, ...prev];
                             });
                           }
                         }
@@ -1821,7 +1823,8 @@ const RFQs: React.FC = () => {
                     {contacts.map((p: any) => {
                       const companyId = form.getFieldValue('company_id');
                       const baseName = p.full_name || p.name || '';
-                      const lbl = (!companyId && p.company_name) ? `${baseName} — ${p.company_name}` : baseName;
+                      const companyName = p.customer_name || p.company_name || '';
+                      const lbl = (!companyId && companyName) ? `${baseName} \u2014 ${companyName}` : baseName;
                       return (
                         <Select.Option key={p.id} value={p.id} label={lbl}>{lbl}</Select.Option>
                       );
