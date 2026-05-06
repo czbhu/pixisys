@@ -1,15 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import { Button, Space, message, Tag, Input, Select, Modal, Tooltip } from 'antd';
-import { CheckOutlined, CloseOutlined, SearchOutlined } from '@ant-design/icons';
+import { CheckOutlined, CloseOutlined, SearchOutlined, EyeOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 import { useAuth } from '../../contexts/AuthContext';
+import { useNavigate } from 'react-router-dom';
 
 const { Option } = Select;
 
 const Approvals: React.FC = () => {
     const { user } = useAuth();
+    const navigate = useNavigate();
     const [data, setData] = useState<any[]>([]);
     const [loading, setLoading] = useState(false);
     const [statusFilter, setStatusFilter] = useState<string[]>(['pending', 'rejected']);
@@ -121,12 +123,21 @@ const Approvals: React.FC = () => {
             }
         },
         {
-            title: 'Művelet',
+            title: 'Műveletek',
             render: (_: any, record: any) => (
                 <Space>
+                    {record.customer_order && (
+                        <Button
+                            size="small"
+                            icon={<EyeOutlined />}
+                            onClick={() => navigate(`/sales/customer-orders/${record.customer_order}`)}
+                        >
+                            Megtekint
+                        </Button>
+                    )}
                     {record.status === 'pending' && record.requester !== user?.id && (
                         <>
-                            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>Jóváhagy</Button>
+                            <Button type="primary" size="small" icon={<CheckOutlined />} onClick={() => handleApprove(record.id)}>Jóváhagyom</Button>
                             <Button danger size="small" icon={<CloseOutlined />} onClick={() => {
                                 setSelectedRequest(record);
                                 setRejectModalOpen(true);

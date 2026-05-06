@@ -289,6 +289,7 @@ const RolesPage: React.FC = () => {
         <>
           {text}
           {record.is_system && <Tag color="blue" style={{ marginLeft: 8 }}>Rendszer</Tag>}
+          {record.can_approve_orders && <Tag color="green" style={{ marginLeft: 8 }}>Jóváhagyó</Tag>}
         </>
       ),
     },
@@ -296,6 +297,22 @@ const RolesPage: React.FC = () => {
       title: 'Leírás',
       dataIndex: 'description',
       key: 'description',
+    },
+    {
+      title: 'Jóváhagyó osztályok',
+      key: 'approver_depts',
+      render: (_: any, record: Role) => {
+        if (!record.can_approve_orders) return <span style={{ color: '#bbb', fontSize: 12 }}>–</span>;
+        const depts = record.department_names || [];
+        if (depts.length === 0) return <span style={{ color: '#bbb', fontSize: 12 }}>Nincs osztály</span>;
+        return (
+          <>
+            {depts.map((name, i) => (
+              <Tag key={i} color="geekblue" style={{ marginBottom: 2 }}>{name}</Tag>
+            ))}
+          </>
+        );
+      },
     },
     {
       title: 'Jogosultságok',

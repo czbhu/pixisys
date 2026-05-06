@@ -9,6 +9,7 @@ export interface Role {
   permissions: Permission[];
   permissions_count: number;
   users_count: number;
+  department_names?: string[];
   created_at: string;
   updated_at: string;
 }

@@ -238,17 +238,25 @@ class RoleSerializer(serializers.ModelSerializer):
     permissions = PermissionSerializer(many=True, read_only=True)
     permissions_count = serializers.SerializerMethodField()
     users_count = serializers.SerializerMethodField()
-    
+    department_names = serializers.SerializerMethodField()
+
     class Meta:
         model = Role
-        fields = ['id', 'name', 'description', 'is_system', 'can_approve_orders', 'permissions', 'permissions_count', 'users_count', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'description', 'is_system', 'can_approve_orders', 'permissions', 'permissions_count', 'users_count', 'department_names', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
-    
+
     def get_permissions_count(self, obj):
         return obj.permissions.count()
-    
+
     def get_users_count(self, obj):
         return obj.user_assignments.count()
+
+    def get_department_names(self, obj):
+        # 'departments' is the related_name on Department.roles M2M
+        try:
+            return list(obj.departments.values_list('name', flat=True))
+        except Exception:
+            return []
 
 
 class UserRoleSerializer(serializers.ModelSerializer):
