@@ -1647,6 +1647,58 @@ class BackupConfigurationViewSet(viewsets.ModelViewSet):
     serializer_class = BackupConfigurationSerializer
     permission_classes = [IsAuthenticated]
 
+    @action(detail=True, methods=['post'])
+    def run_now(self, request, pk=None):
+        """Immediately run a backup for this configuration."""
+        import os
+        import subprocess
+        from django.conf import settings
+
+        config = self.get_object()
+        try:
+            backup_dir = os.path.join(settings.BASE_DIR, 'backups')
+            os.makedirs(backup_dir, exist_ok=True)
+
+            db_cfg = settings.DATABASES['default']
+            engine = db_cfg.get('ENGINE', '')
+            timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
+
+            if 'postgresql' in engine:
+                filename = f'{config.interval}_backup_{timestamp}.sql'
+                filepath = os.path.join(backup_dir, filename)
+                host = db_cfg.get('HOST') or 'localhost'
+                port = str(db_cfg.get('PORT') or 5432)
+                user = db_cfg.get('USER') or ''
+                password = db_cfg.get('PASSWORD') or ''
+                db_name = db_cfg.get('NAME')
+                env = {**os.environ, 'PGPASSWORD': password}
+                cmd = ['pg_dump', '-h', host, '-p', port, '-U', user, '-F', 'c', '-f', filepath, db_name]
+                subprocess.check_call(cmd, env=env)
+            else:
+                import shutil as _shutil
+                db_path = db_cfg.get('NAME')
+                if not db_path or not os.path.exists(db_path):
+                    raise RuntimeError('SQLite adatbázis fájl nem található.')
+                filename = f'{config.interval}_backup_{timestamp}.sqlite3'
+                filepath = os.path.join(backup_dir, filename)
+                _shutil.copy2(db_path, filepath)
+
+            file_size = os.path.getsize(filepath)
+            backup = BackupFile.objects.create(
+                configuration=config,
+                filename=filename,
+                filepath=filepath,
+                file_size=file_size,
+                created_by=request.user,
+                is_manual=False,
+            )
+            config.last_backup = timezone.now()
+            config.save(update_fields=['last_backup'])
+
+            serializer = BackupFileSerializer(backup)
+            return Response({'message': f'Backup sikeresen létrehozva: {filename}', 'backup': serializer.data})
+        except Exception as e:
+            return Response({'error': f'Hiba: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 class BackupFileViewSet(viewsets.ModelViewSet):
     """ViewSet for backup files"""

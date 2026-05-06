@@ -5,7 +5,6 @@ from apps.core.models import BackupConfiguration, BackupFile
 import os
 import shutil
 import subprocess
-from datetime import timedelta
 
 
 class Command(BaseCommand):
@@ -52,15 +51,17 @@ class Command(BaseCommand):
         for config in configs:
             # Check if backup is needed based on interval
             if config.last_backup:
-                time_since_last = timezone.now() - config.last_backup
-                
-                if config.interval == 'daily' and time_since_last < timedelta(days=1):
-                    self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 nap')
+                last_date = config.last_backup.astimezone().date()
+                today = timezone.localtime(timezone.now()).date()
+                days_since = (today - last_date).days
+
+                if config.interval == 'daily' and days_since < 1:
+                    self.stdout.write(f'Kihagyva: {config.name} - már futótt ma')
                     continue
-                elif config.interval == 'weekly' and time_since_last < timedelta(days=7):
+                elif config.interval == 'weekly' and days_since < 7:
                     self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 hét')
                     continue
-                elif config.interval == 'monthly' and time_since_last < timedelta(days=30):
+                elif config.interval == 'monthly' and days_since < 30:
                     self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 hónap')
                     continue
             

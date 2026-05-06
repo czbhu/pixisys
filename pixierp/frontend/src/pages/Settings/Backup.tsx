@@ -26,6 +26,7 @@ import {
   ClockCircleOutlined,
   UploadOutlined,
   DatabaseOutlined,
+  PlayCircleOutlined,
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -214,6 +215,22 @@ const BackupPage: React.FC = () => {
     }
   };
 
+  const [runningConfigId, setRunningConfigId] = useState<number | null>(null);
+
+  const handleRunNow = async (config: BackupConfiguration) => {
+    setRunningConfigId(config.id);
+    try {
+      const response = await api.post(`/backup-configs/${config.id}/run_now/`);
+      message.success(response.data.message || 'Backup sikeresen létrehozva');
+      fetchBackups();
+      fetchConfigs();
+    } catch (error: any) {
+      message.error(error.response?.data?.error || 'Nem sikerült elindítani a backupot');
+    } finally {
+      setRunningConfigId(null);
+    }
+  };
+
   const showConfigModal = (config?: BackupConfiguration) => {
     if (config) {
       setEditingConfig(config);
@@ -367,13 +384,23 @@ const BackupPage: React.FC = () => {
       title: 'Műveletek',
       key: 'actions',
       render: (_, record) => (
-        <Button
-          type="link"
-          icon={<SettingOutlined />}
-          onClick={() => showConfigModal(record)}
-        >
-          Szerkesztés
-        </Button>
+        <Space>
+          <Button
+            type="link"
+            icon={<PlayCircleOutlined />}
+            loading={runningConfigId === record.id}
+            onClick={() => handleRunNow(record)}
+          >
+            Futtatás most
+          </Button>
+          <Button
+            type="link"
+            icon={<SettingOutlined />}
+            onClick={() => showConfigModal(record)}
+          >
+            Szerkesztés
+          </Button>
+        </Space>
       ),
     },
   ];

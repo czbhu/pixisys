@@ -47,15 +47,17 @@ class Command(BaseCommand):
         for config in configs:
             # Check if backup should run based on schedule
             if not force and config.last_backup:
-                time_since_last = timezone.now() - config.last_backup
-                
-                if config.interval == 'daily' and time_since_last < timedelta(days=1):
-                    self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 nap')
+                last_date = config.last_backup.astimezone().date()
+                today = timezone.localtime(timezone.now()).date()
+                days_since = (today - last_date).days
+
+                if config.interval == 'daily' and days_since < 1:
+                    self.stdout.write(f'Kihagyva: {config.name} - már futott ma')
                     continue
-                elif config.interval == 'weekly' and time_since_last < timedelta(weeks=1):
+                elif config.interval == 'weekly' and days_since < 7:
                     self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 hét')
                     continue
-                elif config.interval == 'monthly' and time_since_last < timedelta(days=30):
+                elif config.interval == 'monthly' and days_since < 30:
                     self.stdout.write(f'Kihagyva: {config.name} - még nem telt el 1 hónap')
                     continue
             
