@@ -1,7 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { contactAPI } from '../services/api';
-import ReactQuill from 'react-quill';
-import 'react-quill/dist/quill.snow.css';
 
 export default function EmailModal({
   isOpen,
@@ -29,6 +27,7 @@ export default function EmailModal({
   const [sending, setSending] = useState(false);
   const [contacts, setContacts] = useState([]);
   const [assignTarget, setAssignTarget] = useState('to');
+  const [htmlMode, setHtmlMode] = useState(false); // false = visual preview, true = raw HTML source
 
   // New features
   const [showStatus, setShowStatus] = useState(false);
@@ -50,6 +49,8 @@ export default function EmailModal({
       setStatusModalOpen(false);
       setStatusLog([]);
       setStatusError(null);
+      // Auto-switch to HTML source if body contains a table
+      setHtmlMode(/(<table|<tr|<td|<th)/i.test(defaultBody || ''));
       // Load contacts for customer
       if (customerId) {
         contactAPI.getContacts({ customer_id: customerId, is_active: true })
@@ -190,12 +191,34 @@ export default function EmailModal({
 
           <label style={styles.label}>Üzenet</label>
           <div style={{ gridColumn: '1 / span 2', marginBottom: 20 }}>
-             <ReactQuill 
-                theme="snow" 
-                value={body} 
-                onChange={setBody} 
-                style={{ height: 250, background: '#fff' }}
-             />
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+              <button
+                type="button"
+                onClick={() => setHtmlMode(m => !m)}
+                style={{ fontSize: 12, padding: '2px 8px', border: '1px solid #ccc', borderRadius: 4, background: '#f5f5f5', cursor: 'pointer', color: '#555' }}
+              >
+                {htmlMode ? '👁 Előnézet' : '</> HTML forrás'}
+              </button>
+            </div>
+            {htmlMode ? (
+              <textarea
+                value={body}
+                onChange={(e) => setBody(e.target.value)}
+                style={{ width: '100%', minHeight: 280, fontFamily: 'monospace', fontSize: 12, border: '1px solid #d0d7de', borderRadius: 4, padding: 8, boxSizing: 'border-box', resize: 'vertical' }}
+              />
+            ) : (
+              <div
+                contentEditable
+                suppressContentEditableWarning
+                onBlur={(e) => setBody(e.currentTarget.innerHTML)}
+                dangerouslySetInnerHTML={{ __html: body }}
+                style={{
+                  minHeight: 280, border: '1px solid #d0d7de', borderRadius: 4, padding: 12,
+                  background: '#fff', fontSize: 14, lineHeight: 1.5, overflowY: 'auto',
+                  outline: 'none',
+                }}
+              />
+            )}
           </div>
           
           {Array.isArray(contacts) && contacts.length > 0 && (
