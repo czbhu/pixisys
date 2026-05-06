@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select } from 'antd';
 import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
@@ -107,6 +107,23 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   // suppliers
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
+  const supplierPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const supplierLongFired = useRef(false);
+
+  const startSupplierLongPress = (id: number) => {
+    supplierLongFired.current = false;
+    supplierPressTimer.current = setTimeout(() => {
+      supplierLongFired.current = true;
+      setSupplierPopoverOpen(id);
+    }, 500);
+  };
+
+  const endSupplierLongPress = () => {
+    if (supplierPressTimer.current) {
+      clearTimeout(supplierPressTimer.current);
+      supplierPressTimer.current = null;
+    }
+  };
 
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000')
@@ -309,9 +326,9 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         return (
           <Popover
             open={supplierPopoverOpen === r.id}
-            onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
-            trigger="click"
+            onOpenChange={open => { if (!open) setSupplierPopoverOpen(null); }}
             title="Beszállító változtatás"
+            getPopupContainer={() => document.body}
             content={
               <div style={{ width: 280 }}>
                 <Select
@@ -329,7 +346,12 @@ export const ProductSubItemsTable: React.FC<Props> = ({
             }
             overlayInnerStyle={{ padding: '10px 12px' }}
           >
-            <span onClick={e => e.stopPropagation()}>{tag}</span>
+            <span
+              onClick={e => e.stopPropagation()}
+              onPointerDown={e => { e.stopPropagation(); startSupplierLongPress(r.id); }}
+              onPointerUp={endSupplierLongPress}
+              onPointerLeave={endSupplierLongPress}
+            >{tag}</span>
           </Popover>
         );
       },
@@ -356,7 +378,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           </div>
         );
         return (
-          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }}>
+          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body}>
             <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>{opt.label}</Tag>
           </Popover>
         );
