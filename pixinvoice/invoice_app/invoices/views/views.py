@@ -5758,6 +5758,13 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                         comment__iregex=term_regex,
                     ).values_list('invoice_number', flat=True)
                 )
+                # IncomingInvoiceData.xml_text (tételek, leírások) matching invoice numbers
+                data_inv_numbers = set(
+                    IncomingInvoiceData.objects.filter(
+                        company_id=company_id,
+                        xml_text__iregex=term_regex,
+                    ).values_list('invoice_number', flat=True)
+                )
                 if external_outgoing:
                     term_filter = (
                         Q(invoice_number__icontains=term)
@@ -5776,6 +5783,8 @@ class InvoiceViewSet(viewsets.ModelViewSet):
                     )
                 if doc_inv_numbers:
                     term_filter |= Q(invoice_number__in=doc_inv_numbers)
+                if data_inv_numbers:
+                    term_filter |= Q(invoice_number__in=data_inv_numbers)
                 qs = qs.filter(term_filter)
 
         # Amount filter
