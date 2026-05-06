@@ -1664,7 +1664,7 @@ class BackupConfigurationViewSet(viewsets.ModelViewSet):
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
 
             if 'postgresql' in engine:
-                filename = f'{config.interval}_backup_{timestamp}.sql'
+                filename = f'{config.interval}_backup_{timestamp}.dump'
                 filepath = os.path.join(backup_dir, filename)
                 host = db_cfg.get('HOST') or 'localhost'
                 port = str(db_cfg.get('PORT') or 5432)

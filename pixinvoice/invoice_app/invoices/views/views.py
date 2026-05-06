@@ -15632,7 +15632,7 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             
             # Generate filename
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-            filename = f'manual_backup_{timestamp}.sql'
+            filename = f'manual_backup_{timestamp}.dump'
             filepath = os.path.join(backup_dir, filename)
             
             # Get database configuration
@@ -15709,19 +15709,20 @@ class BackupFileViewSet(viewsets.ModelViewSet):
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Validate file extension
-            if not uploaded_file.name.endswith('.sql'):
+            if not (uploaded_file.name.endswith('.dump') or uploaded_file.name.endswith('.sql')):
                 return Response({
-                    'error': 'Csak .sql kiterjesztésű fájlok tölthetők fel'
+                    'error': 'Csak .dump vagy .sql kiterjesztésű fájlok tölthetők fel'
                 }, status=status.HTTP_400_BAD_REQUEST)
             
             # Create backups directory if not exists
             backup_dir = os.path.join(settings.BASE_DIR, 'backups')
             os.makedirs(backup_dir, exist_ok=True)
             
-            # Generate unique filename
+            # Generate unique filename preserving extension
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
             original_name = uploaded_file.name.rsplit('.', 1)[0]
-            filename = f'uploaded_{original_name}_{timestamp}.sql'
+            ext = uploaded_file.name.rsplit('.', 1)[-1]
+            filename = f'uploaded_{original_name}_{timestamp}.{ext}'
             filepath = os.path.join(backup_dir, filename)
             
             # Save uploaded file
@@ -15808,7 +15809,7 @@ class BackupFileViewSet(viewsets.ModelViewSet):
             # First, create a safety backup of current database
             safety_backup_dir = os.path.join(settings.BASE_DIR, 'backups')
             timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-            safety_filename = f'before_restore_{timestamp}.sql'
+            safety_filename = f'before_restore_{timestamp}.dump'
             safety_filepath = os.path.join(safety_backup_dir, safety_filename)
             
             subprocess.run(

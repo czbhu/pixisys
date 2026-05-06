@@ -544,14 +544,14 @@ const BackupPage: React.FC = () => {
       >
         <Alert
           message="Információ"
-          description="Csak SQLite adatbázis fájlok (.sqlite3) tölthetők fel. A feltöltött backup azonnal visszaállítható lesz."
+          description="PostgreSQL pg_dump által létrehozott .dump fájlok tölthetők fel. A feltöltött backup azonnal visszaallítható lesz."
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
         />
         <Upload.Dragger
           name="file"
-          accept=".sqlite3"
+          accept=".dump,.sqlite3"
           maxCount={1}
           beforeUpload={handleUploadBackup}
           showUploadList={true}
@@ -561,7 +561,7 @@ const BackupPage: React.FC = () => {
           </p>
           <p className="ant-upload-text">Kattintson vagy húzza ide a backup fájlt</p>
           <p className="ant-upload-hint">
-            Támogatott formátum: .sqlite3 (SQLite adatbázis)
+            Támogatott formátum: .dump (PostgreSQL custom dump)
           </p>
         </Upload.Dragger>
       </Modal>

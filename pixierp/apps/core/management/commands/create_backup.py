@@ -68,7 +68,7 @@ class Command(BaseCommand):
             try:
                 # Generate filename
                 timestamp = timezone.now().strftime('%Y%m%d_%H%M%S')
-                filename = f'{config.interval}_backup_{timestamp}.sql'
+                filename = f'{config.interval}_backup_{timestamp}.dump'
                 filepath = os.path.join(backup_dir, filename)
                 
                 # Run pg_dump

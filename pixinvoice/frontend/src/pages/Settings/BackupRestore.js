@@ -495,14 +495,14 @@ const BackupRestore = () => {
       >
         <Alert
           title="Információ"
-          description="Csak PostgreSQL pg_dump által létrehozott .sql fájlok tölthetők fel. A feltöltött backup azonnal visszaállítható lesz."
+          description="PostgreSQL pg_dump által létrehozott .dump fájlok tölthetők fel. A feltöltött backup azonnal visszaallítható lesz."
           type="info"
           showIcon
           style={{ marginBottom: 16 }}
         />
         <Upload.Dragger
           name="file"
-          accept=".sql"
+          accept=".dump,.sql"
           maxCount={1}
           beforeUpload={handleUploadBackup}
           showUploadList={true}
@@ -512,7 +512,7 @@ const BackupRestore = () => {
           </p>
           <p className="ant-upload-text">Kattintson vagy húzza ide a backup fájlt</p>
           <p className="ant-upload-hint">
-            Támogatott formátum: .sql (PostgreSQL dump)
+            Támogatott formátum: .dump (PostgreSQL custom dump)
           </p>
         </Upload.Dragger>
       </Modal>
