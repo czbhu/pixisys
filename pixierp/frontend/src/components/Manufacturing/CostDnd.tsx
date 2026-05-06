@@ -36,6 +36,13 @@ export const CostDragHandle: React.FC = () => {
 };
 
 export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
+  const rowKey = props['data-row-key'];
+  // Ant Design also renders expanded rows using the same row component;
+  // those have non-numeric keys (e.g. "expanded-row-123"). Skip drag setup
+  // for those so they don't get aria-* attributes or any transform applied.
+  const isDraggableRow = rowKey != null && !String(rowKey).startsWith('expanded');
+
+  const sortable = useSortable({ id: isDraggableRow ? rowKey : '__placeholder__' });
   const {
     attributes,
     listeners,
@@ -47,7 +54,7 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
     isOver,
     over,
     active,
-  } = useSortable({ id: props['data-row-key'] });
+  } = isDraggableRow ? sortable : ({} as any);
 
   // Sticky indicator from EnhancedTable (rowDnd) – stays visible even when
   // the pointer briefly leaves every row. Falls back to the local useSortable
@@ -126,22 +133,22 @@ export const CostDraggableRow: React.FC<any> = ({ children, ...props }) => {
 
   return (
     <CostRowContext.Provider value={{ setActivatorNodeRef, listeners }}>
-      <tr
-        {...props}
-        ref={setNodeRef}
-        style={style}
-        {...attributes}
-        onPointerDownCapture={(e) => {
-          // Default to single-row drag. A more specific activator deeper in
-          // the row (e.g. the order-number cell) can overwrite this in its
-          // own capture-phase handler, which fires AFTER this one because
-          // capture phase runs outermost → innermost.
-          dragModeRef.current = 'single';
-          (props.onPointerDownCapture as any)?.(e);
-        }}
-      >
-        {children}
-      </tr>
+      {isDraggableRow ? (
+        <tr
+          {...props}
+          ref={setNodeRef}
+          style={style}
+          {...attributes}
+          onPointerDownCapture={(e) => {
+            dragModeRef.current = 'single';
+            (props.onPointerDownCapture as any)?.(e);
+          }}
+        >
+          {children}
+        </tr>
+      ) : (
+        <tr {...props}>{children}</tr>
+      )}
     </CostRowContext.Provider>
   );
 };
