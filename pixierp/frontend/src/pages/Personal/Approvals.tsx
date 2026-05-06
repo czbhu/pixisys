@@ -79,7 +79,7 @@ const Approvals: React.FC = () => {
                         <Button
                             size="small"
                             icon={<EyeOutlined />}
-                            onClick={() => navigate(`/sales/customer-orders/${record.customer_order}`)}
+                            onClick={() => window.open(`/sales/customer-orders/${record.customer_order}?popup=1`, '_blank')}
                         >
                             Megtekint
                         </Button>

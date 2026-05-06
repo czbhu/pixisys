@@ -38,6 +38,7 @@ const CustomerOrderDetail: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const hidePrices = location.state?.hidePrices;
+  const isPopup = new URLSearchParams(location.search).get('popup') === '1';
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<any>();
@@ -140,12 +141,16 @@ const CustomerOrderDetail: React.FC = () => {
   }, []);
 
   const handleBack = useCallback(() => {
+    if (isPopup) {
+        window.close();
+        return;
+    }
     if (location.key !== "default") {
         navigate(-1);
     } else {
         navigate('/sales/customer-orders');
     }
-  }, [navigate]);
+  }, [navigate, isPopup]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => {
