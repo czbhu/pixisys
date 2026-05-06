@@ -326,9 +326,11 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         return (
           <Popover
             open={supplierPopoverOpen === r.id}
-            onOpenChange={open => { if (!open) setSupplierPopoverOpen(null); }}
+            onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
+            trigger="click"
             title="Beszállító változtatás"
             getPopupContainer={() => document.body}
+            zIndex={1100}
             content={
               <div style={{ width: 280 }}>
                 <Select
@@ -341,17 +343,13 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                   optionFilterProp="label"
                   options={suppliers.map(s => ({ value: s.id, label: s.name }))}
                   onChange={val => handleSupplierChange(r.id, val ?? null)}
+                  getPopupContainer={() => document.body}
                 />
               </div>
             }
             overlayInnerStyle={{ padding: '10px 12px' }}
           >
-            <span
-              onClick={e => e.stopPropagation()}
-              onPointerDown={e => { e.stopPropagation(); startSupplierLongPress(r.id); }}
-              onPointerUp={endSupplierLongPress}
-              onPointerLeave={endSupplierLongPress}
-            >{tag}</span>
+            <span onClick={e => e.stopPropagation()}>{tag}</span>
           </Popover>
         );
       },
@@ -378,7 +376,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           </div>
         );
         return (
-          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body}>
+          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={1100}>
             <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>{opt.label}</Tag>
           </Popover>
         );
