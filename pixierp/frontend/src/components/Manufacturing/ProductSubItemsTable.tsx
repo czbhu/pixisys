@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select } from 'antd';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select, Checkbox } from 'antd';
 import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined } from '@ant-design/icons';
 import {
   DndContext,
@@ -24,6 +24,7 @@ import {
   CostDndItem,
 } from './CostDnd';
 import { manufacturingService } from '../../services/manufacturingService';
+import { hrService } from '../../services/hrService';
 import api from '../../services/api';
 
 const STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
@@ -106,28 +107,15 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [editingSubAttRemarkVal, setEditingSubAttRemarkVal] = useState<string>('');
   // suppliers
   const [suppliers, setSuppliers] = useState<any[]>([]);
+  const [departments, setDepartments] = useState<any[]>([]);
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
-  const supplierPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const supplierLongFired = useRef(false);
-
-  const startSupplierLongPress = (id: number) => {
-    supplierLongFired.current = false;
-    supplierPressTimer.current = setTimeout(() => {
-      supplierLongFired.current = true;
-      setSupplierPopoverOpen(id);
-    }, 500);
-  };
-
-  const endSupplierLongPress = () => {
-    if (supplierPressTimer.current) {
-      clearTimeout(supplierPressTimer.current);
-      supplierPressTimer.current = null;
-    }
-  };
 
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000')
       .then(res => setSuppliers(Array.isArray(res.data?.results) ? res.data.results : (Array.isArray(res.data) ? res.data : [])))
+      .catch(() => {});
+    hrService.getDepartments()
+      .then(res => setDepartments(Array.isArray(res?.results) ? res.results : (Array.isArray(res) ? res : [])))
       .catch(() => {});
   }, []);
 
@@ -143,6 +131,21 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
     } catch {
       message.error('Beszállító frissítése sikertelen');
+      setItems(prev);
+    }
+  };
+
+  const handleInternalChange = async (id: number, isInternal: boolean, deptId?: number | null) => {
+    const prev = items;
+    setItems(items.map(it => {
+      if (it.id !== id) return it;
+      const dept = departments.find(d => d.id === deptId);
+      return { ...it, is_internal: isInternal, department: deptId ?? null, department_name: dept?.name || '', supplier: isInternal ? null : it.supplier, supplier_name: isInternal ? '' : it.supplier_name };
+    }));
+    try {
+      await api.patch(`/manufacturing/cost-items/${id}/`, { is_internal: isInternal, department: deptId ?? null, supplier: isInternal ? null : undefined });
+    } catch {
+      message.error('Frissítés sikertelen');
       setItems(prev);
     }
   };
@@ -319,32 +322,56 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     ] : []),
     { title: 'Beszállító', key: 'supplier', width: 180,
       render: (_: any, r: ProductSubItem) => {
-        if (r.is_internal) return <Tag color="blue">{r.department_name || 'Belső'}</Tag>;
-        const tag = r.supplier_name
-          ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
-          : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
+        const tag = r.is_internal
+          ? <Tag color="blue" style={{ cursor: 'pointer' }}>{r.department_name || 'Belső'}</Tag>
+          : r.supplier_name
+            ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
+            : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
         return (
           <Popover
             open={supplierPopoverOpen === r.id}
             onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
             trigger="click"
-            title="Beszállító változtatás"
+            title="Beszállító / Belső"
             getPopupContainer={() => document.body}
-            zIndex={1100}
+            zIndex={9999}
             content={
-              <div style={{ width: 280 }}>
-                <Select
-                  autoFocus
-                  showSearch
-                  allowClear
-                  placeholder="Beszállító kiválasztása…"
-                  style={{ width: '100%' }}
-                  value={r.supplier ?? undefined}
-                  optionFilterProp="label"
-                  options={suppliers.map(s => ({ value: s.id, label: s.name }))}
-                  onChange={val => handleSupplierChange(r.id, val ?? null)}
-                  getPopupContainer={() => document.body}
-                />
+              <div style={{ width: 300 }}>
+                <div style={{ marginBottom: 8 }}>
+                  <Checkbox
+                    checked={!!r.is_internal}
+                    onChange={e => handleInternalChange(r.id, e.target.checked, r.department ?? null)}
+                  >
+                    Belső gyartás
+                  </Checkbox>
+                </div>
+                {r.is_internal ? (
+                  <Select
+                    autoFocus
+                    showSearch
+                    allowClear
+                    placeholder="Osztály kiválasztása…"
+                    style={{ width: '100%' }}
+                    value={r.department ?? undefined}
+                    optionFilterProp="label"
+                    options={departments.map(d => ({ value: d.id, label: d.name }))}
+                    onChange={val => handleInternalChange(r.id, true, val ?? null)}
+                    getPopupContainer={() => document.body}
+                  />
+                ) : (
+                  <Select
+                    autoFocus
+                    showSearch
+                    allowClear
+                    placeholder="Beszállító kiválasztása…"
+                    style={{ width: '100%' }}
+                    value={r.supplier ?? undefined}
+                    optionFilterProp="label"
+                    options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+                    onChange={val => handleSupplierChange(r.id, val ?? null)}
+                    getPopupContainer={() => document.body}
+                  />
+                )}
               </div>
             }
             overlayInnerStyle={{ padding: '10px 12px' }}
