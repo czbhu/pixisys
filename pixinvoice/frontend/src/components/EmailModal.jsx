@@ -302,9 +302,12 @@ const styles = {
   },
   modal: {
     width: 'min(900px, 94vw)',
+    maxHeight: '92vh',
     background: '#fff',
     borderRadius: 8,
     boxShadow: '0 10px 30px rgba(0,0,0,0.25)',
+    display: 'flex',
+    flexDirection: 'column',
     overflow: 'hidden',
   },
   header: {
@@ -318,6 +321,8 @@ const styles = {
     gridTemplateColumns: '120px 1fr',
     gridRowGap: 10,
     gridColumnGap: 12,
+    overflowY: 'auto',
+    flex: 1,
   },
   label: {
     alignSelf: 'center',
