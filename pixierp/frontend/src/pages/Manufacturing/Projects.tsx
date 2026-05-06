@@ -500,9 +500,39 @@ const Projects: React.FC = () => {
                                                 } else if (companyId) {
                                                     const list = await crmService.getContactsByCompany(companyId);
                                                     setContacts((list as any).results ?? list);
+                                                } else {
+                                                    // Nincs cég választva → összes kapcsolattartó
+                                                    const list = await crmService.getContacts();
+                                                    setContacts(((list as any).results ?? list) || []);
                                                 }
                                             }}
-                                            onChange={(val) => form.setFieldsValue({ contacts: val })}
+                                            onChange={async (val: any) => {
+                                                form.setFieldsValue({ contacts: val });
+                                                const companyId = form.getFieldValue('company_id');
+                                                if (!companyId && Array.isArray(val) && val.length > 0) {
+                                                    const lastId = val[val.length - 1];
+                                                    const chosen = contacts.find((c: any) => c.id === lastId || String(c.id) === String(lastId));
+                                                    if (chosen?.company) {
+                                                        form.setFieldsValue({ company_id: chosen.company });
+                                                        const cl = await crmService.getContactsByCompany(chosen.company);
+                                                        const loaded: any[] = ((cl as any).results ?? cl) || [];
+                                                        const merged = [...loaded];
+                                                        (val as any[]).forEach((selId: any) => {
+                                                            if (!merged.find((c: any) => c.id === selId || String(c.id) === String(selId))) {
+                                                                const ex = contacts.find((c: any) => c.id === selId || String(c.id) === String(selId));
+                                                                if (ex) merged.push(ex);
+                                                            }
+                                                        });
+                                                        setContacts(merged);
+                                                        if (chosen.company_name) {
+                                                            setCompanies((prev: any[]) => {
+                                                                if (prev.find((c: any) => c.id === chosen.company)) return prev;
+                                                                return [{ id: chosen.company, name: chosen.company_name }, ...prev];
+                                                            });
+                                                        }
+                                                    }
+                                                }
+                                            }}
                                             filterOption={(input, option) => {
                                                 const children = option?.children as unknown as string;
                                                 if (!children || typeof children !== 'string') return false;

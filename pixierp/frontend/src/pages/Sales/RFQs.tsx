@@ -1783,16 +1783,49 @@ const RFQs: React.FC = () => {
                       } else if (companyId) {
                         const list = await crmService.getContactsByCompany(companyId);
                         setContacts(list.results ?? list);
+                      } else {
+                        // Nincs cég választva → összes kapcsolattartó
+                        const list = await crmService.getContacts();
+                        setContacts((list.results ?? list) || []);
                       }
                     }}
-                    onChange={(val) => {
+                    onChange={async (val: any) => {
                       console.log('[RFQs] Contacts changed to:', val);
                       form.setFieldsValue({ contact_ids: val });
+                      const companyId = form.getFieldValue('company_id');
+                      if (!companyId && Array.isArray(val) && val.length > 0) {
+                        const lastId = val[val.length - 1];
+                        const chosen = contacts.find((c: any) => c.id === lastId || String(c.id) === String(lastId));
+                        if (chosen?.company) {
+                          form.setFieldsValue({ company_id: chosen.company });
+                          const cl = await crmService.getContactsByCompany(chosen.company);
+                          const loaded: any[] = (cl.results ?? cl) || [];
+                          const merged = [...loaded];
+                          (val as any[]).forEach((selId: any) => {
+                            if (!merged.find((c: any) => c.id === selId || String(c.id) === String(selId))) {
+                              const ex = contacts.find((c: any) => c.id === selId || String(c.id) === String(selId));
+                              if (ex) merged.push(ex);
+                            }
+                          });
+                          setContacts(merged);
+                          if (chosen.company_name) {
+                            setCompanies((prev: any[]) => {
+                              if (prev.find((c: any) => c.id === chosen.company)) return prev;
+                              return [{ id: chosen.company, name: chosen.company_name }, ...prev];
+                            });
+                          }
+                        }
+                      }
                     }}
                   >
-                    {contacts.map((p: any) => (
-                      <Select.Option key={p.id} value={p.id} label={p.full_name || p.name}>{p.full_name || p.name}</Select.Option>
-                    ))}
+                    {contacts.map((p: any) => {
+                      const companyId = form.getFieldValue('company_id');
+                      const baseName = p.full_name || p.name || '';
+                      const lbl = (!companyId && p.company_name) ? `${baseName} — ${p.company_name}` : baseName;
+                      return (
+                        <Select.Option key={p.id} value={p.id} label={lbl}>{lbl}</Select.Option>
+                      );
+                    })}
                   </Select>
                   </Form.Item>
                   <Tooltip title="Új kapcsolattartó hozzáadása">

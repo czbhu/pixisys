@@ -76,10 +76,10 @@ const RFQDetail: React.FC = () => {
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatureTemplates, setSignatureTemplates] = useState<any[]>([]);
 
-  const contactOptionLabel = (p: any) => {
+  const contactOptionLabel = (p: any, showCompany?: boolean) => {
     const nameParts = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
     const altNameParts = [p.last_name, p.first_name].filter(Boolean).join(' ').trim();
-    return (
+    const baseName = (
       p.full_name ||
       p.fullName ||
       nameParts ||
@@ -92,6 +92,8 @@ const RFQDetail: React.FC = () => {
       p.customer_name ||
       p.id
     );
+    const compName = p.company_name || p.customer_name;
+    return (showCompany && compName) ? `${baseName} — ${compName}` : baseName;
   };
 
   /** Refresh only the items list without showing the full-page spinner.
@@ -684,10 +686,11 @@ const RFQDetail: React.FC = () => {
                         optionLabelProp="label"
                         placeholder="Válassz kapcsolattartókat"
                         style={{ width: 'calc(100% - 127px)' }}
-                        options={(contacts || []).map((p: any, idx: number) => ({
-                          value: String(p.id ?? idx),
-                          label: contactOptionLabel(p),
-                        }))}
+                        options={(contacts || []).map((p: any, idx: number) => {
+                          const companyId = formBasic.getFieldValue('company_id');
+                          const lbl = contactOptionLabel(p, !companyId);
+                          return { value: String(p.id ?? idx), label: lbl };
+                        })}
                         onFocus={async () => {
                           const companyId = formBasic.getFieldValue('company_id');
                           if (companyId === 'private') {
@@ -696,6 +699,38 @@ const RFQDetail: React.FC = () => {
                           } else if (companyId) {
                             const list = await crmService.getContactsByCompany(companyId);
                             setContacts((list as any).results ?? list);
+                          } else {
+                            // Nincs cég választva → összes kapcsolattartó
+                            const list = await crmService.getContacts();
+                            setContacts(((list as any).results ?? list) || []);
+                          }
+                        }}
+                        onChange={async (val: any) => {
+                          formBasic.setFieldsValue({ contact_ids: val });
+                          const companyId = formBasic.getFieldValue('company_id');
+                          if (!companyId && Array.isArray(val) && val.length > 0) {
+                            const lastId = val[val.length - 1];
+                            const chosen = contacts.find((c: any) => String(c.id) === String(lastId));
+                            if (chosen?.company) {
+                              formBasic.setFieldsValue({ company_id: chosen.company });
+                              const cl = await crmService.getContactsByCompany(chosen.company);
+                              const loaded: any[] = ((cl as any).results ?? cl) || [];
+                              // Merge already selected contacts
+                              const merged = [...loaded];
+                              (val as any[]).forEach((selId: any) => {
+                                if (!merged.find((c: any) => String(c.id) === String(selId))) {
+                                  const ex = contacts.find((c: any) => String(c.id) === String(selId));
+                                  if (ex) merged.push(ex);
+                                }
+                              });
+                              setContacts(merged);
+                              if (chosen.company_name) {
+                                setCompanies((prev: any[]) => {
+                                  if (prev.find((c: any) => c.id === chosen.company)) return prev;
+                                  return [{ id: chosen.company, name: chosen.company_name }, ...prev];
+                                });
+                              }
+                            }
                           }
                         }}
                       />
