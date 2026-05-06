@@ -3695,8 +3695,9 @@ class InvoiceViewSet(viewsets.ModelViewSet):
             'sender_phone': (getattr(ces, 'default_sender_phone', None) if ces else '') or '',
             'signature_html': default_signature_html,
         }
-        # Use subject from request if provided, otherwise from template
-        body = render_tpl(body_tpl, ctx)
+        # Use body from request if provided (user edited it), otherwise render from template
+        client_body = (data.get('body') or '').strip()
+        body = client_body if client_body else render_tpl(body_tpl, ctx)
         if not subject:
             subject = render_tpl(subject_tpl, ctx)
 
