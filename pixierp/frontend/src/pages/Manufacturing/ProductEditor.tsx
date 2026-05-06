@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Table, Button, Space, Modal, Form, Input, Select, InputNumber,
   message, Tag, Popconfirm, Tooltip, Drawer, Row, Col, Divider,
-  Switch, Empty, Typography, Checkbox, Collapse,
+  Switch, Empty, Typography, Checkbox, Collapse, TreeSelect,
 } from 'antd';
 import NumInput from '../../components/NumInput';
 import {
@@ -236,7 +236,14 @@ const ProductEditor: React.FC = () => {
 
   useEffect(() => { loadAll(); }, [loadAll]);
 
-  const { categoryPathMap, sortedCategories } = useMemo(() => {
+  interface CategoryTreeNode {
+    title: string;
+    value: number;
+    key: number;
+    children?: CategoryTreeNode[];
+  }
+
+  const { categoryPathMap, sortedCategories, categoryTreeData } = useMemo(() => {
     const byId = new Map<number, ProductClass>(categories.map(c => [c.id, c]));
     const depthMemo = new Map<number, number>();
 
@@ -277,7 +284,18 @@ const ProductEditor: React.FC = () => {
     };
     visit(null);
 
-    return { categoryPathMap: pathMap, sortedCategories: ordered };
+    // Build TreeSelect treeData
+    const buildTree = (parentKey: number | null): CategoryTreeNode[] => {
+      return (childrenOf.get(parentKey) ?? []).map(c => {
+        const node: CategoryTreeNode = { title: c.name, value: c.id, key: c.id };
+        const kids = buildTree(c.id);
+        if (kids.length > 0) node.children = kids;
+        return node;
+      });
+    };
+    const treeData = buildTree(null);
+
+    return { categoryPathMap: pathMap, sortedCategories: ordered, categoryTreeData: treeData };
   }, [categories]);
 
   // ── Drawer open/close ───────────────────────────────────────────────────────
@@ -739,11 +757,15 @@ const ProductEditor: React.FC = () => {
                     <Row gutter={16}>
                       <Col span={18}>
                         <Form.Item name="category" label="Termékkategória">
-                          <Select allowClear placeholder="Válassz kategóriát…">
-                            {sortedCategories.map(c => (
-                              <Option key={c.id} value={c.id}>{categoryPathMap.get(c.id) || c.name}</Option>
-                            ))}
-                          </Select>
+                          <TreeSelect
+                            allowClear
+                            placeholder="Válassz kategóriát…"
+                            treeData={categoryTreeData}
+                            treeDefaultExpandAll={false}
+                            showSearch
+                            treeNodeFilterProp="title"
+                            style={{ width: '100%' }}
+                          />
                         </Form.Item>
                       </Col>
                       <Col span={6}>
