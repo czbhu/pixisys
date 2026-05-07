@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Row, Col, Card, Statistic, Table, Select, Typography, Spin, Alert,
-    Badge, Tag, List, Avatar, Space, Collapse
+    Badge, Tag, List, Avatar, Space, Button, Tooltip
 } from 'antd';
 import {
     UserOutlined,
@@ -13,8 +13,7 @@ import {
     ClockCircleOutlined,
     PlusCircleOutlined,
     ExclamationCircleOutlined,
-    LoginOutlined,
-    LogoutOutlined,
+    ReloadOutlined,
 } from '@ant-design/icons';
 import { salesService } from '../services/salesService';
 import { useNavigate } from 'react-router-dom';
@@ -49,6 +48,7 @@ interface WorkLogDetail {
     customer_name: string;
     quote_title: string;
     item_name: string;
+    sub_item_name: string;
     workflow_name: string;
     duration_seconds: number;
     is_running: boolean;
@@ -60,6 +60,7 @@ interface ActiveWork {
     customer_name: string;
     quote_title: string;
     item_name: string;
+    sub_item_name: string;
     workflow_name: string;
     started_at: string;
 }
@@ -71,6 +72,7 @@ interface WorkerEntry {
     check_in_time: string | null;
     check_out_time: string | null;
     total_duration_seconds: number;
+    active_seconds: number;
     is_active: boolean;
     active_work: ActiveWork | null;
     work_logs: WorkLogDetail[];
@@ -105,7 +107,7 @@ function timeLabel(iso: string | null): string {
     return new Date(iso).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' });
 }
 
-// ---------- Worker: napi napló táblázat ----------
+// ---------- Worker: expandable daily work log table ----------
 
 const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<typeof useNavigate> }> = ({ logs, navigate }) => {
     const cols = [
@@ -113,26 +115,33 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             title: 'Ügyfél',
             dataIndex: 'customer_name',
             key: 'customer_name',
-            render: (v: string) => <Text>{v || '—'}</Text>,
+            width: 140,
+            render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
         },
         {
             title: 'Megrendelés',
             key: 'order',
             render: (_: any, r: WorkLogDetail) => (
-                <a onClick={() => navigate(`/orders/${r.order_id}`)} style={{ cursor: 'pointer' }}>
-                    {r.order_number}
-                    {r.quote_title ? <span style={{ color: '#888', marginLeft: 4 }}>— {r.quote_title}</span> : null}
+                <a onClick={() => navigate(`/orders/${r.order_id}`)} style={{ fontSize: 12 }}>
+                    <span style={{ fontWeight: 500 }}>{r.order_number}</span>
+                    {r.quote_title && <span style={{ color: '#888', marginLeft: 4 }}>— {r.quote_title}</span>}
                 </a>
             ),
         },
         {
-            title: 'Munkafolyamat',
-            dataIndex: 'workflow_name',
-            key: 'workflow_name',
+            title: 'Tétel',
+            dataIndex: 'item_name',
+            key: 'item_name',
+            render: (v: string) => <Text style={{ fontSize: 12 }}>{v || '—'}</Text>,
+        },
+        {
+            title: 'Altétel',
+            dataIndex: 'sub_item_name',
+            key: 'sub_item_name',
             render: (v: string, r: WorkLogDetail) => (
                 <Space size={4}>
                     {r.is_running && <Badge status="processing" />}
-                    <Text>{v || '—'}</Text>
+                    <Text style={{ fontSize: 12 }}>{v || r.workflow_name || '—'}</Text>
                 </Space>
             ),
         },
@@ -141,24 +150,25 @@ const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<t
             dataIndex: 'duration_seconds',
             key: 'duration_seconds',
             align: 'right' as const,
-            render: (sec: number) => <Text style={{ whiteSpace: 'nowrap' }}>{durationLabel(sec)}</Text>,
+            width: 110,
+            render: (sec: number) => <Text style={{ whiteSpace: 'nowrap', fontSize: 12 }}>{durationLabel(sec)}</Text>,
         },
     ];
 
     const totalSec = logs.reduce((s, l) => s + l.duration_seconds, 0);
 
     return (
-        <div style={{ paddingBlock: 4 }}>
+        <div style={{ padding: '4px 0 8px 0' }}>
             <Table
                 dataSource={logs}
                 columns={cols}
                 rowKey="id"
                 size="small"
                 pagination={false}
-                style={{ marginBottom: 8 }}
+                style={{ marginBottom: 6 }}
             />
-            <div style={{ textAlign: 'right', paddingRight: 4 }}>
-                <Text strong>Összesen: {durationLabel(totalSec)}</Text>
+            <div style={{ textAlign: 'right', paddingRight: 8 }}>
+                <Text strong style={{ fontSize: 13 }}>Összesen: {durationLabel(totalSec)}</Text>
             </div>
         </div>
     );
@@ -171,7 +181,9 @@ const ManufacturingDashboard: React.FC<{
     workers: { active_now: WorkerEntry[]; today_report: WorkerEntry[] };
     latestOrders: OrderRow[];
     navigate: ReturnType<typeof useNavigate>;
-}> = ({ counts, workers, latestOrders, navigate }) => {
+    onRefresh: () => void;
+    refreshing: boolean;
+}> = ({ counts, workers, latestOrders, navigate, onRefresh, refreshing }) => {
     const statCards = [
         { title: 'Új munkák', value: counts.new ?? 0, icon: <PlusCircleOutlined />, color: '#1677ff', status: 'new' },
         { title: 'Gyártásban', value: counts.in_production ?? 0, icon: <ThunderboltOutlined />, color: '#fa8c16', status: 'in_production' },
@@ -214,47 +226,73 @@ const ManufacturingDashboard: React.FC<{
         },
     ];
 
-    // Collapse items for daily report
-    const dailyItems = workers.today_report.map((w) => ({
-        key: String(w.employee_id),
-        label: (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+    // Daily report table columns (main row)
+    const dailyCols = [
+        {
+            title: 'Név',
+            dataIndex: 'employee_name',
+            key: 'employee_name',
+            render: (name: string, r: WorkerEntry) => (
                 <Space size={6}>
-                    {w.is_active
-                        ? <Badge status="processing" />
-                        : <Badge status="default" />}
-                    <Text strong>{w.employee_name}</Text>
-                </Space>
-                <Space size={4} style={{ fontSize: 12, color: '#666' }}>
-                    <LoginOutlined />
-                    <span>{timeLabel(w.check_in_time)}</span>
-                    {w.check_out_time && (
-                        <>
-                            <LogoutOutlined style={{ marginLeft: 4 }} />
-                            <span>{timeLabel(w.check_out_time)}</span>
-                        </>
+                    {r.is_active
+                        ? <Badge status="processing" title="Bent van" />
+                        : <Badge status="default" title="Kilépett" />}
+                    <Text strong>{name}</Text>
+                    {r.active_work && (
+                        <Text style={{ fontSize: 12, color: '#1677ff' }}>
+                            — <a onClick={() => navigate(`/orders/${r.active_work!.order_id}`)} style={{ fontSize: 12 }}>
+                                {r.active_work.order_number}
+                            </a>
+                            {r.active_work.customer_name && ` (${r.active_work.customer_name}`}
+                            {r.active_work.quote_title && ` — ${r.active_work.quote_title}`}
+                            {r.active_work.customer_name && ')'}
+                            {(r.active_work.sub_item_name || r.active_work.workflow_name) &&
+                                ` · ${r.active_work.sub_item_name || r.active_work.workflow_name}`}
+                        </Text>
                     )}
-                    {w.is_active && <Tag color="green" style={{ marginLeft: 4 }}>Bent van</Tag>}
                 </Space>
-                <Text type="secondary" style={{ fontSize: 12 }}>
-                    <ClockCircleOutlined style={{ marginRight: 4 }} />
-                    {durationLabel(w.total_duration_seconds)}
+            ),
+        },
+        {
+            title: 'Belépés',
+            dataIndex: 'check_in_time',
+            key: 'check_in_time',
+            width: 80,
+            render: (v: string | null) => <Text style={{ whiteSpace: 'nowrap' }}>{timeLabel(v)}</Text>,
+        },
+        {
+            title: 'Kilépés',
+            dataIndex: 'check_out_time',
+            key: 'check_out_time',
+            width: 80,
+            render: (v: string | null, r: WorkerEntry) =>
+                r.is_active
+                    ? <Tag color="green">Bent van</Tag>
+                    : <Text style={{ whiteSpace: 'nowrap' }}>{timeLabel(v)}</Text>,
+        },
+        {
+            title: (
+                <Tooltip title="A kioskon töltött idő">Munkaidő</Tooltip>
+            ),
+            dataIndex: 'total_duration_seconds',
+            key: 'total_duration_seconds',
+            width: 110,
+            render: (sec: number) => <Text style={{ whiteSpace: 'nowrap' }}>{durationLabel(sec)}</Text>,
+        },
+        {
+            title: (
+                <Tooltip title="Stopperrel rögzített idő">Aktív idő</Tooltip>
+            ),
+            dataIndex: 'active_seconds',
+            key: 'active_seconds',
+            width: 110,
+            render: (sec: number) => (
+                <Text style={{ whiteSpace: 'nowrap', color: sec > 0 ? '#52c41a' : '#999' }}>
+                    {durationLabel(sec)}
                 </Text>
-                {w.active_work && (
-                    <Text style={{ fontSize: 12, color: '#1677ff' }}>
-                        {w.active_work.order_number}
-                        {w.active_work.customer_name && ` (${w.active_work.customer_name}`}
-                        {w.active_work.quote_title && ` — ${w.active_work.quote_title}`}
-                        {w.active_work.customer_name && ')'}
-                        {w.active_work.workflow_name && ` · ${w.active_work.workflow_name}`}
-                    </Text>
-                )}
-            </div>
-        ),
-        children: w.work_logs.length > 0
-            ? <WorkerDailyTable logs={w.work_logs} navigate={navigate} />
-            : <Text type="secondary" style={{ paddingLeft: 8 }}>Nincs munkanapló ma.</Text>,
-    }));
+            ),
+        },
+    ];
 
     return (
         <>
@@ -323,7 +361,7 @@ const ManufacturingDashboard: React.FC<{
                                                         {[
                                                             w.active_work.customer_name,
                                                             w.active_work.quote_title,
-                                                            w.active_work.workflow_name,
+                                                            w.active_work.sub_item_name || w.active_work.workflow_name,
                                                         ].filter(Boolean).join(' — ')}
                                                     </Text>
                                                 ) : (
@@ -363,14 +401,35 @@ const ManufacturingDashboard: React.FC<{
             {/* Napi dolgozói napló */}
             <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
                 <Col xs={24}>
-                    <Card title="Napi dolgozói jelentés">
+                    <Card
+                        title="Napi dolgozói jelentés"
+                        extra={
+                            <Button
+                                icon={<ReloadOutlined />}
+                                size="small"
+                                loading={refreshing}
+                                onClick={onRefresh}
+                            >
+                                Frissítés
+                            </Button>
+                        }
+                    >
                         {workers.today_report.length === 0 ? (
                             <Text type="secondary">Ma még senki nem lépett be.</Text>
                         ) : (
-                            <Collapse
-                                items={dailyItems}
-                                ghost
-                                expandIconPosition="start"
+                            <Table
+                                dataSource={workers.today_report}
+                                columns={dailyCols}
+                                rowKey="employee_id"
+                                size="small"
+                                pagination={false}
+                                expandable={{
+                                    expandedRowRender: (w) =>
+                                        w.work_logs.length > 0
+                                            ? <WorkerDailyTable logs={w.work_logs} navigate={navigate} />
+                                            : <Text type="secondary" style={{ paddingLeft: 8, fontSize: 12 }}>Nincs munkanapló ma.</Text>,
+                                    rowExpandable: () => true,
+                                }}
                             />
                         )}
                     </Card>
@@ -513,6 +572,7 @@ const Dashboard = () => {
         return (localStorage.getItem('dashboardView') as DashboardView) ?? 'manufacturing';
     });
     const [loading, setLoading] = useState(true);
+    const [refreshing, setRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [counts, setCounts] = useState<StatusCounts>({});
     const [latestOrders, setLatestOrders] = useState<OrderRow[]>([]);
@@ -522,9 +582,10 @@ const Dashboard = () => {
     });
     const navigate = useNavigate();
 
-    const loadData = useCallback(async () => {
+    const loadData = useCallback(async (silent = false) => {
         try {
-            setLoading(true);
+            if (!silent) setLoading(true);
+            else setRefreshing(true);
             setError(null);
             const [stats, workerData] = await Promise.all([
                 salesService.getDashboardStats(),
@@ -541,13 +602,12 @@ const Dashboard = () => {
             setError('Hiba történt az adatok betöltése során');
         } finally {
             setLoading(false);
+            setRefreshing(false);
         }
     }, []);
 
     useEffect(() => {
         loadData();
-        const id = setInterval(loadData, 60000);
-        return () => clearInterval(id);
     }, [loadData]);
 
     const handleViewChange = (v: DashboardView) => {
@@ -584,6 +644,8 @@ const Dashboard = () => {
                             workers={workers}
                             latestOrders={latestOrders}
                             navigate={navigate}
+                            onRefresh={() => loadData(true)}
+                            refreshing={refreshing}
                         />
                     )}
                     {view === 'sales' && (

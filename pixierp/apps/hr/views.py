@@ -1840,7 +1840,8 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).select_related(
             'user',
             'customer_order__quote_request__company',
-            'item'
+            'item',
+            'sub_item',
         )
         active_wl_map = {wl.user_id: wl for wl in active_wls}
 
@@ -1850,7 +1851,8 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).select_related(
             'user',
             'customer_order__quote_request__company',
-            'item'
+            'item',
+            'sub_item',
         ).order_by('started_at')
         wl_by_user = {}
         for wl in today_wls:
@@ -1872,7 +1874,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             user = emp.user
             logs = data['logs']
 
-            # Compute total duration and active state
+            # Compute total kiosk duration and active state
             total_sec = 0
             is_active = False
             last_check_in = logs[0].check_in_time if logs else None
@@ -1902,7 +1904,8 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_id': awl.customer_order.id,
                     'customer_name': customer_name,
                     'quote_title': quote_title,
-                    'item_name': awl.item.name if awl.item else '',
+                    'item_name': awl.item.description if awl.item else '',
+                    'sub_item_name': awl.sub_item.name if awl.sub_item else '',
                     'workflow_name': awl.workflow_name or '',
                     'started_at': awl.started_at.isoformat(),
                 }
@@ -1910,9 +1913,11 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             # Work log list for today
             user_wls = wl_by_user.get(user.id, [])
             work_log_list = []
+            active_seconds = 0
             for wl in user_wls:
                 wl_end = wl.ended_at or now
                 wl_dur = int((wl_end - wl.started_at).total_seconds())
+                active_seconds += wl_dur
                 try:
                     c_name = (
                         wl.customer_order.quote_request.company.name
@@ -1929,23 +1934,27 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_id': wl.customer_order.id,
                     'customer_name': c_name,
                     'quote_title': q_title,
-                    'item_name': wl.item.name if wl.item else '',
+                    'item_name': wl.item.description if wl.item else '',
+                    'sub_item_name': wl.sub_item.name if wl.sub_item else '',
                     'workflow_name': wl.workflow_name or '',
                     'duration_seconds': wl_dur,
                     'is_running': wl.ended_at is None,
                 })
 
+            # Find earliest check_in and latest check_out for display
+            first_check_in = logs[0].check_in_time if logs else None
+            last_check_out = None
+            if not is_active and logs:
+                last_check_out = logs[-1].check_out_time
+
             entry = {
                 'employee_id': emp_id,
                 'employee_name': user.get_full_name() or user.username,
                 'user_id': user.id,
-                'check_in_time': last_check_in.isoformat() if last_check_in else None,
-                'check_out_time': (
-                    logs[-1].check_out_time.isoformat()
-                    if logs and logs[-1].check_out_time and not is_active
-                    else None
-                ),
+                'check_in_time': first_check_in.isoformat() if first_check_in else None,
+                'check_out_time': last_check_out.isoformat() if last_check_out else None,
                 'total_duration_seconds': total_sec,
+                'active_seconds': active_seconds,
                 'is_active': is_active,
                 'active_work': active_work,
                 'work_logs': work_log_list,
