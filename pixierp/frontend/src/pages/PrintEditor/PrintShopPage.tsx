@@ -17,7 +17,7 @@ import api from '../../services/api';
 import { PrintParams } from './components/Step1Params';
 import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
 import Step3OrderSummary from './components/Step3OrderSummary';
-import PrintCommentView from './components/PrintCommentView';
+import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -105,6 +105,9 @@ const PrintShopPage: React.FC = () => {
   const [saving, setSaving] = useState(false);
   const [rfqSaving, setRfqSaving] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
+
+  // Clear cached PDF on every page load so a fresh file is always required
+  useEffect(() => { clearPdfFromIDB(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // from_rfq mode: opened from RFQ modal, show only Save button
   const fromRfqParams = new URLSearchParams(location.search);
