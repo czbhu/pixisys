@@ -2659,6 +2659,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 d['_source'] = 'item'
                 d['_source_label'] = f'Tétel: {item_name}'
                 d['original_filename'] = att.file.name.split('/')[-1] if att.file else ''
+                d['file_size'] = att.file.size if att.file else 0
                 d['order_item_id'] = oi.id
                 result.append(d)
 
@@ -2674,6 +2675,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                             'id': ci_att.id,
                             'original_filename': ci_att.file.name.split('/')[-1] if ci_att.file else '',
                             'file_url': request.build_absolute_uri(ci_att.file.url) if ci_att.file else None,
+                            'file_size': ci_att.file.size if ci_att.file else 0,
                             'remark': getattr(ci_att, 'remark', ''),
                             'uploaded_by_name': '',
                             'created_at': str(ci_att.created_at) if hasattr(ci_att, 'created_at') else '',
@@ -4364,6 +4366,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
                     'id': a.id,
                     'file_url': request.build_absolute_uri(a.file.url) if a.file else None,
                     'original_filename': a.file.name.split('/')[-1] if a.file else '',
+                    'file_size': a.file.size if a.file else 0,
                     'remark': a.remark,
                     'storage_file_id': a.storage_file_id,
                     'uploaded_by_name': a.uploaded_by.get_full_name() if a.uploaded_by else '',
@@ -4398,6 +4401,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
             'id': att.id,
             'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
             'original_filename': att.file.name.split('/')[-1] if att.file else '',
+            'file_size': att.file.size if att.file else 0,
             'remark': att.remark,
             'storage_file_id': att.storage_file_id,
             'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',

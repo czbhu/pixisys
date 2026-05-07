@@ -26,6 +26,7 @@ import {
 import { manufacturingService } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
 import api from '../../services/api';
+import { formatBytes } from '../../utils/fileUtils';
 
 const STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
   { value: 'new', label: 'Új', color: 'blue' },
@@ -551,6 +552,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                   {atts.map((att: any) => (
                     <Space key={att.id} size={4} align="center">
                       <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
+                      {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                       {editingSubAttRemarkId === att.id ? (
                         <Space size={4}>
                           <Input

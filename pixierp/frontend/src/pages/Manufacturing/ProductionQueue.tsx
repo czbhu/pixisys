@@ -45,6 +45,7 @@ import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import useUserPreference from '../../hooks/useUserPreference';
 import api from '../../services/api';
 import { useSearchParams } from 'react-router-dom';
+import { formatBytes } from '../../utils/fileUtils';
 
 const STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -749,6 +750,7 @@ const ProductionQueue: React.FC = () => {
                                     <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
                                         {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
                                     </a>
+                                    {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                                     <Tooltip title="Letöltés">
                                         <Button
                                             type="text"
