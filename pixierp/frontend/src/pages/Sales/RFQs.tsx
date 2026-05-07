@@ -1861,7 +1861,7 @@ const RFQs: React.FC = () => {
                     placeholder="Válassz kapcsolattartókat"
                     style={{ width: 'calc(100% - 190px)' }}
                     popupMatchSelectWidth={false}
-                    dropdownStyle={{ minWidth: 260 }}
+                    dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
                     onFocus={async () => {
                       // Frissítjük a kapcsolattartók listáját amikor rákattintanak
                       const companyId = form.getFieldValue('company_id');
