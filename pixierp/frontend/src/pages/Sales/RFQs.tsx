@@ -1845,7 +1845,7 @@ const RFQs: React.FC = () => {
                 </Space.Compact>
               </Form.Item>
             </Col>
-            <Col span={16}>
+            <Col xs={24} md={16}>
               <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="contact_ids" noStyle>
