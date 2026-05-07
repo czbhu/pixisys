@@ -44,6 +44,7 @@ import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItems
 import api from '../../services/api';
 import { settingsService } from '../../services/settingsService';
 import { formatBytes } from '../../utils/fileUtils';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 
 const ORDER_ITEM_STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -775,7 +776,13 @@ const OrderedProducts: React.FC = () => {
                                 {itemAtts.map((att: any) => (
                                     <Space key={att.id} size={4} align="center">
                                         <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
-                                        <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
+                                        <a
+                                        href={att.file_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{ fontSize: 12 }}
+                                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                    >{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
                                         {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                                         {editingAttRemarkId === att.id ? (
                                             <Space size={4}>

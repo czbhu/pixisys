@@ -11,10 +11,11 @@ import type { UploadFile } from 'antd/es/upload';
 import {
   FolderOutlined, FileOutlined, UploadOutlined, FolderAddOutlined,
   DeleteOutlined, ShareAltOutlined, DownloadOutlined, MoreOutlined,
-  HomeOutlined, ReloadOutlined, UserOutlined, TeamOutlined,
+  HomeOutlined, ReloadOutlined, UserOutlined, TeamOutlined, EyeOutlined,
 } from '@ant-design/icons';
 import api from '../../services/api';
 import { useAuth } from '../../contexts/AuthContext';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 
 const { Sider, Content } = Layout;
 const { Title, Text } = Typography;
@@ -370,7 +371,16 @@ const StoragePage: React.FC = () => {
       width: 100,
       render: (_: any, record: StorageFile) => {
         const canDel = isAdmin || record.owner === (user as any)?.id;
+        const fileLooksLikePdf = isPdf(record.name) || (record.content_type || '').includes('pdf');
         const items: MenuProps['items'] = [
+          fileLooksLikePdf
+            ? {
+                key: 'preview',
+                label: 'Megnyitás Print Preview-ban',
+                icon: <EyeOutlined />,
+                onClick: () => openPdfPreview(`/api/storage/files/${record.id}/download/`),
+              }
+            : null,
           {
             key: 'download',
             label: 'Letöltés',

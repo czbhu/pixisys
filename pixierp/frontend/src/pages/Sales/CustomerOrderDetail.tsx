@@ -13,6 +13,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { Table } from 'antd';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 
 const { TextArea } = Input;
 
@@ -728,7 +729,7 @@ const CustomerOrderDetail: React.FC = () => {
                   <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
                 </Popover>
               ) : (
-                <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                <Button type="link" style={{ padding: 0 }} onClick={() => isPdf(att.file_url) ? openPdfPreview(att.file_url) : window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
               );
               return (
                 <List.Item>

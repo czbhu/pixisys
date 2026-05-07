@@ -19,6 +19,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import { deepSearchMatch } from '../../utils/searchUtils';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import { Spin as AntSpin } from 'antd';
 import './CustomerOrders.css';
@@ -745,7 +746,13 @@ interface CustomerOrder {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 {atts.map((att: any) => (
                                   <Space key={att.id} size={4} align="center">
-                                    <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>{att.original_filename}</a>
+                                    <a
+                                      href={att.file_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      style={{ fontSize: 12 }}
+                                      onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                    >{att.original_filename}</a>
                                     {editingAttRemarkId === att.id ? (
                                       <Space size={4}>
                                         <Input

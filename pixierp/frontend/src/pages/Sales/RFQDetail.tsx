@@ -20,6 +20,7 @@ import { postalCodeService } from '../../services/postalCodeService';
 import { getCountries } from '../../services/countryService';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 
 const normAccents = (s: string) =>
   (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -1093,7 +1094,15 @@ const RFQDetail: React.FC = () => {
         >
           {filePreviewUrl ? (
             filePreviewUrl.match(/\.pdf($|\?)/i) ? (
-              <iframe title="preview" src={filePreviewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
+              <div style={{ textAlign: 'center', padding: '32px 0' }}>
+                <Button
+                  type="primary"
+                  size="large"
+                  onClick={() => { openPdfPreview(filePreviewUrl!); }}
+                >
+                  Megnyitás Print Preview-ban
+                </Button>
+              </div>
             ) : (
               <img alt={filePreviewTitle} src={filePreviewUrl} style={{ maxWidth: '100%', maxHeight: '70vh' }} />
             )

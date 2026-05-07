@@ -46,6 +46,7 @@ import useUserPreference from '../../hooks/useUserPreference';
 import api from '../../services/api';
 import { useSearchParams } from 'react-router-dom';
 import { formatBytes } from '../../utils/fileUtils';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 
 const STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -747,7 +748,13 @@ const ProductionQueue: React.FC = () => {
                             {atts.map((att: any) => (
                                 <Space key={att.id} size={6} align="center">
                                     <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
-                                    <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 12 }}>
+                                    <a
+                                        href={att.file_url}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        style={{ fontSize: 12 }}
+                                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                    >
                                         {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
                                     </a>
                                     {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}

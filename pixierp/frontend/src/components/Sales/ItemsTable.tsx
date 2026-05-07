@@ -10,6 +10,7 @@ import { manufacturingService } from '../../services/manufacturingService';
 import { buildTreeMetaBy, CostTreeGuide } from '../Manufacturing/CostDnd';
 import ProductSubItemsTable from '../Manufacturing/ProductSubItemsTable';
 import api from '../../services/api';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ImpositionHelperModal from './ImpositionHelperModal';
 
 const ITEM_STATUS_MAP: Record<string, { label: string; color: string }> = {
@@ -689,7 +690,13 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               {atts.map((att: any) => (
                 <Space key={att.id} size={6}>
                   <PaperClipOutlined style={{ color: '#888' }} />
-                  <a href={att.file_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: 13 }}>{att.original_filename}</a>
+                  <a
+                    href={att.file_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    style={{ fontSize: 13 }}
+                    onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                  >{att.original_filename}</a>
                   {att.remark && <span style={{ color: '#888', fontSize: 12, fontStyle: 'italic' }}>{att.remark}</span>}
                   <span style={{ color: '#bbb', fontSize: 11 }}>{att.uploaded_by_name}</span>
                   <Button
@@ -802,7 +809,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                 }
                 
                 return (
-                  <a href={fileUrl} target="_blank" rel="noopener noreferrer">
+                  <a
+                    href={fileUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onClick={(e) => { if (isPdf(fileUrl)) { e.preventDefault(); openPdfPreview(fileUrl); } }}
+                  >
                     {fileName}
                   </a>
                 );
@@ -825,11 +837,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               render: (record: any): React.ReactNode => (
                 <Button 
                   type="link" 
-                  href={record.file_url || record.file} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
+                  onClick={() => {
+                    const url = record.file_url || record.file;
+                    if (isPdf(url)) { openPdfPreview(url); } else { window.open(url, '_blank'); }
+                  }}
                 >
-                  Letöltés
+                  {isPdf(record.file_url || record.file) ? 'Print Preview' : 'Letöltés'}
                 </Button>
               ),
             },

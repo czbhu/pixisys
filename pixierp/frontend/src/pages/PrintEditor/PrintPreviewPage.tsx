@@ -86,6 +86,11 @@ const PrintPreviewPage: React.FC = () => {
     const v = queryParams.get('shareToken');
     return v && v !== 'null' && v !== 'undefined' ? v : null;
   }, [queryParams]);
+  // Direct PDF URL (from attachment links on other pages)
+  const directPdfUrl = useMemo(() => {
+    const v = queryParams.get('pdfUrl');
+    return v && v !== 'null' && v !== 'undefined' ? v : null;
+  }, [queryParams]);
   const hasPrintPreviewPerm = Array.isArray(user?.permissions) && user.permissions.some(
     (p: { module?: string; resource?: string; action?: string; allowed?: boolean }) =>
       p.resource === 'printshop.preview' && p.allowed !== false
@@ -562,12 +567,12 @@ const PrintPreviewPage: React.FC = () => {
     return <div style={{ maxWidth: 900, margin: '40px auto', padding: 16 }}><Alert type="error" showIcon message="Megosztott preview" description={error} /></div>;
   }
 
-  if (!publicToken && (!orderId || !itemId) && !isAdmin) {
+  if (!publicToken && (!orderId || !itemId) && !isAdmin && !directPdfUrl) {
     window.location.replace('/print-storage');
     return null;
   }
 
-  const showPrintCommentView = startupDecided || !!publicToken || !!orderId || !!itemId || !!standaloneShareToken;
+  const showPrintCommentView = startupDecided || !!publicToken || !!orderId || !!itemId || !!standaloneShareToken || !!directPdfUrl;
 
   return (
     <>
@@ -643,7 +648,7 @@ const PrintPreviewPage: React.FC = () => {
           canEdit={publicToken ? !!shareConfig?.editable : isAdmin}
           canComment={publicToken ? !!shareConfig?.commentable : true}
           canExport={publicToken ? !!shareConfig?.exportable : true}
-          initialPdfUrl={publicToken || standaloneShareToken ? (shareConfig?.pdf_url ?? null) : (itemConfig?.generated_pdf_url ?? null)}
+          initialPdfUrl={directPdfUrl ?? (publicToken || standaloneShareToken ? (shareConfig?.pdf_url ?? null) : (itemConfig?.generated_pdf_url ?? null))}
           hideUpload={!!publicToken && !shareConfig?.editable}
           onPdfFileChange={setLocalPdfFile}
           onAnnotationsChange={setLocalAnnotations}
