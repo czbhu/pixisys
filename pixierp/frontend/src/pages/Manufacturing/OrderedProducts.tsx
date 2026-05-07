@@ -35,7 +35,7 @@ import {
     DeleteOutlined,
 } from '@ant-design/icons';
 import dayjs from 'dayjs';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { manufacturingService } from '../../services/manufacturingService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
@@ -170,6 +170,7 @@ const renderSignature = (sig: any, user: any) => {
 
 const OrderedProducts: React.FC = () => {
     const navigate = useNavigate();
+    const [searchParams] = useSearchParams();
     const { user } = useAuth();
     const { setModalOpen: setTimerModalOpen, setPreselectedOrderId, setPreselectedItemId } = useTimeTracker();
 
@@ -184,6 +185,7 @@ const OrderedProducts: React.FC = () => {
     const [items, setItems] = useState<OrderedManufacturingItem[]>([]);
     const [loading, setLoading] = useState(false);
     const [query, setQuery] = useState('');
+    const [filterOrderId, setFilterOrderId] = useState<number | null>(null);
     const [statusFilter, setStatusFilter] = useState<string[]>([
         'new', 'confirmed', 'in_production', 'ready', 'in_delivery',
     ]);
@@ -211,6 +213,11 @@ const OrderedProducts: React.FC = () => {
     useEffect(() => {
         loadItems();
     }, []);
+
+    useEffect(() => {
+        const orderParam = Number(searchParams.get('order') || 0);
+        if (orderParam > 0) setFilterOrderId(orderParam);
+    }, [searchParams]);
 
     const loadItems = async () => {
         try {
@@ -883,6 +890,9 @@ const OrderedProducts: React.FC = () => {
 
     const filtered = (() => {
         let result = items;
+        if (filterOrderId) {
+            result = result.filter(i => i.order_id === filterOrderId);
+        }
         if (statusFilter.length > 0) {
             result = result.filter(i => statusFilter.includes(i.status));
         }
@@ -1088,6 +1098,14 @@ const OrderedProducts: React.FC = () => {
                 title="Megrendelt Gyártások"
                 extra={
                     <Space>
+                        {filterOrderId && (() => {
+                            const orderNum = items.find(i => i.order_id === filterOrderId)?.order_number || `#${filterOrderId}`;
+                            return (
+                                <Tag closable color="blue" onClose={() => setFilterOrderId(null)}>
+                                    Megrendelés: {orderNum}
+                                </Tag>
+                            );
+                        })()}
                         <Select
                             mode="multiple"
                             allowClear
