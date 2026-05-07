@@ -2148,10 +2148,20 @@ const RFQs: React.FC = () => {
               Részlegesen megrendelhető
             </Checkbox>
           </div>
-          <Space>
+          <Space wrap>
             <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
             <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
             <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
+            <Button
+              onClick={() => {
+                const companyId = form.getFieldValue('company_id');
+                const company = companies.find((c: any) => c.id === companyId);
+                const params = new URLSearchParams({ from_rfq: '1' });
+                if (companyId && companyId !== 'private') params.set('company', String(companyId));
+                if (company?.name) params.set('company_name', encodeURIComponent(company.name));
+                window.open(`/print-shop?${params.toString()}`, '_blank');
+              }}
+            >PrintShop</Button>
           </Space>
           <div style={{ marginTop: 6 }}>
             <ItemsTable

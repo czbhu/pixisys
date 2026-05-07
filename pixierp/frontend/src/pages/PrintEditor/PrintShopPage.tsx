@@ -104,6 +104,12 @@ const PrintShopPage: React.FC = () => {
   const [rfqSaving, setRfqSaving] = useState(false);
   const [orderModalOpen, setOrderModalOpen] = useState(false);
 
+  // from_rfq mode: opened from RFQ modal, show only Save button
+  const fromRfqParams = new URLSearchParams(location.search);
+  const fromRfq = fromRfqParams.get('from_rfq') === '1';
+  const fromRfqCompanyId = fromRfqParams.get('company') ? Number(fromRfqParams.get('company')) : null;
+  const fromRfqCompanyName = fromRfqParams.get('company_name') || '';
+
   // Persist orderId/itemId to localStorage
   useEffect(() => {
     try {
@@ -298,6 +304,9 @@ const PrintShopPage: React.FC = () => {
   const [companies, setCompanies] = useState<Company[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [selectedCompany, setSelectedCompany] = useState<number | null>(() => {
+    const qp = new URLSearchParams(window.location.search);
+    const fromRfqCo = qp.get('company') ? Number(qp.get('company')) : null;
+    if (fromRfqCo) return fromRfqCo;
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).selectedCompany; return v ?? null; } } catch {} return null;
   });
   const [selectedContact, setSelectedContact] = useState<number | null>(() => {
@@ -343,6 +352,13 @@ const PrintShopPage: React.FC = () => {
       refreshContacts(selectedCompany);
     } else {
       setContacts([]);
+    }
+    // If opened from RFQ with a company preloaded, ensure it appears in the list
+    if (fromRfqCompanyId && fromRfqCompanyName) {
+      setCompanies(prev => {
+        if (prev.find(c => c.id === fromRfqCompanyId)) return prev;
+        return [{ id: fromRfqCompanyId, name: decodeURIComponent(fromRfqCompanyName) }, ...prev];
+      });
     }
   }, [isAdmin, selectedCompany]); // eslint-disable-line
 
@@ -772,6 +788,16 @@ const PrintShopPage: React.FC = () => {
                 />
               </div>
               <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
+                {fromRfq ? (
+                  <Button
+                    type="primary" block size="large"
+                    icon={<FileTextOutlined />}
+                    loading={rfqSaving} onClick={handleRFQ}
+                    style={{ backgroundColor: '#52c41a', borderColor: '#52c41a' }}
+                  >
+                    Mentés az ajánlathoz
+                  </Button>
+                ) : (
                 <Row gutter={8}>
                   <Col span={12}>
                     <Button
@@ -793,6 +819,7 @@ const PrintShopPage: React.FC = () => {
                     </Button>
                   </Col>
                 </Row>
+                )}
               </div>
             </>
           ) : (
