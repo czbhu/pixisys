@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm } from 'antd';
+import { Modal, Tabs, Input, Table, Button, Form, InputNumber, Select, Space, message, Divider, Alert, Upload, Tooltip, Collapse, Drawer, Tag, Checkbox, Row, Col, Switch, AutoComplete, Typography, Popconfirm, Grid } from 'antd';
 import NumInput from '../NumInput';
 import { UploadOutlined, SyncOutlined, EditOutlined, SearchOutlined, PlusOutlined, DeleteOutlined, CopyOutlined, ExclamationCircleOutlined, UpOutlined, DownOutlined, LeftOutlined, RightOutlined, AppstoreOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent } from '@dnd-kit/core';
@@ -91,6 +91,8 @@ const defaultVat = 27;
 
 export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId }) => {
   const navigate = useNavigate();
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const [activeKey, setActiveKey] = useState<ItemType>(defaultType);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
@@ -2058,6 +2060,74 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                       </div>
                       <DndContext sensors={manuCostSensors} collisionDetection={closestCenter} onDragEnd={onManuCostDragEnd}>
                         <SortableContext items={manuCostItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                          {isMobile ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                              {manuCostItems.map((r: CostItem) => (
+                                <div key={r.id} style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 8, background: '#fff', fontSize: 12 }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+                                      <input type="checkbox" checked={!!r.is_per_unit} onChange={e => manuUpdateCostItem(r.id, 'is_per_unit', e.target.checked)} title="Egységre vonatkozik?" />
+                                      <span style={{ color: '#888', fontSize: 11 }}>{r.type === 'material' ? 'Anyag' : r.type === 'service' ? 'Szv.' : 'Egyéb'}</span>
+                                    </div>
+                                    <Space size={4}>
+                                      <Button size="small" icon={<CopyOutlined />} onClick={() => setManuCostItems(prev => { const idx = prev.findIndex(x => x.id === r.id); if (idx < 0) return prev; const copy = { ...prev[idx], id: Date.now() + Math.random() }; const next = [...prev]; next.splice(idx + 1, 0, copy); return next; })} />
+                                      <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} />
+                                    </Space>
+                                  </div>
+                                  <div style={{ marginBottom: 4 }}>
+                                    {r.type === 'other'
+                                      ? <Input size="small" value={r.name} onChange={e => manuUpdateCostItem(r.id, 'name', e.target.value)} status={!r.name ? 'error' : ''} placeholder="Megnevezés" style={{ width: '100%' }} />
+                                      : <Button type="link" size="small" style={{ padding: 0, height: 'auto', textAlign: 'left', width: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.name ? undefined : '#ff4d4f' }} onClick={() => { setCostSearchQuery(''); setCostSearchEditId(r.id); setCostSearchModal({ open: true, type: r.type as 'material' | 'service' }); }}>{r.name || '(nincs kiválasztva)'}</Button>
+                                    }
+                                  </div>
+                                  <Row gutter={[4, 4]}>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Menny. / Egység</div>
+                                      <Space.Compact style={{ width: '100%' }}>
+                                        <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: '50%' }} />
+                                        {r.type === 'other'
+                                          ? <AutoComplete size="small" value={r.unit} options={unitSuggestions.map(u => ({ value: u.unit, label: u.count > 0 ? `${u.unit} (${u.count}x)` : u.unit }))} onChange={v => manuUpdateCostItem(r.id, 'unit', v)} filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())} style={{ width: '50%' }} />
+                                          : <span style={{ padding: '0 6px', lineHeight: '24px' }}>{r.unit}</span>
+                                        }
+                                      </Space.Compact>
+                                    </Col>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Bek. e.ár</div>
+                                      <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: '100%' }} min={0} />
+                                    </Col>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Haszon%</div>
+                                      <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: '100%' }} min={0} />
+                                    </Col>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>El. egység ár</div>
+                                      <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: '100%' }} min={0} />
+                                    </Col>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Összesen</div>
+                                      <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: '100%' }} min={0} />
+                                    </Col>
+                                    <Col span={12}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Pénznem</div>
+                                      <Select size="small" style={{ width: '100%' }} value={(r.currency_code || manuCostCurrencyCode || 'HUF').toUpperCase()} onChange={(val: string) => { const found = manuCurrencies.find(c => c.code.toUpperCase() === val.toUpperCase()); manuUpdateCostItem(r.id, 'currency_code', val.toUpperCase()); manuUpdateCostItem(r.id, 'currency_id', found?.id ?? null); }}>
+                                        {manuCurrencies.map(c => <Select.Option key={c.code} value={c.code.toUpperCase()}>{c.code.toUpperCase()}</Select.Option>)}
+                                      </Select>
+                                    </Col>
+                                    <Col span={24}>
+                                      <div style={{ fontSize: 11, color: '#888' }}>Beszállító</div>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                        <Checkbox checked={r.is_internal} onChange={e => { manuUpdateCostItem(r.id, 'is_internal', e.target.checked); manuUpdateCostItem(r.id, 'department_id', null); manuUpdateCostItem(r.id, 'supplier_id', null); }}>Belső</Checkbox>
+                                        {r.is_internal
+                                          ? <Select size="small" style={{ flex: 1 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">{manuDepartments.map((d: any) => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}</Select>
+                                          : <Select size="small" style={{ flex: 1 }} value={r.supplier_id} onChange={v => manuUpdateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Beszállító">{manuSuppliers.map((s: any) => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}</Select>
+                                        }
+                                      </div>
+                                    </Col>
+                                  </Row>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
                           <Table
                             dataSource={manuCostItems}
                             columns={[
@@ -2072,6 +2142,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                             size="small"
                             components={{ body: { row: CostDraggableRow } }}
                           />
+                          )}
                         </SortableContext>
                       </DndContext>
                       {manuCostItems.length > 0 && (() => {
