@@ -66,6 +66,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
     manufacturing_product_code = serializers.CharField(source='manufacturing_product.code', read_only=True)
     manufacturing_product_description = serializers.CharField(source='manufacturing_product.description', read_only=True)
+    manufacturing_product_printshop_params = serializers.SerializerMethodField()
     service_name = serializers.CharField(source='service.name', read_only=True)
     service_code = serializers.CharField(source='service.code', read_only=True)
     service_unit_cost_price = serializers.DecimalField(source='service.unit_cost_price', max_digits=12, decimal_places=2, read_only=True, allow_null=True, default=None)
@@ -97,6 +98,12 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
             return round(total / product_qty, 2)
         except Exception:
             return None
+
+    def get_manufacturing_product_printshop_params(self, obj):
+        mp = getattr(obj, 'manufacturing_product', None)
+        if mp:
+            return mp.printshop_params
+        return None
 
     def get_is_ordered(self, obj):
         return obj.customerorderitem_set.exclude(customer_order__status='cancelled').exists()

@@ -531,6 +531,24 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
           {onEditItem ? (
             <Button size="small" onClick={() => onEditItem && onEditItem(record)}>Szerk.</Button>
           ) : null}
+          {record.item_type === 'manufacturing' && record.manufacturing_product_printshop_params ? (
+            <Tooltip title="Megnyitás PrintShopban">
+              <Button
+                size="small"
+                type="primary"
+                ghost
+                onClick={() => {
+                  const psParams = record.manufacturing_product_printshop_params;
+                  try {
+                    const existing = JSON.parse(localStorage.getItem('pixierp_printshop_state') || '{}');
+                    localStorage.setItem('pixierp_printshop_state', JSON.stringify({ ...existing, params: psParams }));
+                  } catch {}
+                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(record.manufacturing_product) });
+                  window.open(`/print-shop?${urlParams.toString()}`, '_blank');
+                }}
+              >PS</Button>
+            </Tooltip>
+          ) : null}
           <Tooltip title={record.imposition_data && Object.keys(record.imposition_data).length > 0 ? 'Impozíció szerkesztése (mentett)' : 'Impozíció hozzáadása'}>
             <Button
               size="small"

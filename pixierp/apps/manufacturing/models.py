@@ -325,6 +325,7 @@ class ManufacturingProduct(models.Model):
     contact = models.ForeignKey(Contact, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Ügyfél")
     contact_external_id = models.CharField(max_length=100, blank=True, default='', db_index=True, verbose_name="Kapcsolattartó külső azonosító")
     deadline = models.DateField(verbose_name="Határidő")
+    printshop_params = models.JSONField(null=True, blank=True, verbose_name="PrintShop paraméterek")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

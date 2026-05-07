@@ -114,6 +114,20 @@ const PrintShopPage: React.FC = () => {
   const fromRfq = fromRfqParams.get('from_rfq') === '1';
   const fromRfqCompanyId = fromRfqParams.get('company') ? Number(fromRfqParams.get('company')) : null;
   const fromRfqCompanyName = fromRfqParams.get('company_name') || '';
+  // edit_mfg_id: opened from PS button on an existing RFQ item → update instead of create
+  const editMfgId = fromRfqParams.get('edit_mfg_id') ? Number(fromRfqParams.get('edit_mfg_id')) : null;
+
+  // Load printshop_params from the manufacturing product when editing
+  useEffect(() => {
+    if (!editMfgId) return;
+    manufacturingService.getProduct(editMfgId).then(product => {
+      const saved = (product as any).printshop_params;
+      if (saved && typeof saved === 'object') {
+        const { price_breakdown: _pb, ...printParams } = saved;
+        setParams(prev => ({ ...prev, ...printParams }));
+      }
+    }).catch(() => {});
+  }, [editMfgId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Persist orderId/itemId to localStorage
   useEffect(() => {
@@ -497,15 +511,24 @@ const PrintShopPage: React.FC = () => {
         sheet_count: params.sheet_count ?? 1,
         material: params.material_id ?? undefined,
         price_breakdown: priceBreakdown ?? undefined,
+        printshop_params: { ...params, price_breakdown: priceBreakdown ?? null },
       };
 
-      const created = await manufacturingService.createProduct(payload);
+      let productId: number;
+      if (editMfgId) {
+        // Update existing manufacturing product
+        await manufacturingService.updateProduct(editMfgId, payload);
+        productId = editMfgId;
+      } else {
+        const created = await manufacturingService.createProduct(payload);
+        productId = created.id;
+      }
 
       // Upload PDF attachment if a file is loaded
       if (currentPdfFileRef.current) {
         try {
           await manufacturingService.uploadProductAttachment(
-            created.id,
+            productId,
             currentPdfFileRef.current,
             'PrintShop PDF'
           );
@@ -515,18 +538,22 @@ const PrintShopPage: React.FC = () => {
       }
 
       message.success('Ajánlat készítése...');
-      const rfqParams = new URLSearchParams({
-        create: 'true',
-        add_item_id: String(created.id),
-        add_item_type: 'manufacturing',
-      });
-      if (selectedCompany) rfqParams.set('company', String(selectedCompany));
-      if (selectedContact) rfqParams.set('contact', String(selectedContact));
-      if (fromRfq) {
-        // Opened from RFQ tab: navigate the current tab back to RFQ
-        window.location.href = `/sales/rfqs?${rfqParams.toString()}`;
+      if (editMfgId) {
+        // Editing existing item: just go back to RFQ list
+        window.location.href = '/sales/rfqs';
       } else {
-        window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+        const rfqParams = new URLSearchParams({
+          create: 'true',
+          add_item_id: String(productId),
+          add_item_type: 'manufacturing',
+        });
+        if (selectedCompany) rfqParams.set('company', String(selectedCompany));
+        if (selectedContact) rfqParams.set('contact', String(selectedContact));
+        if (fromRfq) {
+          window.location.href = `/sales/rfqs?${rfqParams.toString()}`;
+        } else {
+          window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+        }
       }
     } catch (e: any) {
       console.error('[handleRFQ] error:', e?.response?.data);
