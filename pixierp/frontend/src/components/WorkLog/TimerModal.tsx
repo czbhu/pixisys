@@ -172,6 +172,9 @@ export const TimerModal: React.FC = () => {
             open={modalOpen}
             onCancel={() => setModalOpen(false)}
             footer={null}
+            centered
+            width="min(480px, 96vw)"
+            style={{ maxWidth: '96vw' }}
         >
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
                  <Statistic title="Időtartam" value={formatTime(elapsedSeconds)} />

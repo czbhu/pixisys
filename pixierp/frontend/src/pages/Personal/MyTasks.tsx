@@ -426,6 +426,9 @@ const MyTasks: React.FC = () => {
         open={timerModalOpen}
         onCancel={() => setTimerModalOpen(false)}
         footer={null}
+        centered
+        width="min(480px, 96vw)"
+        style={{ maxWidth: '96vw' }}
       >
         <Space direction="vertical" style={{ width: '100%' }} size="large">
           <div style={{ textAlign: 'center' }}>{renderTimer()}</div>
