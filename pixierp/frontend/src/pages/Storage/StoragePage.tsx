@@ -378,7 +378,7 @@ const StoragePage: React.FC = () => {
                 key: 'preview',
                 label: 'Megnyitás Print Preview-ban',
                 icon: <EyeOutlined />,
-                onClick: () => openPdfPreview(`/api/storage/files/${record.id}/download/`),
+                onClick: () => openPdfPreview(`storage/files/${record.id}/download/`),
               }
             : null,
           {
