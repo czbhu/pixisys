@@ -1834,13 +1834,34 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             check_in_time__range=(today_start, today_end)
         ).select_related('employee__user').order_by('employee_id', 'check_in_time')
 
+        def _item_name(item):
+            """CustomerOrderItem → tétel neve (quote_item alapján)"""
+            if not item:
+                return ''
+            try:
+                qi = item.quote_item
+                if qi.product_id and qi.product:
+                    return qi.product.name
+                if qi.material_id and qi.material:
+                    return qi.material.name
+                if qi.manufacturing_product_id and qi.manufacturing_product:
+                    return qi.manufacturing_product.name
+                if qi.service_id and qi.service:
+                    return qi.service.name
+            except Exception:
+                pass
+            return item.description or ''
+
         # Currently running work logs (all users)
         active_wls = WorkLog.objects.filter(
             ended_at__isnull=True
         ).select_related(
             'user',
             'customer_order__quote_request__company',
-            'item',
+            'item__quote_item__product',
+            'item__quote_item__material',
+            'item__quote_item__manufacturing_product',
+            'item__quote_item__service',
             'sub_item',
         )
         active_wl_map = {wl.user_id: wl for wl in active_wls}
@@ -1851,7 +1872,10 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).select_related(
             'user',
             'customer_order__quote_request__company',
-            'item',
+            'item__quote_item__product',
+            'item__quote_item__material',
+            'item__quote_item__manufacturing_product',
+            'item__quote_item__service',
             'sub_item',
         ).order_by('started_at')
         wl_by_user = {}
@@ -1904,7 +1928,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_id': awl.customer_order.id,
                     'customer_name': customer_name,
                     'quote_title': quote_title,
-                    'item_name': awl.item.description if awl.item else '',
+                    'item_name': _item_name(awl.item),
                     'sub_item_name': awl.sub_item.name if awl.sub_item else '',
                     'workflow_name': awl.workflow_name or '',
                     'started_at': awl.started_at.isoformat(),
@@ -1934,7 +1958,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     'order_id': wl.customer_order.id,
                     'customer_name': c_name,
                     'quote_title': q_title,
-                    'item_name': wl.item.description if wl.item else '',
+                    'item_name': _item_name(wl.item),
                     'sub_item_name': wl.sub_item.name if wl.sub_item else '',
                     'workflow_name': wl.workflow_name or '',
                     'duration_seconds': wl_dur,
