@@ -2015,7 +2015,23 @@ def public_submit_order(request, token: str):
                     description=item.description
                 )
                 
-                order_details.append(f"- {item.description or item.product.name if item.product else 'Tétel'}: {quantity} {item.unit}")
+                # Tétel megnevezés feloldása típus szerint
+                if item.product:
+                    item_megnevezes = item.product.name
+                elif item.manufacturing_product:
+                    item_megnevezes = item.manufacturing_product.name
+                elif item.service:
+                    item_megnevezes = item.service.name
+                elif item.material:
+                    item_megnevezes = item.material.name
+                elif item.description:
+                    item_megnevezes = item.description[:100]
+                else:
+                    item_megnevezes = 'Tétel'
+                line = f"- {item_megnevezes}: {quantity} {item.unit}"
+                if item.description and item.description != item_megnevezes:
+                    line += f"\n    Leírás: {item.description[:200]}"
+                order_details.append(line)
             
             # Státusz frissítés - megrendelve (NEM archív!)
             qr.status = 'ordered'
@@ -2025,17 +2041,15 @@ def public_submit_order(request, token: str):
         from django.core.mail import get_connection, EmailMultiAlternatives
         from apps.core.models import EmailServerConfig
         
-        email_body = f"""
-Új megrendelés érkezett az alábbi árajánlathoz:
+        email_body = f"""Új megrendelés érkezett a publikus megrendelő felületen keresztül.
 
+Ajánlat megnevezése: {qr.title}
 Árajánlat száma: {qr.number or qr.request_number}
 Megrendelésszám: {order_number}
-Cím: {qr.title}
 
 Megrendelt tételek:
 {chr(10).join(order_details)}
-
-A megrendelést a publikus linken keresztül küldték be.
+{f'{chr(10)}Megjegyzés: {request.data.get("notes", "").strip()}' if request.data.get('notes', '').strip() else ''}
 """
         # EmailServerConfig használata
         email_config = EmailServerConfig.objects.filter(is_active=True).first()
