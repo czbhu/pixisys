@@ -1857,6 +1857,8 @@ const RFQs: React.FC = () => {
                     filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz kapcsolattartókat"
                     style={{ width: 'calc(100% - 190px)' }}
+                    popupMatchSelectWidth={false}
+                    dropdownStyle={{ minWidth: 260 }}
                     onFocus={async () => {
                       // Frissítjük a kapcsolattartók listáját amikor rákattintanak
                       const companyId = form.getFieldValue('company_id');
