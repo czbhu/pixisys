@@ -6,7 +6,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -1996,6 +1996,65 @@ const RFQs: React.FC = () => {
             <Col xs={24}>
               <Form.Item label="Ajánlat csatolmányok" style={{ marginBottom: 6 }}>
                 <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                  {isMobile ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 120 }}>
+                      {/* Galéria feltöltés */}
+                      <label>
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            files.forEach((file: any) => {
+                              file.uid = file.uid || `${Date.now()}-${file.name}`;
+                              setRfqFiles((prev) => [...prev, file]);
+                              setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
+                            });
+                            e.target.value = '';
+                          }}
+                        />
+                        <Button icon={<PictureOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Galéria</Button>
+                      </label>
+                      {/* Kamera feltöltés */}
+                      <label>
+                        <input
+                          type="file"
+                          accept="image/*"
+                          capture="environment"
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const file: any = e.target.files?.[0];
+                            if (!file) return;
+                            file.uid = file.uid || `${Date.now()}-${file.name}`;
+                            setRfqFiles((prev) => [...prev, file]);
+                            setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
+                            e.target.value = '';
+                          }}
+                        />
+                        <Button icon={<CameraOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Kamera</Button>
+                      </label>
+                      {/* Egyéb fájl */}
+                      <label>
+                        <input
+                          type="file"
+                          multiple
+                          style={{ display: 'none' }}
+                          onChange={(e) => {
+                            const files = Array.from(e.target.files || []);
+                            files.forEach((file: any) => {
+                              file.uid = file.uid || `${Date.now()}-${file.name}`;
+                              setRfqFiles((prev) => [...prev, file]);
+                              setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
+                            });
+                            e.target.value = '';
+                          }}
+                        />
+                        <Button icon={<UploadOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Fájl</Button>
+                      </label>
+                    </div>
+                  ) : (
                   <Upload.Dragger
                     multiple
                     showUploadList={false}
@@ -2014,6 +2073,7 @@ const RFQs: React.FC = () => {
                       <span style={{ fontSize: 11, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>Húzd ide vagy kattints</span>
                     </div>
                   </Upload.Dragger>
+                  )}
                   <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {rfqFiles.length === 0 && (
                       <span style={{ fontSize: 12, color: '#aaa', paddingTop: 4 }}>Még nincs feltöltött fájl</span>
