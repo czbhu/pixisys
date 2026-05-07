@@ -150,6 +150,8 @@ export interface CostItem {
   total: number;
   supplier_id?: number | null;
   supplier_name?: string | null;
+  material_id?: number | null;
+  unit?: string | null;
 }
 
 interface Props {

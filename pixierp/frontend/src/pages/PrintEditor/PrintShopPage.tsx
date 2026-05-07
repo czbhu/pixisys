@@ -18,6 +18,7 @@ import { PrintParams } from './components/Step1Params';
 import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel';
 import Step3OrderSummary from './components/Step3OrderSummary';
 import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
+import MaterialNeedsPanel from './components/MaterialNeedsPanel';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -850,6 +851,7 @@ const PrintShopPage: React.FC = () => {
                   onPriceChange={setPriceBreakdown}
                   isAdmin={isAdmin}
                 />
+                <MaterialNeedsPanel priceBreakdown={priceBreakdown} />
               </div>
               <div style={{ padding: '0 12px 16px', flexShrink: 0 }}>
                 {fromRfq ? (

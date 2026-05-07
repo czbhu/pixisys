@@ -652,6 +652,8 @@ class PrintOrderViewSet(viewsets.ModelViewSet):
                         'cost_price_per': float(mat_cost_per.quantize(Decimal('0.01'))),
                         'markup_percentage': mat_markup,
                         'is_internal': False,
+                        'material_id': mat.id,
+                        'unit': mat.unit or 'ív',
                     }]
 
                     # ── Size comparison ────────────────────────────────────
