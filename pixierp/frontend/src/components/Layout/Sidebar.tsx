@@ -26,11 +26,12 @@ const { Sider } = Layout;
 interface SidebarProps {
   collapsed?: boolean;
   onCollapse?: (collapsed: boolean) => void;
+  onNavigate?: () => void;
   inviteCount?: number;
   notificationCounts?: { [key: string]: number };
 }
 
-const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, inviteCount = 0, notificationCounts = {} }) => {
+const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse, onNavigate, inviteCount = 0, notificationCounts = {} }) => {
   const [internalCollapsed, setInternalCollapsed] = useState(false);
   const [openKeys, setOpenKeys] = useState<string[]>([]);
   const [hasCashRegisterAccess, setHasCashRegisterAccess] = useState(true);
@@ -813,6 +814,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         }
         e.preventDefault();
         navigate(key);
+        if (onNavigate) onNavigate();
       }}>{label}</a>
     );
   };

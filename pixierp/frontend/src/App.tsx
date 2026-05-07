@@ -249,7 +249,8 @@ function AppContent() {
         >
           <Sidebar 
             collapsed={false}
-            onCollapse={() => {}}
+            onCollapse={() => setMobileMenuVisible(false)}
+            onNavigate={() => setMobileMenuVisible(false)}
             inviteCount={inviteCount}
             notificationCounts={notificationCounts}
           />
