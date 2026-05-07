@@ -17,6 +17,7 @@ import {
     Upload,
     Spin,
     Badge,
+    Checkbox,
 } from 'antd';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -108,6 +109,52 @@ const ProductionQueue: React.FC = () => {
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
     const [sendGroups, setSendGroups] = useState<SendGroup[]>([]);
+
+    // ── Supplier change ──────────────────────────────────────────────────
+    const [allSuppliers, setAllSuppliers] = useState<any[]>([]);
+    const [allDepartments, setAllDepartments] = useState<any[]>([]);
+    const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
+
+    useEffect(() => {
+        api.get('/crm/companies/?is_supplier=true&page_size=1000')
+            .then(res => setAllSuppliers(Array.isArray(res.data?.results) ? res.data.results : (Array.isArray(res.data) ? res.data : [])))
+            .catch(() => {});
+        api.get('/hr/departments/')
+            .then(res => setAllDepartments(Array.isArray(res.data?.results) ? res.data.results : (Array.isArray(res.data) ? res.data : [])))
+            .catch(() => {});
+    }, []);
+
+    const handleSupplierChange = async (id: number, supplierId: number | null) => {
+        const prev = rows;
+        const sup = allSuppliers.find((s: any) => s.id === supplierId);
+        setRows(rows.map(r => r.id !== id ? r : { ...r, supplier_id: supplierId, supplier_name: sup?.name || '' }));
+        setSupplierPopoverOpen(null);
+        try {
+            await api.patch(`/manufacturing/cost-items/${id}/`, { supplier: supplierId });
+        } catch {
+            message.error('Beszállító frissítése sikertelen');
+            setRows(prev);
+        }
+    };
+
+    const handleInternalChange = async (id: number, isInternal: boolean, deptId?: number | null) => {
+        const prev = rows;
+        const dept = allDepartments.find((d: any) => d.id === deptId);
+        setRows(rows.map(r => r.id !== id ? r : {
+            ...r,
+            is_internal: isInternal,
+            department_id: isInternal ? (deptId ?? null) : null,
+            department_name: isInternal ? (dept?.name || '') : '',
+            supplier_id: isInternal ? null : r.supplier_id,
+            supplier_name: isInternal ? '' : r.supplier_name,
+        }));
+        try {
+            await api.patch(`/manufacturing/cost-items/${id}/`, { is_internal: isInternal, department: isInternal ? (deptId ?? null) : null, supplier: isInternal ? null : undefined });
+        } catch {
+            message.error('Frissítés sikertelen');
+            setRows(prev);
+        }
+    };
 
     // ── Cost-item attachments ─────────────────────────────────────────────
     const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
@@ -500,9 +547,65 @@ const ProductionQueue: React.FC = () => {
                 ? <Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{n}</span>}><span style={{ color: '#595959', fontStyle: 'italic' }}>{n}</span></Tooltip>
                 : <span style={{ color: '#bbb' }}>—</span> },
         { title: 'Beszállító', key: 'supplier', width: 180,
-            render: (_: any, r: QueueRow) => r.is_internal
-                ? <Tag color="blue">{r.department_name ? `Belső: ${r.department_name}` : 'Belső'}</Tag>
-                : (r.supplier_name ? <Tag color="orange">{r.supplier_name}</Tag> : <span style={{ color: '#bbb' }}>—</span>) },
+            render: (_: any, r: QueueRow) => {
+                const tag = r.is_internal
+                    ? <Tag color="blue" style={{ cursor: 'pointer' }}>{r.department_name ? `Belső: ${r.department_name}` : 'Belső'}</Tag>
+                    : r.supplier_name
+                        ? <Tag color="orange" style={{ cursor: 'pointer' }}>{r.supplier_name}</Tag>
+                        : <span style={{ color: '#bbb', cursor: 'pointer', fontSize: 12 }}>+ beállítás</span>;
+                return (
+                    <Popover
+                        open={supplierPopoverOpen === r.id}
+                        onOpenChange={open => setSupplierPopoverOpen(open ? r.id : null)}
+                        trigger="click"
+                        title="Beszállító / Belső"
+                        getPopupContainer={() => document.body}
+                        zIndex={9999}
+                        content={
+                            <div style={{ width: 300 }}>
+                                <div style={{ marginBottom: 8 }}>
+                                    <Checkbox
+                                        checked={!!r.is_internal}
+                                        onChange={e => handleInternalChange(r.id, e.target.checked, r.department_id ?? null)}
+                                    >
+                                        Belső gyártás
+                                    </Checkbox>
+                                </div>
+                                {r.is_internal ? (
+                                    <Select
+                                        autoFocus
+                                        showSearch
+                                        allowClear
+                                        placeholder="Osztály kiválasztása…"
+                                        style={{ width: '100%' }}
+                                        value={r.department_id ?? undefined}
+                                        optionFilterProp="label"
+                                        options={allDepartments.map((d: any) => ({ value: d.id, label: d.name }))}
+                                        onChange={val => handleInternalChange(r.id, true, val ?? null)}
+                                        getPopupContainer={() => document.body}
+                                    />
+                                ) : (
+                                    <Select
+                                        autoFocus
+                                        showSearch
+                                        allowClear
+                                        placeholder="Beszállító kiválasztása…"
+                                        style={{ width: '100%' }}
+                                        value={r.supplier_id ?? undefined}
+                                        optionFilterProp="label"
+                                        options={allSuppliers.map((s: any) => ({ value: s.id, label: s.name }))}
+                                        onChange={val => handleSupplierChange(r.id, val ?? null)}
+                                        getPopupContainer={() => document.body}
+                                    />
+                                )}
+                            </div>
+                        }
+                        overlayInnerStyle={{ padding: '10px 12px' }}
+                    >
+                        <span onClick={e => e.stopPropagation()}>{tag}</span>
+                    </Popover>
+                );
+            } },
         {
             title: 'Műveletek', key: 'actions', width: 260, fixed: 'right' as const,
             render: (_: any, r: QueueRow) => {
