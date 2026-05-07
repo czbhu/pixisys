@@ -1816,7 +1816,153 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             return Response({'status': 'updated', 'last_activity': now.isoformat()})
             
         return Response({'status': 'no_active_attendance'})
-        
+
+    @action(detail=False, methods=['get'], permission_classes=[IsAuthenticated])
+    def dashboard_workers(self, request):
+        """Dashboard: aktív dolgozók (kiosk-on bejelentkeztek) + napi dolgozói napló"""
+        from datetime import datetime, time as dt_time
+        from apps.sales.models import WorkLog
+
+        now = timezone.now()
+        tz = timezone.get_current_timezone()
+        today = timezone.localtime(now).date()
+        today_start = timezone.make_aware(datetime.combine(today, dt_time.min), tz)
+        today_end = timezone.make_aware(datetime.combine(today, dt_time.max), tz)
+
+        # Today's AccessLog entries
+        today_logs = AccessLog.objects.filter(
+            check_in_time__range=(today_start, today_end)
+        ).select_related('employee__user').order_by('employee_id', 'check_in_time')
+
+        # Currently running work logs (all users)
+        active_wls = WorkLog.objects.filter(
+            ended_at__isnull=True
+        ).select_related(
+            'user',
+            'customer_order__quote_request__company',
+            'item'
+        )
+        active_wl_map = {wl.user_id: wl for wl in active_wls}
+
+        # Today's work logs grouped by user
+        today_wls = WorkLog.objects.filter(
+            started_at__range=(today_start, today_end)
+        ).select_related(
+            'user',
+            'customer_order__quote_request__company',
+            'item'
+        ).order_by('started_at')
+        wl_by_user = {}
+        for wl in today_wls:
+            wl_by_user.setdefault(wl.user_id, []).append(wl)
+
+        # Group access logs by employee
+        emp_logs = {}
+        for log in today_logs:
+            emp_id = log.employee_id
+            if emp_id not in emp_logs:
+                emp_logs[emp_id] = {'employee': log.employee, 'logs': []}
+            emp_logs[emp_id]['logs'].append(log)
+
+        active_now = []
+        today_report = []
+
+        for emp_id, data in emp_logs.items():
+            emp = data['employee']
+            user = emp.user
+            logs = data['logs']
+
+            # Compute total duration and active state
+            total_sec = 0
+            is_active = False
+            last_check_in = logs[0].check_in_time if logs else None
+            for log in logs:
+                end = log.check_out_time or now
+                total_sec += int((end - log.check_in_time).total_seconds())
+                if log.check_out_time is None:
+                    is_active = True
+                    last_check_in = log.check_in_time
+
+            # Active work log for this user
+            awl = active_wl_map.get(user.id)
+            active_work = None
+            if awl:
+                try:
+                    customer_name = (
+                        awl.customer_order.quote_request.company.name
+                        if awl.customer_order.quote_request and awl.customer_order.quote_request.company
+                        else ''
+                    )
+                    quote_title = awl.customer_order.quote_request.title if awl.customer_order.quote_request else ''
+                except Exception:
+                    customer_name = ''
+                    quote_title = ''
+                active_work = {
+                    'order_number': awl.customer_order.order_number,
+                    'order_id': awl.customer_order.id,
+                    'customer_name': customer_name,
+                    'quote_title': quote_title,
+                    'item_name': awl.item.name if awl.item else '',
+                    'workflow_name': awl.workflow_name or '',
+                    'started_at': awl.started_at.isoformat(),
+                }
+
+            # Work log list for today
+            user_wls = wl_by_user.get(user.id, [])
+            work_log_list = []
+            for wl in user_wls:
+                wl_end = wl.ended_at or now
+                wl_dur = int((wl_end - wl.started_at).total_seconds())
+                try:
+                    c_name = (
+                        wl.customer_order.quote_request.company.name
+                        if wl.customer_order.quote_request and wl.customer_order.quote_request.company
+                        else ''
+                    )
+                    q_title = wl.customer_order.quote_request.title if wl.customer_order.quote_request else ''
+                except Exception:
+                    c_name = ''
+                    q_title = ''
+                work_log_list.append({
+                    'id': wl.id,
+                    'order_number': wl.customer_order.order_number,
+                    'order_id': wl.customer_order.id,
+                    'customer_name': c_name,
+                    'quote_title': q_title,
+                    'item_name': wl.item.name if wl.item else '',
+                    'workflow_name': wl.workflow_name or '',
+                    'duration_seconds': wl_dur,
+                    'is_running': wl.ended_at is None,
+                })
+
+            entry = {
+                'employee_id': emp_id,
+                'employee_name': user.get_full_name() or user.username,
+                'user_id': user.id,
+                'check_in_time': last_check_in.isoformat() if last_check_in else None,
+                'check_out_time': (
+                    logs[-1].check_out_time.isoformat()
+                    if logs and logs[-1].check_out_time and not is_active
+                    else None
+                ),
+                'total_duration_seconds': total_sec,
+                'is_active': is_active,
+                'active_work': active_work,
+                'work_logs': work_log_list,
+            }
+
+            if is_active:
+                active_now.append(entry)
+            today_report.append(entry)
+
+        active_now.sort(key=lambda x: x['check_in_time'] or '')
+        today_report.sort(key=lambda x: x['check_in_time'] or '')
+
+        return Response({
+            'active_now': active_now,
+            'today_report': today_report,
+        })
+
 class LeaveRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     queryset = LeaveRequest.objects.all()
     serializer_class = LeaveRequestSerializer

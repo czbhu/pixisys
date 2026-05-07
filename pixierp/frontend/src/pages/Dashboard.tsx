@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Row, Col, Card, Statistic, Table, Select, Typography, Spin, Alert,
-    Badge, Tag, Tooltip, List, Avatar, Space
+    Badge, Tag, List, Avatar, Space, Collapse
 } from 'antd';
 import {
     UserOutlined,
@@ -9,11 +9,12 @@ import {
     ThunderboltOutlined,
     CheckCircleOutlined,
     CarOutlined,
-    WarningOutlined,
     TeamOutlined,
     ClockCircleOutlined,
     PlusCircleOutlined,
     ExclamationCircleOutlined,
+    LoginOutlined,
+    LogoutOutlined,
 } from '@ant-design/icons';
 import { salesService } from '../services/salesService';
 import { useNavigate } from 'react-router-dom';
@@ -38,19 +39,41 @@ interface OrderRow {
     customer_name: string;
     status: string;
     order_date: string;
-    quote_request_title?: string;
-    deadline?: string;
     total_amount?: number;
 }
 
-interface WorkLogRow {
+interface WorkLogDetail {
     id: number;
-    user_name: string;
-    customer_order_number: string;
-    customer_order: number;
+    order_number: string;
+    order_id: number;
+    customer_name: string;
+    quote_title: string;
+    item_name: string;
     workflow_name: string;
-    item_name?: string;
+    duration_seconds: number;
+    is_running: boolean;
+}
+
+interface ActiveWork {
+    order_number: string;
+    order_id: number;
+    customer_name: string;
+    quote_title: string;
+    item_name: string;
+    workflow_name: string;
     started_at: string;
+}
+
+interface WorkerEntry {
+    employee_id: number;
+    employee_name: string;
+    user_id: number;
+    check_in_time: string | null;
+    check_out_time: string | null;
+    total_duration_seconds: number;
+    is_active: boolean;
+    active_work: ActiveWork | null;
+    work_logs: WorkLogDetail[];
 }
 
 const ORDER_STATUS_LABELS: Record<string, string> = {
@@ -68,65 +91,94 @@ const DASHBOARD_VIEWS = [
     { value: 'sales', label: 'Értékesítés' },
 ];
 
-function elapsedLabel(isoDate: string): string {
-    const ms = Date.now() - new Date(isoDate).getTime();
-    const min = Math.floor(ms / 60000);
-    if (min < 60) return `${min} perce`;
-    const h = Math.floor(min / 60);
-    if (h < 24) return `${h} órája`;
-    return `${Math.floor(h / 24)} napja`;
+function durationLabel(sec: number): string {
+    if (sec <= 0) return '0 perc';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    if (h > 0 && m > 0) return `${h} óra ${m} perc`;
+    if (h > 0) return `${h} óra`;
+    return `${m} perc`;
 }
+
+function timeLabel(iso: string | null): string {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleTimeString('hu-HU', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ---------- Worker: napi napló táblázat ----------
+
+const WorkerDailyTable: React.FC<{ logs: WorkLogDetail[]; navigate: ReturnType<typeof useNavigate> }> = ({ logs, navigate }) => {
+    const cols = [
+        {
+            title: 'Ügyfél',
+            dataIndex: 'customer_name',
+            key: 'customer_name',
+            render: (v: string) => <Text>{v || '—'}</Text>,
+        },
+        {
+            title: 'Megrendelés',
+            key: 'order',
+            render: (_: any, r: WorkLogDetail) => (
+                <a onClick={() => navigate(`/orders/${r.order_id}`)} style={{ cursor: 'pointer' }}>
+                    {r.order_number}
+                    {r.quote_title ? <span style={{ color: '#888', marginLeft: 4 }}>— {r.quote_title}</span> : null}
+                </a>
+            ),
+        },
+        {
+            title: 'Munkafolyamat',
+            dataIndex: 'workflow_name',
+            key: 'workflow_name',
+            render: (v: string, r: WorkLogDetail) => (
+                <Space size={4}>
+                    {r.is_running && <Badge status="processing" />}
+                    <Text>{v || '—'}</Text>
+                </Space>
+            ),
+        },
+        {
+            title: 'Idő',
+            dataIndex: 'duration_seconds',
+            key: 'duration_seconds',
+            align: 'right' as const,
+            render: (sec: number) => <Text style={{ whiteSpace: 'nowrap' }}>{durationLabel(sec)}</Text>,
+        },
+    ];
+
+    const totalSec = logs.reduce((s, l) => s + l.duration_seconds, 0);
+
+    return (
+        <div style={{ paddingBlock: 4 }}>
+            <Table
+                dataSource={logs}
+                columns={cols}
+                rowKey="id"
+                size="small"
+                pagination={false}
+                style={{ marginBottom: 8 }}
+            />
+            <div style={{ textAlign: 'right', paddingRight: 4 }}>
+                <Text strong>Összesen: {durationLabel(totalSec)}</Text>
+            </div>
+        </div>
+    );
+};
 
 // ---------- Manufacturing Dashboard ----------
 
 const ManufacturingDashboard: React.FC<{
     counts: StatusCounts;
-    activeWorkers: WorkLogRow[];
+    workers: { active_now: WorkerEntry[]; today_report: WorkerEntry[] };
     latestOrders: OrderRow[];
     navigate: ReturnType<typeof useNavigate>;
-}> = ({ counts, activeWorkers, latestOrders, navigate }) => {
+}> = ({ counts, workers, latestOrders, navigate }) => {
     const statCards = [
-        {
-            title: 'Új munkák',
-            value: counts.new ?? 0,
-            icon: <PlusCircleOutlined />,
-            color: '#1677ff',
-            status: 'new',
-        },
-        {
-            title: 'Gyártásban',
-            value: counts.in_production ?? 0,
-            icon: <ThunderboltOutlined />,
-            color: '#fa8c16',
-            status: 'in_production',
-        },
-        {
-            title: 'Kész munkák',
-            value: counts.ready ?? 0,
-            icon: <CheckCircleOutlined />,
-            color: '#52c41a',
-            status: 'ready',
-        },
-        {
-            title: 'Szállítás alatt',
-            value: counts.in_delivery ?? 0,
-            icon: <CarOutlined />,
-            color: '#13c2c2',
-            status: 'in_delivery',
-        },
-        {
-            title: 'Megerősítve',
-            value: counts.confirmed ?? 0,
-            icon: <ShoppingCartOutlined />,
-            color: '#722ed1',
-            status: 'confirmed',
-        },
-        {
-            title: 'Aktív dolgozók',
-            value: activeWorkers.length,
-            icon: <TeamOutlined />,
-            color: '#eb2f96',
-        },
+        { title: 'Új munkák', value: counts.new ?? 0, icon: <PlusCircleOutlined />, color: '#1677ff', status: 'new' },
+        { title: 'Gyártásban', value: counts.in_production ?? 0, icon: <ThunderboltOutlined />, color: '#fa8c16', status: 'in_production' },
+        { title: 'Kész munkák', value: counts.ready ?? 0, icon: <CheckCircleOutlined />, color: '#52c41a', status: 'ready' },
+        { title: 'Szállítás alatt', value: counts.in_delivery ?? 0, icon: <CarOutlined />, color: '#13c2c2', status: 'in_delivery' },
+        { title: 'Megerősítve', value: counts.confirmed ?? 0, icon: <ShoppingCartOutlined />, color: '#722ed1', status: 'confirmed' },
+        { title: 'Aktív dolgozók', value: workers.active_now.length, icon: <TeamOutlined />, color: '#eb2f96' },
     ];
 
     const latestCols = [
@@ -135,7 +187,7 @@ const ManufacturingDashboard: React.FC<{
             dataIndex: 'order_number',
             key: 'order_number',
             render: (text: string, r: OrderRow) => (
-                <a onClick={() => navigate(`/orders/${r.id}`)} style={{ cursor: 'pointer' }}>
+                <a onClick={() => navigate(`/orders/${r.id}`)}>
                     <div style={{ fontWeight: 500 }}>{text}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
                 </a>
@@ -162,6 +214,48 @@ const ManufacturingDashboard: React.FC<{
         },
     ];
 
+    // Collapse items for daily report
+    const dailyItems = workers.today_report.map((w) => ({
+        key: String(w.employee_id),
+        label: (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+                <Space size={6}>
+                    {w.is_active
+                        ? <Badge status="processing" />
+                        : <Badge status="default" />}
+                    <Text strong>{w.employee_name}</Text>
+                </Space>
+                <Space size={4} style={{ fontSize: 12, color: '#666' }}>
+                    <LoginOutlined />
+                    <span>{timeLabel(w.check_in_time)}</span>
+                    {w.check_out_time && (
+                        <>
+                            <LogoutOutlined style={{ marginLeft: 4 }} />
+                            <span>{timeLabel(w.check_out_time)}</span>
+                        </>
+                    )}
+                    {w.is_active && <Tag color="green" style={{ marginLeft: 4 }}>Bent van</Tag>}
+                </Space>
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                    <ClockCircleOutlined style={{ marginRight: 4 }} />
+                    {durationLabel(w.total_duration_seconds)}
+                </Text>
+                {w.active_work && (
+                    <Text style={{ fontSize: 12, color: '#1677ff' }}>
+                        {w.active_work.order_number}
+                        {w.active_work.customer_name && ` (${w.active_work.customer_name}`}
+                        {w.active_work.quote_title && ` — ${w.active_work.quote_title}`}
+                        {w.active_work.customer_name && ')'}
+                        {w.active_work.workflow_name && ` · ${w.active_work.workflow_name}`}
+                    </Text>
+                )}
+            </div>
+        ),
+        children: w.work_logs.length > 0
+            ? <WorkerDailyTable logs={w.work_logs} navigate={navigate} />
+            : <Text type="secondary" style={{ paddingLeft: 8 }}>Nincs munkanapló ma.</Text>,
+    }));
+
     return (
         <>
             {/* Stat cards */}
@@ -185,7 +279,7 @@ const ManufacturingDashboard: React.FC<{
             </Row>
 
             <Row gutter={[16, 16]}>
-                {/* Active workers */}
+                {/* Aktív dolgozók */}
                 <Col xs={24} lg={10}>
                     <Card
                         title={
@@ -193,17 +287,17 @@ const ManufacturingDashboard: React.FC<{
                                 <Badge status="processing" />
                                 <span>Aktív dolgozók</span>
                                 <Text type="secondary" style={{ fontWeight: 400, fontSize: 13 }}>
-                                    (éppen dolgoznak)
+                                    (jelenleg bent vannak)
                                 </Text>
                             </Space>
                         }
                         style={{ height: '100%' }}
                     >
-                        {activeWorkers.length === 0 ? (
-                            <Text type="secondary">Jelenleg nincs aktív dolgozó.</Text>
+                        {workers.active_now.length === 0 ? (
+                            <Text type="secondary">Jelenleg nincs bejelentkezett dolgozó.</Text>
                         ) : (
                             <List
-                                dataSource={activeWorkers}
+                                dataSource={workers.active_now}
                                 renderItem={(w) => (
                                     <List.Item style={{ paddingBlock: 8 }}>
                                         <List.Item.Meta
@@ -211,28 +305,37 @@ const ManufacturingDashboard: React.FC<{
                                                 <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1677ff' }} />
                                             }
                                             title={
-                                                <Space size={4}>
-                                                    <Text strong>{w.user_name || 'Ismeretlen'}</Text>
-                                                    <Text type="secondary" style={{ fontSize: 12 }}>
-                                                        — {elapsedLabel(w.started_at)}
-                                                    </Text>
+                                                <Space size={4} wrap>
+                                                    <Text strong>{w.employee_name}</Text>
+                                                    {w.active_work && (
+                                                        <Text
+                                                            style={{ fontSize: 12, color: '#1677ff', cursor: 'pointer' }}
+                                                            onClick={() => navigate(`/orders/${w.active_work!.order_id}`)}
+                                                        >
+                                                            — {w.active_work.order_number}
+                                                        </Text>
+                                                    )}
                                                 </Space>
                                             }
                                             description={
-                                                <Space direction="vertical" size={0}>
+                                                w.active_work ? (
                                                     <Text style={{ fontSize: 12 }}>
-                                                        <ClockCircleOutlined style={{ marginRight: 4 }} />
-                                                        {w.workflow_name || '—'}
+                                                        {[
+                                                            w.active_work.customer_name,
+                                                            w.active_work.quote_title,
+                                                            w.active_work.workflow_name,
+                                                        ].filter(Boolean).join(' — ')}
                                                     </Text>
-                                                    <a
-                                                        onClick={() => navigate(`/orders/${w.customer_order}`)}
-                                                        style={{ fontSize: 12 }}
-                                                    >
-                                                        {w.customer_order_number}
-                                                    </a>
-                                                </Space>
+                                                ) : (
+                                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                                        Nem dolgozik semmilyen munkán
+                                                    </Text>
+                                                )
                                             }
                                         />
+                                        <Text type="secondary" style={{ fontSize: 11 }}>
+                                            {timeLabel(w.check_in_time)}
+                                        </Text>
                                     </List.Item>
                                 )}
                             />
@@ -240,15 +343,11 @@ const ManufacturingDashboard: React.FC<{
                     </Card>
                 </Col>
 
-                {/* Latest orders */}
+                {/* Legutóbbi megrendelések */}
                 <Col xs={24} lg={14}>
                     <Card
                         title="Legutóbbi megrendelések"
-                        extra={
-                            <a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>
-                                Összes →
-                            </a>
-                        }
+                        extra={<a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>Összes →</a>}
                     >
                         <Table
                             dataSource={latestOrders}
@@ -257,6 +356,23 @@ const ManufacturingDashboard: React.FC<{
                             size="small"
                             rowKey="id"
                         />
+                    </Card>
+                </Col>
+            </Row>
+
+            {/* Napi dolgozói napló */}
+            <Row gutter={[16, 16]} style={{ marginTop: 16 }}>
+                <Col xs={24}>
+                    <Card title="Napi dolgozói jelentés">
+                        {workers.today_report.length === 0 ? (
+                            <Text type="secondary">Ma még senki nem lépett be.</Text>
+                        ) : (
+                            <Collapse
+                                items={dailyItems}
+                                ghost
+                                expandIconPosition="start"
+                            />
+                        )}
                     </Card>
                 </Col>
             </Row>
@@ -299,7 +415,7 @@ const SalesDashboard: React.FC<{
             dataIndex: 'order_number',
             key: 'order_number',
             render: (text: string, r: OrderRow) => (
-                <a onClick={() => navigate(`/orders/${r.id}`)} style={{ cursor: 'pointer' }}>
+                <a onClick={() => navigate(`/orders/${r.id}`)}>
                     <div style={{ fontWeight: 500 }}>{text}</div>
                     <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
                 </a>
@@ -349,9 +465,7 @@ const SalesDashboard: React.FC<{
                     </Col>
                 ))}
             </Row>
-
             <Row gutter={[16, 16]}>
-                {/* Status breakdown */}
                 <Col xs={24} lg={8}>
                     <Card title="Megrendelések státusz szerint">
                         {allStatusRows.map((row) => {
@@ -373,16 +487,10 @@ const SalesDashboard: React.FC<{
                         })}
                     </Card>
                 </Col>
-
-                {/* Latest orders */}
                 <Col xs={24} lg={16}>
                     <Card
                         title="Legutóbbi megrendelések"
-                        extra={
-                            <a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>
-                                Összes →
-                            </a>
-                        }
+                        extra={<a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>Összes →</a>}
                     >
                         <Table
                             dataSource={latestOrders}
@@ -408,20 +516,26 @@ const Dashboard = () => {
     const [error, setError] = useState<string | null>(null);
     const [counts, setCounts] = useState<StatusCounts>({});
     const [latestOrders, setLatestOrders] = useState<OrderRow[]>([]);
-    const [activeWorkers, setActiveWorkers] = useState<WorkLogRow[]>([]);
+    const [workers, setWorkers] = useState<{ active_now: WorkerEntry[]; today_report: WorkerEntry[] }>({
+        active_now: [],
+        today_report: [],
+    });
     const navigate = useNavigate();
 
     const loadData = useCallback(async () => {
         try {
             setLoading(true);
             setError(null);
-            const [stats, active] = await Promise.all([
+            const [stats, workerData] = await Promise.all([
                 salesService.getDashboardStats(),
-                salesService.getAllActiveWorkLogs(),
+                salesService.getDashboardWorkers(),
             ]);
             setCounts(stats.counts ?? {});
             setLatestOrders(stats.latest_orders ?? []);
-            setActiveWorkers(Array.isArray(active) ? active : []);
+            setWorkers({
+                active_now: workerData.active_now ?? [],
+                today_report: workerData.today_report ?? [],
+            });
         } catch (err) {
             console.error('Dashboard load error:', err);
             setError('Hiba történt az adatok betöltése során');
@@ -432,7 +546,6 @@ const Dashboard = () => {
 
     useEffect(() => {
         loadData();
-        // Auto-refresh every 60 s
         const id = setInterval(loadData, 60000);
         return () => clearInterval(id);
     }, [loadData]);
@@ -456,13 +569,7 @@ const Dashboard = () => {
             </div>
 
             {error && (
-                <Alert
-                    message="Hiba"
-                    description={error}
-                    type="error"
-                    showIcon
-                    style={{ marginBottom: 24 }}
-                />
+                <Alert message="Hiba" description={error} type="error" showIcon style={{ marginBottom: 24 }} />
             )}
 
             {loading ? (
@@ -474,7 +581,7 @@ const Dashboard = () => {
                     {view === 'manufacturing' && (
                         <ManufacturingDashboard
                             counts={counts}
-                            activeWorkers={activeWorkers}
+                            workers={workers}
                             latestOrders={latestOrders}
                             navigate={navigate}
                         />
@@ -493,4 +600,3 @@ const Dashboard = () => {
 };
 
 export default Dashboard;
-
