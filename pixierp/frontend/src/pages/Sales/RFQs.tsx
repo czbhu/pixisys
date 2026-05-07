@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
-import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List } from 'antd';
+import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined } from '@ant-design/icons';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -22,6 +22,8 @@ import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearch
 import Demands from './Demands';
 import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+
+const { useBreakpoint } = Grid;
 
 // Ékezet-független + kis/nagybetű-független filter a Select komponensekhez
 // (a default `optionFilterProp="label"` csak case-insensitive substring match-et csinál).
@@ -104,6 +106,9 @@ const RFQs: React.FC = () => {
   const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
+  const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const screens = useBreakpoint();
+  const isMobile = !screens.md;
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
   const isDemandView = searchParams.get('view') === 'demands';
@@ -1287,55 +1292,133 @@ const RFQs: React.FC = () => {
               ) : (
                 <Tooltip title="CSV export"><Button icon={<FileTextOutlined />} onClick={() => { setCsvMode(true); setCsvSelectedKeys([]); }} /></Tooltip>
               )}
-              <Select
-                className="rfqs-status-select"
-                mode="multiple"
-                placeholder="Státusz szűrő"
-                value={statusFilter}
-                onChange={(value) => setStatusFilter(value)}
-                style={{ width: 200 }}
-                popupMatchSelectWidth={false}
-                maxTagCount="responsive"
-              >
-                <Select.Option value="all">Mind</Select.Option>
-                <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
-                <Select.Option value="new">Új</Select.Option>
-                <Select.Option value="quoted">Árazva</Select.Option>
-                <Select.Option value="rejected">Elutasítva</Select.Option>
-                <Select.Option value="accepted">Elfogadva</Select.Option>
-                <Select.Option value="ordered">Megrendelve</Select.Option>
-                <Select.Option value="archived">Archív</Select.Option>
-              </Select>
-              <Select
-                mode="multiple"
-                placeholder="Megrendelési státusz szűrő"
-                style={{ width: 200 }}
-                value={orderStatusFilter}
-                onChange={(v) => setOrderStatusFilter(v)}
-                popupMatchSelectWidth={false}
-                maxTagCount="responsive"
-              >
-                <Select.Option value="new">Új</Select.Option>
-                <Select.Option value="confirmed">Megerősítve</Select.Option>
-                <Select.Option value="in_production">Gyártásban</Select.Option>
-                <Select.Option value="ready">Kész</Select.Option>
-                <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                <Select.Option value="delivered">Kiszállítva</Select.Option>
-                <Select.Option value="invoiced">Kiszámlázva</Select.Option>
-              </Select>
-              <Select
-                className="rfqs-creator-select"
-                placeholder="Szűrés rögzítőre"
-                allowClear
-                style={{ width: 170 }}
-                value={creatorFilter}
-                onChange={setCreatorFilter}
-              >
-                {creators.map((name: any) => (
-                  <Select.Option key={name} value={name}>{name}</Select.Option>
-                ))}
-              </Select>
+              {/* Desktop: inline filters */}
+              {!isMobile && (
+                <>
+                  <Select
+                    className="rfqs-status-select"
+                    mode="multiple"
+                    placeholder="Státusz szűrő"
+                    value={statusFilter}
+                    onChange={(value) => setStatusFilter(value)}
+                    style={{ width: 200 }}
+                    popupMatchSelectWidth={false}
+                    maxTagCount="responsive"
+                  >
+                    <Select.Option value="all">Mind</Select.Option>
+                    <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
+                    <Select.Option value="new">Új</Select.Option>
+                    <Select.Option value="quoted">Árazva</Select.Option>
+                    <Select.Option value="rejected">Elutasítva</Select.Option>
+                    <Select.Option value="accepted">Elfogadva</Select.Option>
+                    <Select.Option value="ordered">Megrendelve</Select.Option>
+                    <Select.Option value="archived">Archív</Select.Option>
+                  </Select>
+                  <Select
+                    mode="multiple"
+                    placeholder="Megrendelési státusz szűrő"
+                    style={{ width: 200 }}
+                    value={orderStatusFilter}
+                    onChange={(v) => setOrderStatusFilter(v)}
+                    popupMatchSelectWidth={false}
+                    maxTagCount="responsive"
+                  >
+                    <Select.Option value="new">Új</Select.Option>
+                    <Select.Option value="confirmed">Megerősítve</Select.Option>
+                    <Select.Option value="in_production">Gyártásban</Select.Option>
+                    <Select.Option value="ready">Kész</Select.Option>
+                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                    <Select.Option value="delivered">Kiszállítva</Select.Option>
+                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                  </Select>
+                  <Select
+                    className="rfqs-creator-select"
+                    placeholder="Szűrés rögzítőre"
+                    allowClear
+                    style={{ width: 170 }}
+                    value={creatorFilter}
+                    onChange={setCreatorFilter}
+                  >
+                    {creators.map((name: any) => (
+                      <Select.Option key={name} value={name}>{name}</Select.Option>
+                    ))}
+                  </Select>
+                </>
+              )}
+              {/* Mobile: filter button */}
+              {isMobile && (
+                <Button
+                  icon={<FilterOutlined />}
+                  onClick={() => setFilterDrawerOpen(true)}
+                  type={statusFilter.length > 0 || orderStatusFilter.length > 0 || creatorFilter ? 'primary' : 'default'}
+                >
+                  Szűrők{(statusFilter.length + orderStatusFilter.length + (creatorFilter ? 1 : 0)) > 0
+                    ? ` (${statusFilter.length + orderStatusFilter.length + (creatorFilter ? 1 : 0)})`
+                    : ''}
+                </Button>
+              )}
               <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új</Button>
+              {/* Mobile filter drawer */}
+              <Drawer
+                title="Szűrők"
+                placement="bottom"
+                open={filterDrawerOpen}
+                onClose={() => setFilterDrawerOpen(false)}
+                height="auto"
+                styles={{ body: { paddingBottom: 24 } }}
+              >
+                <Space direction="vertical" style={{ width: '100%' }} size={12}>
+                  <Select
+                    className="rfqs-status-select"
+                    mode="multiple"
+                    placeholder="Státusz szűrő"
+                    value={statusFilter}
+                    onChange={(value) => setStatusFilter(value)}
+                    style={{ width: '100%' }}
+                    popupMatchSelectWidth={false}
+                    maxTagCount="responsive"
+                  >
+                    <Select.Option value="all">Mind</Select.Option>
+                    <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
+                    <Select.Option value="new">Új</Select.Option>
+                    <Select.Option value="quoted">Árazva</Select.Option>
+                    <Select.Option value="rejected">Elutasítva</Select.Option>
+                    <Select.Option value="accepted">Elfogadva</Select.Option>
+                    <Select.Option value="ordered">Megrendelve</Select.Option>
+                    <Select.Option value="archived">Archív</Select.Option>
+                  </Select>
+                  <Select
+                    mode="multiple"
+                    placeholder="Megrendelési státusz szűrő"
+                    style={{ width: '100%' }}
+                    value={orderStatusFilter}
+                    onChange={(v) => setOrderStatusFilter(v)}
+                    popupMatchSelectWidth={false}
+                    maxTagCount="responsive"
+                  >
+                    <Select.Option value="new">Új</Select.Option>
+                    <Select.Option value="confirmed">Megerősítve</Select.Option>
+                    <Select.Option value="in_production">Gyártásban</Select.Option>
+                    <Select.Option value="ready">Kész</Select.Option>
+                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                    <Select.Option value="delivered">Kiszállítva</Select.Option>
+                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                  </Select>
+                  <Select
+                    className="rfqs-creator-select"
+                    placeholder="Szűrés rögzítőre"
+                    allowClear
+                    style={{ width: '100%' }}
+                    value={creatorFilter}
+                    onChange={setCreatorFilter}
+                  >
+                    {creators.map((name: any) => (
+                      <Select.Option key={name} value={name}>{name}</Select.Option>
+                    ))}
+                  </Select>
+                  <Button block onClick={() => { setStatusFilter(['all_except_archived']); setOrderStatusFilter([]); setCreatorFilter(null); }}>Szűrők törlése</Button>
+                </Space>
+              </Drawer>
             </Space>
         }
       >

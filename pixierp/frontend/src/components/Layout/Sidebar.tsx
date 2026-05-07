@@ -782,7 +782,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     }
   };
 
-  const renderItemLabel = (key: string, label: string | React.ReactNode) => {
+  const renderItemLabel = (key: string, label: string | React.ReactNode, isLeaf = true) => {
     // Special handling for PixInvoice SSO
     if (key === 'pixinvoice-sso') {
       return (
@@ -814,18 +814,19 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         }
         e.preventDefault();
         navigate(key);
-        if (onNavigate) onNavigate();
+        if (isLeaf && onNavigate) onNavigate();
       }}>{label}</a>
     );
   };
 
   // Map labels to clickable anchors preserving new-tab behavior
+  // isLeaf=true only when the item has no children (clicking navigates away)
   const itemsWithLinks = accessibleMenuItems.map((mi: any) => ({
     ...mi,
-    label: renderItemLabel(mi.key, mi.label),
+    label: renderItemLabel(mi.key, mi.label, !mi.children),
     children: mi.children ? mi.children.map((ch: any) => ({
       ...ch,
-      label: renderItemLabel(ch.key, ch.label),
+      label: renderItemLabel(ch.key, ch.label, !ch.children),
     })) : undefined,
   }));
 
