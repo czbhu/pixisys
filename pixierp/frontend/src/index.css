@@ -357,28 +357,26 @@ body,
 ::-webkit-scrollbar-thumb:hover {
   background: #a8a8a8;
 }
-/* Resizable ReactQuill wrapper used in RFQ description fields */
+/* Auto-grow ReactQuill wrapper: min 2 lines, max 10 lines then scroll */
 .pixi-quill-resizable {
-  resize: vertical;
-  overflow: hidden;
-  min-height: 110px;
-  height: 110px;
   display: flex;
   flex-direction: column;
   border-radius: 2px;
 }
 .pixi-quill-resizable > .quill,
 .pixi-quill-resizable.quill {
-  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  min-height: 0;
   background: #fff;
 }
 .pixi-quill-resizable .ql-container {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: auto;
+  height: auto;
+}
+.pixi-quill-resizable .ql-editor {
+  min-height: 60px;   /* ~2 sor */
+  max-height: 210px;  /* ~10 sor */
+  overflow-y: auto;
+  resize: none;
 }
 
 /* Rich-text (ReactQuill HTML) renderelése táblázat cellákban / tooltipekben */
