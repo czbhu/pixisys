@@ -1872,12 +1872,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   </div>
 
                   <Row gutter={8}>
-                    <Col span={12}>
+                    <Col xs={24} md={12}>
                       <Form.Item label="Leírás" name="description" style={{ marginBottom: 8 }} getValueFromEvent={(v) => v}>
                         <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Külső leírás" />
                       </Form.Item>
                     </Col>
-                    <Col span={12}>
+                    <Col xs={24} md={12}>
                       <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 8 }} getValueFromEvent={(v) => v}>
                         <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Belső leírás" />
                       </Form.Item>

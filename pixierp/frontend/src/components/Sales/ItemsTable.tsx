@@ -758,7 +758,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
         </DndContext>
       </div>
       {!hidePrices && (
-      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+      <div style={{ marginTop: 12, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
         <div>{currencySelector}</div>
         <div style={{ textAlign: 'right' }}>
           <div style={{ fontSize: 16, fontWeight: 'bold', marginBottom: 4 }}>Összesen Nettó: {totals.netDiscounted.toFixed(2)} {currency}</div>
