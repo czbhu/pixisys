@@ -543,7 +543,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                     const existing = JSON.parse(localStorage.getItem('pixierp_printshop_state') || '{}');
                     localStorage.setItem('pixierp_printshop_state', JSON.stringify({ ...existing, params: psParams }));
                   } catch {}
-                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(record.manufacturing_product) });
+                  const urlParams = new URLSearchParams({ from_rfq: '1', edit_mfg_id: String(record.manufacturing_product), return_url: window.location.href });
                   window.open(`/print-shop?${urlParams.toString()}`, '_blank');
                 }}
               >PS</Button>

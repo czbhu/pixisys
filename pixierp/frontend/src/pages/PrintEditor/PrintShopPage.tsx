@@ -117,6 +117,8 @@ const PrintShopPage: React.FC = () => {
   const fromRfqCompanyName = fromRfqParams.get('company_name') || '';
   // edit_mfg_id: opened from PS button on an existing RFQ item → update instead of create
   const editMfgId = fromRfqParams.get('edit_mfg_id') ? Number(fromRfqParams.get('edit_mfg_id')) : null;
+  // return_url: the opener page URL to navigate back to after save
+  const returnUrl = fromRfqParams.get('return_url') || null;
 
   // Load printshop_params from the manufacturing product when editing
   useEffect(() => {
@@ -538,10 +540,21 @@ const PrintShopPage: React.FC = () => {
         }
       }
 
-      message.success('Ajánlat készítése...');
+      message.success('Mentve.');
+
+      // Helper: navigate opener (or self) to targetUrl, then close this tab if opened via window.open
+      const navigateBack = (targetUrl: string) => {
+        if (window.opener && !window.opener.closed) {
+          window.opener.location.href = targetUrl;
+          window.close();
+        } else {
+          window.location.href = targetUrl;
+        }
+      };
+
       if (editMfgId) {
-        // Editing existing item: just go back to RFQ list
-        window.location.href = '/sales/rfqs';
+        // Editing existing item: return to opener (RFQ detail or list)
+        navigateBack(returnUrl || '/sales/rfqs');
       } else {
         const rfqParams = new URLSearchParams({
           create: 'true',
@@ -551,7 +564,10 @@ const PrintShopPage: React.FC = () => {
         if (selectedCompany) rfqParams.set('company', String(selectedCompany));
         if (selectedContact) rfqParams.set('contact', String(selectedContact));
         if (fromRfq) {
-          window.location.href = `/sales/rfqs?${rfqParams.toString()}`;
+          // return_url is the page that opened us (e.g. /sales/rfqs with modal open)
+          // We need to navigate it to the RFQ creation URL with the new item
+          const base = returnUrl ? new URL(returnUrl).pathname : '/sales/rfqs';
+          navigateBack(`${base}?${rfqParams.toString()}`);
         } else {
           window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
         }
