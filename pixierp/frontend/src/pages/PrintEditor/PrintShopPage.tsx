@@ -92,6 +92,8 @@ const PrintShopPage: React.FC = () => {
   const scaleMultiplier = ratioRight / ratioLeft;
   // Raw (unscaled) TrimBox/MediaBox dimensions from last PDF analysis
   const [rawPdfSize, setRawPdfSize] = useState<{ width: number; height: number } | null>(null);
+  // Keep a ref to the currently loaded PDF file so we can attach it on save
+  const currentPdfFileRef = useRef<File | null>(null);
 
   const [orderId, setOrderId] = useState<number | null>(() => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).orderId; return v ?? null; } } catch {} return null;
@@ -216,6 +218,7 @@ const PrintShopPage: React.FC = () => {
 
   // ── PDF-based param auto-fill ──────────────────────────────────────────────
   const handlePdfFileChange = useCallback((file: File | null) => {
+    currentPdfFileRef.current = file;
     if (!file) return;
     // Analyze via backend to get TrimBox and page count
     const formData = new FormData();
@@ -479,9 +482,35 @@ const PrintShopPage: React.FC = () => {
         deadline: new Date(Date.now() + 14 * 86400000).toISOString().split('T')[0],
         contact: selectedContact && typeof selectedContact === 'number' ? selectedContact : undefined,
         cost_items: costItems,
+        // Print-specific fields
+        width_mm: params.width_mm,
+        height_mm: params.height_mm,
+        sides: params.sides,
+        side1_mode: params.side1_mode,
+        side2_mode: params.side2_mode,
+        binding: params.binding,
+        folding_count: params.folding_count,
+        folding_specs: params.folding_specs,
+        sheet_count: params.sheet_count ?? 1,
+        material: params.material_id ?? undefined,
+        price_breakdown: priceBreakdown ?? undefined,
       };
 
       const created = await manufacturingService.createProduct(payload);
+
+      // Upload PDF attachment if a file is loaded
+      if (currentPdfFileRef.current) {
+        try {
+          await manufacturingService.uploadProductAttachment(
+            created.id,
+            currentPdfFileRef.current,
+            'PrintShop PDF'
+          );
+        } catch (attErr) {
+          console.warn('[handleRFQ] PDF attachment upload failed:', attErr);
+        }
+      }
+
       message.success('Ajánlat készítése...');
       const rfqParams = new URLSearchParams({
         create: 'true',
@@ -490,7 +519,12 @@ const PrintShopPage: React.FC = () => {
       });
       if (selectedCompany) rfqParams.set('company', String(selectedCompany));
       if (selectedContact) rfqParams.set('contact', String(selectedContact));
-      window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+      if (fromRfq) {
+        // Opened from RFQ tab: navigate the current tab back to RFQ
+        window.location.href = `/sales/rfqs?${rfqParams.toString()}`;
+      } else {
+        window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+      }
     } catch (e: any) {
       console.error('[handleRFQ] error:', e?.response?.data);
       message.error(e?.response?.data?.error || JSON.stringify(e?.response?.data) || 'Hiba az ajánlat létrehozásakor');
