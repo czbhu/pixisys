@@ -457,7 +457,7 @@ const ProductionQueue: React.FC = () => {
             sorter: (a: QueueRow, b: QueueRow) => (a.order_number || '').localeCompare(b.order_number || ''),
             render: (v: string, r: QueueRow) => (
                 <a
-                    href={`https://erp.pixisys.eu/manufacturing/ordered-products?order=${r.order_id}`}
+                    href={`/manufacturing/ordered-products?order=${r.order_id}`}
                     target="_blank"
                     rel="noopener noreferrer"
                     style={{ fontWeight: 500 }}
