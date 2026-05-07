@@ -1458,7 +1458,7 @@ class ManufacturingCostItemViewSet(
 
                 box = 0.3 * cm
                 p.setLineWidth(0.6)
-                p.rect(col_x_box, y - box + 0.05 * cm, box, box, stroke=1, fill=0)
+                p.rect(col_x_box, y - box * 0.5 + 0.1 * cm, box, box, stroke=1, fill=0)
 
                 is_self = sub.id == ci.id
                 if is_self:
