@@ -501,6 +501,14 @@ export const salesService = {
         const response = await api.get('/sales/work-logs/active/');
         return response.data;
     },
+    async getAllActiveWorkLogs() {
+        const response = await api.get('/sales/work-logs/all_active/');
+        return response.data;
+    },
+    async getDashboardStats() {
+        const response = await api.get('/sales/customer-orders/dashboard_stats/');
+        return response.data;
+    },
     async startWorkLog(data: { order_id: number; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null }) {
         const response = await api.post('/sales/work-logs/start/', data);
         return response.data;

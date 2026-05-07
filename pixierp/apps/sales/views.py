@@ -4337,6 +4337,21 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'errors': errors,
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=False, methods=['get'])
+    def dashboard_stats(self, request):
+        """Aggregated order counts by status for the dashboard"""
+        from django.db.models import Count
+        status_counts = CustomerOrder.objects.values('status').annotate(count=Count('id'))
+        result = {item['status']: item['count'] for item in status_counts}
+        # Latest orders
+        latest = CustomerOrder.objects.select_related('quote_request__company', 'quote_request__customer').order_by('-order_date')[:10]
+        from .serializers import CustomerOrderListSerializer
+        latest_data = CustomerOrderListSerializer(latest, many=True).data
+        return Response({
+            'counts': result,
+            'latest_orders': latest_data,
+        })
+
 
 class CustomerOrderItemViewSet(viewsets.ModelViewSet):
     queryset = CustomerOrderItem.objects.all()
@@ -4951,6 +4966,14 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         if log:
             return Response(self.get_serializer(log).data)
         return Response({}) # Return empty object
+
+    @action(detail=False, methods=['get'])
+    def all_active(self, request):
+        """Get all currently active work logs (all users) for dashboard"""
+        logs = WorkLog.objects.filter(ended_at__isnull=True).select_related(
+            'user', 'customer_order', 'item'
+        ).order_by('started_at')
+        return Response(self.get_serializer(logs, many=True).data)
     
     @action(detail=False, methods=['post'])
     def start(self, request):

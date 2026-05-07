@@ -1,217 +1,183 @@
-import React, { useState, useEffect } from 'react';
-import { Row, Col, Card, Statistic, Table, Progress, Typography, Spin, Alert } from 'antd';
-import ResponsiveTable from '../components/ResponsiveTable';
+import React, { useState, useEffect, useCallback } from 'react';
+import {
+    Row, Col, Card, Statistic, Table, Select, Typography, Spin, Alert,
+    Badge, Tag, Tooltip, List, Avatar, Space
+} from 'antd';
 import {
     UserOutlined,
     ShoppingCartOutlined,
-    DollarOutlined,
+    ThunderboltOutlined,
+    CheckCircleOutlined,
+    CarOutlined,
+    WarningOutlined,
     TeamOutlined,
-    ArrowUpOutlined,
-    ArrowDownOutlined,
+    ClockCircleOutlined,
+    PlusCircleOutlined,
+    ExclamationCircleOutlined,
 } from '@ant-design/icons';
 import { salesService } from '../services/salesService';
+import { useNavigate } from 'react-router-dom';
 
-const { Title } = Typography;
+const { Title, Text } = Typography;
 
-const Dashboard = () => {
-    const [loading, setLoading] = useState(true);
-    const [error, setError] = useState<string | null>(null);
-    const [stats, setStats] = useState({
-        totalCustomers: 0,
-        totalOrders: 0,
-        totalRevenue: 0,
-        totalProducts: 0
-    });
-    const [recentOrders, setRecentOrders] = useState<any[]>([]);
+type DashboardView = 'manufacturing' | 'sales';
 
-    useEffect(() => {
-        loadDashboardData();
-    }, []);
+interface StatusCounts {
+    new?: number;
+    confirmed?: number;
+    in_production?: number;
+    ready?: number;
+    in_delivery?: number;
+    delivered?: number;
+    cancelled?: number;
+}
 
-    const loadDashboardData = async () => {
-        try {
-            setLoading(true);
-            setError(null);
+interface OrderRow {
+    id: number;
+    order_number: string;
+    customer_name: string;
+    status: string;
+    order_date: string;
+    quote_request_title?: string;
+    deadline?: string;
+    total_amount?: number;
+}
 
-            // Load customers
-            const customersResponse = await salesService.getCustomers();
-            const totalCustomers = customersResponse.count || 0;
+interface WorkLogRow {
+    id: number;
+    user_name: string;
+    customer_order_number: string;
+    customer_order: number;
+    workflow_name: string;
+    item_name?: string;
+    started_at: string;
+}
 
-            // Load orders
-            const ordersResponse = await salesService.getOrders();
-            const totalOrders = ordersResponse.count || 0;
-            const orders = ordersResponse.results || [];
+const ORDER_STATUS_LABELS: Record<string, string> = {
+    new: 'Új',
+    confirmed: 'Megerősítve',
+    in_production: 'Gyártásban',
+    ready: 'Kész',
+    in_delivery: 'Szállítás alatt',
+    delivered: 'Kiszállítva',
+    cancelled: 'Törölve',
+};
 
-            // Calculate total revenue
-            const totalRevenue = orders.reduce((sum: number, order: any) =>
-                sum + parseFloat(order.total_amount || 0), 0
-            );
+const DASHBOARD_VIEWS = [
+    { value: 'manufacturing', label: 'Általános / Gyártás' },
+    { value: 'sales', label: 'Értékesítés' },
+];
 
-            // Load products
-            const productsResponse = await salesService.getProducts();
-            const totalProducts = productsResponse.count || 0;
+function elapsedLabel(isoDate: string): string {
+    const ms = Date.now() - new Date(isoDate).getTime();
+    const min = Math.floor(ms / 60000);
+    if (min < 60) return `${min} perce`;
+    const h = Math.floor(min / 60);
+    if (h < 24) return `${h} órája`;
+    return `${Math.floor(h / 24)} napja`;
+}
 
-            setStats({
-                totalCustomers,
-                totalOrders,
-                totalRevenue,
-                totalProducts
-            });
+// ---------- Manufacturing Dashboard ----------
 
-            // Set recent orders (last 5)
-            setRecentOrders(orders.slice(0, 5));
-
-        } catch (err) {
-            console.error('Error loading dashboard data:', err);
-            setError('Hiba történt az adatok betöltése során');
-        } finally {
-            setLoading(false);
-        }
-    };
-
-    const statsData = [
+const ManufacturingDashboard: React.FC<{
+    counts: StatusCounts;
+    activeWorkers: WorkLogRow[];
+    latestOrders: OrderRow[];
+    navigate: ReturnType<typeof useNavigate>;
+}> = ({ counts, activeWorkers, latestOrders, navigate }) => {
+    const statCards = [
         {
-            title: 'Összes ügyfél',
-            value: stats.totalCustomers,
-            icon: <UserOutlined />,
-            color: '#1890ff',
-            change: 12,
-            changeType: 'increase',
+            title: 'Új munkák',
+            value: counts.new ?? 0,
+            icon: <PlusCircleOutlined />,
+            color: '#1677ff',
+            status: 'new',
         },
         {
-            title: 'Aktív megrendelések',
-            value: stats.totalOrders,
-            icon: <ShoppingCartOutlined />,
+            title: 'Gyártásban',
+            value: counts.in_production ?? 0,
+            icon: <ThunderboltOutlined />,
+            color: '#fa8c16',
+            status: 'in_production',
+        },
+        {
+            title: 'Kész munkák',
+            value: counts.ready ?? 0,
+            icon: <CheckCircleOutlined />,
             color: '#52c41a',
-            change: 8,
-            changeType: 'increase',
+            status: 'ready',
         },
         {
-            title: 'Összes bevétel',
-            value: stats.totalRevenue,
-            icon: <DollarOutlined />,
-            color: '#faad14',
-            change: 15,
-            changeType: 'increase',
-            prefix: 'Ft',
+            title: 'Szállítás alatt',
+            value: counts.in_delivery ?? 0,
+            icon: <CarOutlined />,
+            color: '#13c2c2',
+            status: 'in_delivery',
         },
         {
-            title: 'Összes termék',
-            value: stats.totalProducts,
+            title: 'Megerősítve',
+            value: counts.confirmed ?? 0,
+            icon: <ShoppingCartOutlined />,
+            color: '#722ed1',
+            status: 'confirmed',
+        },
+        {
+            title: 'Aktív dolgozók',
+            value: activeWorkers.length,
             icon: <TeamOutlined />,
-            color: '#f5222d',
-            change: 5,
-            changeType: 'decrease',
+            color: '#eb2f96',
         },
     ];
 
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'completed': return 'green';
-            case 'draft': return 'orange';
-            case 'in_progress': return 'blue';
-            case 'cancelled': return 'red';
-            default: return 'default';
-        }
-    };
-
-    const getStatusText = (status: string) => {
-        switch (status) {
-            case 'draft': return 'Vázlat';
-            case 'in_progress': return 'Folyamatban';
-            case 'completed': return 'Befejezve';
-            case 'cancelled': return 'Törölve';
-            default: return status;
-        }
-    };
-
-    const columns = [
+    const latestCols = [
         {
             title: 'Megrendelés',
             dataIndex: 'order_number',
             key: 'order_number',
-            render: (text: string, record: any) => (
-                <div>
+            render: (text: string, r: OrderRow) => (
+                <a onClick={() => navigate(`/orders/${r.id}`)} style={{ cursor: 'pointer' }}>
                     <div style={{ fontWeight: 500 }}>{text}</div>
-                    <div style={{ fontSize: '12px', color: '#666' }}>{record.customer_name}</div>
-                </div>
+                    <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
+                </a>
             ),
-        },
-        {
-            title: 'Összeg',
-            dataIndex: 'total_amount',
-            key: 'total_amount',
-            align: 'right' as const,
-            render: (amount: number) => <span style={{ whiteSpace: 'nowrap' }}>{amount.toLocaleString()} Ft</span>
         },
         {
             title: 'Státusz',
             dataIndex: 'status',
             key: 'status',
-            align: 'center' as const,
-            render: (status: string) => (
-                <span style={{
-                    color: getStatusColor(status) === 'green' ? '#52c41a' :
-                        getStatusColor(status) === 'orange' ? '#fa8c16' :
-                            getStatusColor(status) === 'blue' ? '#1890ff' : '#f5222d',
-                    whiteSpace: 'nowrap',
-                    fontWeight: 500
-                }}>
-                    {getStatusText(status)}
-                </span>
-            )
+            render: (s: string) => {
+                const colorMap: Record<string, string> = {
+                    new: 'blue', confirmed: 'purple', in_production: 'orange',
+                    ready: 'green', in_delivery: 'cyan', delivered: 'default', cancelled: 'red',
+                };
+                return <Tag color={colorMap[s] ?? 'default'}>{ORDER_STATUS_LABELS[s] ?? s}</Tag>;
+            },
         },
         {
-            title: 'Létrehozva',
-            dataIndex: 'created_at',
-            key: 'created_at',
+            title: 'Dátum',
+            dataIndex: 'order_date',
+            key: 'order_date',
             responsive: ['md'] as any,
-            align: 'right' as const,
-            render: (date: string) => <span style={{ whiteSpace: 'nowrap' }}>{new Date(date).toLocaleDateString('hu-HU')}</span>
+            render: (d: string) => new Date(d).toLocaleDateString('hu-HU'),
         },
     ];
 
-    if (loading) {
-        return (
-            <div style={{ padding: '24px', textAlign: 'center' }}>
-                <Spin size="large" />
-                <p>Adatok betöltése...</p>
-            </div>
-        );
-    }
-
     return (
-        <div>
-            <Title level={2} style={{ marginBottom: 24 }}>
-                PixiERP Dashboard
-            </Title>
-
-            {error && (
-                <Alert
-                    message="Hiba"
-                    description={error}
-                    type="error"
-                    showIcon
-                    style={{ marginBottom: '24px' }}
-                />
-            )}
-
-            {/* Statistics Cards */}
+        <>
+            {/* Stat cards */}
             <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
-                {statsData.map((stat, index) => (
-                    <Col xs={24} sm={12} lg={6} key={index}>
-                        <Card>
+                {statCards.map((card, i) => (
+                    <Col xs={12} sm={8} lg={4} key={i}>
+                        <Card
+                            hoverable={!!card.status}
+                            onClick={() => card.status && navigate(`/orders?status=${card.status}`)}
+                            style={{ cursor: card.status ? 'pointer' : 'default' }}
+                        >
                             <Statistic
-                                title={stat.title}
-                                value={stat.value}
-                                prefix={stat.icon}
-                                valueStyle={{ color: stat.color }}
-                                suffix={
-                                    <span style={{ fontSize: 14, color: stat.changeType === 'increase' ? '#52c41a' : '#f5222d' }}>
-                                        {stat.changeType === 'increase' ? <ArrowUpOutlined /> : <ArrowDownOutlined />}
-                                        {stat.change}%
-                                    </span>
-                                }
+                                title={card.title}
+                                value={card.value}
+                                prefix={card.icon}
+                                valueStyle={{ color: card.color, fontSize: 28 }}
                             />
                         </Card>
                     </Col>
@@ -219,56 +185,312 @@ const Dashboard = () => {
             </Row>
 
             <Row gutter={[16, 16]}>
-                {/* Recent Orders */}
-                <Col xs={24} lg={16}>
-                    <Card title="Legutóbbi megrendelések">
-                        <ResponsiveTable
-                            dataSource={recentOrders}
-                            columns={columns}
+                {/* Active workers */}
+                <Col xs={24} lg={10}>
+                    <Card
+                        title={
+                            <Space>
+                                <Badge status="processing" />
+                                <span>Aktív dolgozók</span>
+                                <Text type="secondary" style={{ fontWeight: 400, fontSize: 13 }}>
+                                    (éppen dolgoznak)
+                                </Text>
+                            </Space>
+                        }
+                        style={{ height: '100%' }}
+                    >
+                        {activeWorkers.length === 0 ? (
+                            <Text type="secondary">Jelenleg nincs aktív dolgozó.</Text>
+                        ) : (
+                            <List
+                                dataSource={activeWorkers}
+                                renderItem={(w) => (
+                                    <List.Item style={{ paddingBlock: 8 }}>
+                                        <List.Item.Meta
+                                            avatar={
+                                                <Avatar icon={<UserOutlined />} style={{ backgroundColor: '#1677ff' }} />
+                                            }
+                                            title={
+                                                <Space size={4}>
+                                                    <Text strong>{w.user_name || 'Ismeretlen'}</Text>
+                                                    <Text type="secondary" style={{ fontSize: 12 }}>
+                                                        — {elapsedLabel(w.started_at)}
+                                                    </Text>
+                                                </Space>
+                                            }
+                                            description={
+                                                <Space direction="vertical" size={0}>
+                                                    <Text style={{ fontSize: 12 }}>
+                                                        <ClockCircleOutlined style={{ marginRight: 4 }} />
+                                                        {w.workflow_name || '—'}
+                                                    </Text>
+                                                    <a
+                                                        onClick={() => navigate(`/orders/${w.customer_order}`)}
+                                                        style={{ fontSize: 12 }}
+                                                    >
+                                                        {w.customer_order_number}
+                                                    </a>
+                                                </Space>
+                                            }
+                                        />
+                                    </List.Item>
+                                )}
+                            />
+                        )}
+                    </Card>
+                </Col>
+
+                {/* Latest orders */}
+                <Col xs={24} lg={14}>
+                    <Card
+                        title="Legutóbbi megrendelések"
+                        extra={
+                            <a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>
+                                Összes →
+                            </a>
+                        }
+                    >
+                        <Table
+                            dataSource={latestOrders}
+                            columns={latestCols}
                             pagination={false}
                             size="small"
                             rowKey="id"
-                            cardBreakpoint={500}
                         />
                     </Card>
                 </Col>
+            </Row>
+        </>
+    );
+};
 
-                {/* Quick Stats */}
+// ---------- Sales Dashboard ----------
+
+const SalesDashboard: React.FC<{
+    counts: StatusCounts;
+    latestOrders: OrderRow[];
+    navigate: ReturnType<typeof useNavigate>;
+}> = ({ counts, latestOrders, navigate }) => {
+    const total = Object.values(counts).reduce((a, b) => a + (b ?? 0), 0);
+    const delivered = counts.delivered ?? 0;
+    const cancelled = counts.cancelled ?? 0;
+    const active = total - delivered - cancelled;
+
+    const statCards = [
+        { title: 'Összes megrendelés', value: total, icon: <ShoppingCartOutlined />, color: '#1677ff' },
+        { title: 'Aktív munkák', value: active, icon: <ThunderboltOutlined />, color: '#fa8c16' },
+        { title: 'Kiszállítva', value: delivered, icon: <CheckCircleOutlined />, color: '#52c41a' },
+        { title: 'Törölve', value: cancelled, icon: <ExclamationCircleOutlined />, color: '#ff4d4f' },
+    ];
+
+    const allStatusRows = [
+        { status: 'new', label: 'Új' },
+        { status: 'confirmed', label: 'Megerősítve' },
+        { status: 'in_production', label: 'Gyártásban' },
+        { status: 'ready', label: 'Kész' },
+        { status: 'in_delivery', label: 'Szállítás alatt' },
+        { status: 'delivered', label: 'Kiszállítva' },
+        { status: 'cancelled', label: 'Törölve' },
+    ];
+
+    const latestCols = [
+        {
+            title: 'Megrendelés',
+            dataIndex: 'order_number',
+            key: 'order_number',
+            render: (text: string, r: OrderRow) => (
+                <a onClick={() => navigate(`/orders/${r.id}`)} style={{ cursor: 'pointer' }}>
+                    <div style={{ fontWeight: 500 }}>{text}</div>
+                    <div style={{ fontSize: 12, color: '#888' }}>{r.customer_name}</div>
+                </a>
+            ),
+        },
+        {
+            title: 'Összeg',
+            dataIndex: 'total_amount',
+            key: 'total_amount',
+            align: 'right' as const,
+            render: (v: number) => v != null ? `${Number(v).toLocaleString('hu-HU')} Ft` : '—',
+        },
+        {
+            title: 'Státusz',
+            dataIndex: 'status',
+            key: 'status',
+            render: (s: string) => {
+                const colorMap: Record<string, string> = {
+                    new: 'blue', confirmed: 'purple', in_production: 'orange',
+                    ready: 'green', in_delivery: 'cyan', delivered: 'default', cancelled: 'red',
+                };
+                return <Tag color={colorMap[s] ?? 'default'}>{ORDER_STATUS_LABELS[s] ?? s}</Tag>;
+            },
+        },
+        {
+            title: 'Dátum',
+            dataIndex: 'order_date',
+            key: 'order_date',
+            responsive: ['md'] as any,
+            render: (d: string) => new Date(d).toLocaleDateString('hu-HU'),
+        },
+    ];
+
+    return (
+        <>
+            <Row gutter={[16, 16]} style={{ marginBottom: 24 }}>
+                {statCards.map((card, i) => (
+                    <Col xs={12} sm={6} key={i}>
+                        <Card>
+                            <Statistic
+                                title={card.title}
+                                value={card.value}
+                                prefix={card.icon}
+                                valueStyle={{ color: card.color, fontSize: 28 }}
+                            />
+                        </Card>
+                    </Col>
+                ))}
+            </Row>
+
+            <Row gutter={[16, 16]}>
+                {/* Status breakdown */}
                 <Col xs={24} lg={8}>
-                    <Card title="Gyors statisztikák">
-                        <div style={{ marginBottom: 24 }}>
-                            <div style={{ marginBottom: 8 }}>
-                                <span>Eladási progress</span>
-                                <Progress percent={75} size="small" />
-                            </div>
-                            <div style={{ marginBottom: 8 }}>
-                                <span>Készlet szint</span>
-                                <Progress percent={60} size="small" status="active" />
-                            </div>
-                            <div style={{ marginBottom: 8 }}>
-                                <span>Ügyfél elégedettség</span>
-                                <Progress percent={85} size="small" />
-                            </div>
-                            <div>
-                                <span>Megrendelés teljesítés</span>
-                                <Progress percent={90} size="small" />
-                            </div>
-                        </div>
+                    <Card title="Megrendelések státusz szerint">
+                        {allStatusRows.map((row) => {
+                            const cnt = (counts as any)[row.status] ?? 0;
+                            const pct = total > 0 ? Math.round((cnt / total) * 100) : 0;
+                            return (
+                                <div
+                                    key={row.status}
+                                    style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 10, cursor: 'pointer' }}
+                                    onClick={() => navigate(`/orders?status=${row.status}`)}
+                                >
+                                    <Text>{row.label}</Text>
+                                    <Space>
+                                        <Text type="secondary" style={{ fontSize: 12 }}>{pct}%</Text>
+                                        <Tag>{cnt}</Tag>
+                                    </Space>
+                                </div>
+                            );
+                        })}
+                    </Card>
+                </Col>
 
-                        <div style={{ marginTop: 24 }}>
-                            <Title level={4}>Közelgő határidők</Title>
-                            <ul style={{ paddingLeft: 20 }}>
-                                <li>Havi jelentés - 3 nap</li>
-                                <li>Bérszámfejtés - 5 nap</li>
-                                <li>Készlet ellenőrzés - 1 hét</li>
-                                <li>Ügyfél találkozó - 2 hét</li>
-                            </ul>
-                        </div>
+                {/* Latest orders */}
+                <Col xs={24} lg={16}>
+                    <Card
+                        title="Legutóbbi megrendelések"
+                        extra={
+                            <a onClick={() => navigate('/orders')} style={{ fontSize: 13 }}>
+                                Összes →
+                            </a>
+                        }
+                    >
+                        <Table
+                            dataSource={latestOrders}
+                            columns={latestCols}
+                            pagination={false}
+                            size="small"
+                            rowKey="id"
+                        />
                     </Card>
                 </Col>
             </Row>
+        </>
+    );
+};
+
+// ---------- Main Dashboard ----------
+
+const Dashboard = () => {
+    const [view, setView] = useState<DashboardView>(() => {
+        return (localStorage.getItem('dashboardView') as DashboardView) ?? 'manufacturing';
+    });
+    const [loading, setLoading] = useState(true);
+    const [error, setError] = useState<string | null>(null);
+    const [counts, setCounts] = useState<StatusCounts>({});
+    const [latestOrders, setLatestOrders] = useState<OrderRow[]>([]);
+    const [activeWorkers, setActiveWorkers] = useState<WorkLogRow[]>([]);
+    const navigate = useNavigate();
+
+    const loadData = useCallback(async () => {
+        try {
+            setLoading(true);
+            setError(null);
+            const [stats, active] = await Promise.all([
+                salesService.getDashboardStats(),
+                salesService.getAllActiveWorkLogs(),
+            ]);
+            setCounts(stats.counts ?? {});
+            setLatestOrders(stats.latest_orders ?? []);
+            setActiveWorkers(Array.isArray(active) ? active : []);
+        } catch (err) {
+            console.error('Dashboard load error:', err);
+            setError('Hiba történt az adatok betöltése során');
+        } finally {
+            setLoading(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        loadData();
+        // Auto-refresh every 60 s
+        const id = setInterval(loadData, 60000);
+        return () => clearInterval(id);
+    }, [loadData]);
+
+    const handleViewChange = (v: DashboardView) => {
+        setView(v);
+        localStorage.setItem('dashboardView', v);
+    };
+
+    return (
+        <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 8 }}>
+                <Title level={2} style={{ margin: 0 }}>Dashboard</Title>
+                <Select<DashboardView>
+                    value={view}
+                    onChange={handleViewChange}
+                    options={DASHBOARD_VIEWS}
+                    style={{ minWidth: 200 }}
+                    size="large"
+                />
+            </div>
+
+            {error && (
+                <Alert
+                    message="Hiba"
+                    description={error}
+                    type="error"
+                    showIcon
+                    style={{ marginBottom: 24 }}
+                />
+            )}
+
+            {loading ? (
+                <div style={{ textAlign: 'center', padding: 60 }}>
+                    <Spin size="large" />
+                </div>
+            ) : (
+                <>
+                    {view === 'manufacturing' && (
+                        <ManufacturingDashboard
+                            counts={counts}
+                            activeWorkers={activeWorkers}
+                            latestOrders={latestOrders}
+                            navigate={navigate}
+                        />
+                    )}
+                    {view === 'sales' && (
+                        <SalesDashboard
+                            counts={counts}
+                            latestOrders={latestOrders}
+                            navigate={navigate}
+                        />
+                    )}
+                </>
+            )}
         </div>
     );
 };
 
 export default Dashboard;
+
