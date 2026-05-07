@@ -75,6 +75,9 @@ const RFQs: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
   const [rfqFileRemarks, setRfqFileRemarks] = useState<Record<string, string>>({});
+  const [remarkModalOpen, setRemarkModalOpen] = useState(false);
+  const [remarkModalKey, setRemarkModalKey] = useState<string>('');
+  const [remarkModalValue, setRemarkModalValue] = useState<string>('');
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewTitle, setPreviewTitle] = useState('');
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -1997,11 +2000,12 @@ const RFQs: React.FC = () => {
           <Row gutter={[8, 4]}>
             <Col xs={24}>
               <Form.Item label="Ajánlat csatolmányok" style={{ marginBottom: 6 }}>
-                <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {/* Upload gombok */}
                   {isMobile ? (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, minWidth: 120 }}>
-                      {/* Galéria feltöltés */}
-                      <label>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      {/* Galéria */}
+                      <label style={{ flex: 1 }}>
                         <input
                           type="file"
                           multiple
@@ -2017,10 +2021,13 @@ const RFQs: React.FC = () => {
                             e.target.value = '';
                           }}
                         />
-                        <Button icon={<PictureOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Galéria</Button>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
+                          <PictureOutlined style={{ fontSize: 22 }} />
+                          <span style={{ fontSize: 10 }}>Galéria</span>
+                        </div>
                       </label>
-                      {/* Kamera feltöltés */}
-                      <label>
+                      {/* Kamera */}
+                      <label style={{ flex: 1 }}>
                         <input
                           type="file"
                           accept="image/*"
@@ -2035,10 +2042,13 @@ const RFQs: React.FC = () => {
                             e.target.value = '';
                           }}
                         />
-                        <Button icon={<CameraOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Kamera</Button>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
+                          <CameraOutlined style={{ fontSize: 22 }} />
+                          <span style={{ fontSize: 10 }}>Kamera</span>
+                        </div>
                       </label>
-                      {/* Egyéb fájl */}
-                      <label>
+                      {/* Fájl */}
+                      <label style={{ flex: 1 }}>
                         <input
                           type="file"
                           multiple
@@ -2053,7 +2063,10 @@ const RFQs: React.FC = () => {
                             e.target.value = '';
                           }}
                         />
-                        <Button icon={<UploadOutlined />} style={{ width: '100%', pointerEvents: 'none' }}>Fájl</Button>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
+                          <UploadOutlined style={{ fontSize: 22 }} />
+                          <span style={{ fontSize: 10 }}>Fájl</span>
+                        </div>
                       </label>
                     </div>
                   ) : (
@@ -2076,26 +2089,40 @@ const RFQs: React.FC = () => {
                     </div>
                   </Upload.Dragger>
                   )}
-                  <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {/* Fájllista */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                     {rfqFiles.length === 0 && (
-                      <span style={{ fontSize: 12, color: '#aaa', paddingTop: 4 }}>Még nincs feltöltött fájl</span>
+                      <span style={{ fontSize: 12, color: '#aaa' }}>Még nincs feltöltött fájl</span>
                     )}
                     {rfqFiles.map((f) => {
                       const key = (f as any).uid || (f as any).name;
+                      const remark = rfqFileRemarks[key] || '';
                       return (
                         <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Button type="link" size="small" style={{ padding: 0, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
+                          <Button type="link" size="small" style={{ padding: 0, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
                             const fileObj = (f as any).originFileObj || f;
                             const url = (f as any).url || (fileObj ? URL.createObjectURL(fileObj) : undefined);
                             if (url) { setPreviewUrl(url); setPreviewTitle(f.name); setPreviewOpen(true); }
                           }} title={f.name}>{f.name}</Button>
-                          <Input
-                            size="small"
-                            placeholder="Megjegyzés"
-                            value={rfqFileRemarks[key] || ''}
-                            onChange={(e) => setRfqFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
-                            style={{ flex: 1 }}
-                          />
+                          {isMobile ? (
+                            <Button
+                              size="small"
+                              type={remark ? 'primary' : 'default'}
+                              ghost={!!remark}
+                              onClick={() => { setRemarkModalKey(key); setRemarkModalValue(remark); setRemarkModalOpen(true); }}
+                              style={{ flexShrink: 0 }}
+                            >
+                              {remark ? '📝' : 'Megjegyzés'}
+                            </Button>
+                          ) : (
+                            <Input
+                              size="small"
+                              placeholder="Megjegyzés"
+                              value={remark}
+                              onChange={(e) => setRfqFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
+                              style={{ flex: 1 }}
+                            />
+                          )}
                           <Button danger size="small" onClick={() => {
                             setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
                             setRfqFileRemarks((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
@@ -2281,6 +2308,27 @@ const RFQs: React.FC = () => {
         })() : (
           <div>Nincs előnézet</div>
         )}
+      </Modal>
+
+      <Modal
+        title="Megjegyzés a fájlhoz"
+        open={remarkModalOpen}
+        onOk={() => {
+          setRfqFileRemarks((prev) => ({ ...prev, [remarkModalKey]: remarkModalValue }));
+          setRemarkModalOpen(false);
+        }}
+        onCancel={() => setRemarkModalOpen(false)}
+        okText="Mentés"
+        cancelText="Mégse"
+        width={360}
+      >
+        <Input.TextArea
+          autoFocus
+          rows={3}
+          value={remarkModalValue}
+          onChange={(e) => setRemarkModalValue(e.target.value)}
+          placeholder="Írd be a megjegyzést..."
+        />
       </Modal>
 
       <ItemSelectorModal
