@@ -43,29 +43,37 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
   const collapsed = propCollapsed !== undefined ? propCollapsed : internalCollapsed;
   const setCollapsed = onCollapse || setInternalCollapsed;
 
-  // Dev mode user switcher state
+  // User switcher state (dev mode OR superadmin)
   const isDevMode = process.env.REACT_APP_DEV_MODE === 'true';
+  const canSwitchUsers = isDevMode || !!(user as any)?.is_superuser;
   const [devUsers, setDevUsers] = useState<any[]>([]);
   const [devSwitching, setDevSwitching] = useState(false);
   const [originalUserId, setOriginalUserId] = useState<number | null>(null);
+  const [originalToken, setOriginalToken] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isDevMode && user && devUsers.length === 0) {
+    if (canSwitchUsers && user && devUsers.length === 0) {
       api.get('/users/').then(res => {
         const list = Array.isArray(res.data) ? res.data : res.data?.results || [];
         setDevUsers(list);
       }).catch(() => {});
     }
-  }, [isDevMode, user, devUsers.length]);
+  }, [canSwitchUsers, user, devUsers.length]);
 
   const handleDevSwitchUser = useCallback(async (userId: number) => {
     if (!user) return;
-    if (!originalUserId) {
+    // Save original superuser token on first switch
+    const superToken = originalToken || localStorage.getItem('access_token');
+    if (!originalToken) {
+      setOriginalToken(superToken);
       setOriginalUserId(user.id);
     }
     setDevSwitching(true);
     try {
-      const res = await api.post('/auth/dev-switch-user/', { user_id: userId });
+      // Always use the original superuser token for the switch call
+      const res = await api.post('/auth/dev-switch-user/', { user_id: userId }, {
+        headers: { Authorization: `Bearer ${superToken}` }
+      });
       const { user: newUser, tokens } = res.data;
       localStorage.setItem('access_token', tokens.access);
       localStorage.setItem('refresh_token', tokens.refresh);
@@ -76,7 +84,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     } finally {
       setDevSwitching(false);
     }
-  }, [user, originalUserId, setUser]);
+  }, [user, originalToken, setUser]);
 
   // Calculate selected menu key based on current path
   const getSelectedKey = () => {
@@ -872,7 +880,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       }}>
         {collapsed ? 'P' : 'PixiERP'}
       </div>
-      {process.env.REACT_APP_DEV_MODE === 'true' && (
+      {isDevMode && (
         <div style={{
           textAlign: 'center',
           color: '#faad14',
@@ -887,7 +895,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           DEV MODE
         </div>
       )}
-      {isDevMode && !collapsed && devUsers.length > 0 && (
+      {canSwitchUsers && !collapsed && devUsers.length > 0 && (
         <div style={{ padding: '0 8px 8px', textAlign: 'center' }}>
           <Select
             size="small"

@@ -291,12 +291,11 @@ def profile_view(request):
 @permission_classes([IsAuthenticated])
 def dev_switch_user_view(request):
     """
-    Dev-only: any authenticated user can switch to another user for testing.
-    Only available when DEBUG=True.
+    Switch to another user. Available in DEBUG mode or for superusers.
     """
     from django.conf import settings as django_settings
-    if not django_settings.DEBUG:
-        return Response({'error': 'Csak fejlesztői módban elérhető.'}, status=status.HTTP_403_FORBIDDEN)
+    if not (django_settings.DEBUG or request.user.is_superuser):
+        return Response({'error': 'Csak fejlesztői módban vagy superadmin jogosultsággal elérhető.'}, status=status.HTTP_403_FORBIDDEN)
 
     target_user_id = request.data.get('user_id')
     if not target_user_id:
