@@ -900,25 +900,6 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           DEV MODE
         </div>
       )}
-      {canSwitchUsers && !collapsed && devUsers.length > 0 && (
-        <div style={{ padding: '0 8px 8px', textAlign: 'center' }}>
-          <Select
-            size="small"
-            style={{ width: '100%' }}
-            value={user.id}
-            loading={devSwitching}
-            onChange={handleDevSwitchUser}
-            suffixIcon={<SwapOutlined style={{ color: '#faad14' }} />}
-            popupMatchSelectWidth={false}
-            options={devUsers.map((u: any) => ({
-              value: u.id,
-              label: `${u.username}${u.id === originalUserId ? ' ★' : ''}`,
-            }))}
-            optionFilterProp="label"
-            showSearch
-          />
-        </div>
-      )}
       <div style={{ paddingBottom: '80px' }}>
         <Menu
           theme="dark"
@@ -928,6 +909,26 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           onOpenChange={handleOpenChange}
           items={itemsWithLinks}
         />
+        {canSwitchUsers && !collapsed && devUsers.length > 0 && (
+          <div style={{ padding: '8px 8px 4px', borderTop: '1px solid rgba(255,255,255,0.1)' }}>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 4, paddingLeft: 2 }}>Felhasználó váltás</div>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={user.id}
+              loading={devSwitching}
+              onChange={handleDevSwitchUser}
+              suffixIcon={<SwapOutlined style={{ color: '#faad14' }} />}
+              popupMatchSelectWidth={false}
+              options={devUsers.map((u: any) => ({
+                value: u.id,
+                label: `${u.username}${u.id === originalUserId ? ' ★' : ''}`,
+              }))}
+              optionFilterProp="label"
+              showSearch
+            />
+          </div>
+        )}
       </div>
     </Sider>
   );
