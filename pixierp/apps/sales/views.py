@@ -4364,6 +4364,37 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
     serializer_class = CustomerOrderItemSerializer
     permission_classes = [AllowAny]
 
+    PRICE_FIELDS = {'net_unit_price', 'vat_rate', 'discount_percent', 'discount_amount'}
+
+    def partial_update(self, request, *args, **kwargs):
+        item = self.get_object()
+        order = item.customer_order
+
+        # Számlázás után az ár-mezők nem módosíthatók
+        if order.invoice_number:
+            price_fields_in_request = self.PRICE_FIELDS & set(request.data.keys())
+            if price_fields_in_request:
+                return Response(
+                    {'error': 'A megrendelés már számlázva van, az árak nem módosíthatók.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        # Ár-mezők módosításához sales.orders edit jogosultság kell
+        price_fields_in_request = self.PRICE_FIELDS & set(request.data.keys())
+        if price_fields_in_request:
+            from apps.core.permissions import check_permission
+            user = request.user
+            if not user or not user.is_authenticated:
+                return Response({'error': 'Bejelentkezés szükséges.'}, status=status.HTTP_403_FORBIDDEN)
+            if not (user.is_superuser or user.is_staff or
+                    check_permission(user, 'sales', 'sales.orders', 'edit')):
+                return Response(
+                    {'error': 'Nincs jogosultságod az árak módosításához.'},
+                    status=status.HTTP_403_FORBIDDEN
+                )
+
+        return super().partial_update(request, *args, **kwargs)
+
     @action(detail=True, methods=['patch'], url_path='remark')
     def update_remark(self, request, pk=None):
         """PATCH remark field on a customer order item."""

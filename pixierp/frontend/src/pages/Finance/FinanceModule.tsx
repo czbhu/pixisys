@@ -27,7 +27,7 @@ const FinanceModule = () => {
         try {
           const response = await api.post('/auth/sso-token/', {});
           const ssoToken = response.data.token;
-          const pixinvoiceUrl = `https://inv.pixisys.eu/sso-login?token=${encodeURIComponent(ssoToken)}`;
+          const pixinvoiceUrl = `https://i.pixisys.eu/sso-login?token=${encodeURIComponent(ssoToken)}`;
           window.open(pixinvoiceUrl, '_blank');
         } catch (error) {
           console.error('SSO error:', error);

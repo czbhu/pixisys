@@ -784,7 +784,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       const ssoToken = response.data.token;
       
       // Open PixInvoice with SSO token
-      const pixinvoiceUrl = `https://inv.pixisys.eu/sso-login?token=${encodeURIComponent(ssoToken)}`;
+      const pixinvoiceUrl = `https://i.pixisys.eu/sso-login?token=${encodeURIComponent(ssoToken)}`;
       window.open(pixinvoiceUrl, '_blank');
     } catch (error) {
       console.error('SSO error:', error);

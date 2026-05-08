@@ -408,11 +408,12 @@ class QuoteRequestItem(models.Model):
 
     def _sync_customer_order_items(self):
         """Az ajánlat tétel változásait tükrözze az összes aktív megrendelés tételbe.
-        Nem érintett állapotok: delivered, cancelled."""
-        SKIP_STATUSES = ('delivered', 'cancelled')
+        Csak a lezárt (delivered, cancelled) MEGRENDELÉSEK tételeit hagyjuk ki –
+        az egyes tételek státusza (pl. delivered) nem akadályozza az ár-szinkronizációt."""
+        SKIP_ORDER_STATUSES = ('delivered', 'cancelled')
         order_items = self.customerorderitem_set.exclude(
-            customer_order__status__in=SKIP_STATUSES
-        ).exclude(status__in=SKIP_STATUSES)
+            customer_order__status__in=SKIP_ORDER_STATUSES
+        ).exclude(status='cancelled')
         if not order_items.exists():
             return
         for oi in order_items:

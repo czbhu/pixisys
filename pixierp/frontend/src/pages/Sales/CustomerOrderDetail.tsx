@@ -649,6 +649,15 @@ const CustomerOrderDetail: React.FC = () => {
 
         <Divider />
 
+        {order.invoice_number && (
+          <Alert
+            type="info"
+            showIcon
+            message={`A megrendelés számlázva (${order.invoice_number}), az árak már nem módosíthatók.`}
+            style={{ marginBottom: 12 }}
+          />
+        )}
+
         <ItemsTable
           items={order.items || []}
           onRefresh={load}
@@ -657,11 +666,26 @@ const CustomerOrderDetail: React.FC = () => {
           hidePrices={hidePrices}
           hideDetailLink
           showInlineSubItems
-          onEditItem={order.status === 'new' ? (item) => {
-            setEditContext({ item });
-            setSelectorType(item.item_type);
-            setSelectorOpen(true);
-          } : undefined}
+          onEditItem={(() => {
+            // Számlázás után már nem szerkeszthető
+            if (order.invoice_number) return undefined;
+            // Csak sales.orders edit jogosultsággal, vagy admin/superuser
+            const canEdit =
+              (user as any)?.is_superuser ||
+              (user as any)?.is_staff ||
+              ((user as any)?.permissions ?? []).some(
+                (p: any) => p.resource === 'sales.orders' && p.action === 'edit' && p.allowed !== false
+              ) ||
+              ((user as any)?.permissions ?? []).some(
+                (p: any) => p.resource === 'sales.orders' && p.action === 'manage' && p.allowed !== false
+              );
+            if (!canEdit) return undefined;
+            return (item: any) => {
+              setEditContext({ item });
+              setSelectorType(item.item_type);
+              setSelectorOpen(true);
+            };
+          })()}
         />
 
         <Divider />
