@@ -723,6 +723,11 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         return true;
     }
 
+    // Superuser / staff: minden menüpont látszik
+    if ((user as any)?.is_superuser || (user as any)?.is_staff) {
+        return true;
+    }
+
     const perms = Array.isArray(user?.permissions) ? user.permissions : [];
     if (!perms.length) return false;
 

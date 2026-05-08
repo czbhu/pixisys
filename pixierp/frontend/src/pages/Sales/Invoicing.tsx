@@ -354,13 +354,22 @@ const Invoicing: React.FC = () => {
       title: 'Számla szám',
       dataIndex: 'invoice_number',
       key: 'invoice_number',
-      render: (invoiceNumber: string | null) => (
+      render: (invoiceNumber: string | null, record) => (
         <input
           type="text"
-          value={invoiceNumber || ''}
-          disabled
-          style={{ width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: '4px', backgroundColor: '#f5f5f5', cursor: 'not-allowed' }}
-          placeholder="-"
+          defaultValue={invoiceNumber || ''}
+          style={{ width: '100%', padding: '4px 8px', border: '1px solid #d9d9d9', borderRadius: '4px', backgroundColor: invoiceNumber ? '#f6ffed' : '#fff', cursor: 'text' }}
+          placeholder="Számla szám..."
+          onClick={(e) => e.stopPropagation()}
+          onBlur={(e) => {
+            const newVal = e.target.value.trim();
+            if (newVal !== (invoiceNumber || '')) {
+              updateInvoiceNumber(record.id, newVal);
+            }
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+          }}
         />
       ),
     },

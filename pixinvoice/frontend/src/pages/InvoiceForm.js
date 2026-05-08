@@ -1760,7 +1760,8 @@ const InvoiceForm = () => {
             // Call ERP API for each order
             const updatePromises = erpOrderIdsRef.current.map(async (orderId) => {
               try {
-                const response = await fetch(`http://192.168.5.61:8003/api/v1/sales/customer-orders/${orderId}/update_invoice_number/`, {
+                const erpBaseUrl = process.env.REACT_APP_ERP_API_URL || 'https://e.pixisys.eu/api/v1';
+                const response = await fetch(`${erpBaseUrl}/sales/customer-orders/${orderId}/update_invoice_number/`, {
                   method: 'POST',
                   headers: {
                     'Content-Type': 'application/json',
