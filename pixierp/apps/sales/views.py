@@ -3988,6 +3988,19 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         # Allow None/null to clear the invoice number (for storno)
         order.invoice_number = invoice_number
         order.save()
+
+        # Update linked RFQ status: ordered when invoice set, accepted when cleared
+        qr = getattr(order, 'quote_request', None)
+        if qr:
+            if invoice_number:
+                if qr.status in ('new', 'in_progress', 'quoted', 'accepted'):
+                    qr.status = 'ordered'
+                    qr.save(update_fields=['status'])
+            else:
+                if qr.status == 'ordered':
+                    qr.status = 'accepted'
+                    qr.save(update_fields=['status'])
+
         return Response(self.get_serializer(order).data)
 
     @action(detail=False, methods=['get'])
