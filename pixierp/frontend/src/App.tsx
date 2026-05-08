@@ -39,6 +39,9 @@ import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { SettingsProvider } from './contexts/SettingsContext';
 import { TimeTrackerProvider } from './contexts/TimeTrackerContext';
 import { ActionHistoryProvider } from './contexts/ActionHistoryContext';
+import { CartProvider } from './contexts/CartContext';
+import { PickingProvider } from './contexts/PickingContext';
+import CartDrawer from './components/Cart/CartDrawer';
 import { manufacturingService } from './services/manufacturingService';
 import { notificationWS } from './services/notificationWebSocket';
 import './App.css';
@@ -273,6 +276,7 @@ function AppContent() {
           isMobile={isMobile}
           inviteCount={inviteCount}
         />
+        <CartDrawer />
         <Content style={{ 
           margin: isMobile ? '2px' : '2px', 
           padding: 0, 
@@ -324,7 +328,11 @@ function App() {
         <AuthProvider>
           <ActionHistoryProvider>
             <TimeTrackerProvider>
-              <AppContent />
+              <CartProvider>
+                <PickingProvider>
+                  <AppContent />
+                </PickingProvider>
+              </CartProvider>
             </TimeTrackerProvider>
           </ActionHistoryProvider>
         </AuthProvider>

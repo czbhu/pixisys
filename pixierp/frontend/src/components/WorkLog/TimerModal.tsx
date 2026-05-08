@@ -1,8 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Form, Select, Button, Statistic, AutoComplete } from 'antd';
+import { Modal, Form, Select, Button, Statistic, AutoComplete, Checkbox, Input, Space, Tag, Divider } from 'antd';
+import { TeamOutlined } from '@ant-design/icons';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { salesService } from '../../services/salesService';
+import { hrService } from '../../services/hrService';
 import { manufacturingService } from '../../services/manufacturingService';
+
+const OTHER_ORDER_VALUE = '__other__';
 
 export const TimerModal: React.FC = () => {
     const { 
@@ -15,6 +19,14 @@ export const TimerModal: React.FC = () => {
     const [selectedOrderId, setSelectedOrderId] = useState<number | null>(null);
     const [workflowOptions, setWorkflowOptions] = useState<string[]>([]);
     const [form] = Form.useForm();
+
+    // "Másnak segítek" state
+    const [helpingOther, setHelpingOther] = useState(false);
+    const [employees, setEmployees] = useState<any[]>([]);
+    const [helpUserId, setHelpUserId] = useState<number | null>(null);
+
+    // "Egyéb" order state
+    const [isOtherOrder, setIsOtherOrder] = useState(false);
 
     useEffect(() => {
         loadWorkflowOptions();
@@ -33,74 +45,103 @@ export const TimerModal: React.FC = () => {
         }
     };
 
+    const loadEmployees = async () => {
+        try {
+            const res = await hrService.getEmployees();
+            const list = Array.isArray(res) ? res : (res?.results ?? []);
+            setEmployees(list);
+        } catch (e) {
+            setEmployees([]);
+        }
+    };
+
+    const loadColleagueActiveLog = async (userId: number) => {
+        try {
+            const log = await salesService.getColleagueActiveLog(userId);
+            if (log && log.id) {
+                // Prefill order, item, workflow from colleague's active log
+                form.setFieldsValue({
+                    order_id: log.customer_order || OTHER_ORDER_VALUE,
+                    item_id: log.item || null,
+                    workflow_name: log.workflow_name || '',
+                    order_label: log.order_label || '',
+                });
+                if (log.customer_order) {
+                    setSelectedOrderId(log.customer_order);
+                    setIsOtherOrder(false);
+                    loadItems(log.customer_order);
+                } else if (log.order_label) {
+                    setIsOtherOrder(true);
+                    setSelectedOrderId(null);
+                }
+            }
+        } catch (e) {
+            // No active log for colleague — just leave fields as is
+        }
+    };
+
     useEffect(() => {
         if (modalOpen) {
             loadOrders();
             if (!activeLog) {
                 if (preselectedOrderId) {
-                    // Always try to load the specific order regardless of the list
-                     salesService.getCustomerOrder(preselectedOrderId).then(order => {
-                         // Update orders list to include this one if missing (to ensure label display)
-                         setOrders(prev => {
-                             if (!prev.find(o => o.id === order.id)) {
-                                 return [...prev, order];
-                             }
-                             return prev;
-                         });
-                         
-                         form.setFieldsValue({ order_id: preselectedOrderId });
-                         setSelectedOrderId(preselectedOrderId);
-                     });
+                    salesService.getCustomerOrder(preselectedOrderId).then(order => {
+                        setOrders(prev => {
+                            if (!prev.find((o: any) => o.id === order.id)) {
+                                return [...prev, order];
+                            }
+                            return prev;
+                        });
+                        form.setFieldsValue({ order_id: preselectedOrderId });
+                        setSelectedOrderId(preselectedOrderId);
+                    });
 
                     loadItems(preselectedOrderId).then((loadedItems) => {
-                        // If we have preselectedItemId and items loaded, set it
                         if (preselectedItemId && loadedItems) {
-                             form.setFieldsValue({ item_id: preselectedItemId });
-                             const item = loadedItems.find((i: any) => i.id === preselectedItemId);
-                             if (item) {
-                                 // Load sub-items for this item
-                                 loadSubItems(item).then((loadedSubItems: any[]) => {
-                                     if (preselectedSubItemId) {
-                                         form.setFieldsValue({ sub_item_id: preselectedSubItemId });
-                                     }
-                                 });
-                             }
+                            form.setFieldsValue({ item_id: preselectedItemId });
+                            const item = loadedItems.find((i: any) => i.id === preselectedItemId);
+                            if (item) {
+                                loadSubItems(item).then(() => {
+                                    if (preselectedSubItemId) {
+                                        form.setFieldsValue({ sub_item_id: preselectedSubItemId });
+                                    }
+                                });
+                            }
                         }
                     });
                 } else {
-                    // Reset fields if opened without preselection
                     form.resetFields();
                     setSelectedOrderId(null);
                     setItems([]);
                     setSubItems([]);
+                    setHelpingOther(false);
+                    setHelpUserId(null);
+                    setIsOtherOrder(false);
                 }
-            } else {
-                // If activeLog, populate it (already handled in another useEffect, but safe to keep clean state logic)
             }
         }
     }, [modalOpen, preselectedOrderId, preselectedItemId, preselectedSubItemId, activeLog]);
 
     useEffect(() => {
         if (activeLog) {
+            const orderId = activeLog.customer_order;
+            const isOther = !orderId;
+            setIsOtherOrder(isOther);
             form.setFieldsValue({
-                order_id: activeLog.customer_order,
+                order_id: orderId || (isOther ? OTHER_ORDER_VALUE : null),
                 item_id: activeLog.item,
-                workflow_name: activeLog.workflow_name
+                workflow_name: activeLog.workflow_name,
+                order_label: (activeLog as any).order_label || '',
             });
-            // Ensure order is in list for label
-            salesService.getCustomerOrder(activeLog.customer_order).then(order => {
-                setOrders(prev => {
-                     if (!prev.find(o => o.id === order.id)) {
-                         return [...prev, order];
-                     }
-                     return prev;
+            if (orderId) {
+                salesService.getCustomerOrder(orderId).then(order => {
+                    setOrders(prev => {
+                        if (!prev.find((o: any) => o.id === order.id)) return [...prev, order];
+                        return prev;
+                    });
                 });
-            });
-
-            setSelectedOrderId(activeLog.customer_order);
-            // Load items for valid display
-            if (activeLog.customer_order) {
-                loadItems(activeLog.customer_order).then(loadedItems => {
+                setSelectedOrderId(orderId);
+                loadItems(orderId).then(loadedItems => {
                     if (activeLog.item) {
                         const item = loadedItems.find((i: any) => i.id === activeLog.item);
                         if (item) loadSubItems(item);
@@ -112,13 +153,10 @@ export const TimerModal: React.FC = () => {
 
     const loadOrders = async () => {
         try {
-            // Should list "My Orders" - user invites etc.
-            // Filter by status: new, confirmed, in_production
             const res = await salesService.getCustomerOrders({ 
                 my_orders: 'true',
                 status: 'new,confirmed,in_production'
             });
-            // Also include current order if active log exists and it's not in the list (rare but possible)
             const list = res.results ?? res;
             setOrders(list);
         } catch (e) {}
@@ -155,7 +193,12 @@ export const TimerModal: React.FC = () => {
     const handleStart = async () => {
         try {
             const vals = await form.validateFields();
-            await startTimer(vals.order_id, vals.item_id, vals.workflow_name, vals.sub_item_id ?? null);
+            if (vals.order_id === OTHER_ORDER_VALUE) {
+                // Free-text order
+                await startTimer(null, null, vals.workflow_name, null, helpUserId, vals.order_label || '');
+            } else {
+                await startTimer(vals.order_id, vals.item_id, vals.workflow_name, vals.sub_item_id ?? null, helpUserId || null);
+            }
         } catch (e) {}
     };
 
@@ -166,85 +209,183 @@ export const TimerModal: React.FC = () => {
         return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
     };
 
+    const orderOptions = [
+        ...orders.map((o: any) => ({
+            label: `${o.order_number} – ${o.customer_name || o.quote_request?.customer?.name || 'ismeretlen'}`,
+            value: o.id,
+        })),
+        { label: '— Egyéb (szabad szöveges) —', value: OTHER_ORDER_VALUE },
+    ];
+
     return (
         <Modal
-            title="Munkaóra számláló"
+            title={
+                <Space>
+                    <span>Munkaóra számláló</span>
+                    {helpingOther && helpUserId && (
+                        <Tag color="purple" icon={<TeamOutlined />}>
+                            {employees.find(e => e.user === helpUserId)?.full_name || 'Kolléga'}
+                        </Tag>
+                    )}
+                </Space>
+            }
             open={modalOpen}
             onCancel={() => setModalOpen(false)}
             footer={null}
             centered
-            width="min(480px, 96vw)"
+            width="min(500px, 96vw)"
             style={{ maxWidth: '96vw' }}
         >
             <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                 <Statistic title="Időtartam" value={formatTime(elapsedSeconds)} />
+                <Statistic title="Időtartam" value={formatTime(elapsedSeconds)} />
             </div>
 
+            {/* Másnak segítek */}
+            {!activeLog && (
+                <div style={{
+                    background: helpingOther ? '#f9f0ff' : '#fafafa',
+                    border: `1px solid ${helpingOther ? '#d3adf7' : '#f0f0f0'}`,
+                    borderRadius: 6,
+                    padding: '8px 12px',
+                    marginBottom: 16,
+                }}>
+                    <Checkbox
+                        checked={helpingOther}
+                        onChange={e => {
+                            const val = e.target.checked;
+                            setHelpingOther(val);
+                            if (val) {
+                                loadEmployees();
+                            } else {
+                                setHelpUserId(null);
+                            }
+                        }}
+                    >
+                        <TeamOutlined style={{ marginRight: 4 }} />
+                        <strong>Másnak segítek</strong>
+                    </Checkbox>
+                    {helpingOther && (
+                        <div style={{ marginTop: 8 }}>
+                            <Select
+                                style={{ width: '100%' }}
+                                placeholder="Válassz kollégát..."
+                                showSearch
+                                optionFilterProp="label"
+                                value={helpUserId}
+                                onChange={uid => {
+                                    setHelpUserId(uid);
+                                    // Prefill from colleague's active log
+                                    loadColleagueActiveLog(uid);
+                                    // Also load their orders (show all orders for selection)
+                                    salesService.getCustomerOrders({ status: 'new,confirmed,in_production' }).then(res => {
+                                        const list = res.results ?? res;
+                                        setOrders(list);
+                                    }).catch(() => {});
+                                }}
+                                options={employees.map(e => ({
+                                    label: e.full_name || `${e.user_first_name} ${e.user_last_name}`,
+                                    value: e.user,
+                                }))}
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
+
             <Form form={form} layout="vertical">
-                <Form.Item name="order_id" label="Megrendelés" rules={[{ required: true }]}>
-                    <Select 
+                <Form.Item
+                    name="order_id"
+                    label="Megrendelés"
+                    rules={[{ required: !isOtherOrder, message: 'Kötelező' }]}
+                >
+                    <Select
                         disabled={!!activeLog}
                         showSearch
                         optionFilterProp="label"
                         optionLabelProp="label"
                         onChange={(val) => {
-                            setSelectedOrderId(val);
-                            loadItems(val);
-                            form.setFieldsValue({ item_id: null, workflow_name: '' });
+                            if (val === OTHER_ORDER_VALUE) {
+                                setIsOtherOrder(true);
+                                setSelectedOrderId(null);
+                                setItems([]);
+                                setSubItems([]);
+                                form.setFieldsValue({ item_id: null, sub_item_id: undefined, order_label: '' });
+                            } else {
+                                setIsOtherOrder(false);
+                                setSelectedOrderId(val);
+                                loadItems(val);
+                                form.setFieldsValue({ item_id: null, workflow_name: '' });
+                            }
                         }}
-                        options={orders.map(o => ({
-                            label: `${o.order_number} - ${o.customer_name || o.quote_request?.customer?.name || 'ismeretlen'}`,
-                            value: o.id
-                        }))}
+                        options={orderOptions}
                     />
                 </Form.Item>
-                <Form.Item name="item_id" label="Tétel">
-                    <Select
-                         disabled={!!activeLog}
-                         allowClear
-                         options={(() => {
-                            // Filter out service items if there are legitimate manufacturing/product items to track time on.
-                            // Only show services if they are the only things in the order (or explicitly needed).
-                            const hasManufacturing = items.some(i => i.item_type === 'manufacturing' || i.item_type === 'product');
-                            const displayItems = hasManufacturing 
-                                ? items.filter(i => i.item_type !== 'service') 
-                                : items;
 
-                            return displayItems.map(i => {
-                                 const name = i.product_name || 
-                                              i.manufacturing_product_name || 
-                                              i.material_name || 
-                                              i.service_name || 
-                                              '-';
-                                 return { label: name, value: i.id };
-                             });
-                         })()}
-                         onChange={(val) => {
-                             const item = items.find(i => i.id === val);
-                             // Load sub-items for the selected item
-                             form.setFieldsValue({ sub_item_id: undefined });
-                             if (item) {
-                                 loadSubItems(item);
-                             } else {
-                                 setSubItems([]);
-                             }
-                         }}
-                    />
-                </Form.Item>
-                {subItems.length > 0 && (
-                    <Form.Item name="sub_item_id" label="Altétel">
-                        <Select
+                {isOtherOrder && !activeLog && (
+                    <Form.Item
+                        name="order_label"
+                        label="Tevékenység megnevezése"
+                        rules={[{ required: true, message: 'Add meg a tevékenységet' }]}
+                    >
+                        <Input
+                            placeholder="pl. Takarítás, Karbantartás, Szállítás..."
                             disabled={!!activeLog}
-                            allowClear
-                            placeholder="Válassz altételt..."
-                            options={subItems.map(si => ({
-                                label: si.name + (si.code ? ` [${si.code}]` : ''),
-                                value: si.id,
-                            }))}
-                            onChange={() => {}}
                         />
                     </Form.Item>
                 )}
+                {isOtherOrder && !!activeLog && (
+                    <Form.Item name="order_label" label="Tevékenység megnevezése">
+                        <Input readOnly />
+                    </Form.Item>
+                )}
+
+                {!isOtherOrder && (
+                    <>
+                        <Form.Item name="item_id" label="Tétel">
+                            <Select
+                                disabled={!!activeLog}
+                                allowClear
+                                options={(() => {
+                                    const hasManufacturing = items.some((i: any) => i.item_type === 'manufacturing' || i.item_type === 'product');
+                                    const displayItems = hasManufacturing
+                                        ? items.filter((i: any) => i.item_type !== 'service')
+                                        : items;
+                                    return displayItems.map((i: any) => {
+                                        const name = i.product_name ||
+                                            i.manufacturing_product_name ||
+                                            i.material_name ||
+                                            i.service_name ||
+                                            '-';
+                                        return { label: name, value: i.id };
+                                    });
+                                })()}
+                                onChange={(val) => {
+                                    const item = items.find((i: any) => i.id === val);
+                                    form.setFieldsValue({ sub_item_id: undefined });
+                                    if (item) {
+                                        loadSubItems(item);
+                                    } else {
+                                        setSubItems([]);
+                                    }
+                                }}
+                            />
+                        </Form.Item>
+                        {subItems.length > 0 && (
+                            <Form.Item name="sub_item_id" label="Altétel">
+                                <Select
+                                    disabled={!!activeLog}
+                                    allowClear
+                                    placeholder="Válassz altételt..."
+                                    options={subItems.map((si: any) => ({
+                                        label: si.name + (si.code ? ` [${si.code}]` : ''),
+                                        value: si.id,
+                                    }))}
+                                />
+                            </Form.Item>
+                        )}
+                    </>
+                )}
+
                 <Form.Item name="workflow_name" label="Munkafolyamat">
                     <AutoComplete
                         disabled={!!activeLog}
@@ -266,3 +407,4 @@ export const TimerModal: React.FC = () => {
         </Modal>
     );
 };
+

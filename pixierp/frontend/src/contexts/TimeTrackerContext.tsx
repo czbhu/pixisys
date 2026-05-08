@@ -18,7 +18,7 @@ interface TimeTrackerContextType {
   activeLog: WorkLog | null;
   elapsedSeconds: number;
   refreshActiveLog: () => Promise<void>;
-  startTimer: (orderId: number, itemId?: number | null, workflowName?: string, subItemId?: number | null) => Promise<void>;
+  startTimer: (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string) => Promise<void>;
   stopTimer: () => Promise<void>;
   modalOpen: boolean;
   setModalOpen: (open: boolean) => void;
@@ -81,11 +81,11 @@ export const TimeTrackerProvider: React.FC<{ children: React.ReactNode }> = ({ c
     return () => clearInterval(interval);
   }, [activeLog]);
 
-  const startTimer = async (orderId: number, itemId?: number | null, workflowName?: string, subItemId?: number | null) => {
+  const startTimer = async (orderId?: number | null, itemId?: number | null, workflowName?: string, subItemId?: number | null, forUserId?: number | null, orderLabel?: string) => {
     try {
-      await salesService.startWorkLog({ order_id: orderId, item_id: itemId, workflow_name: workflowName, sub_item_id: subItemId });
+      await salesService.startWorkLog({ order_id: orderId, order_label: orderLabel, item_id: itemId, workflow_name: workflowName, sub_item_id: subItemId, for_user_id: forUserId });
       await refreshActiveLog();
-      message.success('Stopper elindítva');
+      message.success(forUserId ? 'Stopper elindítva (másnak)' : 'Stopper elindítva');
     } catch (e) {
       console.error(e);
       message.error('Hiba az indításkor');

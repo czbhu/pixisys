@@ -21,6 +21,7 @@ import { getCountries } from '../../services/countryService';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import RFQMaterialNeedsPanel from './components/RFQMaterialNeedsPanel';
 
 const normAccents = (s: string) =>
   (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -1078,6 +1079,7 @@ const RFQDetail: React.FC = () => {
             rfqItems={rfq?.items || []}
             refreshKey={costsVersion}
           />
+          <RFQMaterialNeedsPanel rfqItems={rfq?.items || []} />
         </div>
         </Form>
 

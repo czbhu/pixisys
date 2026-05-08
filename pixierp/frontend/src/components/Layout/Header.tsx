@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Layout, Dropdown, Avatar, Button, Space, message, Modal, Typography, Badge, MenuProps, Tooltip } from 'antd';
-import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined, UndoOutlined, RedoOutlined } from '@ant-design/icons';
+import { UserOutlined, LogoutOutlined, MenuOutlined, ClockCircleOutlined, QrcodeOutlined, LoginOutlined, FieldTimeOutlined, RestOutlined, UndoOutlined, RedoOutlined, ShoppingCartOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useActionHistory } from '../../contexts/ActionHistoryContext';
@@ -8,6 +8,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { TimerModal } from '../WorkLog/TimerModal';
 import QRScannerModal from '../QRScannerModal';
 import AttendanceQRModal from '../AttendanceQRModal';
+import { useCart } from '../../contexts/CartContext';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 import duration from 'dayjs/plugin/duration';
@@ -27,6 +28,7 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
     const { user, logout } = useAuth();
     const { undo, redo, canUndo, canRedo, history, currentIndex } = useActionHistory();
     const { activeLog, elapsedSeconds, setModalOpen } = useTimeTracker();
+    const { totalActiveCount, setDrawerOpen: setCartDrawerOpen } = useCart();
     const [qrModalOpen, setQrModalOpen] = useState(false);
     
     // Attendance state
@@ -584,6 +586,15 @@ const Header: React.FC<HeaderProps> = ({ onMenuClick, isMobile = false, inviteCo
             </div>
 
             <Space>
+                <Badge count={totalActiveCount} size="small" offset={[-2, 4]} style={{ backgroundColor: '#531dab' }}>
+                    <Button
+                        type="text"
+                        icon={<ShoppingCartOutlined style={{ fontSize: 18 }} />}
+                        onClick={() => setCartDrawerOpen(true)}
+                        title="Rendelési kosár"
+                        style={{ padding: '0 8px' }}
+                    />
+                </Badge>
                 <Button 
                     type="text" 
                     icon={<QrcodeOutlined />} 

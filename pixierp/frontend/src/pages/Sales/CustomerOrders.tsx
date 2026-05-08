@@ -21,6 +21,7 @@ import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearch
 import { deepSearchMatch } from '../../utils/searchUtils';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 import { Spin as AntSpin } from 'antd';
 import './CustomerOrders.css';
 
@@ -704,6 +705,14 @@ interface CustomerOrder {
                             <div style={{ paddingLeft: 8 }}>
                               <ProductSubItemsTable productId={productId} showNotesAndAttachments />
                             </div>
+                            <MaterialNeedsTree
+                              manufacturingProductId={productId}
+                              quantity={Number(r.quantity || 1)}
+                              sourceType="customer_order"
+                              sourceId={Number(record.id || 0)}
+                              sourceNumber={record.order_number || String(record.id || '')}
+                              sourceItemName={r.product_name || r.manufacturing_product_name || r.material_name || r.name || ''}
+                            />
                           </div>
                         )}
                         <div>

@@ -9,7 +9,9 @@ import {
     DeleteOutlined,
     HomeOutlined,
     SolutionOutlined,
-    BarChartOutlined
+    BarChartOutlined,
+    SelectOutlined,
+    UnorderedListOutlined,
 } from '@ant-design/icons';
 import Materials from './Materials';
 import MaterialGroups from './MaterialGroups';
@@ -20,6 +22,8 @@ import Suppliers from './Suppliers';
 import Reports from './Reports';
 import SupplierInvoices from './SupplierInvoices';
 import Scraps from './Scraps';
+import Picking from './Picking';
+import PickingList from './PickingList';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const WarehouseModule: React.FC = () => {
@@ -33,6 +37,8 @@ const WarehouseModule: React.FC = () => {
         { key: '/warehouse/warehouses', label: 'Raktárak', icon: <HomeOutlined /> },
         { key: '/warehouse/suppliers', label: 'Beszállítók', icon: <SolutionOutlined /> },
         { key: '/warehouse/reports', label: 'Jelentések', icon: <BarChartOutlined /> },
+        { key: '/warehouse/picking', label: 'Kiszedés', icon: <SelectOutlined /> },
+        { key: '/warehouse/picking-list', label: 'Kiszedési lista', icon: <UnorderedListOutlined /> },
     ];
 
     return (
@@ -47,6 +53,8 @@ const WarehouseModule: React.FC = () => {
             <Route path="/supplier-invoices" element={<SupplierInvoices />} />
             <Route path="/scraps" element={<Scraps />} />
             <Route path="/reports" element={<Reports />} />
+            <Route path="/picking" element={<Picking />} />
+            <Route path="/picking-list" element={<PickingList />} />
         </Routes>
     );
 };

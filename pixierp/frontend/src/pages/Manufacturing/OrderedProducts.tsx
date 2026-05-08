@@ -41,6 +41,7 @@ import { manufacturingService } from '../../services/manufacturingService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useAuth } from '../../contexts/AuthContext';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 import api from '../../services/api';
 import { settingsService } from '../../services/settingsService';
 import { formatBytes } from '../../utils/fileUtils';
@@ -731,6 +732,14 @@ const OrderedProducts: React.FC = () => {
         return (
             <div style={{ padding: '8px 0 8px 32px' }}>
                 <ProductSubItemsTable productId={productId} showNotesAndAttachments showPrices={canViewPrices} />
+                <MaterialNeedsTree
+                    manufacturingProductId={productId}
+                    quantity={Number(record.quantity || 1)}
+                    sourceType="ordered_product"
+                    sourceId={Number(record.id || 0)}
+                    sourceNumber={record.order_number || String(record.id || '')}
+                    sourceItemName={record.name || ''}
+                />
 
                 {/* Order-item level attachments */}
                 <div style={{ marginTop: 14, maxWidth: 700 }}>

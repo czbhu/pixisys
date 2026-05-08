@@ -512,6 +512,14 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
           key: '/warehouse/reports',
           label: 'Jelentések',
         },
+        {
+          key: '/warehouse/picking',
+          label: 'Kiszedés',
+        },
+        {
+          key: '/warehouse/picking-list',
+          label: 'Kiszedési lista',
+        },
       ],
     },
     {
@@ -656,6 +664,8 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/warehouse/warehouses': 'warehouse.inventory',
     '/warehouse/suppliers': 'crm.companies',
     '/warehouse/reports': 'warehouse.inventory',
+    '/warehouse/picking': 'warehouse.inventory',
+    '/warehouse/picking-list': 'warehouse.inventory',
 
     // POS
     '/pos/sales': 'pos',

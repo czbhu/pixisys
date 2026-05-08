@@ -501,6 +501,10 @@ export const salesService = {
         const response = await api.get('/sales/work-logs/active/');
         return response.data;
     },
+    async getColleagueActiveLog(userId: number) {
+        const response = await api.get('/sales/work-logs/active/', { params: { user_id: userId } });
+        return response.data;
+    },
     async getAllActiveWorkLogs() {
         const response = await api.get('/sales/work-logs/all_active/');
         return response.data;
@@ -513,7 +517,7 @@ export const salesService = {
         const response = await api.get('/hr/attendances/dashboard_workers/');
         return response.data;
     },
-    async startWorkLog(data: { order_id: number; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null }) {
+    async startWorkLog(data: { order_id?: number | null; order_label?: string; item_id?: number | null; workflow_name?: string; sub_item_id?: number | null; for_user_id?: number | null }) {
         const response = await api.post('/sales/work-logs/start/', data);
         return response.data;
     },

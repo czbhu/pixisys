@@ -657,7 +657,8 @@ class Forecast(models.Model):
 class WorkLog(models.Model):
     """Munka idő nyilvántartás (Stopper)"""
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Felhasználó")
-    customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Megrendelés")
+    customer_order = models.ForeignKey(CustomerOrder, on_delete=models.CASCADE, related_name='work_logs', verbose_name="Megrendelés", null=True, blank=True)
+    order_label = models.CharField(max_length=300, blank=True, default='', verbose_name="Megrendelés megnevezése (szabad szöveges)")
     item = models.ForeignKey(CustomerOrderItem, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Tétel")
     sub_item = models.ForeignKey(
         'manufacturing.ManufacturingCostItem',

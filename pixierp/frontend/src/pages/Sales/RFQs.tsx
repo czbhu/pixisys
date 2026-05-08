@@ -22,6 +22,7 @@ import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearch
 import Demands from './Demands';
 import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
+import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 
 const { useBreakpoint } = Grid;
 
@@ -211,6 +212,14 @@ const RFQs: React.FC = () => {
             expandedRowRender: (r: any) => (
               <div style={{ padding: '8px 0 8px 28px' }}>
                 <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
+                <MaterialNeedsTree
+                  manufacturingProductId={Number(r.manufacturing_product)}
+                  quantity={Number(r.quantity || 1)}
+                  sourceType="rfq"
+                  sourceId={Number(record.id || 0)}
+                  sourceNumber={record.request_number || String(record.id || '')}
+                  sourceItemName={r.product_name || r.manufacturing_product_name || r.material_name || r.name || ''}
+                />
               </div>
             ),
             defaultExpandAllRows: true,
@@ -369,8 +378,11 @@ const RFQs: React.FC = () => {
     }
 
     // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
+    // Non-ordered RFQs are not affected by this filter — they stay visible.
     if (orderStatusFilter && orderStatusFilter.length > 0) {
-      filtered = filtered.filter(r => r.status === 'ordered' && orderStatusFilter.includes(r.effective_status));
+      filtered = filtered.filter(r =>
+        r.status !== 'ordered' || orderStatusFilter.includes(r.effective_status)
+      );
     }
 
     // Creator filter
@@ -708,9 +720,14 @@ const RFQs: React.FC = () => {
           rfq_number: rfq.number || rfq.request_number,
           rfq_id: rfq.id,
           rfq_title: rfq.title,
-          company_name: rfq.company?.name || rfq.company_name || '',
+          company_name: (() => {
+            if (rfq.company?.name) return rfq.company.name;
+            if (rfq.company_name) return rfq.company_name;
+            const contactCo = (rfq.contacts || []).find((c: any) => c.company?.name || c.company_name);
+            return contactCo?.company?.name || contactCo?.company_name || '';
+          })(),
           contact_names: rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', '),
-          is_private: !rfq.company?.name && !rfq.company_name,
+          is_private: !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name),
           issue_date: rfq.issue_date,
           deadline: rfq.deadline,
           status: itemStatus,

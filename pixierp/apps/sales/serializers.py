@@ -1036,7 +1036,7 @@ class QuoteRequestCostSerializer(serializers.ModelSerializer):
 
 class WorkLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.get_full_name', read_only=True)
-    customer_order_number = serializers.CharField(source='customer_order.order_number', read_only=True)
+    customer_order_number = serializers.SerializerMethodField()
     customer_name = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
     sub_item_name = serializers.SerializerMethodField()
@@ -1045,6 +1045,14 @@ class WorkLogSerializer(serializers.ModelSerializer):
         model = WorkLog
         fields = '__all__'
         read_only_fields = ['created_at']
+
+    def get_customer_order_number(self, obj):
+        try:
+            if obj.customer_order:
+                return obj.customer_order.order_number
+        except Exception:
+            pass
+        return obj.order_label or None
 
     def get_customer_name(self, obj):
         try:

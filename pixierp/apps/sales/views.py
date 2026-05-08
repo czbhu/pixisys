@@ -4961,11 +4961,21 @@ class WorkLogViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def active(self, request):
-        """Get the currently active work log for the user"""
-        log = WorkLog.objects.filter(user=request.user, ended_at__isnull=True).first()
+        """Get the currently active work log for the user (or for a specific user if user_id provided)"""
+        user_id = request.query_params.get('user_id')
+        if user_id and (request.user.is_staff or request.user.is_superuser):
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                target_user = User.objects.get(id=user_id)
+            except User.DoesNotExist:
+                return Response({'error': 'User not found'}, status=404)
+            log = WorkLog.objects.filter(user=target_user, ended_at__isnull=True).first()
+        else:
+            log = WorkLog.objects.filter(user=request.user, ended_at__isnull=True).first()
         if log:
             return Response(self.get_serializer(log).data)
-        return Response({}) # Return empty object
+        return Response({})  # Return empty object
 
     @action(detail=False, methods=['get'])
     def all_active(self, request):
@@ -4977,27 +4987,41 @@ class WorkLogViewSet(viewsets.ModelViewSet):
     
     @action(detail=False, methods=['post'])
     def start(self, request):
-        """Start a new timer"""
-        # Stop any active log first
-        active = WorkLog.objects.filter(user=request.user, ended_at__isnull=True).first()
+        """Start a new timer. Supports for_user_id (help colleague) and order_label (free-text Egyéb)."""
+        order_id = request.data.get('order_id')
+        order_label = request.data.get('order_label', '')
+        item_id = request.data.get('item_id')
+        workflow_name = request.data.get('workflow_name', '')
+        sub_item_id = request.data.get('sub_item_id')
+        for_user_id = request.data.get('for_user_id')
+
+        if not order_id and not order_label:
+            return Response({'error': 'order_id or order_label required'}, status=400)
+
+        # Determine target user
+        if for_user_id:
+            from django.contrib.auth import get_user_model
+            User = get_user_model()
+            try:
+                target_user = User.objects.get(id=for_user_id)
+            except User.DoesNotExist:
+                return Response({'error': 'Target user not found'}, status=404)
+        else:
+            target_user = request.user
+
+        # Stop any active log for the target user first
+        active = WorkLog.objects.filter(user=target_user, ended_at__isnull=True).first()
         if active:
             active.ended_at = timezone.now()
             delta = active.ended_at - active.started_at
             active.duration_seconds = int(delta.total_seconds())
             active.save()
 
-        order_id = request.data.get('order_id')
-        item_id = request.data.get('item_id')
-        workflow_name = request.data.get('workflow_name')
-        sub_item_id = request.data.get('sub_item_id')
-        
-        if not order_id:
-            return Response({'error': 'order_id required'}, status=400)
-            
         new_log = WorkLog.objects.create(
-            user=request.user,
-            customer_order_id=order_id,
-            item_id=item_id,
+            user=target_user,
+            customer_order_id=order_id if order_id else None,
+            order_label=order_label or '',
+            item_id=item_id if item_id else None,
             sub_item_id=sub_item_id if sub_item_id else None,
             workflow_name=workflow_name,
             started_at=timezone.now()
