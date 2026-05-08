@@ -13,7 +13,7 @@ from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog, ApprovalRequest,
     ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
-    DeliveryNote, DeliveryNoteItem,
+    DeliveryNote, DeliveryNoteItem, ExtraWork,
     POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from .serializers import (
@@ -25,6 +25,7 @@ from .serializers import (
     CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
     ChatThreadSerializer, ChatMessageSerializer,
     DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
+    ExtraWorkSerializer,
     POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
     POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer
 )
@@ -2909,6 +2910,11 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         if statuses:
             qs = qs.filter(status__in=statuses.split(','))
 
+        # Optional manufacturing_product_id filter
+        mp_id = request.query_params.get('manufacturing_product_id')
+        if mp_id:
+            qs = qs.filter(quote_item__manufacturing_product_id=mp_id)
+
         import re
         from html import unescape
 
@@ -5039,6 +5045,23 @@ class WorkLogViewSet(viewsets.ModelViewSet):
         log.duration_seconds = int(delta.total_seconds())
         log.save()
         return Response(self.get_serializer(log).data)
+
+
+class ExtraWorkViewSet(viewsets.ModelViewSet):
+    """CRUD for Plusz munkák on customer orders"""
+    serializer_class = ExtraWorkSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        qs = ExtraWork.objects.select_related('customer_order', 'customer_order_item', 'created_by')
+        order_id = self.request.query_params.get('order_id')
+        if order_id:
+            qs = qs.filter(customer_order_id=order_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
 
 class ChatThreadViewSet(viewsets.ModelViewSet):
     queryset = ChatThread.objects.all()

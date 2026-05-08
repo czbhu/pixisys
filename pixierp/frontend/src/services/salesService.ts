@@ -526,6 +526,23 @@ export const salesService = {
         return response.data;
     },
 
+    // Extra Works
+    async getExtraWorks(orderId: number) {
+        const response = await api.get('/sales/extra-works/', { params: { order_id: orderId } });
+        return response.data;
+    },
+    async createExtraWork(data: any) {
+        const response = await api.post('/sales/extra-works/', data);
+        return response.data;
+    },
+    async updateExtraWork(id: number, data: any) {
+        const response = await api.patch(`/sales/extra-works/${id}/`, data);
+        return response.data;
+    },
+    async deleteExtraWork(id: number) {
+        await api.delete(`/sales/extra-works/${id}/`);
+    },
+
     // Chat
     async getChatThread(params: { rfq_id?: number, order_id?: number }) {
         const response = await api.get('/sales/chats/find/', { params });
@@ -576,6 +593,14 @@ export const salesService = {
         const params = statuses && statuses.length ? { status: statuses.join(',') } : {};
         const response = await api.get('/sales/customer-orders/manufacturing_items/', { params });
         return response.data;
+    },
+
+    async getOrderIdForManufacturingProduct(manufacturingProductId: number): Promise<number | null> {
+        const response = await api.get('/sales/customer-orders/manufacturing_items/', {
+            params: { manufacturing_product_id: manufacturingProductId },
+        });
+        const items: any[] = Array.isArray(response.data) ? response.data : (response.data?.results ?? []);
+        return items.length > 0 ? items[0].order_id : null;
     },
 };
 

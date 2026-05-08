@@ -5,13 +5,45 @@ from .models import (
     Order, OrderItem, Lead, Opportunity, Forecast, QuoteLog,
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
     CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog,
-    ApprovalRequest, CustomerOrderAttachment,
+    ApprovalRequest, CustomerOrderAttachment, ExtraWork,
     POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer, ServiceSerializer as ManufacturingServiceSerializer
 from apps.crm.serializers import CompanySerializer, ContactSerializer
 from apps.core.serializers import EmailServerConfigSerializer, EmailTemplateSerializer, SignatureTemplateSerializer
+
+class ExtraWorkSerializer(serializers.ModelSerializer):
+    created_by_name = serializers.SerializerMethodField()
+    customer_order_item_name = serializers.SerializerMethodField()
+    net_total = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ExtraWork
+        fields = '__all__'
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def get_created_by_name(self, obj):
+        if obj.created_by:
+            return obj.created_by.get_full_name() or obj.created_by.username
+        return ''
+
+    def get_customer_order_item_name(self, obj):
+        if not obj.customer_order_item:
+            return ''
+        item = obj.customer_order_item
+        qi = getattr(item, 'quote_item', None)
+        if not qi:
+            return ''
+        for attr in ('manufacturing_product', 'product', 'service', 'material'):
+            rel = getattr(qi, attr, None)
+            if rel:
+                return getattr(rel, 'name', str(rel))
+        return ''
+
+    def get_net_total(self, obj):
+        return float(obj.quantity * obj.net_unit_price)
+
 
 class CustomerSerializer(serializers.ModelSerializer):
     class Meta:
@@ -553,6 +585,7 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
 
 class CustomerOrderSerializer(serializers.ModelSerializer):
     items = CustomerOrderItemSerializer(many=True, read_only=True)
+    extra_works = ExtraWorkSerializer(many=True, read_only=True)
     quote_request = QuoteRequestSerializer(read_only=True)
     quote_request_id = serializers.SerializerMethodField()
     total_amount = serializers.SerializerMethodField()
@@ -578,7 +611,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
             'contact_names', 'contact_email', 'deadline',
             'confirmed_at', 'production_started_at', 'ready_at',
             'delivery_started_at', 'delivered_at',
-            'notes', 'created_by', 'created_at', 'updated_at', 'items',
+            'notes', 'created_by', 'created_at', 'updated_at', 'items', 'extra_works',
             'invoice_number', 'pending_approval', 'last_rejection'
         ]
     

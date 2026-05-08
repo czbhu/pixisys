@@ -10,11 +10,13 @@ import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrate
 import { CostDragHandle, CostDraggableRow, applyCostDnd, buildCostTreeMeta, CostTreeGuide } from '../../components/Manufacturing/CostDnd';
 import dayjs from 'dayjs';
 import { manufacturingService } from '../../services/manufacturingService';
+import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
 import { hrService } from '../../services/hrService';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 import NumInput from '../../components/NumInput';
+import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -113,6 +115,7 @@ const ManufacturingProductDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [product, setProduct] = useState<any>(null);
+  const [customerOrderId, setCustomerOrderId] = useState<number | null>(null);
 
   // Reference data
   const [customers, setCustomers] = useState<any[]>([]);
@@ -219,6 +222,11 @@ const ManufacturingProductDetail: React.FC = () => {
       // Load attachments
       manufacturingService.getProductAttachments(Number(id))
         .then(setAttachments)
+        .catch(() => {});
+
+      // Load linked customer order id (for ExtraWorksPanel)
+      salesService.getOrderIdForManufacturingProduct(Number(id))
+        .then(ordId => setCustomerOrderId(ordId))
         .catch(() => {});
     } catch (e) {
       console.error(e);
@@ -1069,6 +1077,13 @@ const ManufacturingProductDetail: React.FC = () => {
           </div>
 
         </Form>
+
+        {customerOrderId && (
+          <div style={{ marginTop: 16, padding: '0 0 8px' }}>
+            <ExtraWorksPanel orderId={customerOrderId} showPrices />
+          </div>
+        )}
+
       </Card>
     </div>
   );

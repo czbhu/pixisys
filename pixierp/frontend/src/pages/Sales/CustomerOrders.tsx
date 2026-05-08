@@ -22,6 +22,7 @@ import { deepSearchMatch } from '../../utils/searchUtils';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
+import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import { Spin as AntSpin } from 'antd';
 import './CustomerOrders.css';
 
@@ -818,6 +819,11 @@ interface CustomerOrder {
             />
           </SortableContext>
         </DndContext>
+        <ExtraWorksPanel
+          orderId={orderId}
+          showPrices
+          orderItems={flatItems}
+        />
       </div>
     );
   };

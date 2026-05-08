@@ -42,6 +42,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { useAuth } from '../../contexts/AuthContext';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
+import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import api from '../../services/api';
 import { settingsService } from '../../services/settingsService';
 import { formatBytes } from '../../utils/fileUtils';
@@ -899,6 +900,10 @@ const OrderedProducts: React.FC = () => {
                         Megnyitás teljes lapon
                     </Button>
                 </div>
+                <ExtraWorksPanel
+                    orderId={record.order_id}
+                    showPrices={canViewPrices}
+                />
             </div>
         );
     };

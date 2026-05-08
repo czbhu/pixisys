@@ -1077,3 +1077,47 @@ class CustomerOrderAttachment(models.Model):
 
     def __str__(self):
         return f"{self.customer_order.order_number} - {self.original_filename}"
+
+
+class ExtraWork(models.Model):
+    """Plusz munka – gyártás során felmerülő, nem megrendelt munka"""
+    COST_TYPE_CHOICES = [
+        ('customer', 'Ügyfél költsége'),
+        ('own', 'Saját költség'),
+    ]
+
+    customer_order = models.ForeignKey(
+        CustomerOrder, on_delete=models.CASCADE,
+        related_name='extra_works', verbose_name='Megrendelés'
+    )
+    customer_order_item = models.ForeignKey(
+        CustomerOrderItem, on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='extra_works', verbose_name='Tétel'
+    )
+    name = models.CharField(max_length=200, verbose_name='Megnevezés')
+    description = models.TextField(blank=True, default='', verbose_name='Leírás')
+    quantity = models.DecimalField(max_digits=10, decimal_places=4, default=1, verbose_name='Mennyiség')
+    unit = models.CharField(max_length=20, default='db', verbose_name='Egység')
+    net_unit_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name='Eladási egységár')
+    cost_price = models.DecimalField(max_digits=15, decimal_places=4, default=0, verbose_name='Bekerülési ár')
+    cost_type = models.CharField(max_length=10, choices=COST_TYPE_CHOICES, default='customer', verbose_name='Típus')
+    notes = models.TextField(blank=True, default='', verbose_name='Megjegyzések')
+    created_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        verbose_name='Létrehozta'
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Plusz munka'
+        verbose_name_plural = 'Plusz munkák'
+        ordering = ['created_at']
+
+    def __str__(self):
+        return f"{self.customer_order.order_number} – {self.name}"
+
+    @property
+    def net_total(self):
+        return float(self.quantity * self.net_unit_price)

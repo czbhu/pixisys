@@ -3,6 +3,7 @@ import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert, Upload, Tooltip } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
+import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import type { UploadFile } from 'antd/es/upload/interface';
 import dayjs from 'dayjs';
 import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined, UploadOutlined, DeleteOutlined, PaperClipOutlined } from '@ant-design/icons';
@@ -661,6 +662,15 @@ const CustomerOrderDetail: React.FC = () => {
             setSelectorType(item.item_type);
             setSelectorOpen(true);
           } : undefined}
+        />
+
+        <Divider />
+
+        <ExtraWorksPanel
+          orderId={Number(id)}
+          showPrices={!hidePrices}
+          orderItems={order.items || []}
+          onChange={load}
         />
 
         <Divider />

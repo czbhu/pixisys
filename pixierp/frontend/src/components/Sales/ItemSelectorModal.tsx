@@ -34,6 +34,8 @@ export interface SelectedItemPayload {
   description?: string;
   discount_percent?: number;
   discount_amount?: number;
+  cost_type?: string;
+  customer_order_item?: number | null;
   files?: File[];
   fileRemarks?: Record<string, string>; // key: file.uid or file.name
   manuCostItems?: Array<{ code?: string; name: string; quantity: number; unit: string; net_unit_price: number; net_total: number; supplier?: number | null; supplier_name?: string; is_stock?: boolean }>;
@@ -50,7 +52,7 @@ interface ItemSelectorModalProps {
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
-  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number }>;
+  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null }>;
   customer?: { id: any; name: string; company_id?: any };
   rfqId?: number;
   /** The RFQ's currency code (e.g. 'HUF', 'EUR'). Used to convert manu sell price to the RFQ currency. */
@@ -59,6 +61,10 @@ interface ItemSelectorModalProps {
   initialManuPayload?: any;
   /** The quote_item id — used to load & display existing attachments in edit mode */
   quoteItemId?: number;
+  /** When true, shows a "Kinek a költsége?" (cost_type) select in the item form */
+  showCostTypeField?: boolean;
+  /** Order items to show a "Kapcsolódó tétel" selector in the item form */
+  orderItems?: Array<{ id: number; name: string }>;
 }
 
 interface CostItem {
@@ -89,7 +95,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -335,10 +341,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           quantity: initialValues.quantity,
           unit: initialValues.unit,
           net_unit_price: initialValues.net_unit_price,
+          cost_price: initialValues.cost_price,
           vat_rate: initialValues.vat_rate ?? defaultVat,
           description: initialValues.description,
           discount_percent: initialValues.discount_percent,
           discount_amount: initialValues.discount_amount,
+          cost_type: initialValues.cost_type || 'customer',
+          customer_order_item: initialValues.customer_order_item ?? undefined,
         });
       }
     }
@@ -668,6 +677,30 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const commonFields = (
     <>
       <Space style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {showCostTypeField && (
+          <Form.Item label="Kinek a költsége?" name="cost_type" initialValue="customer" style={{ marginBottom: 8 }}>
+            <Select
+              style={{ width: 180 }}
+              options={[
+                { value: 'customer', label: 'Ügyfél költsége' },
+                { value: 'own', label: 'Saját költség' },
+              ]}
+            />
+          </Form.Item>
+        )}
+        {orderItems && orderItems.length > 0 && (
+          <Form.Item label="Kapcsolódó tétel" name="customer_order_item" style={{ marginBottom: 8 }}>
+            <Select
+              allowClear
+              placeholder="Opcionális..."
+              style={{ width: 240 }}
+              options={orderItems.map((it: any) => {
+                const label = it.manufacturing_product_name || it.product_name || it.service_name || it.material_name || it.name || `Tétel #${it.id}`;
+                return { value: it.id, label };
+              })}
+            />
+          </Form.Item>
+        )}
         <Form.Item label="Mennyiség" name="quantity" initialValue={1} rules={[{ required: true }]} style={{ marginBottom: 8 }}> 
           <NumInput 
             formula
@@ -879,6 +912,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         description: v.description,
         discount_percent: v.discount_percent,
         discount_amount: v.discount_amount,
+        cost_type: v.cost_type || 'customer',
+        customer_order_item: v.customer_order_item ?? null,
       };
       await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen } as any);
       setLastSavedAt(dayjs());
