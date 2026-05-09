@@ -58,6 +58,13 @@ const PrintEditorPage: React.FC = () => {
   const location = useLocation();
   const isAdmin = !!(user?.is_staff || user?.is_superuser);
 
+  // from_rfq mode: opened from RFQ modal
+  const fromRfqParams = new URLSearchParams(location.search);
+  const fromRfq = fromRfqParams.get('from_rfq') === '1';
+  const fromRfqCompanyId = fromRfqParams.get('company') ? Number(fromRfqParams.get('company')) : null;
+  const fromRfqCompanyName = fromRfqParams.get('company_name') || '';
+  const returnUrl = fromRfqParams.get('return_url') || null;
+
   const canvasRef = useRef<CanvasEditorHandle>(null);
   const [viewMode] = useState<'editor' | 'preview'>('editor');
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
@@ -241,6 +248,17 @@ const PrintEditorPage: React.FC = () => {
     } catch {}
   }, [selectedCompany, selectedContact, clientBarOpen]);
 
+  // Pre-load company from URL param (from_rfq mode)
+  useEffect(() => {
+    if (fromRfqCompanyId && fromRfqCompanyName) {
+      setCompanies(prev => {
+        if (prev.find(c => c.id === fromRfqCompanyId)) return prev;
+        return [{ id: fromRfqCompanyId, name: decodeURIComponent(fromRfqCompanyName) }, ...prev];
+      });
+      setSelectedCompany(prev => prev ?? fromRfqCompanyId);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
   const refreshCompanies = async () => {
     try {
       const list = await crmService.getCompanies({ is_customer: true, compact: true });
@@ -417,7 +435,14 @@ const PrintEditorPage: React.FC = () => {
       });
       if (selectedCompany) rfqParams.set('company', String(selectedCompany));
       if (selectedContact) rfqParams.set('contact', String(selectedContact));
-      window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+      if (fromRfq) {
+        const base = returnUrl ? new URL(returnUrl).pathname : '/sales/rfqs';
+        const target = `${base}?${rfqParams.toString()}`;
+        if (window.opener) { window.opener.location.href = target; window.close(); }
+        else { window.location.href = target; }
+      } else {
+        window.open(`/sales/rfqs?${rfqParams.toString()}`, '_blank');
+      }
     } catch (e: any) {
       console.error('[handleRFQ] error response:', e?.response?.data);
       message.error(e?.response?.data?.error || JSON.stringify(e?.response?.data) || 'Hiba az ajánlat létrehozásakor');
