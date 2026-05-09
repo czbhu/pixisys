@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Button, Checkbox, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal } from 'antd';
+import { Button, Checkbox, Input, InputNumber, List, Avatar, Tooltip, Typography, Upload, message, Spin, Badge, Segmented, Divider, Tag, Progress, Dropdown, Modal, Select, ColorPicker } from 'antd';
 import NumInput from '../../../components/NumInput';
 import {
   CommentOutlined, CheckOutlined, DeleteOutlined,
@@ -10,6 +10,8 @@ import {
   DragOutlined, PlusOutlined, UndoOutlined, RedoOutlined, ClearOutlined,
   AppstoreOutlined,
   LeftOutlined, RightOutlined,
+  PictureOutlined, VerticalAlignTopOutlined, VerticalAlignBottomOutlined, CopyOutlined,
+  FontSizeOutlined, BoldOutlined, ItalicOutlined, FontColorsOutlined,
 } from '@ant-design/icons';
 import type { PrintParams } from './Step1Params';
 import TemplatePicker from './TemplatePicker';
@@ -20,7 +22,7 @@ const { TextArea } = Input;
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type CommentToolType = 'pointer' | 'area' | 'pin' | 'arrow' | 'measure' | 'guideline' | 'crop';
+type CommentToolType = 'pointer' | 'area' | 'pin' | 'arrow' | 'measure' | 'guideline' | 'crop' | 'image' | 'text';
 
 interface Guideline {
   id: number;
@@ -31,6 +33,32 @@ interface Guideline {
 
 interface CropRect {
   x: number; y: number; w: number; h: number; // 0-1 relative
+}
+
+interface OverlayImage {
+  id: number;
+  page: number;
+  src: string;       // data URL – PNG transparency preserved
+  name: string;
+  x: number; y: number; w: number; h: number; // 0-1 relative to page
+  rotation: number;  // degrees
+  zIndex: number;
+}
+
+type ImgHandleType = 'move' | 'tl' | 'tr' | 'bl' | 'br' | 'rotate';
+
+interface OverlayText {
+  id: number;
+  page: number;
+  x: number; y: number; w: number; // 0-1 relative to page; height is auto
+  content: string;
+  fontSize: number;    // px at zoom=1
+  color: string;
+  fontFamily: string;
+  bold: boolean;
+  italic: boolean;
+  align: 'left' | 'center' | 'right';
+  zIndex: number;
 }
 
 export interface CommentAnnotation {
@@ -126,6 +154,8 @@ interface HistorySnapshot {
   annotations: CommentAnnotation[];
   pdfFile: File | null;
   canvases: HTMLCanvasElement[];
+  overlayImages: OverlayImage[];
+  overlayTexts: OverlayText[];
 }
 
 const COLORS = ['#1890ff', '#fa8c16', '#52c41a', '#722ed1', '#eb2f96', '#13c2c2'];
@@ -280,6 +310,8 @@ const PrintCommentView: React.FC<Props> = ({
       { value: 'measure', label: <Tooltip title="Esc: újrakezdi a mérést. Shift: csak X vagy Y irányban mér.">Mérő</Tooltip> },
       { value: 'guideline', label: <Tooltip title="Segédvonal"><DragOutlined /></Tooltip> },
       { value: 'crop', label: <Tooltip title="Croppolás"><ScissorOutlined /></Tooltip> },
+      { value: 'image', label: <Tooltip title="Kép beilleszthető réteg"><PictureOutlined /></Tooltip> },
+      { value: 'text', label: <Tooltip title="Szövegréteg hozzáadása / szerkesztése"><FontSizeOutlined /></Tooltip> },
     ] : []),
   ];
   // PDF state
@@ -348,6 +380,35 @@ const PrintCommentView: React.FC<Props> = ({
 
   // Merge state
   const [merging, setMerging] = useState(false);
+
+  // Overlay image state
+  const [overlayImages, setOverlayImages] = useState<OverlayImage[]>([]);
+  const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
+  const [imgCopyModalOpen, setImgCopyModalOpen] = useState(false);
+  const [imgCopySourceId, setImgCopySourceId] = useState<number | null>(null);
+  const [imgCopyPages, setImgCopyPages] = useState<number[]>([]);
+  const imgIdCounter = useRef(1);
+  const imgDragRef = useRef<{
+    id: number; handle: ImgHandleType;
+    startX: number; startY: number;
+    origX: number; origY: number; origW: number; origH: number;
+    origRot: number; pageRect: DOMRect;
+  } | null>(null);
+
+  // Overlay text state
+  const [overlayTexts, setOverlayTexts] = useState<OverlayText[]>([]);
+  const [selectedTextId, setSelectedTextId] = useState<number | null>(null);
+  const [editingTextId, setEditingTextId] = useState<number | null>(null);
+  const [textDefaults, setTextDefaults] = useState<Omit<OverlayText, 'id' | 'page' | 'x' | 'y' | 'w' | 'content' | 'zIndex'>>({
+    fontSize: 22, color: '#000000', fontFamily: 'Arial',
+    bold: false, italic: false, align: 'left',
+  });
+  const textIdCounter = useRef(1);
+  const textDragRef = useRef<{
+    id: number; startX: number; startY: number;
+    origX: number; origY: number; origW: number;
+    pageRect: DOMRect; resizing: boolean;
+  } | null>(null);
 
   // Export state
   const [exporting, setExporting] = useState(false);
@@ -787,7 +848,9 @@ const PrintCommentView: React.FC<Props> = ({
     annotations: annotations.map(a => ({ ...a })),
     pdfFile: pdfFileRef.current,
     canvases: [...pageCanvasRefs.current],
-  }), [pdfPages, pageInfos, pageColorSpaces, pageElements, guidelines, cropRect, measureLines, annotations]);
+    overlayImages: overlayImages.map(i => ({ ...i })),
+    overlayTexts: overlayTexts.map(t => ({ ...t })),
+  }), [pdfPages, pageInfos, pageColorSpaces, pageElements, guidelines, cropRect, measureLines, annotations, overlayImages, overlayTexts]);
 
   const pushHistory = useCallback(() => {
     if (skipHistoryRef.current) return;
@@ -812,6 +875,8 @@ const PrintCommentView: React.FC<Props> = ({
     pdfFileRef.current = snap.pdfFile;
     onPdfFileChange?.(snap.pdfFile);
     pageCanvasRefs.current = snap.canvases;
+    setOverlayImages(snap.overlayImages ?? []);
+    setOverlayTexts(snap.overlayTexts ?? []);
     setTimeout(() => { skipHistoryRef.current = false; }, 0);
   }, [onPdfFileChange]);
 
@@ -847,6 +912,13 @@ const PrintCommentView: React.FC<Props> = ({
         if (selectedElement) {
           setSelectedElement(null);
         }
+        if (selectedImageId !== null) {
+          setSelectedImageId(null);
+        }
+        if (selectedTextId !== null) {
+          setSelectedTextId(null);
+          setEditingTextId(null);
+        }
       }
       if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
         e.preventDefault();
@@ -859,7 +931,7 @@ const PrintCommentView: React.FC<Props> = ({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedElement, measuring, undo, redo]);
+  }, [selectedElement, selectedImageId, selectedTextId, measuring, undo, redo]);
 
   const scrollToPage = (pageNum: number) => {
     const el = pageRefs.current[pageNum - 1];
@@ -1261,6 +1333,192 @@ const PrintCommentView: React.FC<Props> = ({
   };
 
   const clearGuidelines = () => { pushHistory(); setGuidelines([]); };
+
+  // ── Overlay image handlers ────────────────────────────────────────────────────
+  const handleImgMouseDown = useCallback((
+    e: React.MouseEvent, imgId: number, handle: ImgHandleType, pageIdx: number
+  ) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const img = overlayImages.find(i => i.id === imgId);
+    if (!img) return;
+    setSelectedImageId(imgId);
+    const pageEl = pageRefs.current[pageIdx];
+    if (!pageEl) return;
+    const wrapperEl = pageEl.querySelector('div[style*="inline-block"]') as HTMLElement ?? pageEl;
+    const pageRect = wrapperEl.getBoundingClientRect();
+    imgDragRef.current = {
+      id: imgId, handle,
+      startX: e.clientX, startY: e.clientY,
+      origX: img.x, origY: img.y, origW: img.w, origH: img.h,
+      origRot: img.rotation, pageRect,
+    };
+    pushHistory();
+    const onMove = (me: MouseEvent) => {
+      const s = imgDragRef.current;
+      if (!s) return;
+      const dx = (me.clientX - s.startX) / s.pageRect.width;
+      const dy = (me.clientY - s.startY) / s.pageRect.height;
+      if (s.handle === 'move') {
+        setOverlayImages(prev => prev.map(im => im.id !== s.id ? im : {
+          ...im,
+          x: Math.max(0, Math.min(1 - s.origW, s.origX + dx)),
+          y: Math.max(0, Math.min(1 - s.origH, s.origY + dy)),
+        }));
+      } else if (s.handle === 'rotate') {
+        const cx = s.pageRect.left + (s.origX + s.origW / 2) * s.pageRect.width;
+        const cy = s.pageRect.top + (s.origY + s.origH / 2) * s.pageRect.height;
+        const angle = Math.atan2(me.clientY - cy, me.clientX - cx) * 180 / Math.PI + 90;
+        setOverlayImages(prev => prev.map(im => im.id !== s.id ? im : { ...im, rotation: Math.round(angle) }));
+      } else {
+        let newX = s.origX, newY = s.origY, newW = s.origW, newH = s.origH;
+        const aspect = s.origH / s.origW; // height/width ratio
+        const lockAspect = me.ctrlKey || me.metaKey;
+        if (s.handle === 'tl') {
+          newX = Math.max(0, Math.min(s.origX + s.origW - 0.02, s.origX + dx));
+          newY = Math.max(0, Math.min(s.origY + s.origH - 0.02, s.origY + dy));
+          newW = s.origW + (s.origX - newX); newH = s.origH + (s.origY - newY);
+          if (lockAspect) { newH = newW * aspect; newY = s.origY + s.origH - newH; }
+        } else if (s.handle === 'tr') {
+          newY = Math.max(0, Math.min(s.origY + s.origH - 0.02, s.origY + dy));
+          newW = Math.max(0.02, Math.min(1 - s.origX, s.origW + dx)); newH = s.origH + (s.origY - newY);
+          if (lockAspect) { newH = newW * aspect; newY = s.origY + s.origH - newH; }
+        } else if (s.handle === 'bl') {
+          newX = Math.max(0, Math.min(s.origX + s.origW - 0.02, s.origX + dx));
+          newW = s.origW + (s.origX - newX); newH = Math.max(0.02, Math.min(1 - s.origY, s.origH + dy));
+          if (lockAspect) { newH = newW * aspect; }
+        } else if (s.handle === 'br') {
+          newW = Math.max(0.02, Math.min(1 - s.origX, s.origW + dx));
+          newH = Math.max(0.02, Math.min(1 - s.origY, s.origH + dy));
+          if (lockAspect) { newH = newW * aspect; }
+        }
+        setOverlayImages(prev => prev.map(im => im.id !== s.id ? im : { ...im, x: newX, y: newY, w: newW, h: newH }));
+      }
+    };
+    const onUp = () => { imgDragRef.current = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [overlayImages, pushHistory]);
+
+  const handleImgZOrder = useCallback((imgId: number, dir: 'up' | 'down') => {
+    pushHistory();
+    setOverlayImages(prev => {
+      const sorted = [...prev].sort((a, b) => a.zIndex - b.zIndex);
+      const idx = sorted.findIndex(i => i.id === imgId);
+      if (dir === 'up' && idx < sorted.length - 1) {
+        const tmp = sorted[idx].zIndex;
+        sorted[idx] = { ...sorted[idx], zIndex: sorted[idx + 1].zIndex };
+        sorted[idx + 1] = { ...sorted[idx + 1], zIndex: tmp };
+      } else if (dir === 'down' && idx > 0) {
+        const tmp = sorted[idx].zIndex;
+        sorted[idx] = { ...sorted[idx], zIndex: sorted[idx - 1].zIndex };
+        sorted[idx - 1] = { ...sorted[idx - 1], zIndex: tmp };
+      }
+      return sorted;
+    });
+  }, [pushHistory]);
+
+  const handleImgDelete = useCallback((imgId: number) => {
+    pushHistory();
+    setOverlayImages(prev => prev.filter(i => i.id !== imgId));
+    setSelectedImageId(null);
+  }, [pushHistory]);
+
+  const handleImgCopyToPages = useCallback((imgId: number, targetPages: number[]) => {
+    const src = overlayImages.find(i => i.id === imgId);
+    if (!src) return;
+    pushHistory();
+    const newImgs: OverlayImage[] = targetPages.map(page => ({
+      ...src, id: imgIdCounter.current++, page,
+    }));
+    setOverlayImages(prev => [...prev, ...newImgs]);
+  }, [overlayImages, pushHistory]);
+
+  // ── Overlay text handlers ─────────────────────────────────────────────────────
+  const addOverlayText = useCallback((pageNum: number, x: number, y: number) => {
+    pushHistory();
+    const newTxt: OverlayText = {
+      id: textIdCounter.current++,
+      page: pageNum,
+      x, y, w: 0.4,
+      content: 'Szöveg',
+      ...textDefaults,
+      zIndex: overlayTexts.filter(t => t.page === pageNum).length,
+    };
+    setOverlayTexts(prev => [...prev, newTxt]);
+    setSelectedTextId(newTxt.id);
+    setEditingTextId(newTxt.id);
+  }, [pushHistory, textDefaults, overlayTexts]);
+
+  const handleTextMouseDown = useCallback((
+    e: React.MouseEvent, txtId: number, pageIdx: number, resizing: boolean
+  ) => {
+    if (editingTextId === txtId) return; // let contentEditable handle it
+    e.stopPropagation();
+    e.preventDefault();
+    const txt = overlayTexts.find(t => t.id === txtId);
+    if (!txt) return;
+    setSelectedTextId(txtId);
+    const pageEl = pageRefs.current[pageIdx];
+    if (!pageEl) return;
+    const wrapperEl = pageEl.querySelector('div[style*="inline-block"]') as HTMLElement ?? pageEl;
+    const pageRect = wrapperEl.getBoundingClientRect();
+    textDragRef.current = {
+      id: txtId, startX: e.clientX, startY: e.clientY,
+      origX: txt.x, origY: txt.y, origW: txt.w,
+      pageRect, resizing,
+    };
+    pushHistory();
+    const onMove = (me: MouseEvent) => {
+      const s = textDragRef.current;
+      if (!s) return;
+      const dx = (me.clientX - s.startX) / s.pageRect.width;
+      const dy = (me.clientY - s.startY) / s.pageRect.height;
+      if (s.resizing) {
+        const newW = Math.max(0.05, Math.min(1 - s.origX, s.origW + dx));
+        setOverlayTexts(prev => prev.map(t => t.id !== s.id ? t : { ...t, w: newW }));
+      } else {
+        setOverlayTexts(prev => prev.map(t => t.id !== s.id ? t : {
+          ...t,
+          x: Math.max(0, Math.min(1 - s.origW, s.origX + dx)),
+          y: Math.max(0, s.origY + dy),
+        }));
+      }
+    };
+    const onUp = () => { textDragRef.current = null; document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [overlayTexts, pushHistory, editingTextId]);
+
+  const handleTextContentChange = useCallback((txtId: number, content: string) => {
+    setOverlayTexts(prev => prev.map(t => t.id !== txtId ? t : { ...t, content }));
+  }, []);
+
+  const handleTextStyleChange = useCallback((txtId: number, patch: Partial<OverlayText>) => {
+    pushHistory();
+    setOverlayTexts(prev => prev.map(t => t.id !== txtId ? t : { ...t, ...patch }));
+  }, [pushHistory]);
+
+  const handleTextDelete = useCallback((txtId: number) => {
+    pushHistory();
+    setOverlayTexts(prev => prev.filter(t => t.id !== txtId));
+    setSelectedTextId(null);
+    setEditingTextId(null);
+  }, [pushHistory]);
+
+  const handleTextZOrder = useCallback((txtId: number, dir: 'up' | 'down') => {
+    pushHistory();
+    setOverlayTexts(prev => {
+      const sorted = [...prev].sort((a, b) => a.zIndex - b.zIndex);
+      const idx = sorted.findIndex(t => t.id === txtId);
+      if (dir === 'up' && idx < sorted.length - 1) {
+        [sorted[idx].zIndex, sorted[idx + 1].zIndex] = [sorted[idx + 1].zIndex, sorted[idx].zIndex];
+      } else if (dir === 'down' && idx > 0) {
+        [sorted[idx].zIndex, sorted[idx - 1].zIndex] = [sorted[idx - 1].zIndex, sorted[idx].zIndex];
+      }
+      return sorted;
+    });
+  }, [pushHistory]);
 
   // ── Snap helper ─────────────────────────────────────────────────────────────
   const snapToGuides = (pos: { x: number; y: number }): { x: number; y: number } => {
@@ -1934,6 +2192,215 @@ const PrintCommentView: React.FC<Props> = ({
           </div>
         )}
 
+        {/* Image tool sub-toolbar */}
+        {effectiveCanEdit && activeTool === 'image' && pdfPages.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+            <PictureOutlined style={{ color: '#1890ff' }} />
+            <Upload
+              accept="image/*"
+              showUploadList={false}
+              multiple
+              beforeUpload={(file) => {
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                  const src = ev.target?.result as string;
+                  const imgEl = new Image();
+                  imgEl.onload = () => {
+                    pushHistory();
+                    const aspect = imgEl.naturalHeight / imgEl.naturalWidth;
+                    const defaultW = 0.3;
+                    const defaultH = Math.min(0.5, defaultW * aspect);
+                    const newImg: OverlayImage = {
+                      id: imgIdCounter.current++,
+                      page: currentPage, src, name: file.name,
+                      x: 0.35, y: 0.35, w: defaultW, h: defaultH,
+                      rotation: 0,
+                      zIndex: overlayImages.filter(i => i.page === currentPage).length,
+                    };
+                    setOverlayImages(prev => [...prev, newImg]);
+                    setSelectedImageId(newImg.id);
+                  };
+                  imgEl.src = src;
+                };
+                reader.readAsDataURL(file);
+                return false;
+              }}
+            >
+              <Button size="small" icon={<PlusOutlined />}>Kép feltöltése</Button>
+            </Upload>
+            {selectedImageId != null && (() => {
+              const selImg = overlayImages.find(i => i.id === selectedImageId);
+              if (!selImg) return null;
+              const pageImgs = overlayImages.filter(i => i.page === selImg.page).sort((a, b) => a.zIndex - b.zIndex);
+              const imgIdx = pageImgs.findIndex(i => i.id === selectedImageId);
+              return (
+                <>
+                  <Divider type="vertical" />
+                  <Tooltip title="Előre hozás (rétegrend)">
+                    <Button size="small" icon={<VerticalAlignTopOutlined />}
+                      disabled={imgIdx >= pageImgs.length - 1}
+                      onClick={() => handleImgZOrder(selectedImageId, 'up')} />
+                  </Tooltip>
+                  <Tooltip title="Hátraküldés (rétegrend)">
+                    <Button size="small" icon={<VerticalAlignBottomOutlined />}
+                      disabled={imgIdx <= 0}
+                      onClick={() => handleImgZOrder(selectedImageId, 'down')} />
+                  </Tooltip>
+                  <Divider type="vertical" />
+                  <Tooltip title="Kép másolása más oldalra (pozíció és méret megmarad)">
+                    <Button size="small" icon={<CopyOutlined />} onClick={() => {
+                      setImgCopySourceId(selectedImageId);
+                      setImgCopyPages([]);
+                      setImgCopyModalOpen(true);
+                    }}>Másol oldalra</Button>
+                  </Tooltip>
+                  <Divider type="vertical" />
+                  <Button size="small" danger icon={<DeleteOutlined />} onClick={() => handleImgDelete(selectedImageId)}>Törlés</Button>
+                </>
+              );
+            })()}
+            {overlayImages.some(i => i.page === currentPage) && !selectedImageId && (
+              <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+                Kattints egy képre a kiválasztáshoz, majd húzd a mozgatáshoz
+              </Text>
+            )}
+          </div>
+        )}
+
+        {/* Text tool sub-toolbar */}
+        {effectiveCanEdit && activeTool === 'text' && pdfPages.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0, flexWrap: 'wrap' }}>
+            <FontSizeOutlined style={{ color: '#722ed1' }} />
+            {/* Font size */}
+            <Tooltip title="Betűméret (px)">
+              <InputNumber
+                size="small" min={6} max={200} style={{ width: 68 }}
+                value={selectedTextId
+                  ? (overlayTexts.find(t => t.id === selectedTextId)?.fontSize ?? textDefaults.fontSize)
+                  : textDefaults.fontSize}
+                onChange={v => {
+                  const sz = v ?? 22;
+                  setTextDefaults(d => ({ ...d, fontSize: sz }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { fontSize: sz });
+                }}
+              />
+            </Tooltip>
+            {/* Font family */}
+            <Tooltip title="Betűtípus">
+              <Select
+                size="small" style={{ width: 110 }}
+                value={selectedTextId
+                  ? (overlayTexts.find(t => t.id === selectedTextId)?.fontFamily ?? textDefaults.fontFamily)
+                  : textDefaults.fontFamily}
+                onChange={v => {
+                  setTextDefaults(d => ({ ...d, fontFamily: v }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { fontFamily: v });
+                }}
+                options={[
+                  { value: 'Arial', label: 'Arial' },
+                  { value: 'Times New Roman', label: 'Times New Roman' },
+                  { value: 'Courier New', label: 'Courier New' },
+                  { value: 'Georgia', label: 'Georgia' },
+                  { value: 'Verdana', label: 'Verdana' },
+                  { value: 'Helvetica', label: 'Helvetica' },
+                ]}
+              />
+            </Tooltip>
+            {/* Bold */}
+            <Tooltip title="Félkövér">
+              <Button
+                size="small" icon={<BoldOutlined />}
+                type={(selectedTextId
+                  ? overlayTexts.find(t => t.id === selectedTextId)?.bold
+                  : textDefaults.bold) ? 'primary' : 'default'}
+                onClick={() => {
+                  const cur = selectedTextId
+                    ? (overlayTexts.find(t => t.id === selectedTextId)?.bold ?? textDefaults.bold)
+                    : textDefaults.bold;
+                  setTextDefaults(d => ({ ...d, bold: !cur }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { bold: !cur });
+                }}
+              />
+            </Tooltip>
+            {/* Italic */}
+            <Tooltip title="Dőlt">
+              <Button
+                size="small" icon={<ItalicOutlined />}
+                type={(selectedTextId
+                  ? overlayTexts.find(t => t.id === selectedTextId)?.italic
+                  : textDefaults.italic) ? 'primary' : 'default'}
+                onClick={() => {
+                  const cur = selectedTextId
+                    ? (overlayTexts.find(t => t.id === selectedTextId)?.italic ?? textDefaults.italic)
+                    : textDefaults.italic;
+                  setTextDefaults(d => ({ ...d, italic: !cur }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { italic: !cur });
+                }}
+              />
+            </Tooltip>
+            {/* Text align */}
+            <Tooltip title="Igazítás">
+              <Select
+                size="small" style={{ width: 80 }}
+                value={selectedTextId
+                  ? (overlayTexts.find(t => t.id === selectedTextId)?.align ?? textDefaults.align)
+                  : textDefaults.align}
+                onChange={v => {
+                  setTextDefaults(d => ({ ...d, align: v }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { align: v });
+                }}
+                options={[
+                  { value: 'left', label: 'Bal' },
+                  { value: 'center', label: 'Közép' },
+                  { value: 'right', label: 'Jobb' },
+                ]}
+              />
+            </Tooltip>
+            {/* Color */}
+            <Tooltip title="Szöveg szín">
+              <ColorPicker
+                size="small"
+                value={selectedTextId
+                  ? (overlayTexts.find(t => t.id === selectedTextId)?.color ?? textDefaults.color)
+                  : textDefaults.color}
+                onChange={(c) => {
+                  const hex = c.toHexString();
+                  setTextDefaults(d => ({ ...d, color: hex }));
+                  if (selectedTextId != null) handleTextStyleChange(selectedTextId, { color: hex });
+                }}
+              />
+            </Tooltip>
+            {/* Selected text z-order and delete */}
+            {selectedTextId != null && (() => {
+              const selTxt = overlayTexts.find(t => t.id === selectedTextId);
+              if (!selTxt) return null;
+              const pageTxts = overlayTexts.filter(t => t.page === selTxt.page).sort((a, b) => a.zIndex - b.zIndex);
+              const tIdx = pageTxts.findIndex(t => t.id === selectedTextId);
+              return (
+                <>
+                  <Divider type="vertical" />
+                  <Tooltip title="Előre hozás (rétegrend)">
+                    <Button size="small" icon={<VerticalAlignTopOutlined />}
+                      disabled={tIdx >= pageTxts.length - 1}
+                      onClick={() => handleTextZOrder(selectedTextId, 'up')} />
+                  </Tooltip>
+                  <Tooltip title="Hátraküldés (rétegrend)">
+                    <Button size="small" icon={<VerticalAlignBottomOutlined />}
+                      disabled={tIdx <= 0}
+                      onClick={() => handleTextZOrder(selectedTextId, 'down')} />
+                  </Tooltip>
+                  <Divider type="vertical" />
+                  <Button size="small" danger icon={<DeleteOutlined />}
+                    onClick={() => handleTextDelete(selectedTextId)}>Törlés</Button>
+                </>
+              );
+            })()}
+            <Text type="secondary" style={{ fontSize: 11, marginLeft: 8 }}>
+              {selectedTextId ? 'Duplakatt: szerkesztés | Drag: mozgatás' : 'Kattints az oldalra szöveg hozzáadásához'}
+            </Text>
+          </div>
+        )}
+
         {/* PDF info bar */}
         {pdfPages.length > 0 && curInfo && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 11, color: '#888', flexShrink: 0, flexWrap: 'wrap' }}>
@@ -2085,6 +2552,13 @@ const PrintCommentView: React.FC<Props> = ({
                     }}
                     onMouseDown={e => {
                       if (activeTool === 'crop') { handleCropMouseDown(e, pageNum); return; }
+                      if (activeTool === 'image') { setSelectedImageId(null); return; }
+                      if (activeTool === 'text') {
+                        setSelectedTextId(null); setEditingTextId(null);
+                        const pos = getRelPos(e);
+                        if (pos) addOverlayText(pageNum, pos.x, pos.y);
+                        return;
+                      }
                       handleMouseDown(e, pageNum);
                     }}
                     onMouseMove={e => {
@@ -2098,6 +2572,175 @@ const PrintCommentView: React.FC<Props> = ({
                     onMouseLeave={handleMouseLeave}
                     onDoubleClick={() => setSelectedElement(null)}
                   >
+
+                    {/* Overlay images on this page */}
+                    {overlayImages
+                      .filter(img => img.page === pageNum)
+                      .sort((a, b) => a.zIndex - b.zIndex)
+                      .map(img => {
+                        const isSelected = activeTool === 'image' && selectedImageId === img.id;
+                        const handles: { h: ImgHandleType; style: React.CSSProperties; cursor: string }[] = [
+                          { h: 'tl', style: { top: -5, left: -5 }, cursor: 'nw-resize' },
+                          { h: 'tr', style: { top: -5, right: -5 }, cursor: 'ne-resize' },
+                          { h: 'bl', style: { bottom: -5, left: -5 }, cursor: 'sw-resize' },
+                          { h: 'br', style: { bottom: -5, right: -5 }, cursor: 'se-resize' },
+                        ];
+                        return (
+                          <div
+                            key={img.id}
+                            style={{
+                              position: 'absolute',
+                              left: `${img.x * 100}%`, top: `${img.y * 100}%`,
+                              width: `${img.w * 100}%`, height: `${img.h * 100}%`,
+                              transform: `rotate(${img.rotation}deg)`,
+                              transformOrigin: 'center center',
+                              zIndex: img.zIndex + 2,
+                              pointerEvents: activeTool === 'image' ? 'auto' : 'none',
+                              cursor: activeTool === 'image' ? 'move' : 'default',
+                              outline: isSelected ? '2px solid #1890ff' : undefined,
+                              outlineOffset: 2,
+                              userSelect: 'none',
+                              boxSizing: 'border-box',
+                            }}
+                            onMouseDown={activeTool === 'image' ? (e) => handleImgMouseDown(e, img.id, 'move', pageIdx) : undefined}
+                            onClick={activeTool === 'image' ? (e) => { e.stopPropagation(); setSelectedImageId(img.id); } : undefined}
+                          >
+                            <img
+                              src={img.src} alt={img.name}
+                              style={{ width: '100%', height: '100%', display: 'block', pointerEvents: 'none' }}
+                              draggable={false}
+                            />
+                            {isSelected && (
+                              <>
+                                {handles.map(({ h, style, cursor }) => (
+                                  <div key={h} style={{
+                                    position: 'absolute', width: 9, height: 9,
+                                    background: '#fff', border: '2px solid #1890ff', borderRadius: 2,
+                                    cursor, zIndex: 1, ...style,
+                                  }}
+                                    onMouseDown={(e) => handleImgMouseDown(e, img.id, h, pageIdx)}
+                                  />
+                                ))}
+                                {/* Rotation handle */}
+                                <div style={{
+                                  position: 'absolute', top: -24, left: '50%',
+                                  transform: 'translateX(-50%)',
+                                  width: 12, height: 12, borderRadius: '50%',
+                                  background: '#fff', border: '2px solid #52c41a',
+                                  cursor: 'grab', zIndex: 1,
+                                }}
+                                  onMouseDown={(e) => handleImgMouseDown(e, img.id, 'rotate', pageIdx)}
+                                />
+                                {/* Rotation line */}
+                                <div style={{
+                                  position: 'absolute', top: -18, left: '50%',
+                                  width: 1, height: 14, background: '#52c41a',
+                                  transform: 'translateX(-50%)', zIndex: 1, pointerEvents: 'none',
+                                }} />
+                                {/* Label */}
+                                <div style={{
+                                  position: 'absolute', bottom: -20, left: 0,
+                                  fontSize: 9, color: '#1890ff', background: 'rgba(255,255,255,0.9)',
+                                  padding: '0 3px', borderRadius: 2, whiteSpace: 'nowrap',
+                                  pointerEvents: 'none', lineHeight: '16px',
+                                }}>
+                                  {img.name} {img.rotation !== 0 ? `${Math.round(img.rotation)}°` : ''}
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                    {/* Overlay texts on this page */}
+                    {overlayTexts
+                      .filter(txt => txt.page === pageNum)
+                      .sort((a, b) => a.zIndex - b.zIndex)
+                      .map(txt => {
+                        const isSel = activeTool === 'text' && selectedTextId === txt.id;
+                        const isEditing = editingTextId === txt.id;
+                        return (
+                          <div
+                            key={txt.id}
+                            style={{
+                              position: 'absolute',
+                              left: `${txt.x * 100}%`,
+                              top: `${txt.y * 100}%`,
+                              width: `${txt.w * 100}%`,
+                              zIndex: txt.zIndex + 50,
+                              pointerEvents: activeTool === 'text' ? 'auto' : 'none',
+                              cursor: activeTool === 'text' ? (isEditing ? 'text' : 'move') : 'default',
+                              outline: isSel && !isEditing ? '1.5px dashed #1890ff' : isEditing ? '1.5px solid #1890ff' : undefined,
+                              userSelect: isEditing ? 'text' : 'none',
+                              boxSizing: 'border-box',
+                            }}
+                            onMouseDown={activeTool === 'text' && !isEditing
+                              ? (e) => handleTextMouseDown(e, txt.id, pageIdx, false)
+                              : undefined}
+                            onDoubleClick={activeTool === 'text' ? (e) => {
+                              e.stopPropagation();
+                              setSelectedTextId(txt.id);
+                              setEditingTextId(txt.id);
+                            } : undefined}
+                            onClick={activeTool === 'text' ? (e) => {
+                              e.stopPropagation();
+                              if (!isEditing) setSelectedTextId(txt.id);
+                            } : undefined}
+                          >
+                            {isEditing ? (
+                              <div
+                                contentEditable
+                                suppressContentEditableWarning
+                                onBlur={e => {
+                                  handleTextContentChange(txt.id, e.currentTarget.innerText);
+                                  setEditingTextId(null);
+                                }}
+                                onKeyDown={e => {
+                                  if (e.key === 'Escape') { e.currentTarget.blur(); }
+                                  e.stopPropagation();
+                                }}
+                                style={{
+                                  outline: 'none', minHeight: '1em',
+                                  fontSize: txt.fontSize, color: txt.color,
+                                  fontFamily: txt.fontFamily,
+                                  fontWeight: txt.bold ? 700 : 400,
+                                  fontStyle: txt.italic ? 'italic' : 'normal',
+                                  textAlign: txt.align,
+                                  whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                  lineHeight: 1.3, cursor: 'text',
+                                  background: 'rgba(255,255,255,0.15)',
+                                }}
+                                dangerouslySetInnerHTML={{ __html: txt.content.replace(/\n/g, '<br/>') }}
+                              />
+                            ) : (
+                              <div style={{
+                                fontSize: txt.fontSize, color: txt.color,
+                                fontFamily: txt.fontFamily,
+                                fontWeight: txt.bold ? 700 : 400,
+                                fontStyle: txt.italic ? 'italic' : 'normal',
+                                textAlign: txt.align,
+                                whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                                lineHeight: 1.3, pointerEvents: 'none',
+                              }}>
+                                {txt.content}
+                              </div>
+                            )}
+                            {/* Right-edge resize handle */}
+                            {isSel && !isEditing && (
+                              <div
+                                style={{
+                                  position: 'absolute', top: 0, right: -5, bottom: 0,
+                                  width: 10, cursor: 'ew-resize', zIndex: 1,
+                                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                }}
+                                onMouseDown={(e) => { e.stopPropagation(); handleTextMouseDown(e, txt.id, pageIdx, true); }}
+                              >
+                                <div style={{ width: 6, height: 20, background: '#1890ff', borderRadius: 3, opacity: 0.8 }} />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
 
                     {/* Guidelines on this page */}
                     {guidelines.filter(g => g.page === pageNum).map(g => (
@@ -2771,6 +3414,58 @@ const PrintCommentView: React.FC<Props> = ({
         onClose={() => setTemplatePickerOpen(false)}
         onSelect={(file) => renderPdf(file)}
       />
+
+      {/* Copy image to page modal */}
+      <Modal
+        open={imgCopyModalOpen}
+        title="Kép másolása oldalra"
+        okText="Másolás"
+        cancelText="Mégse"
+        onCancel={() => setImgCopyModalOpen(false)}
+        onOk={() => {
+          if (imgCopySourceId != null && imgCopyPages.length > 0) {
+            handleImgCopyToPages(imgCopySourceId, imgCopyPages);
+          }
+          setImgCopyModalOpen(false);
+          setImgCopySourceId(null);
+          setImgCopyPages([]);
+        }}
+        okButtonProps={{ disabled: imgCopyPages.length === 0 }}
+      >
+        <div style={{ marginBottom: 12, fontSize: 13, color: '#555' }}>
+          Válaszd ki, melyik oldalakra szeretnéd másolni a képet.<br />
+          <span style={{ fontSize: 11, color: '#888' }}>A pozíció és a méret megmarad.</span>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {pdfPages.map((_, idx) => {
+            const pageNum = idx + 1;
+            const srcImg = overlayImages.find(i => i.id === imgCopySourceId);
+            const isSrcPage = srcImg?.page === pageNum;
+            return (
+              <div
+                key={idx}
+                onClick={() => {
+                  if (isSrcPage) return;
+                  setImgCopyPages(prev =>
+                    prev.includes(pageNum) ? prev.filter(p => p !== pageNum) : [...prev, pageNum]
+                  );
+                }}
+                style={{
+                  width: 70, padding: 6, borderRadius: 6, textAlign: 'center', cursor: isSrcPage ? 'default' : 'pointer',
+                  border: isSrcPage ? '2px solid #d9d9d9' : imgCopyPages.includes(pageNum) ? '2px solid #1890ff' : '2px solid #d9d9d9',
+                  background: isSrcPage ? '#f5f5f5' : imgCopyPages.includes(pageNum) ? '#e6f4ff' : '#fafafa',
+                  opacity: isSrcPage ? 0.5 : 1,
+                }}
+              >
+                <img src={pdfPages[idx]} alt={`${pageNum}`} style={{ width: '100%', display: 'block', borderRadius: 3 }} />
+                <div style={{ fontSize: 11, marginTop: 3, color: isSrcPage ? '#aaa' : '#333' }}>
+                  {pageNum}. oldal {isSrcPage ? '(forrás)' : ''}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </Modal>
     </div>
   );
 };
