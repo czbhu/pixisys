@@ -3446,6 +3446,137 @@ class PdfExportView(APIView):
                     shape.finish(color=(0, 0.75, 1), width=0.5, dashes="[2 2]")
                     shape.commit()
 
+            # ── Overlay images ─────────────────────────────────────────────────
+            import base64 as _base64
+
+            def _hex_to_rgb(h):
+                h = h.lstrip('#')
+                if len(h) == 3:
+                    h = h[0]*2 + h[1]*2 + h[2]*2
+                return (int(h[0:2], 16) / 255.0, int(h[2:4], 16) / 255.0, int(h[4:6], 16) / 255.0)
+
+            overlay_images = options.get('overlayImages', [])
+            for img_data in sorted(overlay_images, key=lambda i: (i.get('page', 1), i.get('zIndex', 0))):
+                try:
+                    page_num = int(img_data.get('page', 1)) - 1
+                    if not (0 <= page_num < doc.page_count):
+                        continue
+                    page = doc[page_num]
+                    mb = page.mediabox
+                    pw, ph = mb.width, mb.height
+
+                    x = float(img_data.get('x', 0))
+                    y = float(img_data.get('y', 0))
+                    w = float(img_data.get('w', 0))
+                    h = float(img_data.get('h', 0))
+                    rotation = float(img_data.get('rotation', 0))
+                    src = img_data.get('src', '')
+                    if not src:
+                        continue
+
+                    # Decode base64 data URL
+                    if ',' in src:
+                        src = src.split(',', 1)[1]
+                    img_bytes = _base64.b64decode(src)
+
+                    # Build rect in pt
+                    x0 = x * pw + mb.x0
+                    y0 = y * ph + mb.y0
+                    x1 = (x + w) * pw + mb.x0
+                    y1 = (y + h) * ph + mb.y0
+                    rect = fitz.Rect(x0, y0, x1, y1)
+
+                    page.insert_image(rect, stream=img_bytes, rotate=int(rotation))
+                except Exception:
+                    pass  # skip broken images
+
+            # ── Overlay texts ──────────────────────────────────────────────────
+            # Font name mapping: family + bold + italic → PyMuPDF built-in font name
+            _FONT_MAP = {
+                # (base, bold, italic) → fontname
+                ('he', False, False): 'helv',
+                ('he', True,  False): 'hebo',
+                ('he', False, True):  'heit',
+                ('he', True,  True):  'hebi',
+                ('ti', False, False): 'tiro',
+                ('ti', True,  False): 'tibo',
+                ('ti', False, True):  'tiit',
+                ('ti', True,  True):  'tibi',
+                ('co', False, False): 'cour',
+                ('co', True,  False): 'cobo',
+                ('co', False, True):  'coit',
+                ('co', True,  True):  'cobi',
+            }
+            _ALIGN_MAP = {'left': 0, 'center': 1, 'right': 2}
+
+            # Prefer DejaVu for Unicode support (Hungarian chars)
+            _DEJAVU_FONTS = {
+                (False, False): '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+                (True,  False): '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+                (False, True):  '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',  # no oblique variant
+                (True,  True):  '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
+            }
+
+            overlay_texts = options.get('overlayTexts', [])
+            for txt_data in sorted(overlay_texts, key=lambda t: (t.get('page', 1), t.get('zIndex', 0))):
+                try:
+                    page_num = int(txt_data.get('page', 1)) - 1
+                    if not (0 <= page_num < doc.page_count):
+                        continue
+                    page = doc[page_num]
+                    mb = page.mediabox
+                    pw, ph = mb.width, mb.height
+
+                    x = float(txt_data.get('x', 0))
+                    y = float(txt_data.get('y', 0))
+                    w = float(txt_data.get('w', 0.4))
+                    content = txt_data.get('content', '')
+                    font_size_px = float(txt_data.get('fontSize', 22))
+                    color_hex = txt_data.get('color', '#000000')
+                    family = txt_data.get('fontFamily', 'Arial').lower()
+                    bold = bool(txt_data.get('bold', False))
+                    italic = bool(txt_data.get('italic', False))
+                    align_str = txt_data.get('align', 'left')
+
+                    # Convert px → pt (standard CSS conversion: 1px = 0.75pt)
+                    font_size_pt = font_size_px * 0.75
+
+                    # Build rect in pt (height = rest of page)
+                    x0 = x * pw + mb.x0
+                    y0 = y * ph + mb.y0
+                    x1 = (x + w) * pw + mb.x0
+                    y1 = ph + mb.y0  # extend to bottom of page
+                    rect = fitz.Rect(x0, y0, x1, y1)
+
+                    color = _hex_to_rgb(color_hex)
+                    align = _ALIGN_MAP.get(align_str, 0)
+
+                    # Try DejaVu TrueType for Unicode support
+                    font_path = _DEJAVU_FONTS.get((bold, italic))
+                    inserted = False
+                    if font_path and os.path.exists(font_path):
+                        try:
+                            font = fitz.Font(fontfile=font_path)
+                            page.insert_textbox(rect, content, fontsize=font_size_pt,
+                                                font=font, color=color, align=align)
+                            inserted = True
+                        except Exception:
+                            pass
+
+                    if not inserted:
+                        # Fallback: built-in PDF font
+                        if 'times' in family or 'georgia' in family:
+                            base = 'ti'
+                        elif 'cour' in family or 'mono' in family:
+                            base = 'co'
+                        else:
+                            base = 'he'
+                        fontname = _FONT_MAP.get((base, bold, italic), 'helv')
+                        page.insert_textbox(rect, content, fontsize=font_size_pt,
+                                            fontname=fontname, color=color, align=align)
+                except Exception:
+                    pass  # skip broken text overlays
+
             out_path = os.path.join(tmpdir, 'export.pdf')
             doc.save(out_path)
             doc.close()

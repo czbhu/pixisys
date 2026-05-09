@@ -1694,6 +1694,33 @@ const PrintCommentView: React.FC<Props> = ({
       }
       if (glPt.length > 0) options.guidelines = glPt;
 
+      // Overlay images: send full data with relative coordinates
+      if (overlayImages.length > 0) {
+        options.overlayImages = overlayImages.map(img => ({
+          page: img.page,
+          x: img.x, y: img.y, w: img.w, h: img.h,
+          rotation: img.rotation,
+          zIndex: img.zIndex,
+          src: img.src,
+        }));
+      }
+
+      // Overlay texts: send with relative coordinates + style
+      if (overlayTexts.length > 0) {
+        options.overlayTexts = overlayTexts.map(txt => ({
+          page: txt.page,
+          x: txt.x, y: txt.y, w: txt.w,
+          content: txt.content,
+          fontSize: txt.fontSize,
+          color: txt.color,
+          fontFamily: txt.fontFamily,
+          bold: txt.bold,
+          italic: txt.italic,
+          align: txt.align,
+          zIndex: txt.zIndex,
+        }));
+      }
+
       const formData = new FormData();
       formData.append('pdf', pdfFileRef.current);
       formData.append('options', JSON.stringify(options));
