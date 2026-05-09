@@ -69,7 +69,9 @@ const PrintShopPage: React.FC = () => {
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
-  const [viewMode, setViewMode] = useState<'canvas' | 'pdf'>('canvas');
+  const [viewMode, setViewMode] = useState<'canvas' | 'pdf'>(
+    new URLSearchParams(location.search).get('mode') === 'pdf' ? 'pdf' : 'canvas'
+  );
   const canvasRef = useRef<CanvasEditorHandle>(null);
   const [templateCategoryIds, setTemplateCategoryIds] = useState<number[]>([]);
   const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
