@@ -136,6 +136,8 @@ interface Props {
   onAnnotationsChange?: (annotations: CommentAnnotation[]) => void;
   /** Ref that will receive a function to export the current PDF with overlays baked in */
   exportRef?: React.MutableRefObject<(() => Promise<File | null>) | null>;
+  /** Called when user wants to switch to the canvas editor */
+  onSwitchToCanvas?: () => void;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -317,6 +319,7 @@ const PrintCommentView: React.FC<Props> = ({
   onPdfFileChange,
   onAnnotationsChange,
   exportRef,
+  onSwitchToCanvas,
 }) => {
   const effectiveCanEdit = canEdit ?? isAdmin;
   const effectiveCanComment = canComment ?? true;
@@ -2149,6 +2152,11 @@ const PrintCommentView: React.FC<Props> = ({
               <Button icon={<FilePdfOutlined />} size="small">PDF betöltése</Button>
             </Upload>
           )}
+          {onSwitchToCanvas && (
+            <Button size="small" onClick={onSwitchToCanvas}>
+              Vászon Szerkesztő
+            </Button>
+          )}
           {showTemplates && !hideUpload && canManagePdf && (
             <Button icon={<AppstoreOutlined />} size="small" onClick={() => setTemplatePickerOpen(true)}>
               Sablonok
@@ -2718,6 +2726,11 @@ const PrintCommentView: React.FC<Props> = ({
                     </Button>
                   </div>
                 </Upload>
+                {onSwitchToCanvas && (
+                  <Button size="large" style={{ marginTop: 8 }} onClick={onSwitchToCanvas}>
+                    Vászon Szerkesztő
+                  </Button>
+                )}
                 {showTemplates && (
                   <Button icon={<AppstoreOutlined />} size="large" onClick={() => setTemplatePickerOpen(true)}>
                     Sablon betöltése
