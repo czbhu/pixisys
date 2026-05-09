@@ -202,9 +202,34 @@ export const clearPdfFromIDB = async (): Promise<void> => {
     const db = await openIDB();
     const tx = db.transaction(IDB_STORE, 'readwrite');
     tx.objectStore(IDB_STORE).delete(IDB_KEY);
+    tx.objectStore(IDB_STORE).delete(IDB_OVERLAY_KEY);
     await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
     db.close();
   } catch { /* silent */ }
+};
+
+const IDB_OVERLAY_KEY = 'preview_overlays';
+
+const saveOverlaysToIDB = async (images: any[], texts: any[]): Promise<void> => {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, 'readwrite');
+    tx.objectStore(IDB_STORE).put({ images, texts, ts: Date.now() }, IDB_OVERLAY_KEY);
+    await new Promise<void>((res, rej) => { tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error); });
+    db.close();
+  } catch { /* silent */ }
+};
+
+const loadOverlaysFromIDB = async (): Promise<{ images: any[]; texts: any[] } | null> => {
+  try {
+    const db = await openIDB();
+    const tx = db.transaction(IDB_STORE, 'readonly');
+    const req = tx.objectStore(IDB_STORE).get(IDB_OVERLAY_KEY);
+    const result = await new Promise<any>((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = () => rej(req.error); });
+    db.close();
+    if (result?.images) return { images: result.images, texts: result.texts || [] };
+    return null;
+  } catch { return null; }
 };
 
 let pdfWorkerBlobUrl: string | null = null;
@@ -397,6 +422,7 @@ const PrintCommentView: React.FC<Props> = ({
     origX: number; origY: number; origW: number; origH: number;
     origRot: number; pageRect: DOMRect;
   } | null>(null);
+  const overlaysSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Overlay text state
   const [overlayTexts, setOverlayTexts] = useState<OverlayText[]>([]);
@@ -512,6 +538,15 @@ const PrintCommentView: React.FC<Props> = ({
   }, [activeTool, allowCommentPlacement]);
 
   // ── Auto-load cached PDF on mount ───────────────────────────────────────────
+  // Auto-save overlays to IDB on change (debounced)
+  useEffect(() => {
+    if (overlaysSaveTimerRef.current) clearTimeout(overlaysSaveTimerRef.current);
+    overlaysSaveTimerRef.current = setTimeout(() => {
+      saveOverlaysToIDB(overlayImages, overlayTexts);
+    }, 600);
+    return () => { if (overlaysSaveTimerRef.current) clearTimeout(overlaysSaveTimerRef.current); };
+  }, [overlayImages, overlayTexts]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -532,6 +567,18 @@ const PrintCommentView: React.FC<Props> = ({
       if (cached && !cancelled) {
         const file = new File([cached.buffer], cached.name, { type: 'application/pdf' });
         renderPdf(file, true);
+        // Restore overlays saved before last reload
+        const savedOverlays = await loadOverlaysFromIDB();
+        if (savedOverlays && !cancelled) {
+          if (savedOverlays.images.length > 0) {
+            setOverlayImages(savedOverlays.images);
+            imgIdCounter.current = Math.max(...savedOverlays.images.map((i: any) => i.id), 0) + 1;
+          }
+          if (savedOverlays.texts.length > 0) {
+            setOverlayTexts(savedOverlays.texts);
+            textIdCounter.current = Math.max(...savedOverlays.texts.map((t: any) => t.id), 0) + 1;
+          }
+        }
       }
     })();
     return () => { cancelled = true; };
@@ -557,6 +604,11 @@ const PrintCommentView: React.FC<Props> = ({
       // Save to IndexedDB for persistence across refresh
       if (!skipCache) {
         savePdfToIDB(arrayBuffer.slice(0), file.name);
+        // Fresh file upload: clear overlay state
+        setOverlayImages([]);
+        setOverlayTexts([]);
+        imgIdCounter.current = 1;
+        textIdCounter.current = 1;
       }
 
       // ── 1) Server-side analysis via PyMuPDF: TrimBox + color spaces ──
