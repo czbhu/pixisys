@@ -113,7 +113,8 @@ const RFQs: React.FC = () => {
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
-  const [clientModalOpen, setClientModalOpen] = useState(false);
+  const [clientCompanyModalOpen, setClientCompanyModalOpen] = useState(false);
+  const [clientContactModalOpen, setClientContactModalOpen] = useState(false);
   const screens = useBreakpoint();
   const isMobile = !screens.md;
   const watchedCompanyId = Form.useWatch('company_id', form);
@@ -1806,7 +1807,7 @@ const RFQs: React.FC = () => {
         cancelText="Mégse"
         width={isMobile ? '100%' : 1100}
         style={isMobile ? { top: 0, maxWidth: '100%', margin: 0, paddingBottom: 0 } : {}}
-        styles={isMobile ? { content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto' } } : {}}
+        styles={isMobile ? { wrapper: { padding: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto', padding: '12px 12px 0' } } : {}}
         forceRender
       >
         <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
@@ -1838,26 +1839,39 @@ const RFQs: React.FC = () => {
           </div>
           {/* ── Ügyfél ──────────────────────────────────────────────────── */}
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
-              {isMobile && (
-                <Button size="small" type="primary" ghost onClick={() => setClientModalOpen(true)}>Szerkesztés</Button>
-              )}
-            </div>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
           {isMobile ? (
             <div style={{ paddingBottom: 8 }}>
               {(() => {
                 const companyName = watchedCompanyId === 'private'
                   ? 'Magánszemély'
                   : (companies.find((c: any) => c.id === watchedCompanyId)?.name || '');
-                const contactCount = Array.isArray(watchedContactIds) ? watchedContactIds.length : 0;
+                const contactNames = Array.isArray(watchedContactIds)
+                  ? watchedContactIds.map((id: any) => {
+                      const c = contacts.find((c: any) => c.id === id || String(c.id) === String(id));
+                      return c?.full_name || c?.name || String(id);
+                    })
+                  : [];
                 return (
-                  <div style={{ fontSize: 13, color: '#333', lineHeight: '20px' }}>
-                    <span style={{ fontWeight: 500 }}>Cég: </span>
-                    <span style={{ color: companyName ? '#000' : '#aaa' }}>{companyName || 'Nincs kiválasztva'}</span>
-                    {contactCount > 0 && (
-                      <span style={{ marginLeft: 12, color: '#389e0d' }}>{contactCount} kapcsolattartó</span>
-                    )}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, color: '#389e0d', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Cég</div>
+                        <div style={{ fontSize: 15, fontWeight: 500, color: companyName ? '#000' : '#aaa', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {companyName || 'Nincs kiválasztva'}
+                        </div>
+                      </div>
+                      <Button size="small" type="primary" ghost onClick={() => setClientCompanyModalOpen(true)}>Szerkesztés</Button>
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 11, color: '#389e0d', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: 2 }}>Kapcsolattartók</div>
+                        <div style={{ fontSize: 14, color: contactNames.length ? '#000' : '#aaa' }}>
+                          {contactNames.length ? contactNames.join(', ') : 'Nincs kiválasztva'}
+                        </div>
+                      </div>
+                      <Button size="small" type="primary" ghost onClick={() => setClientContactModalOpen(true)}>Szerkesztés</Button>
+                    </div>
                   </div>
                 );
               })()}
@@ -2074,24 +2088,21 @@ const RFQs: React.FC = () => {
             </Col>
           </Row>
           )}
-          {/* Ügyfél szerkesztő sub-modal (csak mobilon) */}
+          {/* Cég kiválasztó sub-modal (csak mobilon) */}
           {isMobile && (
             <Modal
-              title="Ügyfél kiválasztása"
-              open={clientModalOpen}
-              onOk={() => setClientModalOpen(false)}
-              onCancel={() => setClientModalOpen(false)}
+              title="Cég kiválasztása"
+              open={clientCompanyModalOpen}
+              onOk={() => setClientCompanyModalOpen(false)}
+              onCancel={() => setClientCompanyModalOpen(false)}
               okText="Kész"
               cancelButtonProps={{ style: { display: 'none' } }}
               forceRender
               width="100%"
               style={{ top: 0, maxWidth: '100%', margin: 0, paddingBottom: 0 }}
-              styles={{ content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto' } }}
+              styles={{ wrapper: { padding: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto', padding: '16px 12px' } }}
             >
-              <Form.Item 
-                label="Cég" 
-                style={{ marginBottom: 12 }}
-              > 
+              <Form.Item label="Cég" style={{ marginBottom: 12 }}> 
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="company_id" noStyle>
                   <Select 
@@ -2167,6 +2178,22 @@ const RFQs: React.FC = () => {
                   </Tooltip>
                 </Space.Compact>
               </Form.Item>
+            </Modal>
+          )}
+          {/* Kapcsolattartók kiválasztó sub-modal (csak mobilon) */}
+          {isMobile && (
+            <Modal
+              title="Kapcsolattartók kiválasztása"
+              open={clientContactModalOpen}
+              onOk={() => setClientContactModalOpen(false)}
+              onCancel={() => setClientContactModalOpen(false)}
+              okText="Kész"
+              cancelButtonProps={{ style: { display: 'none' } }}
+              forceRender
+              width="100%"
+              style={{ top: 0, maxWidth: '100%', margin: 0, paddingBottom: 0 }}
+              styles={{ wrapper: { padding: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto', padding: '16px 12px' } }}
+            >
               <Form.Item label="Kapcsolattartók" style={{ marginBottom: 12 }}>
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="contact_ids" noStyle>
