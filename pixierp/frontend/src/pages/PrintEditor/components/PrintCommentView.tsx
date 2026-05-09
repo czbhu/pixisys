@@ -1694,14 +1694,15 @@ const PrintCommentView: React.FC<Props> = ({
       }
       if (glPt.length > 0) options.guidelines = glPt;
 
-      // Overlay images: send full data with relative coordinates
+      // Overlay images: send metadata in options, actual image data as separate FormData files
+      // (avoid huge JSON caused by base64 strings)
       if (overlayImages.length > 0) {
-        options.overlayImages = overlayImages.map(img => ({
+        options.overlayImages = overlayImages.map((img, idx) => ({
           page: img.page,
           x: img.x, y: img.y, w: img.w, h: img.h,
           rotation: img.rotation,
           zIndex: img.zIndex,
-          src: img.src,
+          fileIndex: idx,  // references FormData field image_N
         }));
       }
 
@@ -1734,6 +1735,20 @@ const PrintCommentView: React.FC<Props> = ({
       const formData = new FormData();
       formData.append('pdf', pdfFileRef.current);
       formData.append('options', JSON.stringify(options));
+
+      // Append each overlay image as a separate file to avoid large JSON
+      for (let i = 0; i < overlayImages.length; i++) {
+        const img = overlayImages[i];
+        // Convert data URL to Blob
+        const dataUrl = img.src;
+        const arr = dataUrl.split(',');
+        const mime = (arr[0].match(/:(.*?);/) || ['', 'image/png'])[1];
+        const bstr = atob(arr[1] || '');
+        const u8arr = new Uint8Array(bstr.length);
+        for (let j = 0; j < bstr.length; j++) u8arr[j] = bstr.charCodeAt(j);
+        const blob = new Blob([u8arr], { type: mime });
+        formData.append(`image_${i}`, blob, `img_${i}.${mime.split('/')[1] || 'png'}`);
+      }
 
       const resp = await api.post('/printshop/pdf-export/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
@@ -1948,7 +1963,14 @@ const PrintCommentView: React.FC<Props> = ({
         {/* Toolbar */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0, flexWrap: 'wrap' }}>
           {!hideUpload && canManagePdf && (
-            <Upload accept=".pdf" showUploadList={false} beforeUpload={file => { renderPdf(file); return false; }}>
+            <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
+              if (fileList && fileList.length > 1 && file === fileList[fileList.length - 1]) {
+                handleMerge(fileList as unknown as File[]);
+              } else if (!fileList || fileList.length <= 1) {
+                renderPdf(file);
+              }
+              return false;
+            }}>
               <Button icon={<FilePdfOutlined />} size="small">PDF betöltése</Button>
             </Upload>
           )}

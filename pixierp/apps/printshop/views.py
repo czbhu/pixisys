@@ -3470,14 +3470,23 @@ class PdfExportView(APIView):
                     w = float(img_data.get('w', 0))
                     h = float(img_data.get('h', 0))
                     rotation = float(img_data.get('rotation', 0))
-                    src = img_data.get('src', '')
-                    if not src:
-                        continue
 
-                    # Decode base64 data URL
-                    if ',' in src:
-                        src = src.split(',', 1)[1]
-                    img_bytes = _base64.b64decode(src)
+                    # Read image bytes from uploaded file (preferred) or fallback to base64 src
+                    img_bytes = None
+                    file_index = img_data.get('fileIndex')
+                    if file_index is not None:
+                        img_file = request.FILES.get(f'image_{file_index}')
+                        if img_file:
+                            img_bytes = img_file.read()
+
+                    if img_bytes is None:
+                        # Legacy: base64 in src
+                        src = img_data.get('src', '')
+                        if not src:
+                            continue
+                        if ',' in src:
+                            src = src.split(',', 1)[1]
+                        img_bytes = _base64.b64decode(src)
 
                     # Build rect in pt
                     x0 = x * pw + mb.x0
@@ -3486,7 +3495,9 @@ class PdfExportView(APIView):
                     y1 = (y + h) * ph + mb.y0
                     rect = fitz.Rect(x0, y0, x1, y1)
 
-                    page.insert_image(rect, stream=img_bytes, rotate=int(rotation))
+                    # PyMuPDF rotate only supports multiples of 90
+                    fitz_rotate = int(rotation / 90) * 90
+                    page.insert_image(rect, stream=img_bytes, rotate=fitz_rotate)
                 except Exception:
                     pass  # skip broken images
 
