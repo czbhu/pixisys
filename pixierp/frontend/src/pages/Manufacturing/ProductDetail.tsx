@@ -17,6 +17,7 @@ import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import api from '../../services/api';
 import NumInput from '../../components/NumInput';
 import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -151,6 +152,9 @@ const ManufacturingProductDetail: React.FC = () => {
   const [attachments, setAttachments] = useState<any[]>([]);
   const [uploadingAtt, setUploadingAtt] = useState(false);
   const [pendingRemark, setPendingRemark] = useState('');
+  const [attPreviewOpen, setAttPreviewOpen] = useState(false);
+  const [attPreviewUrl, setAttPreviewUrl] = useState<string | null>(null);
+  const [attPreviewTitle, setAttPreviewTitle] = useState('');
 
   // ── Load product + reference data ─────────────────────────────────────────
 
@@ -1029,11 +1033,23 @@ const ManufacturingProductDetail: React.FC = () => {
                 {
                   title: 'Fájl',
                   key: 'file',
-                  render: (_: any, att: any) => (
-                    <a href={att.file_url} target="_blank" rel="noopener noreferrer">
-                      <PaperClipOutlined style={{ marginRight: 4 }} />{att.file_url?.split('/').pop() || att.id}
-                    </a>
-                  ),
+                  render: (_: any, att: any) => {
+                    const fileUrl = att.file_url;
+                    const fileName = fileUrl?.split('/').pop() || att.id;
+                    return (
+                      <a
+                        href={fileUrl}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setAttPreviewUrl(fileUrl);
+                          setAttPreviewTitle(fileName);
+                          setAttPreviewOpen(true);
+                        }}
+                      >
+                        <PaperClipOutlined style={{ marginRight: 4 }} />{fileName}
+                      </a>
+                    );
+                  },
                 },
                 {
                   title: 'Megjegyzés',
@@ -1085,6 +1101,12 @@ const ManufacturingProductDetail: React.FC = () => {
         )}
 
       </Card>
+      <AttachmentPreviewModal
+        open={attPreviewOpen}
+        title={attPreviewTitle}
+        url={attPreviewUrl}
+        onClose={() => { setAttPreviewOpen(false); setAttPreviewUrl(null); setAttPreviewTitle(''); }}
+      />
     </div>
   );
 };

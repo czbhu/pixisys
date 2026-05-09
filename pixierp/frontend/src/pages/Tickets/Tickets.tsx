@@ -28,6 +28,7 @@ import { ticketsService } from '../../services/ticketsService';
 import { useAuth } from '../../contexts/AuthContext';
 import { deepSearchMatch } from '../../utils/searchUtils';
 import EnhancedTable from '../../components/EnhancedTable';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 
 const { Dragger } = Upload;
 
@@ -129,6 +130,9 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
   const [detailStatus, setDetailStatus] = useState<string>('open');
   const [createFiles, setCreateFiles] = useState<UploadFile[]>([]);
   const [replyFiles, setReplyFiles] = useState<UploadFile[]>([]);
+  const [attPreviewOpen, setAttPreviewOpen] = useState(false);
+  const [attPreviewUrl, setAttPreviewUrl] = useState<string | null>(null);
+  const [attPreviewTitle, setAttPreviewTitle] = useState('');
   const [form] = Form.useForm();
   const [typeForm] = Form.useForm();
 
@@ -754,7 +758,17 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
                     {item.attachments?.length > 0 && (
                       <div style={{ marginTop: 8 }}>
                         {item.attachments.map((attachment) => (
-                          <a key={attachment.id} href={attachment.file_url} target="_blank" rel="noreferrer" style={{ display: 'block' }}>
+                          <a
+                            key={attachment.id}
+                            href={attachment.file_url}
+                            style={{ display: 'block' }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setAttPreviewUrl(attachment.file_url);
+                              setAttPreviewTitle(attachment.file_name);
+                              setAttPreviewOpen(true);
+                            }}
+                          >
                             {attachment.file_name}
                           </a>
                         ))}
@@ -793,7 +807,12 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
           </>
         )}
       </Modal>
-
+      <AttachmentPreviewModal
+        open={attPreviewOpen}
+        title={attPreviewTitle}
+        url={attPreviewUrl}
+        onClose={() => { setAttPreviewOpen(false); setAttPreviewUrl(null); setAttPreviewTitle(''); }}
+      />
     </>
   );
 };

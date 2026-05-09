@@ -21,6 +21,7 @@ import { getCountries } from '../../services/countryService';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 import RFQMaterialNeedsPanel from './components/RFQMaterialNeedsPanel';
 
 const normAccents = (s: string) =>
@@ -967,7 +968,19 @@ const RFQDetail: React.FC = () => {
                 }
               };
               const linkBtn = (
-                <Button type="link" style={{ padding: 0 }} onClick={handleDownload}>{f.name}</Button>
+                <Button
+                  type="link"
+                  style={{ padding: 0 }}
+                  onClick={() => {
+                    if (f.url && isPdf(f.url)) {
+                      setFilePreviewUrl(f.url);
+                      setFilePreviewTitle(f.name);
+                      setFilePreviewOpen(true);
+                    } else {
+                      handleDownload();
+                    }
+                  }}
+                >{f.name}</Button>
               );
               return (
                 <List.Item>
@@ -1083,35 +1096,12 @@ const RFQDetail: React.FC = () => {
         </div>
         </Form>
 
-        <Modal
-          title={filePreviewTitle}
+        <AttachmentPreviewModal
           open={filePreviewOpen}
-          onCancel={() => {
-            setFilePreviewOpen(false);
-            setFilePreviewUrl(null);
-            setFilePreviewTitle('');
-          }}
-          footer={null}
-          width={900}
-        >
-          {filePreviewUrl ? (
-            filePreviewUrl.match(/\.pdf($|\?)/i) ? (
-              <div style={{ textAlign: 'center', padding: '32px 0' }}>
-                <Button
-                  type="primary"
-                  size="large"
-                  onClick={() => { openPdfPreview(filePreviewUrl!); }}
-                >
-                  Megnyitás Print Preview-ban
-                </Button>
-              </div>
-            ) : (
-              <img alt={filePreviewTitle} src={filePreviewUrl} style={{ maxWidth: '100%', maxHeight: '70vh' }} />
-            )
-          ) : (
-            <div>Nincs előnézet</div>
-          )}
-        </Modal>
+          title={filePreviewTitle}
+          url={filePreviewUrl}
+          onClose={() => { setFilePreviewOpen(false); setFilePreviewUrl(null); setFilePreviewTitle(''); }}
+        />
 
       </Card>
       <Modal title="Átveszem" open={takeoverConfirmOpen} onCancel={() => setTakeoverConfirmOpen(false)} onOk={async () => {

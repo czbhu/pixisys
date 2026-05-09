@@ -15,6 +15,7 @@ import { Table } from 'antd';
 import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 
 const { TextArea } = Input;
 
@@ -760,10 +761,10 @@ const CustomerOrderDetail: React.FC = () => {
               const isImage = (att.original_filename || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
               const fileBtn = isImage && att.file_url ? (
                 <Popover content={<img src={att.file_url} alt={att.original_filename} style={{ maxWidth: 300, maxHeight: 300, objectFit: 'contain' }} />} title={att.original_filename}>
-                  <Button type="link" style={{ padding: 0 }} onClick={() => window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                  <Button type="link" style={{ padding: 0 }} onClick={() => { setFilePreviewUrl(att.file_url); setFilePreviewTitle(att.original_filename); setFilePreviewOpen(true); }}>{att.original_filename}</Button>
                 </Popover>
               ) : (
-                <Button type="link" style={{ padding: 0 }} onClick={() => isPdf(att.file_url) ? openPdfPreview(att.file_url) : window.open(att.file_url, '_blank')}>{att.original_filename}</Button>
+                <Button type="link" style={{ padding: 0 }} onClick={() => { setFilePreviewUrl(att.file_url); setFilePreviewTitle(att.original_filename); setFilePreviewOpen(true); }}>{att.original_filename}</Button>
               );
               return (
                 <List.Item>
@@ -836,27 +837,12 @@ const CustomerOrderDetail: React.FC = () => {
           />
         </Card>
 
-        <Modal
-          title={filePreviewTitle}
+        <AttachmentPreviewModal
           open={filePreviewOpen}
-          onCancel={() => {
-            setFilePreviewOpen(false);
-            setFilePreviewUrl(null);
-            setFilePreviewTitle('');
-          }}
-          footer={null}
-          width={900}
-        >
-          {filePreviewUrl ? (
-            filePreviewUrl.match(/\.pdf($|\?)/i) ? (
-              <iframe title="preview" src={filePreviewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
-            ) : (
-              <img alt={filePreviewTitle} src={filePreviewUrl} style={{ maxWidth: '100%', maxHeight: '70vh' }} />
-            )
-          ) : (
-            <div>Nincs előnézet</div>
-          )}
-        </Modal>
+          title={filePreviewTitle}
+          url={filePreviewUrl}
+          onClose={() => { setFilePreviewOpen(false); setFilePreviewUrl(null); setFilePreviewTitle(''); }}
+        />
 
         <Divider />
 
