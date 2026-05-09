@@ -945,6 +945,22 @@ const PrintShopPage: React.FC = () => {
                 <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
                   PREVIEW & KOMMENT
                 </Text>
+                <Button
+                  size="small"
+                  type="default"
+                  onClick={() => {
+                    const p = new URLSearchParams({ from_rfq: '1', return_url: window.location.href });
+                    if (selectedCompany && selectedCompany > 0) p.set('company', String(selectedCompany));
+                    if (selectedCompany && selectedCompany > 0) {
+                      const co = companies.find(c => c.id === selectedCompany);
+                      if (co?.name) p.set('company_name', encodeURIComponent(co.name));
+                    }
+                    if (selectedContact) p.set('contact', String(selectedContact));
+                    window.open(`/print-editor?${p.toString()}`, '_blank');
+                  }}
+                >
+                  Vászon Szerkesztő
+                </Button>
                 <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 8, background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>
                     <Text style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Arány</Text>
