@@ -71,8 +71,14 @@ const PrintShopPage: React.FC = () => {
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
-  const [paramsPanelW, setParamsPanelW] = useState(PARAMS_PANEL_W_DEFAULT);
-  const paramsPanelWRef = useRef(PARAMS_PANEL_W_DEFAULT);
+  const [paramsPanelW, setParamsPanelW] = useState(() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) { const v = JSON.parse(s).paramsPanelW; if (v && v >= PARAMS_PANEL_W_MIN && v <= PARAMS_PANEL_W_MAX) return v; }
+    } catch {}
+    return PARAMS_PANEL_W_DEFAULT;
+  });
+  const paramsPanelWRef = useRef(paramsPanelW);
   const dragStartXRef = useRef<number | null>(null);
   const dragStartWRef = useRef<number>(PARAMS_PANEL_W_DEFAULT);
   const handleDragStart = useCallback((e: React.MouseEvent) => {
@@ -87,6 +93,11 @@ const PrintShopPage: React.FC = () => {
     };
     const onMouseUp = () => {
       dragStartXRef.current = null;
+      try {
+        const s = localStorage.getItem(STORAGE_KEY);
+        const existing = s ? JSON.parse(s) : {};
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, paramsPanelW: paramsPanelWRef.current }));
+      } catch {}
       window.removeEventListener('mousemove', onMouseMove);
       window.removeEventListener('mouseup', onMouseUp);
     };
