@@ -921,6 +921,7 @@ const RFQDetail: React.FC = () => {
             <Upload.Dragger
               multiple
               fileList={rfqFiles}
+              showUploadList={false}
               beforeUpload={async (file) => {
                 try {
                   const res = await salesService.uploadQuoteRequestAttachment(Number(id), file as any, rfqPendingRemark || undefined);
