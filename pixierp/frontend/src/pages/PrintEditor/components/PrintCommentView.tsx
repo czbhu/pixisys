@@ -2521,23 +2521,34 @@ const PrintCommentView: React.FC<Props> = ({
             </div>
           ) : pdfPages.length === 0 ? (
             !hideUpload && canManagePdf ? (
-              <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
-                if (fileList && fileList.length > 1 && file === fileList[fileList.length - 1]) {
-                  handleMerge(fileList as unknown as File[]);
-                } else if (!fileList || fileList.length <= 1) {
-                  renderPdf(file);
-                }
-                return false;
-              }}>
-                <div style={{
-                  border: '2px dashed #d9d9d9', borderRadius: 8, padding: 48,
-                  cursor: 'pointer', color: '#999', textAlign: 'center', background: '#fff',
+              <div style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
+                <Upload accept=".pdf" multiple showUploadList={false} beforeUpload={(file, fileList) => {
+                  if (fileList && fileList.length > 1 && file === fileList[fileList.length - 1]) {
+                    handleMerge(fileList as unknown as File[]);
+                  } else if (!fileList || fileList.length <= 1) {
+                    renderPdf(file);
+                  }
+                  return false;
                 }}>
-                  <FilePdfOutlined style={{ fontSize: 48, marginBottom: 12 }} />
-                  <div>Húzz ide egy PDF fájlt, vagy kattints a betöltéshez</div>
-                  <div style={{ fontSize: 11, color: '#bbb', marginTop: 4 }}>Több PDF egyszerre = összefűzés</div>
-                </div>
-              </Upload>
+                  <div style={{
+                    border: '2px dashed #d9d9d9', borderRadius: 8, padding: '32px 64px',
+                    cursor: 'pointer', color: '#999', textAlign: 'center', background: '#fff',
+                    minWidth: 320,
+                  }}>
+                    <FilePdfOutlined style={{ fontSize: 48, marginBottom: 12 }} />
+                    <div>Húzz ide egy PDF fájlt, vagy kattints a betöltéshez</div>
+                    <div style={{ fontSize: 11, color: '#bbb', marginTop: 4 }}>Több PDF egyszerre = összefűzés</div>
+                    <Button type="primary" icon={<FilePdfOutlined />} style={{ marginTop: 16 }}>
+                      PDF betöltése
+                    </Button>
+                  </div>
+                </Upload>
+                {showTemplates && (
+                  <Button icon={<AppstoreOutlined />} size="large" onClick={() => setTemplatePickerOpen(true)}>
+                    Sablon betöltése
+                  </Button>
+                )}
+              </div>
             ) : (
               <div style={{
                 border: '2px dashed #d9d9d9', borderRadius: 8, padding: 48,
