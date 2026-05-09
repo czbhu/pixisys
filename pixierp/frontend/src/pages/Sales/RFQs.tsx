@@ -1503,7 +1503,8 @@ const RFQs: React.FC = () => {
           expandedRowRender: renderExpandedRfqRow,
           rowExpandable: (record: any) => {
             const count = Array.isArray(record?.items) ? record.items.length : 0;
-            return count > 0;
+            const attCount = Array.isArray(record?.attachments) ? record.attachments.length : 0;
+            return count > 0 || attCount > 0;
           },
         } : undefined} />
       </Card>

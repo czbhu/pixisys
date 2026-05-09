@@ -93,6 +93,7 @@ interface QueueRow {
     quantity: number;
     unit: string;
     supplier_email_sent_at: string | null;
+    attachment_count: number;
 }
 
 const ProductionQueue: React.FC = () => {
@@ -613,7 +614,7 @@ const ProductionQueue: React.FC = () => {
             render: (_: any, r: QueueRow) => {
                 const atts: any[] = costItemAtts[r.id] || [];
                 const attsLoaded = !!costItemAttsLoaded[r.id];
-                const attCount = attsLoaded ? atts.length : 0;
+                const attCount = attsLoaded ? atts.length : (r.attachment_count || 0);
                 const isExpanded = expandedRowKeys.includes(r.id);
                 return (
                     <Space size="small" onClick={(e) => e.stopPropagation()}>

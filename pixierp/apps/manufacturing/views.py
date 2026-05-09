@@ -526,9 +526,10 @@ class ManufacturingCostItemViewSet(
     def queue(self, request):
         """List all cost_items belonging to non-cancelled/non-delivered customer orders.
         Sorted by queue_position (nulls last by id)."""
-        from django.db.models import F
+        from django.db.models import F, Count
         qs = (ManufacturingCostItem.objects
               .select_related('product', 'supplier', 'department')
+              .annotate(_att_count=Count('attachments'))
               .order_by(F('queue_position').asc(nulls_last=True), 'id'))
 
         # Optional filters
@@ -616,6 +617,7 @@ class ManufacturingCostItemViewSet(
                 'quantity': float(ci.quantity),
                 'unit': ci.unit,
                 'supplier_email_sent_at': ci.supplier_email_sent_at.isoformat() if ci.supplier_email_sent_at else None,
+                'attachment_count': getattr(ci, '_att_count', 0),
             })
         return Response(data)
 
