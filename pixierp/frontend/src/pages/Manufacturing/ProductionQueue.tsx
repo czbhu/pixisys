@@ -47,6 +47,7 @@ import api from '../../services/api';
 import { useSearchParams } from 'react-router-dom';
 import { formatBytes } from '../../utils/fileUtils';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 
 const STATUS_COLORS: Record<string, string> = {
     new: 'default',
@@ -167,6 +168,9 @@ const ProductionQueue: React.FC = () => {
     const [costItemAttRemark, setCostItemAttRemark] = useState<Record<number, string>>({});
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
+    const [queueAttPreviewUrl, setQueueAttPreviewUrl] = useState<string | null>(null);
+    const [queueAttPreviewTitle, setQueueAttPreviewTitle] = useState('');
+    const [queueAttPreviewOpen, setQueueAttPreviewOpen] = useState(false);
 
     const load = async () => {
         try {
@@ -755,7 +759,7 @@ const ProductionQueue: React.FC = () => {
                                         target="_blank"
                                         rel="noopener noreferrer"
                                         style={{ fontSize: 12 }}
-                                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                        onClick={(e) => { e.preventDefault(); setQueueAttPreviewUrl(att.file_url); setQueueAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); setQueueAttPreviewOpen(true); }}
                                     >
                                         {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
                                     </a>
@@ -1040,6 +1044,12 @@ const ProductionQueue: React.FC = () => {
                     // Keep only items that failed (no recipient / SMTP error) selected.
                     setSelectedRowKeys(unsentIds);
                 }}
+            />
+            <AttachmentPreviewModal
+                open={queueAttPreviewOpen}
+                url={queueAttPreviewUrl || ''}
+                title={queueAttPreviewTitle}
+                onClose={() => setQueueAttPreviewOpen(false)}
             />
         </div>
     );
