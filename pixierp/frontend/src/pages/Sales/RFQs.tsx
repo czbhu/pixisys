@@ -2242,10 +2242,10 @@ const RFQs: React.FC = () => {
               onClick={() => {
                 const companyId = form.getFieldValue('company_id');
                 const company = companies.find((c: any) => c.id === companyId);
-                const params = new URLSearchParams({ from_rfq: '1', return_url: window.location.href });
+                const params = new URLSearchParams({ from_rfq: '1', return_url: window.location.href, mode: 'pdf' });
                 if (companyId && companyId !== 'private') params.set('company', String(companyId));
                 if (company?.name) params.set('company_name', encodeURIComponent(company.name));
-                window.open(`/print-editor?${params.toString()}`, '_blank');
+                window.open(`/print-shop?${params.toString()}`, '_blank');
               }}
             >PrintShop</Button>
           </Space>
