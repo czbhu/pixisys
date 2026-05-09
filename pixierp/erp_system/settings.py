@@ -255,6 +255,11 @@ LOGGING = {
             'level': 'INFO',
             'propagate': True,
         },
+        '': {
+            'handlers': ['file'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
     },
 }
 

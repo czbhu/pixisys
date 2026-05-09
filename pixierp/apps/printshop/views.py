@@ -3471,22 +3471,13 @@ class PdfExportView(APIView):
                     h = float(img_data.get('h', 0))
                     rotation = float(img_data.get('rotation', 0))
 
-                    # Read image bytes from uploaded file (preferred) or fallback to base64 src
-                    img_bytes = None
-                    file_index = img_data.get('fileIndex')
-                    if file_index is not None:
-                        img_file = request.FILES.get(f'image_{file_index}')
-                        if img_file:
-                            img_bytes = img_file.read()
-
-                    if img_bytes is None:
-                        # Legacy: base64 in src
-                        src = img_data.get('src', '')
-                        if not src:
-                            continue
-                        if ',' in src:
-                            src = src.split(',', 1)[1]
-                        img_bytes = _base64.b64decode(src)
+                    # Decode base64 data URL
+                    src = img_data.get('src', '')
+                    if not src:
+                        continue
+                    if ',' in src:
+                        src = src.split(',', 1)[1]
+                    img_bytes = _base64.b64decode(src)
 
                     # Build rect in pt
                     x0 = x * pw + mb.x0
@@ -3498,8 +3489,9 @@ class PdfExportView(APIView):
                     # PyMuPDF rotate only supports multiples of 90
                     fitz_rotate = int(rotation / 90) * 90
                     page.insert_image(rect, stream=img_bytes, rotate=fitz_rotate)
-                except Exception:
-                    pass  # skip broken images
+                except Exception as _exc:
+                    import logging as _log
+                    _log.getLogger(__name__).error(f'[pdf-export] overlay image error: {_exc}', exc_info=True)
 
             # ── Overlay texts ──────────────────────────────────────────────────
             # Font name mapping: family + bold + italic → PyMuPDF built-in font name
