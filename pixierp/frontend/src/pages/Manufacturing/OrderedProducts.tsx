@@ -788,10 +788,8 @@ const OrderedProducts: React.FC = () => {
                                         <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
                                         <a
                                         href={att.file_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
                                         style={{ fontSize: 12 }}
-                                        onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                        onClick={(e) => { e.preventDefault(); openPreview(att.file_url, att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); }}
                                     >{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
                                         {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                                         {editingAttRemarkId === att.id ? (
@@ -863,9 +861,7 @@ const OrderedProducts: React.FC = () => {
                                     return (
                                         <a
                                             href={url}
-                                            target="_blank"
-                                            rel="noopener noreferrer"
-                                            onClick={(e) => { if (isPdf(url)) { e.preventDefault(); openPdfPreview(url); } }}
+                                            onClick={(e) => { e.preventDefault(); openPreview(url, name); }}
                                         >{name}</a>
                                     );
                                 },
@@ -1355,9 +1351,7 @@ const OrderedProducts: React.FC = () => {
                                                     render: (_: any, att: any) => (
                                                         <a
                                                             href={att.file_url}
-                                                            target="_blank"
-                                                            rel="noopener noreferrer"
-                                                            onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                                            onClick={(e) => { e.preventDefault(); openPreview(att.file_url, att.file_name || att.file_url?.split('/').pop() || ''); }}
                                                         >{att.file_name}</a>
                                                     ),
                                                 },

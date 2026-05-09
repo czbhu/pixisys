@@ -24,6 +24,7 @@ import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItems
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import { Spin as AntSpin } from 'antd';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 import './CustomerOrders.css';
 
 // Row context + DnD helpers for order-item expand rows
@@ -220,6 +221,12 @@ interface CustomerOrder {
   const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
   const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
   const [editingAttRemarkVal, setEditingAttRemarkVal] = useState<string>('');
+  // Gyökér-szintű (rendelés-szintű) csatolmányok
+  const [orderLevelAtts, setOrderLevelAtts] = useState<Record<number, any[]>>({});
+  // AttachmentPreviewModal
+  const [coAttPreviewOpen, setCoAttPreviewOpen] = useState(false);
+  const [coAttPreviewUrl, setCoAttPreviewUrl] = useState<string | null>(null);
+  const [coAttPreviewTitle, setCoAttPreviewTitle] = useState('');
   
   // Email sending state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
@@ -467,6 +474,11 @@ interface CustomerOrder {
         return { ...it, _parent_coi_id: parentCoiId, _currency_code: currencyCode };
       });
       setOrderExpandedItems(prev => ({ ...prev, [orderId]: flat }));
+      // Also fetch order-level attachments
+      try {
+        const attRes = await api.get(`/sales/customer-orders/${orderId}/attachments/`);
+        setOrderLevelAtts(prev => ({ ...prev, [orderId]: attRes.data || [] }));
+      } catch { setOrderLevelAtts(prev => ({ ...prev, [orderId]: [] })); }
     } catch (e) {
       console.error(e);
       message.error('Nem sikerült betölteni a megrendelés tételeit');
@@ -559,8 +571,25 @@ interface CustomerOrder {
       persistOrder(newItems);
     };
 
+    const orderRootAtts: any[] = orderLevelAtts[orderId] || [];
+
     return (
       <div style={{ padding: '8px 0 8px 28px' }}>
+        {orderRootAtts.length > 0 && (
+          <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginRight: 4 }}>Rendelés csatolmányai:</span>
+            {orderRootAtts.map((att: any) => (
+              <a
+                key={att.id}
+                href={att.file_url || att.file}
+                onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url || att.file); setCoAttPreviewTitle(att.original_filename || att.file?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
+                style={{ fontSize: 12 }}
+              >
+                <PaperClipOutlined style={{ marginRight: 3 }} />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
+              </a>
+            ))}
+          </div>
+        )}
         <DndContext
           sensors={dndSensors}
           collisionDetection={closestCenter}
@@ -758,10 +787,8 @@ interface CustomerOrder {
                                   <Space key={att.id} size={4} align="center">
                                     <a
                                       href={att.file_url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
                                       style={{ fontSize: 12 }}
-                                      onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                      onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url); setCoAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
                                     >{att.original_filename}</a>
                                     {editingAttRemarkId === att.id ? (
                                       <Space size={4}>
@@ -1930,6 +1957,7 @@ interface CustomerOrder {
   );
 
   return (
+    <>
     <Card
       title={<UnifiedQuickSearchHeader
         title="Megrendelések"
@@ -2420,6 +2448,13 @@ interface CustomerOrder {
             </Form>
         </Modal>
     </Card>
+    <AttachmentPreviewModal
+      open={coAttPreviewOpen}
+      title={coAttPreviewTitle}
+      url={coAttPreviewUrl}
+      onClose={() => { setCoAttPreviewOpen(false); setCoAttPreviewUrl(null); setCoAttPreviewTitle(''); }}
+    />
+    </>
   );
 };
 

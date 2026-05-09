@@ -6,7 +6,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
@@ -24,6 +24,7 @@ import Demands from './Demands';
 import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils';
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
+import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 
 const { useBreakpoint } = Grid;
 
@@ -120,6 +121,10 @@ const RFQs: React.FC = () => {
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
   const [rfqExpandedLoading, setRfqExpandedLoading] = useState<Record<number, boolean>>({});
+  const [rfqAttachments, setRfqAttachments] = useState<Record<number, any[]>>({});
+  const [rfqAttPreviewOpen, setRfqAttPreviewOpen] = useState(false);
+  const [rfqAttPreviewUrl, setRfqAttPreviewUrl] = useState<string | null>(null);
+  const [rfqAttPreviewTitle, setRfqAttPreviewTitle] = useState('');
 
   const loadRfqExpandedItems = async (record: any) => {
     const rfqId = Number(record?.id || 0);
@@ -146,6 +151,7 @@ const RFQs: React.FC = () => {
         else roots.push(node);
       });
       setRfqExpandedItems(prev => ({ ...prev, [rfqId]: roots }));
+      setRfqAttachments(prev => ({ ...prev, [rfqId]: Array.isArray(full?.attachments) ? full.attachments : [] }));
     } catch (e) {
       console.error(e);
       message.error('Nem sikerült betölteni az ajánlat tételeit');
@@ -159,6 +165,7 @@ const RFQs: React.FC = () => {
     const rfqId = Number(record?.id || 0);
     const loadingItems = !!rfqExpandedLoading[rfqId];
     const treeItems = rfqExpandedItems[rfqId];
+    const rootAtts: any[] = rfqAttachments[rfqId] || [];
 
     if (loadingItems) {
       return (
@@ -174,6 +181,21 @@ const RFQs: React.FC = () => {
 
     return (
       <div style={{ padding: '8px 0 8px 28px' }}>
+        {rootAtts.length > 0 && (
+          <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginRight: 4 }}>Csatolmányok:</span>
+            {rootAtts.map((att: any) => (
+              <a
+                key={att.id}
+                href={att.file_url || att.file}
+                onClick={(e) => { e.preventDefault(); setRfqAttPreviewUrl(att.file_url || att.file); setRfqAttPreviewTitle(att.original_filename || att.file?.split('/').pop() || ''); setRfqAttPreviewOpen(true); }}
+                style={{ fontSize: 12 }}
+              >
+                <PaperClipOutlined style={{ marginRight: 3 }} />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
+              </a>
+            ))}
+          </div>
+        )}
         <Table
           size="small"
           pagination={false}
@@ -197,6 +219,29 @@ const RFQs: React.FC = () => {
               key: 'qty',
               width: 120,
               render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+            },
+            {
+              title: 'Csatolmányok',
+              key: 'attachments',
+              width: 180,
+              render: (_: any, r: any) => {
+                const atts: any[] = r.attachments || [];
+                if (!atts.length) return null;
+                return (
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                    {atts.map((att: any) => (
+                      <a
+                        key={att.id}
+                        href={att.file_url || att.file}
+                        onClick={(e) => { e.preventDefault(); setRfqAttPreviewUrl(att.file_url || att.file); setRfqAttPreviewTitle(att.original_filename || att.file?.split('/').pop() || ''); setRfqAttPreviewOpen(true); }}
+                        style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}
+                      >
+                        <PaperClipOutlined />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
+                      </a>
+                    ))}
+                  </div>
+                );
+              },
             },
             {
               title: 'Leírás',
@@ -2430,6 +2475,12 @@ const RFQs: React.FC = () => {
           discount_percent: Number((newItems[editIdx] as any).discount_percent || 0),
           discount_amount: Number((newItems[editIdx] as any).discount_amount || 0),
         } : undefined) : undefined}
+      />
+      <AttachmentPreviewModal
+        open={rfqAttPreviewOpen}
+        title={rfqAttPreviewTitle}
+        url={rfqAttPreviewUrl}
+        onClose={() => { setRfqAttPreviewOpen(false); setRfqAttPreviewUrl(null); setRfqAttPreviewTitle(''); }}
       />
     </div>
   );
