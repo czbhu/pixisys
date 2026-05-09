@@ -419,6 +419,8 @@ const PrintCommentView: React.FC<Props> = ({
   // DnD page reorder state
   const dragPageIdx = useRef<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [selectedPageIdxs, setSelectedPageIdxs] = useState<Set<number>>(new Set());
+  const lastClickedPageIdx = useRef<number | null>(null);
 
   // Undo/Redo history
   const historyStack = useRef<HistorySnapshot[]>([]);
@@ -1261,17 +1263,61 @@ const PrintCommentView: React.FC<Props> = ({
     });
   };
 
-  // ── Page reorder handler ────────────────────────────────────────────────────
-  const handlePageReorder = async (fromIdx: number, toIdx: number) => {
-    if (fromIdx === toIdx || !pdfFileRef.current) return;
-    pushHistory();
-    // Build new order
-    const order = Array.from({ length: pdfPages.length }, (_, i) => i);
-    const [moved] = order.splice(fromIdx, 1);
-    order.splice(toIdx, 0, moved);
+  // ── Multi-page delete ───────────────────────────────────────────────────────
+  const handleDeletePages = async (indices: number[]) => {
+    if (!pdfFileRef.current) return;
+    const sorted = [...indices].sort((a, b) => a - b);
+    if (pdfPages.length - sorted.length < 1) { message.warning('Legalább egy oldal maradnia kell'); return; }
+    Modal.confirm({
+      title: `${sorted.length} oldal törlése`,
+      content: `Biztosan törlöd a kijelölt ${sorted.length} oldalt?`,
+      okText: 'Törlés', cancelText: 'Mégse', okButtonProps: { danger: true },
+      onOk: async () => {
+        try {
+          pushHistory();
+          // Delete from highest index to lowest to keep indices valid
+          let currentFile = pdfFileRef.current!;
+          for (const pageIdx of [...sorted].reverse()) {
+            const formData = new FormData();
+            formData.append('pdf', currentFile);
+            formData.append('page', String(pageIdx));
+            const resp = await api.post('/printshop/pdf-delete-page/', formData, {
+              headers: { 'Content-Type': 'multipart/form-data' },
+              responseType: 'blob',
+              timeout: 30000,
+            });
+            const blob = new Blob([resp.data], { type: 'application/pdf' });
+            currentFile = new File([blob], currentFile.name, { type: 'application/pdf' });
+          }
+          setSelectedPageIdxs(new Set());
+          await renderPdf(currentFile, true);
+          message.success(`${sorted.length} oldal törölve`);
+        } catch {
+          message.error('Oldal törlési hiba');
+        }
+      },
+    });
+  };
 
+  // ── Page reorder handler ────────────────────────────────────────────────────
+  const handlePageReorder = async (fromIdx: number, toIdx: number, movedIdxs?: number[]) => {
+    if (!pdfFileRef.current) return;
+    const movingSet = movedIdxs && movedIdxs.length > 1 ? new Set(movedIdxs) : new Set([fromIdx]);
+    if (movingSet.has(toIdx) && movingSet.size === 1) return; // single no-op
+
+    pushHistory();
+    // Build new order: extract moving pages, insert at toIdx
+    const order = Array.from({ length: pdfPages.length }, (_, i) => i);
+    const moving = order.filter(i => movingSet.has(i));
+    const rest = order.filter(i => !movingSet.has(i));
+
+    // Find effective insertion index in `rest`
+    const targetInRest = rest.findIndex(i => i === toIdx);
+    const insertAt = targetInRest === -1 ? rest.length : targetInRest;
+    rest.splice(insertAt, 0, ...moving);
+    const newOrder = rest;
     // Reorder client-side arrays instantly for snappy feedback
-    const reorder = <T,>(arr: T[]) => order.map(i => arr[i]);
+    const reorder = <T,>(arr: T[]) => newOrder.map(i => arr[i]);
     setPdfPages(prev => reorder(prev));
     setPageInfos(prev => reorder(prev));
     setPageColorSpaces(prev => reorder(prev));
@@ -1282,7 +1328,7 @@ const PrintCommentView: React.FC<Props> = ({
     try {
       const formData = new FormData();
       formData.append('pdf', pdfFileRef.current);
-      formData.append('order', JSON.stringify(order));
+      formData.append('order', JSON.stringify(newOrder));
       const resp = await api.post('/printshop/pdf-reorder/', formData, {
         headers: { 'Content-Type': 'multipart/form-data' },
         responseType: 'blob',
@@ -1873,6 +1919,22 @@ const PrintCommentView: React.FC<Props> = ({
               <Button size="small" type="text" icon={<LeftOutlined />} onClick={() => setPagesPanelCollapsed(true)} />
             </Tooltip>
           </div>
+          {/* Multi-selection toolbar */}
+          {selectedPageIdxs.size > 0 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '2px 6px 4px', flexShrink: 0, borderBottom: '1px solid #f0f0f0', background: '#f6ffed' }}>
+              <Text style={{ fontSize: 10, color: '#389e0d', flex: 1 }}>{selectedPageIdxs.size} kijelölve</Text>
+              {canManagePdf && pdfPages.length - selectedPageIdxs.size >= 1 && (
+                <Tooltip title="Kijelöltek törlése">
+                  <Button size="small" type="text" danger icon={<DeleteOutlined />}
+                    onClick={() => handleDeletePages(Array.from(selectedPageIdxs))} />
+                </Tooltip>
+              )}
+              <Tooltip title="Kijelölés törlése">
+                <Button size="small" type="text" icon={<CloseOutlined />}
+                  onClick={() => { setSelectedPageIdxs(new Set()); lastClickedPageIdx.current = null; }} />
+              </Tooltip>
+            </div>
+          )}
           <div style={{ flex: 1, overflowY: 'auto', padding: '4px 4px 8px', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {pdfPages.map((src, idx) => {
             const cs = pageColorSpaces[idx];
@@ -1883,15 +1945,22 @@ const PrintCommentView: React.FC<Props> = ({
                 menu={{
                   items: [
                     {
-                      key: 'delete',
-                      label: 'Oldal törlése',
+                      key: 'delete-selected',
+                      label: selectedPageIdxs.size > 1 && selectedPageIdxs.has(idx)
+                        ? `${selectedPageIdxs.size} oldal törlése`
+                        : 'Oldal törlése',
                       icon: <DeleteOutlined />,
                       danger: true,
                       disabled: !canManagePdf || pdfPages.length <= 1,
                     },
                   ],
                   onClick: ({ key }) => {
-                    if (key === 'delete' && canManagePdf) handleDeletePage(idx);
+                    if (key === 'delete-selected' && canManagePdf) {
+                      const toDelete = selectedPageIdxs.size > 1 && selectedPageIdxs.has(idx)
+                        ? Array.from(selectedPageIdxs)
+                        : [idx];
+                      handleDeletePages(toDelete);
+                    }
                   },
                 }}
               >
@@ -1901,7 +1970,6 @@ const PrintCommentView: React.FC<Props> = ({
                   if (!canManagePdf) return;
                   dragPageIdx.current = idx;
                   e.dataTransfer.effectAllowed = 'move';
-                  // Transparent drag image — we show our own indicator
                   const el = e.currentTarget;
                   e.dataTransfer.setDragImage(el, el.offsetWidth / 2, 20);
                 }}
@@ -1916,25 +1984,53 @@ const PrintCommentView: React.FC<Props> = ({
                   if (!canManagePdf) return;
                   e.preventDefault();
                   setDragOverIdx(null);
-                  if (dragPageIdx.current !== null && dragPageIdx.current !== idx) {
-                    handlePageReorder(dragPageIdx.current, idx);
+                  const from = dragPageIdx.current;
+                  if (from !== null && from !== idx) {
+                    // If the dragged page is part of a multi-selection, move all selected
+                    const movedIdxs = selectedPageIdxs.size > 1 && selectedPageIdxs.has(from)
+                      ? Array.from(selectedPageIdxs)
+                      : undefined;
+                    handlePageReorder(from, idx, movedIdxs);
+                    setSelectedPageIdxs(new Set());
                   }
                   dragPageIdx.current = null;
                 }}
                 onDragEnd={() => { dragPageIdx.current = null; setDragOverIdx(null); }}
-                onClick={() => scrollToPage(idx + 1)}
+                onClick={e => {
+                  if (e.shiftKey && lastClickedPageIdx.current !== null) {
+                    // Range select
+                    const from = Math.min(lastClickedPageIdx.current, idx);
+                    const to = Math.max(lastClickedPageIdx.current, idx);
+                    const range = new Set(Array.from({ length: to - from + 1 }, (_, k) => from + k));
+                    setSelectedPageIdxs(range);
+                  } else if (e.ctrlKey || e.metaKey) {
+                    // Toggle single
+                    setSelectedPageIdxs(prev => {
+                      const next = new Set(prev);
+                      if (next.has(idx)) next.delete(idx); else next.add(idx);
+                      return next;
+                    });
+                    lastClickedPageIdx.current = idx;
+                  } else {
+                    // Normal click: clear selection and navigate
+                    setSelectedPageIdxs(new Set());
+                    lastClickedPageIdx.current = idx;
+                    scrollToPage(idx + 1);
+                  }
+                }}
                 style={{
                   cursor: canManagePdf ? 'grab' : 'pointer', borderRadius: 4, overflow: 'hidden', flexShrink: 0,
-                  borderLeft: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
-                  borderRight: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
-                  borderBottom: currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderLeft: selectedPageIdxs.has(idx) ? '2px solid #52c41a' : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderRight: selectedPageIdxs.has(idx) ? '2px solid #52c41a' : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  borderBottom: selectedPageIdxs.has(idx) ? '2px solid #52c41a' : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
                   borderTop: dragOverIdx === idx && dragPageIdx.current !== idx
                     ? '3px solid #1890ff'
-                    : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
-                  background: currentPage === idx + 1 ? '#e6f4ff' : '#fafafa',
+                    : selectedPageIdxs.has(idx) ? '2px solid #52c41a' : currentPage === idx + 1 ? '2px solid #1890ff' : '2px solid transparent',
+                  background: selectedPageIdxs.has(idx) ? '#f6ffed' : currentPage === idx + 1 ? '#e6f4ff' : '#fafafa',
                   padding: 4, textAlign: 'center',
-                  opacity: dragPageIdx.current === idx ? 0.4 : 1,
+                  opacity: dragPageIdx.current !== null && selectedPageIdxs.has(idx) && selectedPageIdxs.has(dragPageIdx.current ?? -1) ? 0.4 : dragPageIdx.current === idx ? 0.4 : 1,
                   transition: 'border-top 0.15s, opacity 0.15s',
+                  userSelect: 'none',
                 }}
               >
                 <img src={src} alt={`${idx + 1}. oldal`} style={{ width: '100%', display: 'block', borderRadius: 2 }} />
