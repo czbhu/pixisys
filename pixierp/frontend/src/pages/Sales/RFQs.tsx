@@ -113,8 +113,11 @@ const RFQs: React.FC = () => {
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
+  const [clientModalOpen, setClientModalOpen] = useState(false);
   const screens = useBreakpoint();
   const isMobile = !screens.md;
+  const watchedCompanyId = Form.useWatch('company_id', form);
+  const watchedContactIds = Form.useWatch('contact_ids', form);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
   const isDemandView = searchParams.get('view') === 'demands';
@@ -1801,7 +1804,9 @@ const RFQs: React.FC = () => {
         onCancel={handleCancel}
         okText="Létrehozás"
         cancelText="Mégse"
-        width={1100}
+        width={isMobile ? '100%' : 1100}
+        style={isMobile ? { top: 0, maxWidth: '100%', margin: 0, paddingBottom: 0 } : {}}
+        styles={isMobile ? { content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto' } } : {}}
         forceRender
       >
         <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
@@ -1833,9 +1838,33 @@ const RFQs: React.FC = () => {
           </div>
           {/* ── Ügyfél ──────────────────────────────────────────────────── */}
           <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+              {isMobile && (
+                <Button size="small" type="primary" ghost onClick={() => setClientModalOpen(true)}>Szerkesztés</Button>
+              )}
+            </div>
+          {isMobile ? (
+            <div style={{ paddingBottom: 8 }}>
+              {(() => {
+                const companyName = watchedCompanyId === 'private'
+                  ? 'Magánszemély'
+                  : (companies.find((c: any) => c.id === watchedCompanyId)?.name || '');
+                const contactCount = Array.isArray(watchedContactIds) ? watchedContactIds.length : 0;
+                return (
+                  <div style={{ fontSize: 13, color: '#333', lineHeight: '20px' }}>
+                    <span style={{ fontWeight: 500 }}>Cég: </span>
+                    <span style={{ color: companyName ? '#000' : '#aaa' }}>{companyName || 'Nincs kiválasztva'}</span>
+                    {contactCount > 0 && (
+                      <span style={{ marginLeft: 12, color: '#389e0d' }}>{contactCount} kapcsolattartó</span>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+          ) : (
           <Row gutter={[8, 4]}>
-            <Col xs={24} md={8}>
+            <Col xs={24} md={6}>
               <Form.Item 
                 label="Cég" 
                 style={{ marginBottom: 6 }}
@@ -1931,7 +1960,7 @@ const RFQs: React.FC = () => {
                 </Space.Compact>
               </Form.Item>
             </Col>
-            <Col xs={24} md={16}>
+            <Col xs={24} md={18}>
               <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="contact_ids" noStyle>
@@ -2044,6 +2073,207 @@ const RFQs: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
+          )}
+          {/* Ügyfél szerkesztő sub-modal (csak mobilon) */}
+          {isMobile && (
+            <Modal
+              title="Ügyfél kiválasztása"
+              open={clientModalOpen}
+              onOk={() => setClientModalOpen(false)}
+              onCancel={() => setClientModalOpen(false)}
+              okText="Kész"
+              cancelButtonProps={{ style: { display: 'none' } }}
+              forceRender
+              width="100%"
+              style={{ top: 0, maxWidth: '100%', margin: 0, paddingBottom: 0 }}
+              styles={{ content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column' }, body: { flex: 1, overflowY: 'auto' } }}
+            >
+              <Form.Item 
+                label="Cég" 
+                style={{ marginBottom: 12 }}
+              > 
+                <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name="company_id" noStyle>
+                  <Select 
+                    showSearch 
+                    optionFilterProp="label"
+                    filterOption={accentInsensitiveLabelFilter}
+                    placeholder="Válassz céget vagy magánszemélyt" 
+                    style={{ width: 'calc(100% - 32px)' }}
+                    onFocus={async () => {
+                      try {
+                        const [list, topList] = await Promise.all([
+                          crmService.getCompanies({ is_customer: true, compact: true }),
+                          salesService.getTopCompanies().catch(() => [])
+                        ]);
+                        const all: any[] = list.results ?? list;
+                        const top: any[] = Array.isArray(topList) ? topList : [];
+                        const normalize = (value: any) => (value ?? '').toString().trim().toLowerCase();
+                        const normalizeTax = (value: any) => (value ?? '').toString().replace(/\D+/g, '').slice(0, 8);
+                        const companyKey = (c: any) => {
+                          const tax = normalizeTax(c?.tax_number || c?.full_tax_number || c?.taxNumber || c?.fullTaxNumber);
+                          const name = normalize(c?.name || c?.full_name);
+                          return `${tax}|${name}`;
+                        };
+                        const allByKey = new Map<string, any>();
+                        for (const company of all) allByKey.set(companyKey(company), company);
+                        const ordered: any[] = [];
+                        const seenKeys = new Set<string>();
+                        for (const topCompany of top) {
+                          const key = companyKey(topCompany);
+                          const canonical = allByKey.get(key) || topCompany;
+                          const dedupeKey = companyKey(canonical) || `id:${canonical?.id}`;
+                          if (seenKeys.has(dedupeKey)) continue;
+                          seenKeys.add(dedupeKey);
+                          ordered.push(canonical);
+                        }
+                        for (const company of all) {
+                          const dedupeKey = companyKey(company) || `id:${company?.id}`;
+                          if (seenKeys.has(dedupeKey)) continue;
+                          seenKeys.add(dedupeKey);
+                          ordered.push(company);
+                        }
+                        setCompanies(ordered);
+                      } catch (err) {
+                        console.error(err);
+                        const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                        setCompanies(list.results ?? list);
+                      }
+                    }}
+                    onChange={async (val) => {
+                      form.setFieldsValue({ company_id: val });
+                      if (val === 'private') {
+                        const list = await crmService.getPrivateContacts();
+                        setContacts(list.results ?? list);
+                        form.setFieldsValue({ contact_ids: [] });
+                      } else {
+                        const list = await crmService.getContactsByCompany(val);
+                        setContacts(list.results ?? list);
+                        form.setFieldsValue({ contact_ids: [] });
+                      }
+                    }}
+                  >
+                    <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
+                    {companies.map((c: any) => (
+                      <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                    ))}
+                  </Select>
+                  </Form.Item>
+                  <Tooltip title="Új cég hozzáadása">
+                    <Button 
+                      icon={<PlusCircleOutlined />}
+                      onClick={() => { window.open('/crm/companies?action=create', '_blank'); }}
+                    />
+                  </Tooltip>
+                </Space.Compact>
+              </Form.Item>
+              <Form.Item label="Kapcsolattartók" style={{ marginBottom: 12 }}>
+                <Space.Compact style={{ width: '100%' }}>
+                  <Form.Item name="contact_ids" noStyle>
+                  <Select 
+                    mode="multiple" 
+                    allowClear 
+                    showSearch 
+                    optionFilterProp="label"
+                    filterOption={accentInsensitiveLabelFilter}
+                    placeholder="Válassz kapcsolattartókat"
+                    style={{ width: 'calc(100% - 96px)' }}
+                    popupMatchSelectWidth={false}
+                    dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
+                    onFocus={async () => {
+                      const companyId = form.getFieldValue('company_id');
+                      if (companyId === 'private') {
+                        const list = await crmService.getPrivateContacts();
+                        setContacts(list.results ?? list);
+                      } else if (companyId) {
+                        const list = await crmService.getContactsByCompany(companyId);
+                        setContacts(list.results ?? list);
+                      } else {
+                        const list = await crmService.getContacts();
+                        setContacts((list.results ?? list) || []);
+                      }
+                    }}
+                    onChange={async (val: any) => {
+                      form.setFieldsValue({ contact_ids: val });
+                      const companyId = form.getFieldValue('company_id');
+                      if (!companyId && Array.isArray(val) && val.length > 0) {
+                        const lastId = val[val.length - 1];
+                        const chosen = contacts.find((c: any) => c.id === lastId || String(c.id) === String(lastId));
+                        const chosenCompanyId = chosen?.customer || chosen?.customer_id || chosen?.company || chosen?.company_id;
+                        if (chosenCompanyId) {
+                          form.setFieldsValue({ company_id: chosenCompanyId });
+                          const cl = await crmService.getContactsByCompany(chosenCompanyId);
+                          const loaded: any[] = (cl.results ?? cl) || [];
+                          const merged = [...loaded];
+                          (val as any[]).forEach((selId: any) => {
+                            if (!merged.find((c: any) => c.id === selId || String(c.id) === String(selId))) {
+                              const ex = contacts.find((c: any) => c.id === selId || String(c.id) === String(selId));
+                              if (ex) merged.push(ex);
+                            }
+                          });
+                          setContacts(merged);
+                          const chosenCompanyName = chosen?.customer_name || chosen?.company_name;
+                          if (chosenCompanyName) {
+                            setCompanies((prev: any[]) => {
+                              if (prev.find((c: any) => String(c.id) === String(chosenCompanyId))) return prev;
+                              return [{ id: chosenCompanyId, name: chosenCompanyName }, ...prev];
+                            });
+                          }
+                        }
+                      }
+                    }}
+                  >
+                    {contacts.map((p: any) => {
+                      const companyId = form.getFieldValue('company_id');
+                      const baseName = p.full_name || p.name || '';
+                      const companyName = p.customer_name || p.company_name || '';
+                      const lbl = (!companyId && companyName) ? `${baseName} \u2014 ${companyName}` : baseName;
+                      return (
+                        <Select.Option key={p.id} value={p.id} label={lbl}>{lbl}</Select.Option>
+                      );
+                    })}
+                  </Select>
+                  </Form.Item>
+                  <Tooltip title="Új kapcsolattartó hozzáadása">
+                    <Button 
+                      icon={<PlusCircleOutlined />}
+                      onClick={() => {
+                        const companyId = form.getFieldValue('company_id');
+                        let url = '/crm/contacts?action=create';
+                        if (companyId && companyId !== 'private') {
+                          url += `&company=${companyId}`;
+                          const company = companies.find((c: any) => c.id === companyId);
+                          if (company?.name) url += `&company_name=${encodeURIComponent(company.name)}`;
+                        }
+                        window.open(url, '_blank');
+                      }}
+                    />
+                  </Tooltip>
+                  <Button 
+                    type="default"
+                    onClick={async () => {
+                      const companyId = form.getFieldValue('company_id');
+                      if (companyId) {
+                        if (companyId === 'private') {
+                          const list = await crmService.getPrivateContacts();
+                          setContacts(list.results ?? list);
+                          message.success('Magánszemély kapcsolattartók frissítve');
+                        } else {
+                          const list = await crmService.getContactsByCompany(companyId);
+                          setContacts(list.results ?? list);
+                          message.success('Kapcsolattartók frissítve');
+                        }
+                      } else {
+                        message.warning('Először válassz céget');
+                      }
+                    }}
+                  >
+                    Frissítés
+                  </Button>
+                </Space.Compact>
+              </Form.Item>
+            </Modal>
+          )}
           </div>
           {/* ── Tartalom ─────────────────────────────────────────────────── */}
           <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
