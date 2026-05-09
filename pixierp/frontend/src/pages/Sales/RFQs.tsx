@@ -2245,7 +2245,7 @@ const RFQs: React.FC = () => {
                 const params = new URLSearchParams({ from_rfq: '1', return_url: window.location.href });
                 if (companyId && companyId !== 'private') params.set('company', String(companyId));
                 if (company?.name) params.set('company_name', encodeURIComponent(company.name));
-                window.open(`/print-shop?${params.toString()}`, '_blank');
+                window.open(`/print-editor?${params.toString()}`, '_blank');
               }}
             >PrintShop</Button>
           </Space>
