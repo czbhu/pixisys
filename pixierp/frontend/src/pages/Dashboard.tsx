@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import {
     Row, Col, Card, Statistic, Table, Select, Typography, Spin, Alert,
-    Badge, Tag, List, Avatar, Space, Button, Tooltip
+    Badge, Tag, List, Avatar, Space, Button, Tooltip, Grid
 } from 'antd';
 import {
     UserOutlined,
@@ -581,6 +581,8 @@ const Dashboard = () => {
         today_report: [],
     });
     const navigate = useNavigate();
+    const screens = Grid.useBreakpoint();
+    const isMobile = !screens.md;
 
     const loadData = useCallback(async (silent = false) => {
         try {
@@ -617,6 +619,18 @@ const Dashboard = () => {
 
     return (
         <div>
+            {isMobile && (
+                <Button
+                    type="primary"
+                    size="large"
+                    icon={<PlusCircleOutlined />}
+                    block
+                    style={{ marginBottom: 16, fontWeight: 600, fontSize: 16, height: 48 }}
+                    onClick={() => navigate('/sales/rfqs?create=true')}
+                >
+                    Új ajánlat
+                </Button>
+            )}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 24, flexWrap: 'wrap', gap: 8 }}>
                 <Title level={2} style={{ margin: 0 }}>Dashboard</Title>
                 <Select<DashboardView>
