@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useEffect, createContext, useContext } from 'react';
-import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag, Input, Upload } from 'antd';
+import { Card, Table, Space, Button, Popconfirm, message, Modal, Tooltip, Image, Tag, Input, Upload, Grid } from 'antd';
 import { FileOutlined, MenuOutlined, RightOutlined, LeftOutlined, LinkOutlined, AppstoreOutlined, PaperClipOutlined, UploadOutlined, DeleteOutlined } from '@ant-design/icons';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragOverlay, DragEndEvent } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable } from '@dnd-kit/sortable';
@@ -118,6 +118,8 @@ const DraggableRow = ({ children, ...props }: any) => {
 };
 
 export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, showInlineSubItems = false }) => {
+  const screens = Grid.useBreakpoint();
+  const isMobile = !screens.md;
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
@@ -396,10 +398,17 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
 
         const base = (
             <CostTreeGuide meta={meta}>
-              <div>
-                <div style={{ fontWeight: 600 }}>{code}</div>
-                <div>{name}</div>
-              </div>
+              {isMobile ? (
+                <div>
+                  <div style={{ fontWeight: 600 }}>{name}</div>
+                  <div style={{ fontSize: 11, color: '#888', marginTop: 1 }}>{code}</div>
+                </div>
+              ) : (
+                <div>
+                  <div style={{ fontWeight: 600 }}>{code}</div>
+                  <div>{name}</div>
+                </div>
+              )}
             </CostTreeGuide>
         );
 
