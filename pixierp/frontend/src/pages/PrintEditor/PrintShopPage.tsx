@@ -19,6 +19,7 @@ import PrintParamsPanel, { PriceBreakdown } from './components/PrintParamsPanel'
 import Step3OrderSummary from './components/Step3OrderSummary';
 import PrintCommentView, { clearPdfFromIDB } from './components/PrintCommentView';
 import MaterialNeedsPanel from './components/MaterialNeedsPanel';
+import Step2CanvasEditor, { CanvasEditorHandle } from './components/Step2CanvasEditor';
 
 const { Title, Text } = Typography;
 const { Option } = Select;
@@ -68,6 +69,27 @@ const PrintShopPage: React.FC = () => {
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
+  const [viewMode, setViewMode] = useState<'canvas' | 'pdf'>('canvas');
+  const canvasRef = useRef<CanvasEditorHandle>(null);
+  const [templateCategoryIds, setTemplateCategoryIds] = useState<number[]>([]);
+  const initialDesignRef = useRef<{ d1: any; d2: any; sheets?: Array<{ d1: any; d2: any }> } | null>((() => {
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      if (s) {
+        const { d1, d2, sheets } = JSON.parse(s);
+        return (d1 || d2 || sheets) ? { d1: d1 ?? null, d2: d2 ?? null, sheets: sheets ?? undefined } : null;
+      }
+    } catch {}
+    return null;
+  })());
+  const handleDesignChange = useCallback((d1: any, d2: any, sheets?: Array<{ d1: any; d2: any }>) => {
+    initialDesignRef.current = { d1, d2, sheets };
+    try {
+      const s = localStorage.getItem(STORAGE_KEY);
+      const existing = s ? JSON.parse(s) : {};
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...existing, params: paramsRef.current, d1, d2, sheets: sheets ?? null }));
+    } catch {}
+  }, []);
   const [params, setParams] = useState<PrintParams>(() => {
     try {
       const s = localStorage.getItem(STORAGE_KEY);
@@ -588,7 +610,8 @@ const PrintShopPage: React.FC = () => {
   const handleOrder = async () => {
     setSaving(true);
     try {
-      const itemPayload = {
+      const design = viewMode === 'canvas' ? canvasRef.current?.getDesignJson() : null;
+      const itemPayload: any = {
         product_name: params.product_name,
         material: params.material_id ?? undefined,
         quantity: params.quantity,
@@ -604,6 +627,11 @@ const PrintShopPage: React.FC = () => {
         total_price: priceBreakdown?.total ?? 0,
         price_breakdown: priceBreakdown ?? null,
         sheet_count: params.sheet_count ?? 1,
+        ...(design ? {
+          design_json_side1: design.d1,
+          design_json_side2: design.d2,
+          sheets: (design as any).sheets ?? null,
+        } : {}),
       };
       const orderPayload = {
         status: 'draft',
@@ -870,6 +898,7 @@ const PrintShopPage: React.FC = () => {
                   params={params}
                   onChange={setParams}
                   onPriceChange={setPriceBreakdown}
+                  onTemplateCategoriesChange={setTemplateCategoryIds}
                   isAdmin={isAdmin}
                 />
                 <MaterialNeedsPanel priceBreakdown={priceBreakdown} />
@@ -941,34 +970,54 @@ const PrintShopPage: React.FC = () => {
             justifyContent: previewPanelOpen ? 'space-between' : 'center',
           }}>
             {previewPanelOpen && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
                 <Text strong style={{ fontSize: 11, color: '#888', whiteSpace: 'nowrap' }}>
-                  PREVIEW & KOMMENT
+                  {viewMode === 'canvas' ? 'VÁSZON SZERKESZTŐ' : 'PREVIEW & KOMMENT'}
                 </Text>
-                <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 8, background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>
-                    <Text style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Arány</Text>
-                    <NumInput
-                      size="small"
-                      min={1}
-                      max={1000}
-                      value={ratioLeft}
-                      onChange={v => setRatioLeft(v && v > 0 ? v : 1)}
-                      style={{ width: 44 }}
-                      controls={false}
-                    />
-                    <Text style={{ fontSize: 11, color: '#999' }}>:</Text>
-                    <NumInput
-                      size="small"
-                      min={1}
-                      max={1000}
-                      value={ratioRight}
-                      onChange={v => setRatioRight(v && v > 0 ? v : 1)}
-                      style={{ width: 44 }}
-                      controls={false}
-                    />
-                  </div>
-                </Tooltip>
+                {/* Mode toggle buttons */}
+                <Button
+                  size="small"
+                  type={viewMode === 'canvas' ? 'primary' : 'default'}
+                  onClick={() => setViewMode('canvas')}
+                  style={{ fontSize: 11, padding: '0 8px' }}
+                >
+                  Vászon
+                </Button>
+                <Button
+                  size="small"
+                  type={viewMode === 'pdf' ? 'primary' : 'default'}
+                  onClick={() => setViewMode('pdf')}
+                  style={{ fontSize: 11, padding: '0 8px' }}
+                >
+                  PDF
+                </Button>
+                {/* Ratio controls — only visible in PDF mode */}
+                {viewMode === 'pdf' && (
+                  <Tooltip title="PDF méretarány. Pl. 1:10 = a PDF 10× kicsinyített, 2:1 = a PDF 2× nagyított. A TrimBox méreteket ezzel számolja át.">
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 2, marginLeft: 4, background: '#f5f5f5', borderRadius: 4, padding: '1px 6px' }}>
+                      <Text style={{ fontSize: 10, color: '#999', whiteSpace: 'nowrap' }}>Arány</Text>
+                      <NumInput
+                        size="small"
+                        min={1}
+                        max={1000}
+                        value={ratioLeft}
+                        onChange={v => setRatioLeft(v && v > 0 ? v : 1)}
+                        style={{ width: 44 }}
+                        controls={false}
+                      />
+                      <Text style={{ fontSize: 11, color: '#999' }}>:</Text>
+                      <NumInput
+                        size="small"
+                        min={1}
+                        max={1000}
+                        value={ratioRight}
+                        onChange={v => setRatioRight(v && v > 0 ? v : 1)}
+                        style={{ width: 44 }}
+                        controls={false}
+                      />
+                    </div>
+                  </Tooltip>
+                )}
               </div>
             )}
             <Button
@@ -980,16 +1029,32 @@ const PrintShopPage: React.FC = () => {
           </div>
           {previewPanelOpen ? (
             <div style={{ flex: 1, overflow: 'hidden', minWidth: 0 }}>
-              <PrintCommentView
-                orderId={orderId}
-                itemId={itemId}
-                isAdmin={isAdmin}
-                locked={!isAdmin && previewLocked}
-                authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
-                params={params}
-                onPdfFileChange={handlePdfFileChange}
-                exportRef={printViewExportRef}
-              />
+              {viewMode === 'canvas' ? (
+                <Step2CanvasEditor
+                  ref={canvasRef}
+                  params={params}
+                  isAdmin={isAdmin}
+                  priceBreakdown={priceBreakdown}
+                  leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
+                  onParamsChange={setParams}
+                  initialDesign={initialDesignRef.current}
+                  onDesignChange={handleDesignChange}
+                  locked={!isAdmin && editorLocked}
+                  templateCategoryIds={templateCategoryIds}
+                />
+              ) : (
+                <PrintCommentView
+                  orderId={orderId}
+                  itemId={itemId}
+                  isAdmin={isAdmin}
+                  locked={!isAdmin && previewLocked}
+                  authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
+                  params={params}
+                  onPdfFileChange={handlePdfFileChange}
+                  exportRef={printViewExportRef}
+                  onSwitchToCanvas={() => setViewMode('canvas')}
+                />
+              )}
             </div>
           ) : (
             <div
@@ -1000,7 +1065,7 @@ const PrintShopPage: React.FC = () => {
                 writingMode: 'vertical-rl', textOrientation: 'mixed',
                 transform: 'rotate(180deg)', fontSize: 11, color: '#bbb',
                 userSelect: 'none', whiteSpace: 'nowrap',
-              }}>Preview & komment</span>
+              }}>{viewMode === 'canvas' ? 'Vászon szerkesztő' : 'Preview & komment'}</span>
             </div>
           )}
         </div>
