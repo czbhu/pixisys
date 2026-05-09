@@ -362,6 +362,9 @@ class QuoteRequestItem(models.Model):
     # Per-item impozíció pillanatkép (független minden más tételtől és a globális presetektől)
     imposition_data = models.JSONField(blank=True, null=True, default=dict, verbose_name="Impozíció adatok")
 
+    # Képletek tárolása (pl. 'quantity_formula': '100*1.5')
+    formulas = models.JSONField(default=dict, blank=True, null=True, verbose_name="Képletek")
+
     # Ordering and Nesting
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children', verbose_name="Szülő tétel")

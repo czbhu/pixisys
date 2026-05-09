@@ -378,6 +378,9 @@ class ManufacturingCostItem(models.Model):
     queue_position = models.PositiveIntegerField(null=True, blank=True, db_index=True, verbose_name="Sorhely")
     is_paused = models.BooleanField(default=False, verbose_name="Szünetel")
 
+    # Képletek tárolása (pl. '100*1.5' → 150)
+    formulas = models.JSONField(default=dict, blank=True, null=True, verbose_name="Képletek")
+
     # Sorrend & alá-felérendelés
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
     parent = models.ForeignKey(

@@ -64,6 +64,8 @@ interface FormulaInputNumberProps extends Omit<InputNumberProps<number>, 'onChan
   value?: number;
   onChange?: (value: number | undefined) => void;
   onBlur?: React.FocusEventHandler<HTMLInputElement>;
+  initialFormula?: string | null;
+  onFormulaChange?: (formula: string | null) => void;
 }
 
 const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
@@ -78,10 +80,12 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
   disabled,
   placeholder,
   onBlur: externalOnBlur,
+  initialFormula,
+  onFormulaChange,
 }) => {
   const round = (n: number) => precision !== undefined ? Math.round(n * Math.pow(10, precision)) / Math.pow(10, precision) : n;
   const [text, setText] = useState<string>('');
-  const [formula, setFormula] = useState<string | null>(null);
+  const [formula, setFormula] = useState<string | null>(initialFormula || null);
   const [focused, setFocused] = useState(false);
   const prevValueRef = useRef<number | undefined>(value);
 
@@ -99,6 +103,14 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
     }
   }, [value, focused, formula]);
 
+  // Sync initialFormula when it changes from outside (e.g. after item copy)
+  useEffect(() => {
+    if (!focused) {
+      setFormula(initialFormula || null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialFormula]);
+
   const numToText = (n: number | undefined | null): string => {
     if (n === undefined || n === null) return '';
     return huFormatter(n);
@@ -109,6 +121,7 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
     if (!trimmed) {
       onChange?.(undefined);
       setFormula(null);
+      onFormulaChange?.(null);
       if (externalOnBlur && e) externalOnBlur(e);
       return;
     }
@@ -119,12 +132,14 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
         if (min !== undefined) clamped = Math.max(clamped, min as number);
         if (max !== undefined) clamped = Math.min(clamped, max as number);
         setFormula(trimmed);
+        onFormulaChange?.(trimmed);
         prevValueRef.current = clamped;
         onChange?.(clamped);
       }
       // Invalid formula → keep old value
     } else {
       setFormula(null);
+      onFormulaChange?.(null);
       const parsed = parseFloat(String(huParser(trimmed)));
       if (!isNaN(parsed)) {
         let clamped = round(parsed);
@@ -170,12 +185,12 @@ const FormulaInputNumber: React.FC<FormulaInputNumberProps> = ({
 
 // Generic forwardRef wrapper that preserves antd's T = number default and ref support
 function NumInputInner<T extends ValueType = number>(
-  { formatter, parser, formula, ...rest }: InputNumberProps<T> & { formula?: boolean },
+  { formatter, parser, formula, initialFormula, onFormulaChange, ...rest }: InputNumberProps<T> & { formula?: boolean; initialFormula?: string | null; onFormulaChange?: (f: string | null) => void },
   ref: React.Ref<HTMLInputElement>
 ): React.ReactElement {
   if (formula !== false) {
     // FormulaInputNumber handles locale internally; strip parser/formatter
-    return <FormulaInputNumber {...(rest as any)} />;
+    return <FormulaInputNumber {...(rest as any)} initialFormula={initialFormula} onFormulaChange={onFormulaChange} />;
   }
   return (
     <InputNumber<T>
@@ -188,7 +203,7 @@ function NumInputInner<T extends ValueType = number>(
 }
 
 export const NumInput = React.forwardRef(NumInputInner) as <T extends ValueType = number>(
-  props: InputNumberProps<T> & { ref?: React.Ref<HTMLInputElement>; formula?: boolean }
+  props: InputNumberProps<T> & { ref?: React.Ref<HTMLInputElement>; formula?: boolean; initialFormula?: string | null; onFormulaChange?: (f: string | null) => void }
 ) => React.ReactElement;
 
 export default NumInput;

@@ -452,6 +452,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         vat_rate = request.data.get('vat_rate') or 27
         discount_percent = request.data.get('discount_percent') or 0
         discount_amount = request.data.get('discount_amount') or 0
+        formulas = request.data.get('formulas') or {}
         
         product = None
         material = None
@@ -490,7 +491,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             vat_rate=vat_rate,
             discount_percent=discount_percent,
             discount_amount=discount_amount,
-            description=description
+            description=description,
+            formulas=formulas if isinstance(formulas, dict) else {},
         )
         if material:
             _bump_search_stat('product', material.id)
@@ -510,6 +512,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         vat_rate = request.data.get('vat_rate') or 27
         discount_percent = request.data.get('discount_percent') or 0
         discount_amount = request.data.get('discount_amount') or 0
+        formulas_manu = request.data.get('formulas') or {}
         if not mp_id:
             return Response({'error': 'manufacturing_product_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         mp = get_object_or_404(ManufacturingProduct, id=mp_id)
@@ -536,7 +539,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             vat_rate=vat_rate,
             discount_percent=discount_percent,
             discount_amount=discount_amount,
-            description=description
+            description=description,
+            formulas=formulas_manu if isinstance(formulas_manu, dict) else {},
         )
         _bump_search_stat('manufacturing', mp.id)
         try:
@@ -625,6 +629,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         vat_rate = request.data.get('vat_rate') or 27
         discount_percent = request.data.get('discount_percent') or 0
         discount_amount = request.data.get('discount_amount') or 0
+        formulas_svc = request.data.get('formulas') or {}
         if not service_id:
             return Response({'error': 'service_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         service = get_object_or_404(Service, id=service_id)
@@ -648,7 +653,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             vat_rate=vat_rate,
             discount_percent=discount_percent,
             discount_amount=discount_amount,
-            description=description
+            description=description,
+            formulas=formulas_svc if isinstance(formulas_svc, dict) else {},
         )
         _bump_search_stat('service', service.id)
         QuoteLog.objects.create(quote=qr, user=request.user, action=f'Szolgáltatás hozzáadva: {service.name}')

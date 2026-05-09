@@ -223,6 +223,7 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 currency=ci.currency,
                 is_per_unit=ci.is_per_unit,
                 status=ci.status,
+                formulas=ci.formulas or {},
             )
 
         serializer = self.get_serializer(new_product)

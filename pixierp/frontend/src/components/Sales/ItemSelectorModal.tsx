@@ -40,6 +40,8 @@ export interface SelectedItemPayload {
   fileRemarks?: Record<string, string>; // key: file.uid or file.name
   manuCostItems?: Array<{ code?: string; name: string; quantity: number; unit: string; net_unit_price: number; net_total: number; supplier?: number | null; supplier_name?: string; is_stock?: boolean }>;
   keepOpen?: boolean;
+  /** Képletek tárolása (pl. { quantity: '100*1.5', net_unit_price: '200+50' }) */
+  formulas?: Record<string, string | null>;
   /** Stored manufacturing product creation payload for deferred creation (new unsaved RFQ) */
   pendingManuPayload?: any;
 }
@@ -53,6 +55,7 @@ interface ItemSelectorModalProps {
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null }>;
+  initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
   rfqId?: number;
   /** The RFQ's currency code (e.g. 'HUF', 'EUR'). Used to convert manu sell price to the RFQ currency. */
@@ -89,13 +92,15 @@ interface CostItem {
   // Sorrend & alá-felérendelés (mint a tételnél)
   sort_order?: number;
   parent_local_id?: number | null;
+  // Képletek tárolása mezőnként (pl. { quantity: '100*1.5', cost_price: '200+50' })
+  formulas?: Record<string, string | null>;
 }
 
 const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -113,6 +118,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [manuEditorOpen, setManuEditorOpen] = useState(false);
   const [pendingFiles, setPendingFiles] = useState<File[]>([]);
   const [pendingFileRemarks, setPendingFileRemarks] = useState<Record<string, string>>({});
+  // Képletek a fő tétel formhoz (quantity, net_unit_price, discount_percent, discount_amount)
+  const [itemFormFormulas, setItemFormFormulas] = useState<Record<string, string | null>>({});
 
   // Inline manufacturing form state
   const [manuForm] = Form.useForm();
@@ -350,6 +357,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           customer_order_item: initialValues.customer_order_item ?? undefined,
         });
       }
+      if (initialFormulas) {
+        setItemFormFormulas(initialFormulas);
+      }
     }
   }, [open, defaultType, mode, quoteItemId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -486,6 +496,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             currency_id: c.currency_info?.id ?? null,
             sort_order: typeof c.sort_order === 'number' ? c.sort_order : idx,
             parent_local_id: null as number | null,
+            formulas: (c.formulas && typeof c.formulas === 'object') ? c.formulas : {},
           };
         });
         // Resolve parent local ids (second pass)
@@ -706,7 +717,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             formula
             min={0.01} 
             step={1} 
-            style={{ width: 120 }} 
+            style={{ width: 120 }}
+            initialFormula={itemFormFormulas.quantity ?? undefined}
+            onFormulaChange={f => setItemFormFormulas(prev => ({ ...prev, quantity: f }))}
             onBlur={(e) => {
                  const value = parseFloat(e.target.value.replace(',', '.'));
                  const currentType = (activeKey === 'all' ? (selected?.__type as any) : activeKey);
@@ -729,7 +742,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           <Input disabled style={{ width: 100 }} />
         </Form.Item>
         <Form.Item label="Nettó egységár" name="net_unit_price" style={{ marginBottom: 8 }}> 
-          <NumInput formula min={0} step={1} style={{ width: 160 }} />
+          <NumInput formula min={0} step={1} style={{ width: 160 }} initialFormula={itemFormFormulas.net_unit_price ?? undefined} onFormulaChange={f => setItemFormFormulas(prev => ({ ...prev, net_unit_price: f }))} />
         </Form.Item>
         {(() => {
           const currentType = (activeKey === 'all' ? (selected?.__type as any) : activeKey);
@@ -833,10 +846,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         )}
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
           <Form.Item label="Kedvezmény %" name="discount_percent" style={{ marginBottom: 8 }}>
-            <NumInput formula min={0} max={100} style={{ width: 120 }} />
+            <NumInput formula min={0} max={100} style={{ width: 120 }} initialFormula={itemFormFormulas.discount_percent ?? undefined} onFormulaChange={f => setItemFormFormulas(prev => ({ ...prev, discount_percent: f }))} />
           </Form.Item>
           <Form.Item label="Kedvezmény (fix)" name="discount_amount" style={{ marginBottom: 8 }}>
-            <NumInput formula min={0} style={{ width: 160 }} />
+            <NumInput formula min={0} style={{ width: 160 }} initialFormula={itemFormFormulas.discount_amount ?? undefined} onFormulaChange={f => setItemFormFormulas(prev => ({ ...prev, discount_amount: f }))} />
           </Form.Item>
           <Form.Item label="Kedvezményes nettó összesen" shouldUpdate style={{ marginBottom: 8 }}>
             {() => {
@@ -915,7 +928,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         cost_type: v.cost_type || 'customer',
         customer_order_item: v.customer_order_item ?? null,
       };
-      await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen } as any);
+      await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen, formulas: itemFormFormulas } as any);
       setLastSavedAt(dayjs());
       if (!keepOpen) {
         setPendingFiles([]);
@@ -1056,6 +1069,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             currency: (c.currency_code || 'HUF').toUpperCase(),
             sort_order: idx,
             parent_index: parentIdx >= 0 ? parentIdx : null,
+            formulas: c.formulas || {},
           });
         }),
         is_fixed_quantity: false,
@@ -1378,6 +1392,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     }));
   };
 
+  const manuUpdateCostItemFormula = (id: number, field: string, formulaStr: string | null) => {
+    setManuCostItems(prev => prev.map(r => r.id !== id ? r : {
+      ...r,
+      formulas: { ...(r.formulas || {}), [field]: formulaStr },
+    }));
+  };
+
   const manuApplyDefaultMarkup = () => {
     setManuCostItems(prev => prev.map(item => {
       const cp = Number(item.cost_price) || 0;
@@ -1533,7 +1554,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 60 }} /> },
+    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: 60 }} /> },
     { title: 'Egység', key: 'unit', width: 75, render: (_: any, r: CostItem) => r.type === 'other'
         ? <AutoComplete
             size="small"
@@ -1545,10 +1566,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           />
         : <span>{r.unit}</span>
     },
-    { title: 'Bek. e.ár', key: 'cost_price', width: 85, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: 76 }} min={0} /> },
-    { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
-    { title: 'El. egység ár', key: 'sell_up', width: 95, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: 84 }} min={0} /> },
-    { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: 80 }} min={0} /> },
+    { title: 'Bek. e.ár', key: 'cost_price', width: 85, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} initialFormula={r.formulas?.cost_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'cost_price', f)} disabled={r.type !== 'other'} controls={false} style={{ width: 76 }} min={0} /> },
+    { title: 'Haszon%', key: 'markup', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} initialFormula={r.formulas?.markup_percent ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'markup_percent', f)} controls={false} precision={1} style={{ width: 62 }} min={0} /> },
+    { title: 'El. egység ár', key: 'sell_up', width: 95, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} initialFormula={r.formulas?.selling_unit_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'selling_unit_price', f)} controls={false} style={{ width: 84 }} min={0} /> },
+    { title: 'Összesen', key: 'selling_price', width: 90, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} initialFormula={r.formulas?.selling_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'selling_price', f)} controls={false} style={{ width: 80 }} min={0} /> },
     { title: 'Pénznem', key: 'currency', width: 90, render: (_: any, r: CostItem) => (
       <Select
         size="small"
@@ -2119,7 +2140,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>Menny. / Egység</div>
                                       <Space.Compact style={{ width: '100%' }}>
-                                        <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: '50%' }} />
+                                        <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: '50%' }} />
                                         {r.type === 'other'
                                           ? <AutoComplete size="small" value={r.unit} options={unitSuggestions.map(u => ({ value: u.unit, label: u.count > 0 ? `${u.unit} (${u.count}x)` : u.unit }))} onChange={v => manuUpdateCostItem(r.id, 'unit', v)} filterOption={(input, option) => (option?.value || '').toLowerCase().includes(input.toLowerCase())} style={{ width: '50%' }} />
                                           : <span style={{ padding: '0 6px', lineHeight: '24px' }}>{r.unit}</span>
@@ -2128,19 +2149,19 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                                     </Col>
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>Bek. e.ár</div>
-                                      <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} disabled={r.type !== 'other'} controls={false} style={{ width: '100%' }} min={0} />
+                                      <NumInput formula size="small" value={r.cost_price} onChange={v => manuUpdateCostItem(r.id, 'cost_price', v)} initialFormula={r.formulas?.cost_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'cost_price', f)} disabled={r.type !== 'other'} controls={false} style={{ width: '100%' }} min={0} />
                                     </Col>
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>Haszon%</div>
-                                      <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} controls={false} precision={1} style={{ width: '100%' }} min={0} />
+                                      <NumInput formula size="small" value={r.markup_percent} onChange={v => manuUpdateCostItem(r.id, 'markup_percent', v)} initialFormula={r.formulas?.markup_percent ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'markup_percent', f)} controls={false} precision={1} style={{ width: '100%' }} min={0} />
                                     </Col>
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>El. egység ár</div>
-                                      <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} controls={false} style={{ width: '100%' }} min={0} />
+                                      <NumInput formula size="small" value={r.selling_unit_price} onChange={v => manuUpdateCostItem(r.id, 'selling_unit_price', v)} initialFormula={r.formulas?.selling_unit_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'selling_unit_price', f)} controls={false} style={{ width: '100%' }} min={0} />
                                     </Col>
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>Összesen</div>
-                                      <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} controls={false} style={{ width: '100%' }} min={0} />
+                                      <NumInput formula size="small" value={r.selling_price} onChange={v => manuUpdateCostItem(r.id, 'selling_price', v)} initialFormula={r.formulas?.selling_price ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'selling_price', f)} controls={false} style={{ width: '100%' }} min={0} />
                                     </Col>
                                     <Col span={12}>
                                       <div style={{ fontSize: 11, color: '#888' }}>Pénznem</div>

@@ -282,13 +282,13 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
       };
       let createdItem: any = null;
       if (record.item_type === 'product' && record.product) {
-        createdItem = await salesService.addRfqProductItem(quoteRequestId, Number(record.product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqProductItem(quoteRequestId, Number(record.product), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount, undefined, (record as any).formulas || {});
       } else if (record.item_type === 'manufacturing' && record.manufacturing_product) {
         // Duplicate the manufacturing product so the copy is fully independent
         const dup = await manufacturingService.duplicateProduct(Number(record.manufacturing_product));
-        createdItem = await salesService.addRfqManufacturingItem(quoteRequestId, dup.id, common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqManufacturingItem(quoteRequestId, dup.id, common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount, (record as any).formulas || {});
       } else if (record.item_type === 'service' && record.service) {
-        createdItem = await salesService.addRfqServiceItem(quoteRequestId, Number(record.service), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount);
+        createdItem = await salesService.addRfqServiceItem(quoteRequestId, Number(record.service), common.quantity, common.description, common.unit, common.net_unit_price, common.vat_rate, common.discount_percent, common.discount_amount, (record as any).formulas || {});
       } else {
         message.error('Nem található a tétel hivatkozása, nem másolható');
         return;

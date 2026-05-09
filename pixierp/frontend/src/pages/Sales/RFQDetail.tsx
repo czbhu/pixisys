@@ -323,12 +323,13 @@ const RFQDetail: React.FC = () => {
         payload.vat_rate, 
         (payload as any).discount_percent, 
         (payload as any).discount_amount,
-        payload.ref_id  // Send as material_id too
+        payload.ref_id,  // Send as material_id too
+        (payload as any).formulas || {},
       );
     } else if (payload.item_type === 'manufacturing') {
-      createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount);
+      createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     } else {
-      createdItem = await salesService.addRfqServiceItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount);
+      createdItem = await salesService.addRfqServiceItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     }
     // Upload any queued files
     if (createdItem?.id && payload.files?.length) {
@@ -360,6 +361,7 @@ const RFQDetail: React.FC = () => {
         description: payload.description,
         discount_percent: (payload as any).discount_percent,
         discount_amount: (payload as any).discount_amount,
+        formulas: (payload as any).formulas || {},
       };
       if (payload.item_type === 'product') {
         patch.item_type = 'product';
@@ -1221,6 +1223,7 @@ const RFQDetail: React.FC = () => {
           discount_percent: Number(editContext.item.discount_percent || 0),
           discount_amount: Number(editContext.item.discount_amount || 0),
         } : undefined}
+        initialFormulas={editContext?.item?.formulas || {}}
         quoteItemId={editContext?.item?.id}
       />
 

@@ -286,6 +286,7 @@ export const salesService = {
         discount_percent?: number,
         discount_amount?: number,
         material_id?: number,
+        formulas?: Record<string, string | null>,
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_product_item/`, {
             product_id: productId,
@@ -297,6 +298,7 @@ export const salesService = {
             vat_rate,
             discount_percent,
             discount_amount,
+            formulas: formulas || {},
         });
         return response.data;
     },
@@ -311,6 +313,7 @@ export const salesService = {
         vat_rate?: number,
         discount_percent?: number,
         discount_amount?: number,
+        formulas?: Record<string, string | null>,
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_manufacturing_item/`, {
             manufacturing_product_id: manufacturingProductId,
@@ -321,6 +324,7 @@ export const salesService = {
             vat_rate,
             discount_percent,
             discount_amount,
+            formulas: formulas || {},
         });
         return response.data;
     },
@@ -340,6 +344,7 @@ export const salesService = {
         vat_rate?: number,
         discount_percent?: number,
         discount_amount?: number,
+        formulas?: Record<string, string | null>,
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_service_item/`, {
             service_id: serviceId,
@@ -350,6 +355,7 @@ export const salesService = {
             vat_rate,
             discount_percent,
             discount_amount,
+            formulas: formulas || {},
         });
         return response.data;
     },
@@ -429,7 +435,7 @@ export const salesService = {
         return response.data;
     },
     // Quote request items CRUD
-    async updateQuoteRequestItem(itemId: number, data: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any }>) {
+    async updateQuoteRequestItem(itemId: number, data: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any; formulas: Record<string, string | null> }>) {
         const response = await api.patch(`/sales/quote-request-items/${itemId}/`, data);
         return response.data;
     },
