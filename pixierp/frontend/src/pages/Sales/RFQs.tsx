@@ -1806,8 +1806,9 @@ const RFQs: React.FC = () => {
         okText="Létrehozás"
         cancelText="Mégse"
         width={isMobile ? '100vw' : 1100}
-        style={isMobile ? { top: 0, left: 0, right: 0, maxWidth: '100vw', margin: 0, padding: 0 } : {}}
-        styles={isMobile ? { wrapper: { padding: 0, top: 0, left: 0, right: 0, bottom: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column', padding: 0 }, header: { padding: '12px 16px', marginBottom: 0 }, body: { flex: 1, overflowY: 'auto', padding: '8px 12px 0' }, footer: { padding: '8px 12px' } } : {}}
+        wrapClassName={isMobile ? 'pixi-fullscreen-wrap' : undefined}
+        style={isMobile ? { margin: 0, padding: 0 } : {}}
+        styles={isMobile ? { body: { padding: '8px 12px 0' }, footer: { padding: '8px 12px' } } : {}}
         forceRender
       >
         <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
@@ -2105,8 +2106,9 @@ const RFQs: React.FC = () => {
               cancelButtonProps={{ style: { display: 'none' } }}
               forceRender
               width="100vw"
-              style={{ top: 0, left: 0, right: 0, maxWidth: '100vw', margin: 0, padding: 0 }}
-              styles={{ wrapper: { padding: 0, top: 0, left: 0, right: 0, bottom: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column', padding: 0 }, header: { padding: '12px 16px', marginBottom: 0 }, body: { flex: 1, overflowY: 'auto', padding: '16px 12px' }, footer: { padding: '8px 12px' } }}
+              wrapClassName="pixi-fullscreen-wrap"
+              style={{ margin: 0, padding: 0 }}
+              styles={{ body: { padding: '16px 12px' }, footer: { padding: '8px 12px' } }}
             >
               <Form.Item label="Cég" style={{ marginBottom: 12 }}> 
                 <Space.Compact style={{ width: '100%' }}>
@@ -2199,8 +2201,9 @@ const RFQs: React.FC = () => {
               cancelButtonProps={{ style: { display: 'none' } }}
               forceRender
               width="100vw"
-              style={{ top: 0, left: 0, right: 0, maxWidth: '100vw', margin: 0, padding: 0 }}
-              styles={{ wrapper: { padding: 0, top: 0, left: 0, right: 0, bottom: 0 }, content: { height: '100dvh', borderRadius: 0, display: 'flex', flexDirection: 'column', padding: 0 }, header: { padding: '12px 16px', marginBottom: 0 }, body: { flex: 1, overflowY: 'auto', padding: '16px 12px' }, footer: { padding: '8px 12px' } }}
+              wrapClassName="pixi-fullscreen-wrap"
+              style={{ margin: 0, padding: 0 }}
+              styles={{ body: { padding: '16px 12px' }, footer: { padding: '8px 12px' } }}
             >
               <Form.Item label="Kapcsolattartók" style={{ marginBottom: 12 }}>
                 <Space.Compact style={{ width: '100%' }}>
