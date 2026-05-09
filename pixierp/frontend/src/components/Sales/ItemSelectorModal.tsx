@@ -1834,14 +1834,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <strong>{manuCreatedId ? 'Egyedi gyártás szerkesztése' : 'Új egyedi gyártás'}</strong>
                 </div>                <Form layout="vertical" form={manuForm}>
-                  <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end' }}>
-                    <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: 2, marginBottom: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+                    <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: '1 1 100%', marginBottom: 8 }}>
                       <Input placeholder="Egyedi gyártás neve" />
                     </Form.Item>
-                    <Form.Item label="Cikkszám" name="code" style={{ flex: 1, marginBottom: 8 }}>
+                    <Form.Item label="Cikkszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
                       <Input placeholder="Auto-generál, ha üres" />
                     </Form.Item>
-                    <Button style={{ marginBottom: 8 }} onClick={manuGenerateCode}>Generál</Button>
+                    <Button style={{ marginBottom: 8, flexShrink: 0 }} onClick={manuGenerateCode}>Generál</Button>
                   </div>
 
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
