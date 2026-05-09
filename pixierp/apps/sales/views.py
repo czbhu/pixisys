@@ -1,6 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from django.db import models
-from django.db.models import Q, Prefetch
+from django.db.models import Q, Prefetch, Count
 from django.template import Template, Context
 import datetime
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
@@ -2903,7 +2903,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         ).filter(
             quote_item__item_type='manufacturing',
             quote_item__manufacturing_product__isnull=False,
-        ).order_by('-customer_order__order_date')
+        ).annotate(_att_count=Count('quote_item__attachments')).order_by('-customer_order__order_date')
 
         # Optional status filter
         statuses = request.query_params.get('status')
@@ -2969,6 +2969,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 'quantity': float(item.quantity),
                 'unit': item.unit,
                 'net_unit_price': float(item.net_unit_price),
+                'attachment_count': getattr(item, '_att_count', 0),
             })
         return Response(data)
 

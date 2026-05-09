@@ -176,7 +176,26 @@ const RFQs: React.FC = () => {
     }
 
     if (!treeItems || treeItems.length === 0) {
-      return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
+      if (rootAtts.length === 0) {
+        return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
+      }
+      return (
+        <div style={{ padding: '8px 0 8px 28px' }}>
+          <div style={{ marginBottom: 8, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginRight: 4 }}>Csatolmányok:</span>
+            {rootAtts.map((att: any) => (
+              <a
+                key={att.id}
+                href={att.file_url || att.file}
+                onClick={(e) => { e.preventDefault(); setRfqAttPreviewUrl(att.file_url || att.file); setRfqAttPreviewTitle(att.original_filename || att.file?.split('/').pop() || ''); setRfqAttPreviewOpen(true); }}
+                style={{ fontSize: 12 }}
+              >
+                <PaperClipOutlined style={{ marginRight: 3 }} />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
+              </a>
+            ))}
+          </div>
+        </div>
+      );
     }
 
     return (

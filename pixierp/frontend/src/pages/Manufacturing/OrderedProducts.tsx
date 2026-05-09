@@ -86,6 +86,7 @@ interface OrderedManufacturingItem {
     unit: string;
     net_unit_price: number;
     remark?: string;
+    attachment_count?: number;
 }
 
 interface RenderedSendGroup {
@@ -1092,9 +1093,9 @@ const OrderedProducts: React.FC = () => {
                                 }
                             }}
                         >
-                            {orderItemAttsLoaded[record.id] && (orderItemAtts[record.id] || []).length > 0
-                                ? (orderItemAtts[record.id] || []).length
-                                : ''}
+                            {orderItemAttsLoaded[record.id]
+                                ? ((orderItemAtts[record.id] || []).length > 0 ? (orderItemAtts[record.id] || []).length : '')
+                                : (record.attachment_count ? record.attachment_count : '')}
                         </Button>
                     </Tooltip>
                     <Tooltip title="Munkalap nyomtatása">
