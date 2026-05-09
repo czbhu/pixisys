@@ -2581,6 +2581,7 @@ const PrintCommentView: React.FC<Props> = ({
                       if (activeTool === 'crop') { handleCropMouseDown(e, pageNum); return; }
                       if (activeTool === 'image') { setSelectedImageId(null); return; }
                       if (activeTool === 'text') {
+                        if (editingTextId !== null) return; // szerkesztés közben ne rakjon le újat
                         setSelectedTextId(null); setEditingTextId(null);
                         const pos = getRelPos(e);
                         if (pos) addOverlayText(pageNum, pos.x, pos.y);
