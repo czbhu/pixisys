@@ -861,7 +861,12 @@ const OrderedProducts: React.FC = () => {
                                     const url = att.file_url || att.file || '';
                                     const name = url ? (url.split('/').pop() || `#${att.id}`) : `#${att.id}`;
                                     return (
-                                        <a href={url} target="_blank" rel="noopener noreferrer">{name}</a>
+                                        <a
+                                            href={url}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            onClick={(e) => { if (isPdf(url)) { e.preventDefault(); openPdfPreview(url); } }}
+                                        >{name}</a>
                                     );
                                 },
                             },
@@ -1212,7 +1217,12 @@ const OrderedProducts: React.FC = () => {
             >
                 {previewUrl ? (
                     isPdfFile(previewUrl) ? (
-                        <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
+                        <div>
+                            <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '65vh', border: 0 }} />
+                            <div style={{ marginTop: 8, textAlign: 'center' }}>
+                                <Button type="primary" onClick={() => openPdfPreview(previewUrl!)}>Megnyitás Print Preview-ban</Button>
+                            </div>
+                        </div>
                     ) : (
                         <img alt={previewTitle} src={previewUrl} style={{ maxWidth: '100%', maxHeight: '70vh', display: 'block', margin: '0 auto' }} />
                     )
@@ -1343,7 +1353,12 @@ const OrderedProducts: React.FC = () => {
                                                     title: 'Fájl',
                                                     key: 'file_name',
                                                     render: (_: any, att: any) => (
-                                                        <a href={att.file_url} target="_blank" rel="noopener noreferrer">{att.file_name}</a>
+                                                        <a
+                                                            href={att.file_url}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            onClick={(e) => { if (isPdf(att.file_url)) { e.preventDefault(); openPdfPreview(att.file_url); } }}
+                                                        >{att.file_name}</a>
                                                     ),
                                                 },
                                                 {

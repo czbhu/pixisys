@@ -672,6 +672,7 @@ const ProductionQueue: React.FC = () => {
         const handleDownloadAll = async () => {
             if (atts.length === 0) return;
             if (atts.length === 1) {
+                if (isPdf(atts[0].file_url)) { openPdfPreview(atts[0].file_url); return; }
                 window.open(atts[0].file_url, '_blank');
                 return;
             }

@@ -7,6 +7,7 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined } from '@ant-design/icons';
+import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
@@ -2118,7 +2119,10 @@ const RFQs: React.FC = () => {
                         <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                           <Button type="link" size="small" style={{ padding: 0, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
                             const fileObj = (f as any).originFileObj || f;
-                            const url = (f as any).url || (fileObj ? URL.createObjectURL(fileObj) : undefined);
+                            const savedUrl = (f as any).url;
+                            // Saved PDF → open in Print Preview
+                            if (savedUrl && isPdf(savedUrl)) { openPdfPreview(savedUrl); return; }
+                            const url = savedUrl || (fileObj ? URL.createObjectURL(fileObj) : undefined);
                             if (url) { setPreviewUrl(url); setPreviewTitle(f.name); setPreviewOpen(true); }
                           }} title={f.name}>{f.name}</Button>
                           {isMobile ? (
@@ -2319,7 +2323,14 @@ const RFQs: React.FC = () => {
         {previewUrl ? (() => {
           const ext = previewTitle.split('.').pop()?.toLowerCase() ?? '';
           if (ext === 'pdf') {
-            return <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '75vh', border: 0 }} />;
+            return (
+              <div>
+                <iframe title="preview" src={previewUrl} style={{ width: '100%', height: '70vh', border: 0 }} />
+                <div style={{ marginTop: 8, textAlign: 'center' }}>
+                  <Button type="primary" onClick={() => openPdfPreview(previewUrl!)}>Megnyitás Print Preview-ban</Button>
+                </div>
+              </div>
+            );
           }
           if (['jpg','jpeg','png','gif','webp','bmp','svg'].includes(ext)) {
             return <img alt={previewTitle} src={previewUrl} style={{ maxWidth: '100%', maxHeight: '75vh', display: 'block', margin: '0 auto' }} />;
