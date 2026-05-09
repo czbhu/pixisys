@@ -40,7 +40,9 @@ const buildStandalonePreviewUrl = (orderId: number | null, itemId: number | null
   return `${window.location.origin}/print-preview?orderId=${orderId}&itemId=${itemId}`;
 };
 
-const PARAMS_PANEL_W = 280;
+const PARAMS_PANEL_W_DEFAULT = 280;
+const PARAMS_PANEL_W_MIN = 180;
+const PARAMS_PANEL_W_MAX = 560;
 const COLLAPSED_W = 28;
 
 const DEFAULT_PARAMS: PrintParams = {
@@ -69,6 +71,28 @@ const PrintShopPage: React.FC = () => {
 
   const [leftPanelOpen, setLeftPanelOpen] = useState(true);
   const [previewPanelOpen, setPreviewPanelOpen] = useState(true);
+  const [paramsPanelW, setParamsPanelW] = useState(PARAMS_PANEL_W_DEFAULT);
+  const paramsPanelWRef = useRef(PARAMS_PANEL_W_DEFAULT);
+  const dragStartXRef = useRef<number | null>(null);
+  const dragStartWRef = useRef<number>(PARAMS_PANEL_W_DEFAULT);
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    dragStartXRef.current = e.clientX;
+    dragStartWRef.current = paramsPanelWRef.current;
+    const onMouseMove = (ev: MouseEvent) => {
+      if (dragStartXRef.current === null) return;
+      const delta = ev.clientX - dragStartXRef.current;
+      const newW = Math.min(PARAMS_PANEL_W_MAX, Math.max(PARAMS_PANEL_W_MIN, dragStartWRef.current + delta));
+      paramsPanelWRef.current = newW;
+      setParamsPanelW(newW);
+    };
+    const onMouseUp = () => {
+      dragStartXRef.current = null;
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+  }, []);
   const [viewMode, setViewMode] = useState<'canvas' | 'pdf'>(
     new URLSearchParams(location.search).get('mode') === 'pdf' ? 'pdf' : 'canvas'
   );
@@ -867,14 +891,13 @@ const PrintShopPage: React.FC = () => {
       <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
         {/* Left params panel — collapsible */}
         <div style={{
-          width: !previewPanelOpen ? undefined : (leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W),
+          width: !previewPanelOpen ? undefined : (leftPanelOpen ? paramsPanelW : COLLAPSED_W),
           flex: !previewPanelOpen ? 1 : undefined,
           flexShrink: 0,
           borderRight: '1px solid #e8e8e8',
           background: '#fff',
           display: 'flex',
           flexDirection: 'column',
-          transition: 'width 0.2s ease',
           overflow: 'hidden',
         }}>
           <div style={{
@@ -953,6 +976,27 @@ const PrintShopPage: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Drag handle between panels */}
+        {leftPanelOpen && previewPanelOpen && (
+          <div
+            onMouseDown={handleDragStart}
+            style={{
+              width: 5, flexShrink: 0, cursor: 'col-resize',
+              background: 'transparent',
+              position: 'relative', zIndex: 10,
+            }}
+          >
+            <div style={{
+              position: 'absolute', top: 0, bottom: 0, left: 1, width: 3,
+              background: '#e8e8e8',
+              transition: 'background 0.15s',
+            }}
+              onMouseEnter={e => (e.currentTarget.style.background = '#1890ff')}
+              onMouseLeave={e => (e.currentTarget.style.background = '#e8e8e8')}
+            />
+          </div>
+        )}
 
         {/* Right preview panel — collapsible */}
         <div style={{
@@ -1037,7 +1081,7 @@ const PrintShopPage: React.FC = () => {
                   params={params}
                   isAdmin={isAdmin}
                   priceBreakdown={priceBreakdown}
-                  leftOffset={leftPanelOpen ? PARAMS_PANEL_W : COLLAPSED_W}
+                  leftOffset={leftPanelOpen ? paramsPanelW : COLLAPSED_W}
                   onParamsChange={setParams}
                   initialDesign={initialDesignRef.current}
                   onDesignChange={handleDesignChange}
