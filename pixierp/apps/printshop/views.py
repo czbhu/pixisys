@@ -3532,14 +3532,20 @@ class PdfExportView(APIView):
                     w = float(txt_data.get('w', 0.4))
                     content = txt_data.get('content', '')
                     font_size_px = float(txt_data.get('fontSize', 22))
+                    page_css_px_w = float(txt_data.get('pageCssPxWidth', 0))
                     color_hex = txt_data.get('color', '#000000')
                     family = txt_data.get('fontFamily', 'Arial').lower()
                     bold = bool(txt_data.get('bold', False))
                     italic = bool(txt_data.get('italic', False))
                     align_str = txt_data.get('align', 'left')
 
-                    # Convert px → pt (standard CSS conversion: 1px = 0.75pt)
-                    font_size_pt = font_size_px * 0.75
+                    # Convert fontSize (CSS px at zoom=1) → PDF pt
+                    # Formula: fontSize_pt = fontSize_px * pageWidthPt / pageWidthCssPx
+                    # Fallback: standard CSS 1px = 0.75pt (96dpi)
+                    if page_css_px_w > 0:
+                        font_size_pt = font_size_px * pw / page_css_px_w
+                    else:
+                        font_size_pt = font_size_px * 0.75
 
                     # Build rect in pt (height = rest of page)
                     x0 = x * pw + mb.x0

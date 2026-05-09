@@ -1706,19 +1706,29 @@ const PrintCommentView: React.FC<Props> = ({
       }
 
       // Overlay texts: send with relative coordinates + style
+      // Also send the rendered CSS pixel width of each page at zoom=1 so the
+      // backend can correctly convert fontSize (CSS px) → PDF pt.
       if (overlayTexts.length > 0) {
-        options.overlayTexts = overlayTexts.map(txt => ({
-          page: txt.page,
-          x: txt.x, y: txt.y, w: txt.w,
-          content: txt.content,
-          fontSize: txt.fontSize,
-          color: txt.color,
-          fontFamily: txt.fontFamily,
-          bold: txt.bold,
-          italic: txt.italic,
-          align: txt.align,
-          zIndex: txt.zIndex,
-        }));
+        options.overlayTexts = overlayTexts.map(txt => {
+          const pageEl = pageRefs.current[txt.page - 1];
+          // pageEl has width = zoomLevel * 100% of container → divide by zoomLevel to get zoom=1 width
+          const pageCssPxWidth = pageEl
+            ? pageEl.getBoundingClientRect().width / zoomLevel
+            : 800;
+          return {
+            page: txt.page,
+            x: txt.x, y: txt.y, w: txt.w,
+            content: txt.content,
+            fontSize: txt.fontSize,
+            pageCssPxWidth,          // CSS px width of the page at zoom=1
+            color: txt.color,
+            fontFamily: txt.fontFamily,
+            bold: txt.bold,
+            italic: txt.italic,
+            align: txt.align,
+            zIndex: txt.zIndex,
+          };
+        });
       }
 
       const formData = new FormData();
