@@ -134,6 +134,8 @@ interface Props {
   showTemplates?: boolean;
   onPdfFileChange?: (file: File | null) => void;
   onAnnotationsChange?: (annotations: CommentAnnotation[]) => void;
+  /** Ref that will receive a function to export the current PDF with overlays baked in */
+  exportRef?: React.MutableRefObject<(() => Promise<File | null>) | null>;
 }
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -289,6 +291,7 @@ const PrintCommentView: React.FC<Props> = ({
   showTemplates = false,
   onPdfFileChange,
   onAnnotationsChange,
+  exportRef,
 }) => {
   const effectiveCanEdit = canEdit ?? isAdmin;
   const effectiveCanComment = canComment ?? true;
@@ -1802,6 +1805,45 @@ const PrintCommentView: React.FC<Props> = ({
       setExporting(false);
     }
   };
+
+  // ── Export for save (returns File with overlays baked in, or original) ─────
+  const exportPdfForSave = useCallback(async (): Promise<File | null> => {
+    if (!pdfFileRef.current) return null;
+    if (overlayImages.length === 0 && overlayTexts.length === 0) return pdfFileRef.current;
+    const options: any = {};
+    if (overlayImages.length > 0) {
+      options.overlayImages = overlayImages.map(img => ({
+        page: img.page, x: img.x, y: img.y, w: img.w, h: img.h,
+        rotation: img.rotation, zIndex: img.zIndex, src: img.src,
+      }));
+    }
+    if (overlayTexts.length > 0) {
+      options.overlayTexts = overlayTexts.map(txt => {
+        const pageEl = pageRefs.current[txt.page - 1];
+        const pageCssPxWidth = pageEl ? pageEl.getBoundingClientRect().width / zoomLevel : 800;
+        return {
+          page: txt.page, x: txt.x, y: txt.y, w: txt.w,
+          content: txt.content, fontSize: txt.fontSize, pageCssPxWidth,
+          color: txt.color, fontFamily: txt.fontFamily,
+          bold: txt.bold, italic: txt.italic, align: txt.align, zIndex: txt.zIndex,
+        };
+      });
+    }
+    const formData = new FormData();
+    formData.append('pdf', pdfFileRef.current);
+    formData.append('options', JSON.stringify(options));
+    const resp = await api.post('/printshop/pdf-export/', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      responseType: 'blob',
+      timeout: 120000,
+    });
+    return new File([resp.data], pdfFileRef.current.name, { type: 'application/pdf' });
+  }, [overlayImages, overlayTexts, zoomLevel]);
+
+  // Wire exportRef so parent can trigger export-for-save
+  useEffect(() => {
+    if (exportRef) exportRef.current = exportPdfForSave;
+  }, [exportRef, exportPdfForSave]);
 
   // ── Derived ──────────────────────────────────────────────────────────────────
   const curInfo = pageInfos[currentPage - 1] ?? null;

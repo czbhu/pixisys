@@ -3484,11 +3484,49 @@ class PdfExportView(APIView):
                     y0 = y * ph + mb.y0
                     x1 = (x + w) * pw + mb.x0
                     y1 = (y + h) * ph + mb.y0
-                    rect = fitz.Rect(x0, y0, x1, y1)
 
-                    # PyMuPDF rotate only supports multiples of 90
-                    fitz_rotate = int(rotation / 90) * 90
-                    page.insert_image(rect, stream=img_bytes, rotate=fitz_rotate)
+                    rotation_norm = rotation % 360
+
+                    if rotation_norm == 0:
+                        page.insert_image(fitz.Rect(x0, y0, x1, y1), stream=img_bytes)
+                    elif rotation_norm % 90 == 0:
+                        # PyMuPDF native rotation (multiples of 90)
+                        page.insert_image(fitz.Rect(x0, y0, x1, y1), stream=img_bytes, rotate=int(rotation_norm))
+                    else:
+                        # Arbitrary rotation: pre-rotate image using PIL, adjust bounding rect
+                        import math as _math
+                        import io as _io
+                        from PIL import Image as _PILImage
+
+                        img_pil = _PILImage.open(_io.BytesIO(img_bytes)).convert('RGBA')
+                        orig_w_pt = w * pw
+                        orig_h_pt = h * ph
+                        cx = (x + w / 2) * pw + mb.x0
+                        cy = (y + h / 2) * ph + mb.y0
+
+                        # Resize to match the rect aspect ratio before rotating
+                        target_w = max(img_pil.width, 600)
+                        target_h = round(target_w * orig_h_pt / orig_w_pt) if orig_w_pt > 0 else max(img_pil.height, 600)
+                        resized = img_pil.resize((target_w, target_h), _PILImage.LANCZOS)
+
+                        # PIL rotates counterclockwise, CSS clockwise → negate angle
+                        rotated = resized.rotate(-rotation_norm, expand=True, resample=_PILImage.BICUBIC)
+                        _buf = _io.BytesIO()
+                        rotated.save(_buf, format='PNG')
+                        rot_bytes = _buf.getvalue()
+
+                        # Compute bounding box of the rotated rect (same formula as CSS)
+                        rad = _math.radians(rotation_norm)
+                        cos_a = abs(_math.cos(rad))
+                        sin_a = abs(_math.sin(rad))
+                        new_w_pt = orig_w_pt * cos_a + orig_h_pt * sin_a
+                        new_h_pt = orig_w_pt * sin_a + orig_h_pt * cos_a
+
+                        new_rect = fitz.Rect(
+                            cx - new_w_pt / 2, cy - new_h_pt / 2,
+                            cx + new_w_pt / 2, cy + new_h_pt / 2,
+                        )
+                        page.insert_image(new_rect, stream=rot_bytes)
                 except Exception as _exc:
                     import logging as _log
                     _log.getLogger(__name__).error(f'[pdf-export] overlay image error: {_exc}', exc_info=True)

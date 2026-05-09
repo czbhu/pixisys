@@ -95,6 +95,8 @@ const PrintShopPage: React.FC = () => {
   const [rawPdfSize, setRawPdfSize] = useState<{ width: number; height: number } | null>(null);
   // Keep a ref to the currently loaded PDF file so we can attach it on save
   const currentPdfFileRef = useRef<File | null>(null);
+  // Ref to PrintCommentView's export function (returns PDF with overlays baked in)
+  const printViewExportRef = useRef<(() => Promise<File | null>) | null>(null);
 
   const [orderId, setOrderId] = useState<number | null>(() => {
     try { const s = localStorage.getItem(STORAGE_KEY); if (s) { const v = JSON.parse(s).orderId; return v ?? null; } } catch {} return null;
@@ -527,12 +529,15 @@ const PrintShopPage: React.FC = () => {
         productId = created.id;
       }
 
-      // Upload PDF attachment if a file is loaded
+      // Upload PDF attachment if a file is loaded (with overlays baked in if any)
       if (currentPdfFileRef.current) {
         try {
+          const pdfToUpload = printViewExportRef.current
+            ? (await printViewExportRef.current()) ?? currentPdfFileRef.current
+            : currentPdfFileRef.current;
           await manufacturingService.uploadProductAttachment(
             productId,
-            currentPdfFileRef.current,
+            pdfToUpload,
             'PrintShop PDF'
           );
         } catch (attErr) {
@@ -983,6 +988,7 @@ const PrintShopPage: React.FC = () => {
                 authorName={user ? `${user.first_name || ''} ${user.last_name || ''}`.trim() || user.username : 'Ismeretlen'}
                 params={params}
                 onPdfFileChange={handlePdfFileChange}
+                exportRef={printViewExportRef}
               />
             </div>
           ) : (
