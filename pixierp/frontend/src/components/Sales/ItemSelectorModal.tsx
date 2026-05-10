@@ -68,6 +68,8 @@ interface ItemSelectorModalProps {
   showCostTypeField?: boolean;
   /** Order items to show a "Kapcsolódó tétel" selector in the item form */
   orderItems?: Array<{ id: number; name: string }>;
+  /** When true, the "Beszállítók és árkalkuláció" collapse panel is pre-opened */
+  expandCosts?: boolean;
 }
 
 interface CostItem {
@@ -100,11 +102,12 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
   const [activeKey, setActiveKey] = useState<ItemType>(defaultType);
+  const [manuCollapseKeys, setManuCollapseKeys] = useState<string[]>(expandCosts ? ['costs'] : []);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [products, setProducts] = useState<any[]>([]);
@@ -318,6 +321,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   useEffect(() => {
     if (!open) return;
     setActiveKey(mode === 'edit' && initialSelection?.item_type ? initialSelection.item_type : defaultType);
+    setManuCollapseKeys(expandCosts ? ['costs'] : []);
     setPendingFiles([]);
     setPendingFileRemarks({});
     manuForm.resetFields();
@@ -1942,7 +1946,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                     </Col>
                   </Row>
 
-                  <Collapse ghost size="small" style={{ marginBottom: 8 }}>
+                  <Collapse ghost size="small" style={{ marginBottom: 8 }} activeKey={manuCollapseKeys} onChange={(k) => setManuCollapseKeys(Array.isArray(k) ? k as string[] : [k as string])}>
                     <Collapse.Panel header={<span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>} key="imposition" extra={<Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); openImpositionWithPreset(null); }}>Új megnyitása</Button>}>
                       <div style={{ fontSize: 12, color: '#666', marginBottom: impositionPresets.length ? 8 : 0 }}>Számítsd ki a produkciós ív kihozatalt: több termékméret és több ívméret kombinációi, érhetőség (készlet) figyelembe vételével.</div>
                       {impositionPresets.length > 0 && (

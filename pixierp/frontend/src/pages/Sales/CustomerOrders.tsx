@@ -685,6 +685,65 @@ interface CustomerOrder {
                   ),
                 },
                 {
+                  title: 'Státusz', key: 'item_status', width: 140,
+                  render: (_: any, r: any) => {
+                    const ITEM_STATUS_OPTS = [
+                      { value: 'new', label: 'Új', color: 'blue' },
+                      { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
+                      { value: 'in_production', label: 'Gyártásban', color: 'orange' },
+                      { value: 'ready', label: 'Kész', color: 'green' },
+                      { value: 'in_delivery', label: 'Szállítás alatt', color: 'purple' },
+                      { value: 'delivered', label: 'Kiszállítva', color: 'success' },
+                      { value: 'cancelled', label: 'Törölve', color: 'red' },
+                    ];
+                    const cur = r.status || 'new';
+                    const opt = ITEM_STATUS_OPTS.find(o => o.value === cur) || ITEM_STATUS_OPTS[0];
+                    return (
+                      <Popover
+                        trigger="click"
+                        title="Tétel státusza"
+                        getPopupContainer={() => document.body}
+                        zIndex={9999}
+                        content={
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {ITEM_STATUS_OPTS.map(o => (
+                              <Button key={o.value} size="small" type={o.value === cur ? 'primary' : 'text'}
+                                disabled={o.value === cur}
+                                onClick={async () => {
+                                  const prev = [...flatItems];
+                                  const newItems = flatItems.map((it: any) => it.id === r.id ? { ...it, status: o.value } : it);
+                                  setOrderExpandedItems(ps => ({ ...ps, [orderId]: newItems }));
+                                  try {
+                                    await api.patch(`/sales/customer-order-items/${r.id}/`, { status: o.value });
+                                  } catch {
+                                    message.error('Státusz frissítése sikertelen');
+                                    setOrderExpandedItems(ps => ({ ...ps, [orderId]: prev }));
+                                  }
+                                }}
+                              >{o.label}</Button>
+                            ))}
+                          </div>
+                        }
+                        overlayInnerStyle={{ padding: '6px 8px' }}
+                      >
+                        <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()}>{opt.label}</Tag>
+                      </Popover>
+                    );
+                  },
+                },
+                {
+                  title: '', key: 'open_item', width: 110,
+                  render: (_: any, r: any) => (
+                    <Button
+                      size="small"
+                      icon={<EyeOutlined />}
+                      onClick={() => navigate(`/sales/customer-orders/${orderId}?edit_item=${r.id}`)}
+                    >
+                      Megnyitás
+                    </Button>
+                  ),
+                },
+                {
                   title: 'Csatolmányok',
                   key: 'attachments',
                   width: 140,
@@ -736,7 +795,7 @@ interface CustomerOrder {
                               <Button
                                 size="small"
                                 icon={<EyeOutlined />}
-                                onClick={() => navigate(`/sales/customer-orders/${record.id}`)}
+                                onClick={() => navigate(`/sales/customer-orders/${record.id}?edit_item=${coiId}`)}
                               >
                                 Tétel megnyitása
                               </Button>
@@ -1644,7 +1703,9 @@ interface CustomerOrder {
                     customer_name: order.customer_name,
                     is_private: order.is_private,
                     deadline: order.deadline,
-                    status: order.status,
+                    // Use COI's own status (item.status is the CustomerOrderItem status)
+                    status: item.status || order.status,
+                    order_status: order.status,
                     created_by_name: order.created_by_name,
                     contact_names: order.contact_names,
                     invoice_number: order.invoice_number,
@@ -2199,6 +2260,7 @@ interface CustomerOrder {
             expandedRowRender: (record: any) => {
               const productId = Number(record.quote_item?.manufacturing_product || record.manufacturing_product || 0);
               const orderId = record.originalOrder?.id;
+              const coiId = record.id;
               const itemName = record.product_name || record.manufacturing_product_name || record.name || '';
               if (!productId) return <div style={{ padding: '8px 16px', color: '#999' }}>Nincs altétel.</div>;
               return (
@@ -2209,7 +2271,7 @@ interface CustomerOrder {
                       <Button
                         size="small"
                         icon={<EyeOutlined />}
-                        onClick={() => navigate(`/sales/customer-orders/${orderId}`)}
+                        onClick={() => navigate(`/sales/customer-orders/${orderId}?edit_item=${coiId}`)}
                       >
                         Tétel megnyitása
                       </Button>

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, useLocation } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
 import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert, Upload, Tooltip } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
@@ -40,6 +40,7 @@ const CustomerOrderDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams] = useSearchParams();
   const hidePrices = location.state?.hidePrices;
   const isPopup = new URLSearchParams(location.search).get('popup') === '1';
   const { user } = useAuth();
@@ -75,6 +76,7 @@ const CustomerOrderDetail: React.FC = () => {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
+  const [selectorExpandCosts, setSelectorExpandCosts] = useState(false);
 
   const loadLogs = async () => {
     try {
@@ -133,6 +135,18 @@ const CustomerOrderDetail: React.FC = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  // Auto-open edit modal when ?edit_item=<coiId> is present
+  useEffect(() => {
+    const editItemId = searchParams.get('edit_item');
+    if (!editItemId || !order?.items) return;
+    const item = order.items.find((i: any) => String(i.id) === editItemId);
+    if (!item) return;
+    setEditContext({ item });
+    setSelectorType(item.item_type || 'manufacturing');
+    setSelectorExpandCosts(true);
+    setSelectorOpen(true);
+  }, [order, searchParams]);
 
   useEffect(() => {
     (async () => {
@@ -897,11 +911,12 @@ const CustomerOrderDetail: React.FC = () => {
         <ItemSelectorModal
           open={selectorOpen}
           defaultType={selectorType}
-          onCancel={() => { setSelectorOpen(false); setEditContext(null); }}
+          onCancel={() => { setSelectorOpen(false); setEditContext(null); setSelectorExpandCosts(false); }}
           onAdd={onEditSelected}
           mode="edit"
           rfqId={rfq?.id ? Number(rfq.id) : undefined}
           rfqCurrency={rfq?.currency_code || 'HUF'}
+          expandCosts={selectorExpandCosts}
           initialSelection={editContext ? {
             item_type: editContext.item.item_type,
             ref_id: (editContext.item.quote_item?.product || editContext.item.quote_item?.manufacturing_product || editContext.item.quote_item?.service) as number,
