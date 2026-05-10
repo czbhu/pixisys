@@ -1893,7 +1893,8 @@ const RFQs: React.FC = () => {
                 <Space.Compact style={{ width: '100%' }}>
                   <Form.Item name="company_id" noStyle>
                   <Select 
-                    showSearch 
+                    showSearch
+                    allowClear
                     optionFilterProp="label"
                     filterOption={accentInsensitiveLabelFilter}
                     placeholder="Válassz céget vagy magánszemélyt" 
@@ -1950,8 +1951,13 @@ const RFQs: React.FC = () => {
                       }
                     }}
                     onChange={async (val) => {
-                      form.setFieldsValue({ company_id: val });
-                      if (val === 'private') {
+                      form.setFieldsValue({ company_id: val ?? null });
+                      if (!val) {
+                        // Törölt ügyfél → összes kapcsolattartó, névnél cég is látszódjon
+                        const list = await crmService.getContacts();
+                        setContacts((list.results ?? list) || []);
+                        form.setFieldsValue({ contact_ids: [] });
+                      } else if (val === 'private') {
                         // Magánszemélyek lekérdezése
                         const list = await crmService.getPrivateContacts();
                         setContacts(list.results ?? list);
@@ -2160,8 +2166,13 @@ const RFQs: React.FC = () => {
                       }
                     }}
                     onChange={async (val) => {
-                      form.setFieldsValue({ company_id: val });
-                      if (val === 'private') {
+                      form.setFieldsValue({ company_id: val ?? null });
+                      if (!val) {
+                        // Törölt ügyfél → összes kapcsolattartó, névnél cég is látszódjon
+                        const list = await crmService.getContacts();
+                        setContacts((list.results ?? list) || []);
+                        form.setFieldsValue({ contact_ids: [] });
+                      } else if (val === 'private') {
                         const list = await crmService.getPrivateContacts();
                         setContacts(list.results ?? list);
                         form.setFieldsValue({ contact_ids: [] });
@@ -2170,8 +2181,7 @@ const RFQs: React.FC = () => {
                         setContacts(list.results ?? list);
                         form.setFieldsValue({ contact_ids: [] });
                       }
-                      // Auto-close after selection
-                      setClientCompanyModalOpen(false);
+                      if (val) setClientCompanyModalOpen(false);
                     }}
                   >
                     <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
