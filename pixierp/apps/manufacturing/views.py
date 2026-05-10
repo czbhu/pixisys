@@ -1240,7 +1240,12 @@ class ManufacturingCostItemViewSet(
 
         # QR targets
         base_url = getattr(dj_settings, 'FRONTEND_BASE_URL', 'https://erp.pixisys.eu').rstrip('/')
-        internal_target_url = f"{base_url}/manufacturing/products/{product.id}" if product else f"{base_url}/manufacturing/queue"
+        if order:
+            internal_target_url = f"{base_url}/manufacturing/queue?order={order.id}"
+        elif product:
+            internal_target_url = f"{base_url}/manufacturing/queue?product={product.id}"
+        else:
+            internal_target_url = f"{base_url}/manufacturing/queue"
         external_target_url = None
         external_status_note = ''
 
