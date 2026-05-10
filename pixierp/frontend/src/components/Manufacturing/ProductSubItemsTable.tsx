@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select, Checkbox } from 'antd';
-import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined } from '@ant-design/icons';
+import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select, Checkbox, Modal, Form } from 'antd';
+import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import {
   DndContext,
   closestCenter,
@@ -111,6 +111,12 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
   const [supplierPopoverOpen, setSupplierPopoverOpen] = useState<number | null>(null);
+
+  // Edit modal state
+  const [editModalVisible, setEditModalVisible] = useState(false);
+  const [editingSubItem, setEditingSubItem] = useState<ProductSubItem | null>(null);
+  const [editFormInternal, setEditFormInternal] = useState(false);
+  const [editForm] = Form.useForm();
 
   useEffect(() => {
     api.get('/crm/companies/?is_supplier=true&page_size=1000')
@@ -278,6 +284,59 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     persist(next);
   };
 
+  const openEditModal = (r: ProductSubItem) => {
+    setEditingSubItem(r);
+    setEditFormInternal(!!r.is_internal);
+    editForm.setFieldsValue({
+      name: r.name,
+      code: r.code || '',
+      type: r.type || 'other',
+      quantity: r.quantity,
+      unit: r.unit || 'db',
+      cost_price: r.cost_price,
+      markup_percent: r.markup_percent,
+      status: r.status || 'new',
+      is_internal: !!r.is_internal,
+      supplier: r.supplier ?? undefined,
+      department: r.department ?? undefined,
+    });
+    setEditModalVisible(true);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingSubItem) return;
+    try {
+      const values = await editForm.validateFields();
+      const patch: any = {
+        name: values.name,
+        code: values.code || '',
+        type: values.type,
+        quantity: values.quantity,
+        unit: values.unit,
+        cost_price: values.cost_price ?? editingSubItem.cost_price,
+        markup_percent: values.markup_percent ?? editingSubItem.markup_percent,
+        status: values.status,
+        is_internal: !!values.is_internal,
+        supplier: values.is_internal ? null : (values.supplier ?? null),
+        department: values.is_internal ? (values.department ?? null) : null,
+      };
+      const supObj = suppliers.find(s => s.id === patch.supplier);
+      const deptObj = departments.find(d => d.id === patch.department);
+      setItems(prev => prev.map(it => it.id === editingSubItem.id ? {
+        ...it,
+        ...patch,
+        supplier_name: supObj?.name || '',
+        department_name: deptObj?.name || '',
+      } : it));
+      setEditModalVisible(false);
+      await api.patch(`/manufacturing/cost-items/${editingSubItem.id}/`, patch);
+      message.success('Altétel mentve');
+    } catch (e: any) {
+      if (e?.errorFields) return; // validation error
+      message.error('Mentés sikertelen');
+    }
+  };
+
   const handleStatusChange = async (id: number, newStatus: string) => {
     const prev = items;
     setItems(items.map(it => it.id === id ? { ...it, status: newStatus } : it));
@@ -292,6 +351,11 @@ export const ProductSubItemsTable: React.FC<Props> = ({
 
   const columns: any[] = [
     ...(readOnly ? [] : [{ title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> }]),
+    { title: '', key: 'edit', width: 32,
+      render: (_: any, r: ProductSubItem) => (
+        <Button size="small" icon={<EditOutlined />} type="text" onClick={(e) => { e.stopPropagation(); openEditModal(r); }} />
+      ),
+    },
     {
       title: 'Megnevezés', key: 'name',
       render: (_: any, r: ProductSubItem) => (
@@ -652,6 +716,80 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           </SortableContext>
         </DndContext>
       )}
+
+      <Modal
+        title="Altétel szerkesztése"
+        open={editModalVisible}
+        onCancel={() => setEditModalVisible(false)}
+        onOk={handleEditSave}
+        okText="Mentés"
+        cancelText="Mégse"
+        destroyOnClose
+        width={480}
+      >
+        <Form form={editForm} layout="vertical" size="small">
+          <Form.Item label="Megnevezés" name="name" rules={[{ required: true, message: 'Kötelező' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item label="Kód" name="code">
+            <Input placeholder="Opcionális" />
+          </Form.Item>
+          <Space style={{ width: '100%' }} size={8}>
+            <Form.Item label="Típus" name="type" style={{ flex: 1 }}>
+              <Select style={{ width: 140 }} options={[
+                { value: 'material', label: 'Anyag' },
+                { value: 'service', label: 'Szolgáltatás' },
+                { value: 'other', label: 'Egyéb' },
+              ]} />
+            </Form.Item>
+            <Form.Item label="Mennyiség" name="quantity" style={{ flex: 1 }}>
+              <Input type="number" step="0.01" min={0} style={{ width: 110 }} />
+            </Form.Item>
+            <Form.Item label="Egység" name="unit" style={{ flex: 1 }}>
+              <Input style={{ width: 80 }} />
+            </Form.Item>
+          </Space>
+          {showPrices && (
+            <Space style={{ width: '100%' }} size={8}>
+              <Form.Item label="Beker. ár" name="cost_price" style={{ flex: 1 }}>
+                <Input type="number" step="0.01" min={0} style={{ width: 130 }} />
+              </Form.Item>
+              <Form.Item label="Felár %" name="markup_percent" style={{ flex: 1 }}>
+                <Input type="number" step="0.1" min={0} style={{ width: 100 }} />
+              </Form.Item>
+            </Space>
+          )}
+          <Form.Item label="Státusz" name="status">
+            <Select style={{ width: '100%' }} options={STATUS_OPTIONS.map(o => ({ value: o.value, label: o.label }))} />
+          </Form.Item>
+          <Form.Item name="is_internal" valuePropName="checked">
+            <Checkbox onChange={e => setEditFormInternal(e.target.checked)}>Belső gyártás</Checkbox>
+          </Form.Item>
+          {editFormInternal ? (
+            <Form.Item label="Osztály" name="department">
+              <Select
+                showSearch
+                allowClear
+                placeholder="Osztály kiválasztása…"
+                style={{ width: '100%' }}
+                optionFilterProp="label"
+                options={departments.map(d => ({ value: d.id, label: d.name }))}
+              />
+            </Form.Item>
+          ) : (
+            <Form.Item label="Beszállító" name="supplier">
+              <Select
+                showSearch
+                allowClear
+                placeholder="Beszállító kiválasztása…"
+                style={{ width: '100%' }}
+                optionFilterProp="label"
+                options={suppliers.map(s => ({ value: s.id, label: s.name }))}
+              />
+            </Form.Item>
+          )}
+        </Form>
+      </Modal>
     </div>
   );
 };

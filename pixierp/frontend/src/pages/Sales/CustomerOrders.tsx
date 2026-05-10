@@ -731,7 +731,16 @@ interface CustomerOrder {
                       <Space direction="vertical" style={{ width: '100%' }} size={10}>
                         {productId > 0 && (
                           <div>
-                            <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Altételek</div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                              <span style={{ fontWeight: 500, fontSize: 12, color: '#555' }}>Altételek</span>
+                              <Button
+                                size="small"
+                                icon={<EyeOutlined />}
+                                onClick={() => navigate(`/sales/customer-orders/${record.id}`)}
+                              >
+                                Tétel megnyitása
+                              </Button>
+                            </div>
                             <div style={{ paddingLeft: 8 }}>
                               <ProductSubItemsTable productId={productId} showNotesAndAttachments />
                             </div>
@@ -2189,9 +2198,23 @@ interface CustomerOrder {
             },
             expandedRowRender: (record: any) => {
               const productId = Number(record.quote_item?.manufacturing_product || record.manufacturing_product || 0);
+              const orderId = record.originalOrder?.id;
+              const itemName = record.product_name || record.manufacturing_product_name || record.name || '';
               if (!productId) return <div style={{ padding: '8px 16px', color: '#999' }}>Nincs altétel.</div>;
               return (
                 <div style={{ padding: '8px 0 8px 28px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                    {itemName && <span style={{ fontSize: 12, color: '#555', fontWeight: 500 }}>{itemName}</span>}
+                    {orderId && (
+                      <Button
+                        size="small"
+                        icon={<EyeOutlined />}
+                        onClick={() => navigate(`/sales/customer-orders/${orderId}`)}
+                      >
+                        Tétel megnyitása
+                      </Button>
+                    )}
+                  </div>
                   <ProductSubItemsTable productId={productId} />
                 </div>
               );
