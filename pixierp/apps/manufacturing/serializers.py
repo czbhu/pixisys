@@ -616,7 +616,7 @@ class ProductTemplateSerializer(serializers.ModelSerializer):
             'custom_size_width_min', 'custom_size_width_max',
             'custom_size_height_min', 'custom_size_height_max',
             'sizes', 'quantity_discounts',
-            'is_active', 'created_at', 'updated_at',
+            'is_active', 'is_protected', 'created_at', 'updated_at',
         ]
         read_only_fields = ['created_at', 'updated_at']
 

@@ -12,7 +12,6 @@ import {
     BarChartOutlined,
     SelectOutlined,
     UnorderedListOutlined,
-    ScissorOutlined,
 } from '@ant-design/icons';
 import Materials from './Materials';
 import MaterialGroups from './MaterialGroups';
@@ -25,7 +24,6 @@ import SupplierInvoices from './SupplierInvoices';
 import Scraps from './Scraps';
 import Picking from './Picking';
 import PickingList from './PickingList';
-import Remnants from './Remnants';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const WarehouseModule: React.FC = () => {
@@ -41,7 +39,6 @@ const WarehouseModule: React.FC = () => {
         { key: '/warehouse/reports', label: 'Jelentések', icon: <BarChartOutlined /> },
         { key: '/warehouse/picking', label: 'Kiszedés', icon: <SelectOutlined /> },
         { key: '/warehouse/picking-list', label: 'Kiszedési lista', icon: <UnorderedListOutlined /> },
-        { key: '/warehouse/remnants', label: 'Maradékok / Hullók', icon: <ScissorOutlined /> },
     ];
 
     return (
@@ -58,7 +55,6 @@ const WarehouseModule: React.FC = () => {
             <Route path="/reports" element={<Reports />} />
             <Route path="/picking" element={<Picking />} />
             <Route path="/picking-list" element={<PickingList />} />
-            <Route path="/remnants" element={<Remnants />} />
         </Routes>
     );
 };

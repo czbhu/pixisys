@@ -1739,3 +1739,31 @@ class ProductTemplateViewSet(viewsets.ModelViewSet):
         if category:
             qs = qs.filter(category_id=category)
         return qs
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        if instance.is_protected:
+            return Response(
+                {'detail': 'Védett terméksablon nem törölhető.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().destroy(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Védett sablon esetén az is_protected mezőt nem engedjük False-ra állítani
+        if instance.is_protected and not request.data.get('is_protected', True):
+            return Response(
+                {'detail': 'Védett terméksablon is_protected mezője nem módosítható.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return super().update(request, *args, **kwargs)
+
+    @action(detail=False, methods=['post'], url_path='ensure-protected')
+    def ensure_protected(self, request):
+        """Ellenőrzi és létrehozza a hiányzó védett elemeket."""
+        from django.core.management import call_command
+        from io import StringIO
+        out = StringIO()
+        call_command('seed_protected_items', '--verbose', stdout=out)
+        return Response({'detail': out.getvalue()})

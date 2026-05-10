@@ -26,7 +26,6 @@ import Services from './Services';
 import ServiceGroups from './ServiceGroups';
 import CalculatorTemplates from './CalculatorTemplates';
 import Calculator from './Calculator';
-import UVCalculator from './UVCalculator';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const ManufacturingModule: React.FC = () => {
@@ -39,7 +38,6 @@ const ManufacturingModule: React.FC = () => {
         { key: '/manufacturing/services', label: 'Szolgáltatások', icon: <ScissorOutlined /> },
         { key: '/manufacturing/service-groups', label: 'Szolgáltatás csoportok', icon: <GroupOutlined /> },
         { key: '/manufacturing/calculators', label: 'Kalkulátorok', icon: <CalculatorOutlined /> },
-        { key: '/manufacturing/uv-calculator', label: 'UV Nyomtató Kalkulátor', icon: <ToolOutlined /> },
         { key: '/manufacturing/print-templates', label: 'Sablonok', icon: <FileOutlined /> },
     ];
 
@@ -57,7 +55,6 @@ const ManufacturingModule: React.FC = () => {
             <Route path="/service-groups" element={<ServiceGroups />} />
             <Route path="/calculators" element={<CalculatorTemplates />} />
             <Route path="/calculator/:templateId" element={<Calculator />} />
-            <Route path="/uv-calculator" element={<UVCalculator />} />
         </Routes>
     );
 };

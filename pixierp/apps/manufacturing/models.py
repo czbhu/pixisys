@@ -1347,6 +1347,11 @@ class ProductTemplate(models.Model):
     )
 
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    is_protected = models.BooleanField(
+        default=False,
+        verbose_name="Védett",
+        help_text="Védett terméksablon nem törölhető. Minden termékkategóriában az alapminta.",
+    )
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Létrehozva")
     updated_at = models.DateTimeField(auto_now=True, verbose_name="Módosítva")
 
@@ -1357,6 +1362,11 @@ class ProductTemplate(models.Model):
 
     def __str__(self):
         return self.name
+
+    def delete(self, *args, **kwargs):
+        if self.is_protected:
+            raise ValueError("Védett terméksablon nem törölhető.")
+        super().delete(*args, **kwargs)
 
 
 class ProductTemplateSize(models.Model):

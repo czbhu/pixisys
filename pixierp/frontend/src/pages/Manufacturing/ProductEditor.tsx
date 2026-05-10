@@ -90,6 +90,7 @@ interface ProductTemplate {
   template_categories: number[];
   template_categories_details: { id: number; name: string }[];
   is_active: boolean;
+  is_protected: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -619,6 +620,7 @@ const ProductEditor: React.FC = () => {
       sorter: (a: ProductTemplate, b: ProductTemplate) => a.name.localeCompare(b.name),
       render: (name: string, rec: ProductTemplate) => (
         <Button type="link" style={{ padding: 0 }} onClick={() => openDetail(rec)}>
+          {rec.is_protected && <LockOutlined style={{ marginRight: 4, color: '#faad14' }} />}
           {name}
         </Button>
       ),
@@ -672,11 +674,17 @@ const ProductEditor: React.FC = () => {
           <Tooltip title="Másolás">
             <Button size="small" icon={<CopyOutlined />} onClick={() => handleDuplicate(rec)} />
           </Tooltip>
-          <Popconfirm title="Biztosan törlöd?" onConfirm={() => handleDelete(rec.id)} okText="Törlés" cancelText="Mégse">
-            <Tooltip title="Törlés">
-              <Button size="small" danger icon={<DeleteOutlined />} />
+          {rec.is_protected ? (
+            <Tooltip title="Védett terméksablon – nem törölhető">
+              <Button size="small" danger icon={<LockOutlined />} disabled />
             </Tooltip>
-          </Popconfirm>
+          ) : (
+            <Popconfirm title="Biztosan törlöd?" onConfirm={() => handleDelete(rec.id)} okText="Törlés" cancelText="Mégse">
+              <Tooltip title="Törlés">
+                <Button size="small" danger icon={<DeleteOutlined />} />
+              </Tooltip>
+            </Popconfirm>
+          )}
         </Space>
       ),
     },
