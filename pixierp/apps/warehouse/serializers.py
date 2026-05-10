@@ -76,7 +76,7 @@ class MaterialSerializer(serializers.ModelSerializer):
         try:
             import requests
             response = requests.get(
-                f'https://inv.pixisys.eu/api/vat-types/{obj.vat_type_id}/',
+                f'http://localhost:4001/api/vat-types/{obj.vat_type_id}/',
                 timeout=2
             )
             if response.status_code == 200:

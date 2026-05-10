@@ -1149,7 +1149,7 @@ class VATTypeProxyViewSet(viewsets.ViewSet):
         try:
             # Call the invoice API
             response = requests.get(
-                'https://inv.pixisys.eu/api/vat-types/',
+                'http://localhost:4001/api/vat-types/',
                 params={'active': 'true'},
                 timeout=10
             )
