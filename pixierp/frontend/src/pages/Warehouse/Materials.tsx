@@ -189,6 +189,7 @@ const Materials: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [csvImporting, setCsvImporting] = useState(false);
   const csvImportRef = React.useRef<HTMLInputElement>(null);
+  const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [form] = Form.useForm();
@@ -885,7 +886,10 @@ const Materials: React.FC = () => {
   };
 
   const handleExportCsv = () => {
-    window.location.href = '/api/warehouse/materials/export_csv/';
+    const ids = selectedRowKeys.join(',');
+    window.location.href = ids
+      ? `/api/warehouse/materials/export_csv/?ids=${ids}`
+      : '/api/warehouse/materials/export_csv/';
   };
 
   const handleImportCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2074,6 +2078,11 @@ const Materials: React.FC = () => {
         searchValue={searchText}
         onSearchChange={setSearchText}
         searchPlaceholder="Keresés név, kód vagy leírás alapján..."
+        rowSelection={{
+          selectedRowKeys,
+          onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as number[]),
+          columnWidth: 40,
+        }}
         toolbarExtra={
           <Space wrap>
             <Select
@@ -2118,9 +2127,9 @@ const Materials: React.FC = () => {
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               Új elem
             </Button>
-            <Tooltip title="Összes anyag exportálása CSV-be">
+            <Tooltip title={selectedRowKeys.length ? `${selectedRowKeys.length} kijelölt sor exportálása` : 'Összes anyag exportálása CSV-be'}>
               <Button icon={<DownloadOutlined />} onClick={handleExportCsv}>
-                CSV export
+                CSV export{selectedRowKeys.length ? ` (${selectedRowKeys.length})` : ''}
               </Button>
             </Tooltip>
             <Tooltip title="Anyagok importálása CSV-ből (cikkszám egyezésnél felülírja)">

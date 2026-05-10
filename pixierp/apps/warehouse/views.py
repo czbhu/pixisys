@@ -122,10 +122,15 @@ class MaterialViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'], url_path='export_csv')
     def export_csv(self, request):
-        """Összes anyag exportálása CSV-be."""
+        """Összes anyag exportálása CSV-be. ids=1,2,3 esetén csak azokat."""
         import csv
         from django.http import HttpResponse
         qs = self.get_queryset().select_related('material_group', 'default_supplier')
+        ids_param = request.query_params.get('ids', '').strip()
+        if ids_param:
+            id_list = [i.strip() for i in ids_param.split(',') if i.strip().isdigit()]
+            if id_list:
+                qs = qs.filter(id__in=id_list)
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="materials.csv"'
         response.write('\ufeff')  # UTF-8 BOM for Excel
