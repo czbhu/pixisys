@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Table, Card, Button, Modal, Form, Input, Select, message, Space, Tag, Popconfirm, Tabs, Upload, Checkbox, Row, Col, Radio, Tooltip } from 'antd';
 import NumInput from '../../components/NumInput';
-import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined } from '@ant-design/icons';
+import { PlusOutlined, EditOutlined, DeleteOutlined, UploadOutlined, ExclamationCircleOutlined, ThunderboltOutlined, CopyOutlined, DownloadOutlined, ImportOutlined } from '@ant-design/icons';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../services/api';
 import EnhancedTable from '../../components/EnhancedTable';
@@ -187,6 +187,8 @@ const Materials: React.FC = () => {
   const [searchParams] = useSearchParams();
   const [materials, setMaterials] = useState<Material[]>([]);
   const [loading, setLoading] = useState(false);
+  const [csvImporting, setCsvImporting] = useState(false);
+  const csvImportRef = React.useRef<HTMLInputElement>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
   const [form] = Form.useForm();
@@ -879,6 +881,35 @@ const Materials: React.FC = () => {
       console.error('Hiba a hozzáadott beszállítók betöltésekor:', error);
       setAddedSuppliers([]);
       setAllCostItems([]);
+    }
+  };
+
+  const handleExportCsv = () => {
+    window.location.href = '/api/warehouse/materials/export_csv/';
+  };
+
+  const handleImportCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    // reset so same file can be re-selected
+    e.target.value = '';
+    const formData = new FormData();
+    formData.append('file', file);
+    setCsvImporting(true);
+    try {
+      const res = await api.post('/warehouse/materials/import_csv/', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const { created, updated, errors } = res.data;
+      const lines = [`Létrehozva: ${created}, Frissítve: ${updated}`];
+      if (errors?.length) lines.push(`Hibák: ${errors.slice(0, 5).join('; ')}`);
+      if (errors?.length > 5) lines.push(`… és még ${errors.length - 5} hiba`);
+      message.success(lines.join(' | '), 6);
+      fetchMaterials();
+    } catch (err: any) {
+      message.error(err?.response?.data?.error || 'Import hiba');
+    } finally {
+      setCsvImporting(false);
     }
   };
 
@@ -2087,6 +2118,27 @@ const Materials: React.FC = () => {
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               Új elem
             </Button>
+            <Tooltip title="Összes anyag exportálása CSV-be">
+              <Button icon={<DownloadOutlined />} onClick={handleExportCsv}>
+                CSV export
+              </Button>
+            </Tooltip>
+            <Tooltip title="Anyagok importálása CSV-ből (cikkszám egyezésnél felülírja)">
+              <Button
+                icon={<ImportOutlined />}
+                loading={csvImporting}
+                onClick={() => csvImportRef.current?.click()}
+              >
+                CSV import
+              </Button>
+            </Tooltip>
+            <input
+              ref={csvImportRef}
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: 'none' }}
+              onChange={handleImportCsvChange}
+            />
           </Space>
         }
         pagination={{

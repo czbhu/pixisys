@@ -104,6 +104,165 @@ class MaterialViewSet(viewsets.ModelViewSet):
         
         return queryset
 
+    # CSV mezők sorrendje (fejléc)
+    CSV_FIELDS = [
+        'code', 'name', 'description',
+        'is_material', 'is_product', 'is_active',
+        'unit', 'unit_cost_price', 'markup_percentage', 'currency',
+        'material_group_name', 'material_format',
+        'width', 'length', 'height', 'dimension_unit',
+        'width_fixed', 'length_fixed', 'height_fixed',
+        'density', 'density_unit',
+        'area_weight', 'area_weight_unit',
+        'specific_weight', 'specific_weight_unit',
+        'weight', 'weight_unit',
+        'volume_liter',
+        'default_supplier_name',
+    ]
+
+    @action(detail=False, methods=['get'], url_path='export_csv')
+    def export_csv(self, request):
+        """Összes anyag exportálása CSV-be."""
+        import csv
+        from django.http import HttpResponse
+        qs = self.get_queryset().select_related('material_group', 'default_supplier')
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="materials.csv"'
+        response.write('\ufeff')  # UTF-8 BOM for Excel
+        writer = csv.DictWriter(response, fieldnames=self.CSV_FIELDS, extrasaction='ignore')
+        writer.writeheader()
+        for m in qs:
+            writer.writerow({
+                'code': m.code or '',
+                'name': m.name or '',
+                'description': m.description or '',
+                'is_material': '1' if m.is_material else '0',
+                'is_product': '1' if m.is_product else '0',
+                'is_active': '1' if m.is_active else '0',
+                'unit': m.unit or '',
+                'unit_cost_price': m.unit_cost_price if m.unit_cost_price is not None else '',
+                'markup_percentage': m.markup_percentage if m.markup_percentage is not None else '',
+                'currency': m.currency or 'HUF',
+                'material_group_name': (m.material_group.name if m.material_group else ''),
+                'material_format': m.material_format or '',
+                'width': m.width if m.width is not None else '',
+                'length': m.length if m.length is not None else '',
+                'height': m.height if m.height is not None else '',
+                'dimension_unit': m.dimension_unit or '',
+                'width_fixed': '1' if m.width_fixed else '0',
+                'length_fixed': '1' if m.length_fixed else '0',
+                'height_fixed': '1' if m.height_fixed else '0',
+                'density': m.density if m.density is not None else '',
+                'density_unit': m.density_unit or '',
+                'area_weight': m.area_weight if m.area_weight is not None else '',
+                'area_weight_unit': m.area_weight_unit or '',
+                'specific_weight': m.specific_weight if m.specific_weight is not None else '',
+                'specific_weight_unit': m.specific_weight_unit or '',
+                'weight': m.weight if m.weight is not None else '',
+                'weight_unit': m.weight_unit or '',
+                'volume_liter': m.volume_liter if m.volume_liter is not None else '',
+                'default_supplier_name': (m.default_supplier.name if m.default_supplier else ''),
+            })
+        return response
+
+    @action(detail=False, methods=['post'], url_path='import_csv',
+            parser_classes=[MultiPartParser, FormParser])
+    def import_csv(self, request):
+        """CSV import: ha azonos a cikkszám, frissíti; egyébként létrehozza."""
+        import csv
+        import io
+        file_obj = request.FILES.get('file')
+        if not file_obj:
+            return Response({'error': 'Nincs fájl csatolva.'}, status=400)
+
+        try:
+            content = file_obj.read().decode('utf-8-sig')  # strip BOM
+            reader = csv.DictReader(io.StringIO(content))
+        except Exception as e:
+            return Response({'error': f'Fájl olvasási hiba: {e}'}, status=400)
+
+        created = 0
+        updated = 0
+        errors = []
+
+        # Előre betöltjük a csoportokat és beszállítókat névalapon
+        group_map = {g.name.strip().lower(): g for g in MaterialGroup.objects.all()}
+        supplier_map = {s.name.strip().lower(): s for s in Company.objects.filter(is_supplier=True)}
+
+        def to_decimal(val):
+            if val is None or str(val).strip() == '':
+                return None
+            try:
+                return float(str(val).replace(',', '.'))
+            except Exception:
+                return None
+
+        def to_bool(val):
+            return str(val).strip() in ('1', 'true', 'True', 'igen', 'yes')
+
+        for row_num, row in enumerate(reader, start=2):
+            code = (row.get('code') or '').strip()
+            if not code:
+                errors.append(f'#{row_num}: hiányzó cikkszám — sor kihagyva')
+                continue
+            name = (row.get('name') or '').strip()
+            if not name:
+                errors.append(f'#{row_num} ({code}): hiányzó név — sor kihagyva')
+                continue
+
+            # Lookup kapcsolt objektumok
+            group_name = (row.get('material_group_name') or '').strip().lower()
+            group = group_map.get(group_name)
+
+            supplier_name = (row.get('default_supplier_name') or '').strip().lower()
+            supplier = supplier_map.get(supplier_name)
+
+            defaults = {
+                'name': name,
+                'description': (row.get('description') or '').strip(),
+                'is_material': to_bool(row.get('is_material', '1')),
+                'is_product': to_bool(row.get('is_product', '0')),
+                'is_active': to_bool(row.get('is_active', '1')),
+                'unit': (row.get('unit') or '').strip(),
+                'unit_cost_price': to_decimal(row.get('unit_cost_price')),
+                'markup_percentage': to_decimal(row.get('markup_percentage')) or 0,
+                'currency': (row.get('currency') or 'HUF').strip(),
+                'material_group': group,
+                'material_format': (row.get('material_format') or '').strip(),
+                'width': to_decimal(row.get('width')),
+                'length': to_decimal(row.get('length')),
+                'height': to_decimal(row.get('height')),
+                'dimension_unit': (row.get('dimension_unit') or 'mm').strip(),
+                'width_fixed': to_bool(row.get('width_fixed', '0')),
+                'length_fixed': to_bool(row.get('length_fixed', '0')),
+                'height_fixed': to_bool(row.get('height_fixed', '0')),
+                'density': to_decimal(row.get('density')),
+                'density_unit': (row.get('density_unit') or '').strip(),
+                'area_weight': to_decimal(row.get('area_weight')),
+                'area_weight_unit': (row.get('area_weight_unit') or '').strip(),
+                'specific_weight': to_decimal(row.get('specific_weight')),
+                'specific_weight_unit': (row.get('specific_weight_unit') or '').strip(),
+                'weight': to_decimal(row.get('weight')),
+                'weight_unit': (row.get('weight_unit') or '').strip(),
+                'volume_liter': to_decimal(row.get('volume_liter')),
+                'default_supplier': supplier,
+            }
+
+            try:
+                obj, is_new = Material.objects.update_or_create(code=code, defaults=defaults)
+                if is_new:
+                    created += 1
+                else:
+                    updated += 1
+            except Exception as e:
+                errors.append(f'#{row_num} ({code}): {e}')
+
+        return Response({
+            'created': created,
+            'updated': updated,
+            'errors': errors,
+        })
+
 class WarehouseViewSet(viewsets.ModelViewSet):
     """Raktárak kezelése"""
     queryset = Warehouse.objects.all()
