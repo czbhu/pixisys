@@ -589,10 +589,30 @@ const Tickets: React.FC<TicketsProps> = ({ mode = 'list' }) => {
         open={createOpen}
         width={920}
         onCancel={() => {
-          setCreateOpen(false);
-          setCreateMessageHtml('');
-          setCreateFiles([]);
-          form.resetFields();
+          const isDirty =
+            form.isFieldsTouched() ||
+            !!createMessageHtml.replace(/<[^>]+>/g, '').trim() ||
+            createFiles.length > 0;
+          if (isDirty) {
+            Modal.confirm({
+              title: 'Biztosan bezárod?',
+              content: 'Az ablakban nem mentett módosítások vannak. Ha bezárod, a változtatások elvesznek.',
+              okText: 'Bezárás',
+              cancelText: 'Mégsem',
+              okButtonProps: { danger: true },
+              onOk: () => {
+                setCreateOpen(false);
+                setCreateMessageHtml('');
+                setCreateFiles([]);
+                form.resetFields();
+              },
+            });
+          } else {
+            setCreateOpen(false);
+            setCreateMessageHtml('');
+            setCreateFiles([]);
+            form.resetFields();
+          }
         }}
         onOk={handleCreate}
         okText="Jegy létrehozása"
