@@ -20,13 +20,14 @@ class UserSerializer(serializers.ModelSerializer):
     permissions = serializers.SerializerMethodField()
     employee_id = serializers.SerializerMethodField()
     department_names = serializers.SerializerMethodField()
+    department_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             'id', 'username', 'email', 'first_name', 'last_name',
             'is_active', 'is_staff', 'is_superuser', 'date_joined', 'last_login',
-            'roles', 'permissions', 'employee_id', 'department_names'
+            'roles', 'permissions', 'employee_id', 'department_names', 'department_ids'
         ]
         read_only_fields = ['id', 'date_joined']
 
@@ -42,6 +43,14 @@ class UserSerializer(serializers.ModelSerializer):
         try:
             employee = Employee.objects.get(user=obj)
             return [dept.name for dept in employee.departments.all()]
+        except Employee.DoesNotExist:
+            return []
+
+    def get_department_ids(self, obj):
+        from apps.hr.models import Employee
+        try:
+            employee = Employee.objects.get(user=obj)
+            return list(employee.departments.values_list('id', flat=True))
         except Employee.DoesNotExist:
             return []
 

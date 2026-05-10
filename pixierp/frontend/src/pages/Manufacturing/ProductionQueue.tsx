@@ -109,6 +109,8 @@ const ProductionQueue: React.FC = () => {
         'manufacturingProductionQueue_filterSupplier',
         null,
     );
+    const { user } = useAuth();
+    const [urlDeptFilter, setUrlDeptFilter] = useState<number | null>(null);
     const [filterStatus, setFilterStatus] = useState<string[]>(['in_production']);
     const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
     const [sendModalOpen, setSendModalOpen] = useState(false);
@@ -191,8 +193,13 @@ const ProductionQueue: React.FC = () => {
         const orderParam = Number(searchParams.get('order') || 0);
         if (orderParam > 0) {
             setFilterOrder(orderParam);
+            // QR scan: auto-apply the logged-in user's first HR department as dept filter
+            const deptIds: number[] = (user as any)?.department_ids || [];
+            if (deptIds.length > 0) {
+                setUrlDeptFilter(deptIds[0]);
+            }
         }
-    }, [searchParams]);
+    }, [searchParams, user]);
 
     const customerOptions = useMemo(() => {
         const map = new Map<number, string>();
@@ -251,6 +258,8 @@ const ProductionQueue: React.FC = () => {
             } else {
                 r = r.filter(x => !x.is_internal && x.supplier_id === id);
             }
+        } else if (urlDeptFilter) {
+            r = r.filter(x => x.is_internal && x.department_id === urlDeptFilter);
         }
         if (filterStatus.length > 0) {
             const set = new Set(filterStatus);
@@ -264,7 +273,7 @@ const ProductionQueue: React.FC = () => {
             r = r.filter(x => normalize([x.order_number, x.customer_name, x.product_name, x.item_name, x.code, x.notes].join(' ')).includes(q));
         }
         return r;
-    }, [rows, filterCustomer, filterOrder, filterSupplier, filterStatus, query]);
+    }, [rows, filterCustomer, filterOrder, filterSupplier, urlDeptFilter, filterStatus, query]);
 
     // ── Actions ──────────────────────────────────────────────────────────
     const handleStatusChange = async (id: number, newStatus: string) => {
@@ -956,9 +965,9 @@ const ProductionQueue: React.FC = () => {
                         />
                         <Select
                             allowClear placeholder="Besállító / részleg" style={{ minWidth: 200 }}
-                            value={filterSupplier ?? undefined}
+                            value={filterSupplier ?? (urlDeptFilter ? `dep:${urlDeptFilter}` : undefined)}
                             options={supplierOptions}
-                            onChange={(v) => setFilterSupplier(v ?? null)}
+                            onChange={(v) => { setUrlDeptFilter(null); setFilterSupplier(v ?? null); }}
                             showSearch optionFilterProp="label"
                         />
                         <Select

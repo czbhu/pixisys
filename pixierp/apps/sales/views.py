@@ -3548,7 +3548,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
         # Generate QR Code
         base_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
-        target_url = f"{base_url}/sales/customer-orders/{order.id}" # Link to Order or Item? User said generic QR.
+        target_url = f"{base_url}/manufacturing/queue?order={order.id}"
         qr = qrcode.QRCode(version=1, box_size=10, border=2)
         qr.add_data(target_url)
         qr.make(fit=True)
@@ -3763,7 +3763,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
 
         # Generate QR Code
         base_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://e.pixisys.eu').rstrip('/')
-        target_url = f"{base_url}/sales/customer-orders/{order.id}"
+        target_url = f"{base_url}/manufacturing/queue?order={order.id}"
         
         qr = qrcode.QRCode(
             version=1,
