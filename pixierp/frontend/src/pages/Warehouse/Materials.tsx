@@ -885,11 +885,24 @@ const Materials: React.FC = () => {
     }
   };
 
-  const handleExportCsv = () => {
+  const handleExportCsv = async () => {
     const ids = selectedRowKeys.join(',');
-    window.location.href = ids
-      ? `/api/warehouse/materials/export_csv/?ids=${ids}`
-      : '/api/warehouse/materials/export_csv/';
+    const params: Record<string, string> = {};
+    if (ids) params.ids = ids;
+    try {
+      const res = await api.get('/warehouse/materials/export_csv/', {
+        params,
+        responseType: 'blob',
+      });
+      const url = URL.createObjectURL(new Blob([res.data]));
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'materials.csv';
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      message.error('CSV export hiba');
+    }
   };
 
   const handleImportCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
