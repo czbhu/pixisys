@@ -55,6 +55,23 @@ const formatDuration = (minutes?: number | null) => {
   return `${minutes.toFixed(1)} perc`;
 };
 
+const formatMinutes = (totalMinutes: number): string => {
+  const abs = Math.abs(Math.round(totalMinutes));
+  const years   = Math.floor(abs / (60 * 24 * 365));
+  const months  = Math.floor((abs % (60 * 24 * 365)) / (60 * 24 * 30));
+  const days    = Math.floor((abs % (60 * 24 * 30)) / (60 * 24));
+  const hours   = Math.floor((abs % (60 * 24)) / 60);
+  const minutes = abs % 60;
+
+  const parts: string[] = [];
+  if (years   > 0) parts.push(`${years} év`);
+  if (months  > 0) parts.push(`${months} hónap`);
+  if (days    > 0) parts.push(`${days} nap`);
+  if (hours   > 0) parts.push(`${hours} óra`);
+  if (minutes > 0) parts.push(`${minutes} perc`);
+  return parts.length > 0 ? parts.join(' ') : '0 perc';
+};
+
 const MyTasks: React.FC = () => {
   const [rows, setRows] = useState<MyTaskRow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -243,12 +260,12 @@ const MyTasks: React.FC = () => {
           return <Tag color="green">Kész</Tag>;
         }
         if (row.overdue_minutes > 0) {
-          return <Typography.Text type="danger">Túllépve: {row.overdue_minutes} perccel</Typography.Text>;
+          return <Typography.Text type="danger">Túllépve: {formatMinutes(row.overdue_minutes)}</Typography.Text>;
         }
         if (row.due_in_minutes <= 0) {
           return <Tag color="orange">Most esedékes</Tag>;
         }
-        return `${row.due_in_minutes} perc múlva`;
+        return `${formatMinutes(row.due_in_minutes)} múlva`;
       },
       sorter: (a, b) => new Date(a.due_at).getTime() - new Date(b.due_at).getTime(),
       defaultSortOrder: 'ascend',
