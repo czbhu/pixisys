@@ -138,7 +138,10 @@ class TaskConfigurationViewSet(viewsets.ModelViewSet):
         return start, end, period_key
 
     def _calculate_due_at(self, task, now, period_start, completed_count):
-        due_at = period_start
+        # For 'once' tasks the period_start sentinel is 1970-01-01 which would
+        # produce a 56-year overdue value.  Use the current time as base instead
+        # so the due date is meaningful: "right now" or "now + interval".
+        due_at = now if task.frequency_type == 'once' else period_start
         required_count = max(1, int(task.required_count or 1))
 
         if task.frequency_type == 'weekly' and task.days_of_week:
