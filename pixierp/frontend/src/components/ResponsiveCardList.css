@@ -61,6 +61,16 @@
   font-weight: 500;
 }
 
+/* Tétel neve kiemelve mobil kártyán */
+.rc-col-item_name .rc-label {
+  color: #1677ff;
+}
+.rc-col-item_name .rc-value {
+  font-weight: 600;
+  font-size: 14px;
+  color: #111;
+}
+
 /* Bottom row: status + actions side by side */
 .rc-row-bottom {
   padding-top: 4px;

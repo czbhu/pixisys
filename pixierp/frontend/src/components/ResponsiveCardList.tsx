@@ -173,7 +173,7 @@ const ResponsiveCardList: React.FC<ResponsiveCardListProps> = ({
                     }
                     const title = typeof col.title === 'string' ? col.title : colKey;
                     return (
-                      <div key={colKey} className="rc-cell">
+                      <div key={colKey} className={`rc-cell rc-col-${colKey}`}>
                         <span className="rc-label">{title}</span>
                         <span className="rc-value">{rendered}</span>
                       </div>
