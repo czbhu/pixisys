@@ -1149,10 +1149,14 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
-    def _render_full_work_sheet_pdf_bytes(self, ci):
+    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None):
         """Generate the full two-section (KÜLSŐ + BELSŐ) worksheet PDF for a
         cost item and return the raw bytes.  Raises ImportError if ReportLab /
-        qrcode are not installed."""
+        qrcode are not installed.
+        highlight_id: the cost item id to bold-highlight in the altételek list.
+        If None, defaults to ci.id (the cost item itself).  Pass 0 to suppress."""
+        if highlight_id is None:
+            highlight_id = ci.id
         from io import BytesIO
         from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import A4
@@ -1510,7 +1514,7 @@ class ManufacturingCostItemViewSet(
                 p.setLineWidth(0.6)
                 p.rect(col_x_box, y - box * 0.5 + 0.1 * cm, box, box, stroke=1, fill=0)
 
-                is_self = sub.id == ci.id
+                is_self = (highlight_id and sub.id == highlight_id)
                 if is_self:
                     p.setFont(font_bold, 8)
 
@@ -1592,6 +1596,31 @@ class ManufacturingCostItemViewSet(
             return Response({'error': 'PDF generation failed'}, status=500)
         response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="munkalap_item_{ci.id}.pdf"'
+        return response
+
+    @action(detail=False, methods=['get'], url_path='work_sheet_for_product')
+    def work_sheet_for_product(self, request):
+        """Worksheet PDF for a ManufacturingProduct (by product_id query param).
+        No specific cost-item is highlighted — shows all altételek equally."""
+        from django.http import HttpResponse
+        from django.db.models import F
+        product_id = request.query_params.get('product_id')
+        if not product_id:
+            return Response({'error': 'product_id kötelező'}, status=400)
+        ci = (ManufacturingCostItem.objects
+              .filter(product_id=product_id)
+              .order_by(F('queue_position').asc(nulls_last=True), 'id')
+              .first())
+        if not ci:
+            return Response({'error': 'Ehhez a termékhez nincs altétel.'}, status=404)
+        try:
+            pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+        except ImportError:
+            return Response({'error': 'ReportLab not installed'}, status=500)
+        if not pdf_bytes:
+            return Response({'error': 'PDF generation failed'}, status=500)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="munkalap_product_{product_id}.pdf"'
         return response
 
     @action(detail=True, methods=['get', 'post'], url_path='attachments')

@@ -261,21 +261,19 @@ const OrderedProducts: React.FC = () => {
 
     const handlePrintWorksheet = async (record: OrderedManufacturingItem) => {
         try {
-            const product = await manufacturingService.getProduct(record.manufacturing_product_id);
-            const firstCostItemId = Number(product?.cost_items?.[0]?.id || 0);
-            if (!firstCostItemId) {
-                message.warning('Ehhez a termékhez nincs nyomtatható altétel munkalap.');
-                return;
-            }
             const response = await api.get(
-                `/manufacturing/cost-items/${firstCostItemId}/work_sheet/`,
+                `/manufacturing/cost-items/work_sheet_for_product/?product_id=${record.manufacturing_product_id}`,
                 { responseType: 'blob' }
             );
             const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
             window.open(url, '_blank');
-        } catch (e) {
-            console.error(e);
-            message.error('Hiba a munkalap letöltése során');
+        } catch (e: any) {
+            if (e?.response?.status === 404) {
+                message.warning('Ehhez a termékhez nincs nyomtatható altétel munkalap.');
+            } else {
+                console.error(e);
+                message.error('Hiba a munkalap letöltése során');
+            }
         }
     };
 
