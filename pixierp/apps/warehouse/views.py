@@ -76,6 +76,8 @@ class MaterialViewSet(viewsets.ModelViewSet):
         material_type = self.request.query_params.get('material_type', None)
         filter_type = self.request.query_params.get('filter_type', None)
         search = self.request.query_params.get('search', None)
+        material_group = self.request.query_params.get('material_group', None)
+        supplier = self.request.query_params.get('supplier', None)
         
         if material_type:
             queryset = queryset.filter(material_type_id=material_type)
@@ -86,6 +88,12 @@ class MaterialViewSet(viewsets.ModelViewSet):
         elif filter_type == 'products':
             queryset = queryset.filter(is_product=True)
         # Ha 'all' vagy nincs megadva, akkor mindent mutat
+        
+        if material_group:
+            queryset = queryset.filter(material_group_id=material_group)
+        
+        if supplier:
+            queryset = queryset.filter(default_supplier_id=supplier)
         
         if search:
             queryset = queryset.filter(

@@ -280,6 +280,8 @@ const Materials: React.FC = () => {
   const [selectedMaterialFormat, setSelectedMaterialFormat] = useState<string>('piece');
   const [searchText, setSearchText] = useState<string>('');
   const [filterType, setFilterType] = useState<string>('all');
+  const [filterGroupId, setFilterGroupId] = useState<number | undefined>(undefined);
+  const [filterSupplierId, setFilterSupplierId] = useState<number | undefined>(undefined);
   const [netUnitPrice, setNetUnitPrice] = useState<number>(0);
   const [calculatedVat, setCalculatedVat] = useState<number>(0);
   const [calculatedGross, setCalculatedGross] = useState<number>(0);
@@ -574,7 +576,7 @@ const Materials: React.FC = () => {
   // Újratöltés szűrő vagy keresés változásakor
   useEffect(() => {
     fetchMaterials();
-  }, [filterType, searchText]);
+  }, [filterType, searchText, filterGroupId, filterSupplierId]);
 
   // Update informational price when default supplier changes
   // Disabled to strictly follow manual transfer workflow like Services
@@ -594,6 +596,14 @@ const Materials: React.FC = () => {
       
       if (searchText) {
         params.append('search', searchText);
+      }
+      
+      if (filterGroupId !== undefined) {
+        params.append('material_group', String(filterGroupId));
+      }
+      
+      if (filterSupplierId !== undefined) {
+        params.append('supplier', String(filterSupplierId));
       }
       
       // Load all materials for client-side pagination
@@ -2034,15 +2044,45 @@ const Materials: React.FC = () => {
         onSearchChange={setSearchText}
         searchPlaceholder="Keresés név, kód vagy leírás alapján..."
         toolbarExtra={
-          <Space>
+          <Space wrap>
             <Select
               value={filterType}
               onChange={setFilterType}
-              style={{ width: 150 }}
+              style={{ width: 140 }}
             >
               <Option value="all">Mind</Option>
               <Option value="materials">Alapanyagok</Option>
               <Option value="products">Termékek</Option>
+            </Select>
+            <Select
+              allowClear
+              placeholder="Kategória"
+              value={filterGroupId}
+              onChange={(val) => setFilterGroupId(val)}
+              style={{ width: 180 }}
+              showSearch
+              filterOption={(input, option) =>
+                String(option?.children || '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {materialGroups.map(g => (
+                <Option key={g.id} value={g.id}>{g.name}</Option>
+              ))}
+            </Select>
+            <Select
+              allowClear
+              placeholder="Beszállító"
+              value={filterSupplierId}
+              onChange={(val) => setFilterSupplierId(val)}
+              style={{ width: 200 }}
+              showSearch
+              filterOption={(input, option) =>
+                String(option?.children || '').toLowerCase().includes(input.toLowerCase())
+              }
+            >
+              {suppliers.map(s => (
+                <Option key={s.id} value={s.id}>{s.name}</Option>
+              ))}
             </Select>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
               Új elem
