@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.pagination import PageNumberPagination
@@ -1292,3 +1293,49 @@ class VATTypeProxyViewSet(viewsets.ViewSet):
                 {'error': f'Error connecting to invoice system: {str(e)}'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE
             )
+
+
+from .serializers import MaterialRemnantSerializer
+from .models import MaterialRemnant
+
+
+class MaterialRemnantViewSet(viewsets.ModelViewSet):
+    """Alapanyag maradék (hulló) nyilvántartás."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = MaterialRemnantSerializer
+
+    def get_queryset(self):
+        qs = MaterialRemnant.objects.select_related(
+            'material', 'warehouse', 'created_by', 'source_stock'
+        ).all()
+        material_id = self.request.query_params.get('material')
+        if material_id:
+            qs = qs.filter(material_id=material_id)
+        warehouse_id = self.request.query_params.get('warehouse')
+        if warehouse_id:
+            qs = qs.filter(warehouse_id=warehouse_id)
+        available = self.request.query_params.get('available')
+        if available == '1':
+            qs = qs.filter(is_available=True)
+        elif available == '0':
+            qs = qs.filter(is_available=False)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+    @action(detail=True, methods=['post'], url_path='mark-used')
+    def mark_used(self, request, pk=None):
+        """Maradék felhasználtnak jelöl (is_available=False)."""
+        remnant = self.get_object()
+        remnant.is_available = False
+        remnant.save()
+        return Response({'status': 'ok', 'id': remnant.id})
+
+    @action(detail=True, methods=['post'], url_path='mark-available')
+    def mark_available(self, request, pk=None):
+        """Maradék visszaáll elérhetőre (pl. tévedésből jelölték felhasználtnak)."""
+        remnant = self.get_object()
+        remnant.is_available = True
+        remnant.save()
+        return Response({'status': 'ok', 'id': remnant.id})

@@ -18,7 +18,7 @@ from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
     SharedPrintPreviewFolder, SharedPrintPreviewVersion,
-    PrintTemplateCategory, PrintTemplate,
+    PrintTemplateCategory, PrintTemplate, Machine,
 )
 from .serializers import (
     PrintSizePresetSerializer, PrintPricingConfigSerializer,
@@ -26,7 +26,7 @@ from .serializers import (
     PrintMaterialSerializer, PrintOrderItemCommentSerializer,
     SharedPrintPreviewSerializer, SharedPrintPreviewCommentSerializer,
     SharedPrintPreviewFolderSerializer, SharedPrintPreviewVersionSerializer,
-    PrintTemplateCategorySerializer, PrintTemplateSerializer,
+    PrintTemplateCategorySerializer, PrintTemplateSerializer, MachineSerializer,
 )
 
 
@@ -3729,3 +3729,227 @@ class PrintTemplateViewSet(viewsets.ModelViewSet):
         # Regenerate thumbnail if file changed and no manual thumbnail provided
         if file and not self.request.FILES.get('thumbnail'):
             self._generate_thumbnail(instance)
+
+
+class MachineViewSet(viewsets.ModelViewSet):
+    """Gép (nyomtató/feldolgozó berendezés) kezelés."""
+    permission_classes = [IsAuthenticated]
+    serializer_class = MachineSerializer
+
+    def get_queryset(self):
+        qs = Machine.objects.all()
+        tech = self.request.query_params.get('tech_type')
+        if tech:
+            qs = qs.filter(tech_type=tech)
+        active = self.request.query_params.get('active')
+        if active == '1':
+            qs = qs.filter(is_active=True)
+        return qs
+
+    def get_permissions(self):
+        if self.action in ('list', 'retrieve'):
+            return [IsAuthenticated()]
+        return [IsAuthenticated()]  # staff check a serializer szinten elegendő
+
+
+class UVCalculatorViewSet(viewsets.ViewSet):
+    """UV flatbed / UV tekercses nyomtatás árkalkulátor."""
+    permission_classes = [IsAuthenticated]
+
+    @action(detail=False, methods=['post'], url_path='calculate')
+    def calculate(self, request):
+        """
+        UV nyomtatás árkalkuláció.
+
+        Bemenet (JSON):
+          machine_id        int      kötelező
+          material_id       int      opcionális
+          width_mm          float    termék szélessége mm
+          height_mm         float    termék magassága mm
+          quantity          int      darabszám
+          bleed_mm          float    vérzés (default 0)
+          margin_pct        float    fedezet % (default 0)
+          finishing_service_ids  [int]  utómunka szolgáltatás ID-k
+
+        Kimenet: részletes breakdown + elrendezés + maradék előnézet
+        """
+        from decimal import Decimal, ROUND_HALF_UP
+        from apps.printshop.cutting_optimizer import (
+            optimize_sheet_cut, optimize_roll_cut,
+            sheets_needed_for_quantity, roll_length_needed_mm,
+        )
+        from apps.warehouse.models import Material as WarehouseMaterial
+
+        d = request.data
+        try:
+            machine_id = d.get('machine_id')
+            material_id = d.get('material_id')
+            prod_w_mm = float(d.get('width_mm', 0))
+            prod_h_mm = float(d.get('height_mm', 0))
+            quantity = max(1, int(d.get('quantity', 1)))
+            bleed_mm = float(d.get('bleed_mm', 0))
+            margin_pct = Decimal(str(d.get('margin_pct', 0)))
+            finishing_service_ids = d.get('finishing_service_ids') or []
+
+            if not machine_id:
+                return Response({'error': 'machine_id kötelező'}, status=400)
+            if prod_w_mm <= 0 or prod_h_mm <= 0:
+                return Response({'error': 'Érvényes width_mm és height_mm szükséges'}, status=400)
+
+            machine = Machine.objects.get(id=machine_id)
+
+            # ── Alapanyag adatok ─────────────────────────────────────────────
+            mat_cost_per_m2 = Decimal('0')
+            mat_w_mm = mat_h_mm = roll_width_mm = None
+            mat_name = ''
+            mat_format = 'sheet'
+
+            if material_id:
+                mat = WarehouseMaterial.objects.get(id=material_id)
+                mat_name = mat.name
+                mat_format = mat.material_format or 'sheet'
+                _mult = {'mm': 1, 'cm': 10, 'm': 1000}.get(mat.dimension_unit or 'mm', 1)
+                if mat.width:
+                    mat_w_mm = float(mat.width) * _mult
+                if mat.length:
+                    mat_h_mm = float(mat.length) * _mult
+                if mat.roll_width:
+                    roll_width_mm = float(mat.roll_width) * _mult
+
+                cost_price = float(mat.unit_cost_price or 0)
+                unit = mat.unit
+                eff_roll_w = roll_width_mm or mat_w_mm
+                if unit == 'm2':
+                    mat_cost_per_m2 = Decimal(str(cost_price))
+                elif unit == 'm' and eff_roll_w:
+                    mat_cost_per_m2 = Decimal(str(cost_price / (eff_roll_w / 1000)))
+                elif unit == 'db' and mat_w_mm and mat_h_mm:
+                    area = (mat_w_mm / 1000) * (mat_h_mm / 1000)
+                    mat_cost_per_m2 = Decimal(str(cost_price / area)) if area else Decimal('0')
+
+            # ── Elrendezés optimalizálás ─────────────────────────────────────
+            is_roll = (mat_format in ('roll',)) or (machine.tech_type == 'uv_roll')
+            sheets_needed = 0
+            roll_length_mm_total = 0.0
+            remnant_preview = []
+            layout_info = {}
+
+            if is_roll:
+                rw = roll_width_mm or mat_w_mm or (
+                    float(machine.max_width_mm) if machine.max_width_mm else None)
+                if rw:
+                    roll_info = optimize_roll_cut(rw, prod_w_mm, prod_h_mm, bleed_mm)
+                    roll_length_mm_total = roll_length_needed_mm(
+                        roll_info['cols'], roll_info['length_per_row_mm'], quantity)
+                    layout_info = roll_info
+                    if roll_info['side_remnant_mm'] >= 10:
+                        remnant_preview = [{
+                            'width_mm': roll_info['side_remnant_mm'],
+                            'height_mm': None,
+                            'type': 'roll_side_strip',
+                            'note': 'Oldalsáv maradék (tekercs)',
+                        }]
+            else:
+                # Táblás
+                if mat_w_mm and mat_h_mm:
+                    sheet_info = optimize_sheet_cut(
+                        mat_w_mm, mat_h_mm, prod_w_mm, prod_h_mm, bleed_mm)
+                    fit = sheet_info['fit_count']
+                    sheets_needed = sheets_needed_for_quantity(fit, quantity) if fit > 0 else quantity
+                    layout_info = sheet_info
+                    remnant_preview = [
+                        {**r, 'type': 'sheet_remnant', 'note': 'Guillotine maradék'}
+                        for r in sheet_info['remnants']
+                    ]
+                else:
+                    sheets_needed = quantity
+
+            # ── Költségszámítás ──────────────────────────────────────────────
+            prod_area_m2 = Decimal(str((prod_w_mm / 1000) * (prod_h_mm / 1000)))
+
+            # 1) Anyagköltség
+            if is_roll and roll_length_mm_total:
+                eff_rw = Decimal(str(roll_width_mm or mat_w_mm or prod_w_mm))
+                roll_area_m2 = (eff_rw / 1000) * Decimal(str(roll_length_mm_total / 1000))
+                material_cost = roll_area_m2 * mat_cost_per_m2
+            elif sheets_needed and mat_w_mm and mat_h_mm:
+                sheet_area_m2 = Decimal(str((mat_w_mm / 1000) * (mat_h_mm / 1000)))
+                material_cost = sheet_area_m2 * mat_cost_per_m2 * Decimal(str(sheets_needed))
+            else:
+                material_cost = prod_area_m2 * mat_cost_per_m2 * Decimal(str(quantity))
+
+            # 2) Nyomtatási költség (gép print_cost_per_m2 × nyomtatott terület)
+            total_print_area_m2 = prod_area_m2 * Decimal(str(quantity))
+            print_cost = total_print_area_m2 * Decimal(str(machine.print_cost_per_m2 or 0))
+
+            # 3) Beállítási (setup) rezsi
+            setup_cost = (
+                Decimal(str(machine.hourly_cost or 0))
+                * Decimal(str(machine.setup_time_min or 0))
+                / Decimal('60')
+            )
+
+            # 4) Utómunka szolgáltatások
+            service_cost = Decimal('0')
+            service_breakdown = []
+            if finishing_service_ids:
+                from apps.manufacturing.models import Service
+                services = Service.objects.filter(id__in=finishing_service_ids)
+                for svc in services:
+                    ptype = svc.pricing_type or 'per_sheet'
+                    cap = Decimal(str(svc.capacity or 1)) if svc.capacity else Decimal('1')
+                    svc_total = Decimal('0')
+                    if ptype == 'per_job':
+                        svc_total = (Decimal(str(svc.setup_cost_selling or 0))
+                                     + Decimal(str(svc.unit_cost_selling or 0)))
+                    elif ptype == 'per_cut':
+                        cuts = (Decimal(str(quantity)) / cap).to_integral_value(rounding='ROUND_CEILING')
+                        svc_total = (Decimal(str(svc.setup_cost_selling or 0))
+                                     + Decimal(str(svc.unit_cost_selling or 0)) * cuts)
+                    else:  # per_sheet / per_piece
+                        svc_total = (Decimal(str(svc.setup_cost_selling or 0))
+                                     + Decimal(str(svc.unit_cost_selling or 0)) * Decimal(str(quantity)))
+                    service_cost += svc_total
+                    service_breakdown.append({
+                        'id': svc.id, 'name': svc.name,
+                        'pricing_type': ptype, 'total': float(svc_total.quantize(Decimal('0.01'))),
+                    })
+
+            subtotal = material_cost + print_cost + setup_cost + service_cost
+            margin_mult = Decimal('1') + margin_pct / Decimal('100')
+            total = (subtotal * margin_mult).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP)
+            unit_price = (total / Decimal(str(quantity))).quantize(Decimal('0.0001'), rounding=ROUND_HALF_UP)
+
+            return Response({
+                'machine': {
+                    'id': machine.id,
+                    'name': str(machine),
+                    'tech_type': machine.tech_type,
+                },
+                'material': {
+                    'name': mat_name,
+                    'format': mat_format,
+                    'cost_per_m2': float(mat_cost_per_m2),
+                },
+                'layout': layout_info,
+                'sheets_needed': sheets_needed if not is_roll else None,
+                'roll_length_mm': roll_length_mm_total if is_roll else None,
+                'remnant_preview': remnant_preview,
+                'cost_breakdown': {
+                    'material_cost': float(material_cost.quantize(Decimal('0.01'))),
+                    'print_cost': float(print_cost.quantize(Decimal('0.01'))),
+                    'setup_cost': float(setup_cost.quantize(Decimal('0.01'))),
+                    'service_cost': float(service_cost.quantize(Decimal('0.01'))),
+                    'subtotal': float(subtotal.quantize(Decimal('0.01'))),
+                    'margin_pct': float(margin_pct),
+                    'total': float(total),
+                    'unit_price': float(unit_price),
+                    'quantity': quantity,
+                },
+                'service_breakdown': service_breakdown,
+            })
+
+        except Machine.DoesNotExist:
+            return Response({'error': 'Gép nem található'}, status=404)
+        except Exception as e:
+            return Response({'error': str(e)}, status=400)

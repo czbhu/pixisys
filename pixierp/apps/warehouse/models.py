@@ -1639,3 +1639,88 @@ class InvoiceItem(models.Model):
     
     def __str__(self):
         return f"{self.invoice.invoice_number} - {self.material.name} - {self.quantity}"
+
+
+class MaterialRemnant(models.Model):
+    """Alapanyag maradék/hulló nyilvántartás.
+
+    Tábla- vagy tekercsvágás után keletkező hulló darabok nyomon követése.
+    A maradékokat újra fel lehet használni következő munkánál, csökkentve a
+    anyagköltséget.
+    """
+    material = models.ForeignKey(
+        Material,
+        on_delete=models.CASCADE,
+        related_name='remnants',
+        verbose_name='Alapanyag'
+    )
+    warehouse = models.ForeignKey(
+        Warehouse,
+        on_delete=models.CASCADE,
+        related_name='remnants',
+        verbose_name='Raktár'
+    )
+
+    # Maradék méretei (mindig mm-ben tárolva)
+    width_mm = models.DecimalField(
+        max_digits=10, decimal_places=2,
+        verbose_name='Szélesség (mm)')
+    height_mm = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name='Magasság (mm)',
+        help_text='Táblás anyagnál kötelező')
+    length_mm = models.DecimalField(
+        max_digits=10, decimal_places=2, null=True, blank=True,
+        verbose_name='Hosszúság (mm)',
+        help_text='Tekercses anyagnál: maradék folyóméter mm-ben')
+
+    quantity = models.PositiveIntegerField(default=1, verbose_name='Darabszám')
+    is_available = models.BooleanField(default=True, verbose_name='Elérhető')
+
+    # Becsült érték (forrástábla arányos ára alapján)
+    unit_value = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0,
+        verbose_name='Becsült érték (HUF/db)')
+    currency = models.CharField(max_length=3, default='HUF', verbose_name='Pénznem')
+
+    # Honnan keletkezett
+    source_job_ref = models.CharField(
+        max_length=200, blank=True,
+        verbose_name='Forrás munka',
+        help_text='pl. Megrendelés #42, UV Kalkuláció #5')
+    source_stock = models.ForeignKey(
+        MaterialStock,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='remnants',
+        verbose_name='Forrás készletsor')
+
+    notes = models.TextField(blank=True, verbose_name='Megjegyzés')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='Létrehozva')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='Módosítva')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL, null=True, blank=True,
+        related_name='created_remnants',
+        verbose_name='Létrehozta')
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Alapanyag maradék'
+        verbose_name_plural = 'Alapanyag maradékok'
+
+    def __str__(self):
+        dim = f"{self.width_mm}"
+        if self.height_mm:
+            dim += f"×{self.height_mm}"
+        return f"{self.material.name} maradék {dim} mm ({self.quantity} db)"
+
+    @property
+    def area_m2(self):
+        """Maradék területe m²-ben (táblás anyagnál)."""
+        if self.width_mm and self.height_mm:
+            from decimal import Decimal
+            return float(
+                (self.width_mm / Decimal('1000')) * (self.height_mm / Decimal('1000'))
+            )
+        return None

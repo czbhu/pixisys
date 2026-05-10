@@ -8,6 +8,8 @@ router.register(r'materials', views.PrintMaterialViewSet, basename='print-materi
 router.register(r'orders', views.PrintOrderViewSet, basename='print-order')
 router.register(r'template-categories', views.PrintTemplateCategoryViewSet, basename='print-template-category')
 router.register(r'templates', views.PrintTemplateViewSet, basename='print-template')
+router.register(r'machines', views.MachineViewSet, basename='machine')
+router.register(r'uv-calculator', views.UVCalculatorViewSet, basename='uv-calculator')
 
 urlpatterns = [
     path('', include(router.urls)),

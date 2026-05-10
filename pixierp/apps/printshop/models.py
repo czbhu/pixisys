@@ -428,3 +428,69 @@ class PrintTemplate(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.get_file_type_display()})"
+
+
+class Machine(models.Model):
+    """Nyomtatógép / feldolgozógép modell.
+
+    Minden fizikai gépet reprezentál (UV táblás, UV tekercses, íves digitális,
+    szita, tampon stb.). A kalkulátorban rezsiköltséget és nyomtatási árat tárol.
+    """
+    TECH_CHOICES = [
+        ('uv_flatbed', 'UV táblás (flatbed)'),
+        ('uv_roll',    'UV tekercses (roll)'),
+        ('digital_sheet', 'Íves digitális'),
+        ('screen',     'Szita'),
+        ('pad',        'Tampon'),
+        ('other',      'Egyéb'),
+    ]
+
+    name = models.CharField(max_length=200, verbose_name='Gép neve')
+    tech_type = models.CharField(
+        max_length=30, choices=TECH_CHOICES,
+        verbose_name='Technológia típus')
+    max_width_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name='Max. szélesség (mm)')
+    max_height_mm = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name='Max. magasság (mm)')
+
+    # Rezsiköltség
+    hourly_cost = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name='Rezsi (HUF/óra)',
+        help_text='Energia + amortizáció + bér összesen')
+    setup_time_min = models.DecimalField(
+        max_digits=6, decimal_places=2, default=0,
+        verbose_name='Beállítási idő (perc)')
+
+    # UV nyomtatás — tinta + gép rezsi m²-enként
+    print_cost_per_m2 = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        verbose_name='Nyomtatási ár (HUF/m²)',
+        help_text='Tinta + rezsi összesen m²-enként')
+    speed_m2_per_hour = models.DecimalField(
+        max_digits=8, decimal_places=2, null=True, blank=True,
+        verbose_name='Sebesség (m²/óra)')
+
+    # Íves digitális (Konica-típus) — klikkdíj
+    click_cost_color = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0,
+        verbose_name='Klikkdíj színes (HUF/lap)')
+    click_cost_bw = models.DecimalField(
+        max_digits=10, decimal_places=4, default=0,
+        verbose_name='Klikkdíj F/F (HUF/lap)')
+
+    is_active = models.BooleanField(default=True, verbose_name='Aktív')
+    notes = models.TextField(blank=True, verbose_name='Megjegyzés')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['tech_type', 'name']
+        verbose_name = 'Gép'
+        verbose_name_plural = 'Gépek'
+
+    def __str__(self):
+        return f"{self.name} ({self.get_tech_type_display()})"

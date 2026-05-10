@@ -7,7 +7,7 @@ from .views import (
     MaterialStockViewSet, MaterialReceiptViewSet, StockMovementViewSet,
     SupplierInvoiceViewSet, InvoiceItemViewSet,
     ScrapRecordViewSet, ScrapItemViewSet,
-    VATTypeProxyViewSet
+    VATTypeProxyViewSet, MaterialRemnantViewSet
 )
 
 router = DefaultRouter()
@@ -28,6 +28,7 @@ router.register(r'invoice-items', InvoiceItemViewSet)
 router.register(r'scrap-records', ScrapRecordViewSet)
 router.register(r'scrap-items', ScrapItemViewSet)
 router.register(r'vat-types', VATTypeProxyViewSet, basename='vat-type')
+router.register(r'material-remnants', MaterialRemnantViewSet, basename='material-remnant')
 
 urlpatterns = [
     path('', include(router.urls)),

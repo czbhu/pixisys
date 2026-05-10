@@ -4,7 +4,7 @@ from .models import (
     PrintSizePreset, PrintPricingConfig, PrintOrder, PrintOrderItem, PrintMaterial,
     PrintOrderItemComment, SharedPrintPreview, SharedPrintPreviewComment,
     SharedPrintPreviewFolder, SharedPrintPreviewVersion,
-    PrintTemplateCategory, PrintTemplate,
+    PrintTemplateCategory, PrintTemplate, Machine,
 )
 
 
@@ -318,3 +318,21 @@ class PrintTemplateSerializer(serializers.ModelSerializer):
                 return request.build_absolute_uri(obj.thumbnail.url)
             return obj.thumbnail.url
         return None
+
+
+class MachineSerializer(serializers.ModelSerializer):
+    """Gép serializer."""
+    tech_type_display = serializers.CharField(
+        source='get_tech_type_display', read_only=True)
+
+    class Meta:
+        model = Machine
+        fields = [
+            'id', 'name', 'tech_type', 'tech_type_display',
+            'max_width_mm', 'max_height_mm',
+            'hourly_cost', 'setup_time_min',
+            'print_cost_per_m2', 'speed_m2_per_hour',
+            'click_cost_color', 'click_cost_bw',
+            'is_active', 'notes', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['created_at', 'updated_at']

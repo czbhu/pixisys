@@ -5,7 +5,7 @@ from .models import (
     Inventory, MaterialCostItem, MaterialSize,
     MaterialStock, MaterialReceipt, StockMovement,
     SupplierInvoice, InvoiceItem,
-    ScrapRecord, ScrapItem
+    ScrapRecord, ScrapItem, MaterialRemnant,
 )
 from apps.crm.models import Company
 
@@ -461,3 +461,28 @@ class ScrapRecordSerializer(serializers.ModelSerializer):
             summary.append(f"{item.material.name} ({item.quantity} {item.material.unit})")
         return ", ".join(summary) if summary else "-"
 
+
+
+class MaterialRemnantSerializer(serializers.ModelSerializer):
+    """Alapanyag maradék serializer."""
+    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_code = serializers.CharField(source='material.code', read_only=True)
+    material_unit = serializers.CharField(source='material.unit', read_only=True)
+    material_format = serializers.CharField(source='material.material_format', read_only=True)
+    warehouse_name = serializers.CharField(source='warehouse.name', read_only=True)
+    created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
+    area_m2 = serializers.FloatField(source='area_m2', read_only=True)
+
+    class Meta:
+        model = MaterialRemnant
+        fields = [
+            'id', 'material', 'material_name', 'material_code', 'material_unit',
+            'material_format', 'warehouse', 'warehouse_name',
+            'width_mm', 'height_mm', 'length_mm',
+            'quantity', 'is_available', 'area_m2',
+            'unit_value', 'currency',
+            'source_job_ref', 'source_stock',
+            'notes', 'created_at', 'updated_at',
+            'created_by', 'created_by_name',
+        ]
+        read_only_fields = ['created_at', 'updated_at', 'created_by']
