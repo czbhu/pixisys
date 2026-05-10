@@ -685,7 +685,7 @@ interface CustomerOrder {
                   ),
                 },
                 {
-                  title: 'Státusz', key: 'item_status', width: 140,
+                  title: 'Státusz', key: 'item_status', width: 160,
                   render: (_: any, r: any) => {
                     const ITEM_STATUS_OPTS = [
                       { value: 'new', label: 'Új', color: 'blue' },
@@ -696,8 +696,16 @@ interface CustomerOrder {
                       { value: 'delivered', label: 'Kiszállítva', color: 'success' },
                       { value: 'cancelled', label: 'Törölve', color: 'red' },
                     ];
-                    const cur = r.status || 'new';
+                    const AT_OR_ABOVE_PROD = ['in_production', 'ready', 'in_delivery', 'delivered'];
+                    const children = flatItems.filter((it: any) => String(it._parent_coi_id) === String(r.id));
+                    const relevant = children.filter((c: any) => c.status !== 'cancelled');
+                    const progressCount = relevant.filter((c: any) => AT_OR_ABOVE_PROD.includes(c.status)).length;
+                    const progressTotal = relevant.length;
+                    const hasProgress = progressCount > 0 && progressTotal > 0;
+                    const cur = hasProgress ? 'in_production' : (r.status || 'new');
                     const opt = ITEM_STATUS_OPTS.find(o => o.value === cur) || ITEM_STATUS_OPTS[0];
+                    const displayLabel = hasProgress ? `${opt.label} (${progressCount}/${progressTotal})` : opt.label;
+                    const storedCur = r.status || 'new';
                     return (
                       <Popover
                         trigger="click"
@@ -706,9 +714,10 @@ interface CustomerOrder {
                         zIndex={9999}
                         content={
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {hasProgress && <div style={{ fontSize: 11, color: '#888', paddingBottom: 4 }}>{progressCount}/{progressTotal} altétel gyártásban vagy felette</div>}
                             {ITEM_STATUS_OPTS.map(o => (
-                              <Button key={o.value} size="small" type={o.value === cur ? 'primary' : 'text'}
-                                disabled={o.value === cur}
+                              <Button key={o.value} size="small" type={o.value === storedCur ? 'primary' : 'text'}
+                                disabled={o.value === storedCur}
                                 onClick={async () => {
                                   const prev = [...flatItems];
                                   const newItems = flatItems.map((it: any) => it.id === r.id ? { ...it, status: o.value } : it);
@@ -726,7 +735,7 @@ interface CustomerOrder {
                         }
                         overlayInnerStyle={{ padding: '6px 8px' }}
                       >
-                        <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()}>{opt.label}</Tag>
+                        <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()}>{displayLabel}</Tag>
                       </Popover>
                     );
                   },
@@ -1034,10 +1043,19 @@ interface CustomerOrder {
       delivered: { color: 'success', text: 'Leszállítva' },
       cancelled: { color: 'red', text: 'Törölve' },
     };
-    const { color, text } = statusMap[status] || { color: 'default', text: status };
+    const AT_OR_ABOVE_PROD_ORDER = ['in_production', 'ready', 'in_delivery', 'delivered'];
+    const orderItems: any[] = record.items || [];
+    const relevantOrderItems = orderItems.filter((it: any) => it.status !== 'cancelled');
+    const orderProgressCount = relevantOrderItems.filter((it: any) => AT_OR_ABOVE_PROD_ORDER.includes(it.status)).length;
+    const orderProgressTotal = relevantOrderItems.length;
+    const hasOrderProgress = orderProgressCount > 0 && orderProgressTotal > 0;
+    const displayStatus = hasOrderProgress ? 'in_production' : status;
+    const { color, text } = statusMap[displayStatus] || { color: 'default', text: status };
+    const displayText = hasOrderProgress ? `${text} (${orderProgressCount}/${orderProgressTotal})` : text;
     
     const content = (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {hasOrderProgress && <div style={{ fontSize: 11, color: '#888', paddingBottom: 4 }}>{orderProgressCount}/{orderProgressTotal} tétel gyártásban vagy felette</div>}
             {Object.keys(statusMap).map(s => (
                 <Button 
                     key={s} 
@@ -1056,7 +1074,7 @@ interface CustomerOrder {
     return (
         <Space>
             <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
-                <Tag color={color} style={{ cursor: 'pointer' }}>{text}</Tag>
+                <Tag color={color} style={{ cursor: 'pointer' }}>{displayText}</Tag>
             </Popover>
             {record.pending_approval && (
           <>
