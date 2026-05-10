@@ -108,7 +108,8 @@ class MaterialViewSet(viewsets.ModelViewSet):
     CSV_FIELDS = [
         'code', 'name', 'description',
         'is_material', 'is_product', 'is_active',
-        'unit', 'unit_cost_price', 'markup_percentage', 'currency',
+        'unit', 'unit_cost_price', 'unit_selling_price', 'markup_percentage', 'currency',
+        'vat_type',
         'material_group_name', 'material_format',
         'width', 'length', 'height', 'dimension_unit',
         'width_fixed', 'length_fixed', 'height_fixed',
@@ -118,25 +119,120 @@ class MaterialViewSet(viewsets.ModelViewSet):
         'weight', 'weight_unit',
         'volume_liter',
         'default_supplier_name',
+        'suppliers',
+        'price_calculation_versions',
+        'stocks',
+        'sizes',
     ]
 
     @action(detail=False, methods=['get'], url_path='export_csv')
     def export_csv(self, request):
         """Összes anyag exportálása CSV-be. ids=1,2,3 esetén csak azokat."""
         import csv
+        import json
         from django.http import HttpResponse
+        from apps.warehouse.models import MaterialSupplier, MaterialCostItem, MaterialStock, MaterialSize
+
         qs = self.get_queryset().select_related('material_group', 'default_supplier')
         ids_param = request.query_params.get('ids', '').strip()
         if ids_param:
             id_list = [i.strip() for i in ids_param.split(',') if i.strip().isdigit()]
             if id_list:
                 qs = qs.filter(id__in=id_list)
+
+        material_ids = list(qs.values_list('id', flat=True))
+
+        # Kapcsolódó adatok előre betöltve
+        sup_map = {}
+        for s in (MaterialSupplier.objects
+                  .filter(material_id__in=material_ids, is_active=True)
+                  .select_related('supplier')
+                  .order_by('material_id', '-is_primary', 'supplier__name')):
+            sup_map.setdefault(s.material_id, []).append(s)
+
+        ver_map = {}
+        for v in (MaterialCostItem.objects
+                  .filter(material_id__in=material_ids)
+                  .values('material_id', 'price_calculation_version')
+                  .distinct()
+                  .order_by('material_id', 'price_calculation_version')):
+            ver_map.setdefault(v['material_id'], []).append(v['price_calculation_version'])
+
+        stock_map = {}
+        for s in (MaterialStock.objects
+                  .filter(material_id__in=material_ids)
+                  .select_related('warehouse')
+                  .order_by('material_id', 'warehouse__name')):
+            stock_map.setdefault(s.material_id, []).append(s)
+
+        size_map = {}
+        for s in (MaterialSize.objects
+                  .filter(material_id__in=material_ids, is_active=True)
+                  .order_by('material_id', 'sort_order', 'width', 'length')):
+            size_map.setdefault(s.material_id, []).append(s)
+
+        # ÁFA típusok az invoice rendszerből
+        vat_lookup = {}
+        try:
+            vat_resp = requests.get('http://localhost:4001/api/vat-types/', timeout=5)
+            if vat_resp.status_code == 200:
+                data = vat_resp.json()
+                results = data.get('results', data) if isinstance(data, dict) else data
+                for vt in results:
+                    vat_lookup[str(vt.get('id', ''))] = vt.get('name') or vt.get('code') or ''
+        except Exception:
+            pass
+
+        def _dec(v):
+            return float(v) if v is not None else None
+
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response['Content-Disposition'] = 'attachment; filename="materials.csv"'
         response.write('\ufeff')  # UTF-8 BOM for Excel
         writer = csv.DictWriter(response, fieldnames=self.CSV_FIELDS, extrasaction='ignore')
         writer.writeheader()
+
         for m in qs:
+            suppliers_json = json.dumps([
+                {
+                    'nev': s.supplier.name,
+                    'egysegar': _dec(s.unit_price),
+                    'penznem': s.currency,
+                    'elsodleges': s.is_primary,
+                    'kod': s.supplier_code or '',
+                }
+                for s in sup_map.get(m.id, [])
+            ], ensure_ascii=False)
+
+            versions_json = json.dumps(ver_map.get(m.id, []), ensure_ascii=False)
+
+            stocks_json = json.dumps([
+                {
+                    'raktar': s.warehouse.name,
+                    'mennyiseg': _dec(s.quantity),
+                    'mertekegyseg': m.unit or '',
+                    'szelesseg': _dec(s.width),
+                    'hosszusag': _dec(s.length),
+                    'vastagság': _dec(s.thickness),
+                    'mertek_me': s.dimension_unit or '',
+                }
+                for s in stock_map.get(m.id, [])
+            ], ensure_ascii=False)
+
+            sizes_json = json.dumps([
+                {
+                    'nev': s.name or '',
+                    'szelesseg': _dec(s.width),
+                    'hosszusag': _dec(s.length),
+                    'magassag': _dec(s.height),
+                    'mertek_me': s.dimension_unit or '',
+                    'ar_tipus': s.pricing_type,
+                    'ar': _dec(s.effective_price),
+                    'penznem': m.currency or 'HUF',
+                }
+                for s in size_map.get(m.id, [])
+            ], ensure_ascii=False)
+
             writer.writerow({
                 'code': m.code or '',
                 'name': m.name or '',
@@ -145,28 +241,34 @@ class MaterialViewSet(viewsets.ModelViewSet):
                 'is_product': '1' if m.is_product else '0',
                 'is_active': '1' if m.is_active else '0',
                 'unit': m.unit or '',
-                'unit_cost_price': m.unit_cost_price if m.unit_cost_price is not None else '',
-                'markup_percentage': m.markup_percentage if m.markup_percentage is not None else '',
+                'unit_cost_price': _dec(m.unit_cost_price) if m.unit_cost_price is not None else '',
+                'unit_selling_price': _dec(m.unit_selling_price) if m.unit_selling_price is not None else '',
+                'markup_percentage': _dec(m.markup_percentage) if m.markup_percentage is not None else '',
                 'currency': m.currency or 'HUF',
+                'vat_type': vat_lookup.get(str(m.vat_type_id), str(m.vat_type_id) if m.vat_type_id else ''),
                 'material_group_name': (m.material_group.name if m.material_group else ''),
                 'material_format': m.material_format or '',
-                'width': m.width if m.width is not None else '',
-                'length': m.length if m.length is not None else '',
-                'height': m.height if m.height is not None else '',
+                'width': _dec(m.width) if m.width is not None else '',
+                'length': _dec(m.length) if m.length is not None else '',
+                'height': _dec(m.height) if m.height is not None else '',
                 'dimension_unit': m.dimension_unit or '',
                 'width_fixed': '1' if m.width_fixed else '0',
                 'length_fixed': '1' if m.length_fixed else '0',
                 'height_fixed': '1' if m.height_fixed else '0',
-                'density': m.density if m.density is not None else '',
+                'density': _dec(m.density) if m.density is not None else '',
                 'density_unit': m.density_unit or '',
-                'area_weight': m.area_weight if m.area_weight is not None else '',
+                'area_weight': _dec(m.area_weight) if m.area_weight is not None else '',
                 'area_weight_unit': m.area_weight_unit or '',
-                'specific_weight': m.specific_weight if m.specific_weight is not None else '',
+                'specific_weight': _dec(m.specific_weight) if m.specific_weight is not None else '',
                 'specific_weight_unit': m.specific_weight_unit or '',
-                'weight': m.weight if m.weight is not None else '',
+                'weight': _dec(m.weight) if m.weight is not None else '',
                 'weight_unit': m.weight_unit or '',
-                'volume_liter': m.volume_liter if m.volume_liter is not None else '',
+                'volume_liter': _dec(m.volume_liter) if m.volume_liter is not None else '',
                 'default_supplier_name': (m.default_supplier.name if m.default_supplier else ''),
+                'suppliers': suppliers_json,
+                'price_calculation_versions': versions_json,
+                'stocks': stocks_json,
+                'sizes': sizes_json,
             })
         return response
 
