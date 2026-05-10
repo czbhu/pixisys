@@ -275,12 +275,15 @@ class MaterialViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['post'], url_path='import_csv',
             parser_classes=[MultiPartParser, FormParser])
     def import_csv(self, request):
-        """CSV import: ha azonos a cikkszám, frissíti; egyébként létrehozza."""
+        """CSV import: ha azonos a cikkszám, frissíti; egyébként létrehozza.
+        skip_empty=1 esetén az üres CSV cellák nem írják felül a meglévő értékeket."""
         import csv
         import io
         file_obj = request.FILES.get('file')
         if not file_obj:
             return Response({'error': 'Nincs fájl csatolva.'}, status=400)
+
+        skip_empty = request.data.get('skip_empty', '0') in ('1', 'true', 'True')
 
         try:
             content = file_obj.read().decode('utf-8-sig')  # strip BOM
@@ -356,7 +359,23 @@ class MaterialViewSet(viewsets.ModelViewSet):
             }
 
             try:
-                obj, is_new = Material.objects.update_or_create(code=code, defaults=defaults)
+                if skip_empty:
+                    # Csak a nem-üres mezőket frissítjük meglévő rekordnál
+                    existing = Material.objects.filter(code=code).first()
+                    if existing:
+                        filtered = {
+                            k: v for k, v in defaults.items()
+                            if v is not None and v != ''
+                        }
+                        for k, v in filtered.items():
+                            setattr(existing, k, v)
+                        existing.save()
+                        obj, is_new = existing, False
+                    else:
+                        obj = Material.objects.create(code=code, **defaults)
+                        is_new = True
+                else:
+                    obj, is_new = Material.objects.update_or_create(code=code, defaults=defaults)
                 if is_new:
                     created += 1
                 else:

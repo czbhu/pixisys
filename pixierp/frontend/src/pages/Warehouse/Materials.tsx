@@ -189,6 +189,8 @@ const Materials: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [csvImporting, setCsvImporting] = useState(false);
   const csvImportRef = React.useRef<HTMLInputElement>(null);
+  const [csvPendingFile, setCsvPendingFile] = useState<File | null>(null);
+  const [csvSkipEmptyModal, setCsvSkipEmptyModal] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
   const [modalVisible, setModalVisible] = useState(false);
   const [editingMaterial, setEditingMaterial] = useState<Material | null>(null);
@@ -905,13 +907,21 @@ const Materials: React.FC = () => {
     }
   };
 
-  const handleImportCsvChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImportCsvChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    // reset so same file can be re-selected
     e.target.value = '';
+    setCsvPendingFile(file);
+    setCsvSkipEmptyModal(true);
+  };
+
+  const handleImportSubmit = async (skipEmpty: boolean) => {
+    if (!csvPendingFile) return;
+    setCsvSkipEmptyModal(false);
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', csvPendingFile);
+    formData.append('skip_empty', skipEmpty ? '1' : '0');
+    setCsvPendingFile(null);
     setCsvImporting(true);
     try {
       const res = await api.post('/warehouse/materials/import_csv/', formData, {
@@ -2171,6 +2181,26 @@ const Materials: React.FC = () => {
         }}
       />
       </Card>
+
+      <Modal
+        title="CSV import beállítás"
+        open={csvSkipEmptyModal}
+        onCancel={() => { setCsvSkipEmptyModal(false); setCsvPendingFile(null); }}
+        footer={null}
+        width={480}
+      >
+        <p style={{ marginBottom: 24 }}>
+          Mit tegyen az import, ha a CSV-ben egy mező <strong>üres</strong>, de a meglévő rekordban van érték?
+        </p>
+        <Space direction="vertical" style={{ width: '100%' }} size="middle">
+          <Button block type="primary" onClick={() => handleImportSubmit(false)}>
+            Felülírja üres cellával (töröl)
+          </Button>
+          <Button block onClick={() => handleImportSubmit(true)}>
+            Megtartja a meglévő értéket (ajánlott)
+          </Button>
+        </Space>
+      </Modal>
 
       <Modal
         title={editingMaterial ? 'Alapanyag/Termék szerkesztése' : 'Új alapanyag/termék'}
