@@ -47,6 +47,9 @@ build/
 logs/
 *.log
 
+# Backups
+backups/
+
 # OS
 .DS_Store
 Thumbs.db
