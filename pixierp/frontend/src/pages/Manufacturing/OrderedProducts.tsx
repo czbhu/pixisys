@@ -33,7 +33,10 @@ import {
     SendOutlined,
     PaperClipOutlined,
     DeleteOutlined,
+    MenuOutlined,
 } from '@ant-design/icons';
+import { arrayMove } from '@dnd-kit/sortable';
+import { CostDraggableRow, CostDragHandle } from '../../components/Manufacturing/CostDnd';
 import dayjs from 'dayjs';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
@@ -930,7 +933,36 @@ const OrderedProducts: React.FC = () => {
         return result;
     })();
 
+    const onRowReorder = async (activeId: string | number, overId: string | number) => {
+        const activeItem = filtered.find(r => r.id === Number(activeId));
+        const overItem = filtered.find(r => r.id === Number(overId));
+        if (!activeItem || !overItem || activeItem.id === overItem.id) return;
+        const oldIdx = filtered.findIndex(r => r.id === activeItem.id);
+        const newIdx = filtered.findIndex(r => r.id === overItem.id);
+        if (oldIdx < 0 || newIdx < 0) return;
+        const reorderedFiltered = arrayMove(filtered, oldIdx, newIdx);
+        const filteredIds = new Set(filtered.map(r => r.id));
+        const others = items.filter(r => !filteredIds.has(r.id));
+        const newItems = [...reorderedFiltered, ...others];
+        setItems(newItems);
+        try {
+            await api.post('/manufacturing/cost-items/reorder_by_coi/', {
+                coi_ids: reorderedFiltered.map(r => r.id),
+            });
+        } catch (e) {
+            console.error(e);
+            message.error('Sorrend mentése sikertelen');
+            loadItems();
+        }
+    };
+
     const columns = [
+        {
+            title: '',
+            key: 'drag',
+            width: 32,
+            render: () => <CostDragHandle />,
+        },
         {
             title: 'Megrendelés',
             dataIndex: 'order_number',
@@ -1178,6 +1210,8 @@ const OrderedProducts: React.FC = () => {
                     cardBreakpoint={950}
                     size="small"
                     loading={loading}
+                    rowDnd={{ items: filtered.map(r => r.id), onReorder: onRowReorder }}
+                    bodyComponents={{ body: { row: CostDraggableRow } }}
                     rowSelection={{
                         selectedRowKeys,
                         onChange: (keys: React.Key[]) => setSelectedRowKeys(keys as number[]),

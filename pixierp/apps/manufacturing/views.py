@@ -696,7 +696,49 @@ class ManufacturingCostItemViewSet(
         self._renumber([int(x) for x in ids])
         return Response({'updated': len(ids)})
 
-    def _build_group_context(self, items):
+    @action(detail=False, methods=['post'], url_path='reorder_by_coi')
+    def reorder_by_coi(self, request):
+        """Body: { coi_ids: [id1, id2, ...] }
+        Reorders the manufacturing queue by the given CustomerOrderItem order.
+        For each COI (in given order), collects its associated ManufacturingCostItems
+        (ordered by their current queue_position / id), then renumbers the full queue."""
+        from django.db.models import F
+        from apps.sales.models import CustomerOrderItem
+        coi_ids = request.data.get('coi_ids') or []
+        if not isinstance(coi_ids, list):
+            return Response({'error': 'coi_ids must be a list'}, status=400)
+
+        # Collect cost item IDs in COI order, preserving relative order within each product
+        ordered_cost_ids = []
+        seen = set()
+        for coi_id in coi_ids:
+            try:
+                coi = CustomerOrderItem.objects.select_related(
+                    'quote_item__manufacturing_product'
+                ).get(id=int(coi_id))
+            except CustomerOrderItem.DoesNotExist:
+                continue
+            mp = getattr(coi.quote_item, 'manufacturing_product', None) if coi.quote_item else None
+            if not mp:
+                continue
+            ci_qs = (ManufacturingCostItem.objects
+                     .filter(product=mp)
+                     .order_by(F('queue_position').asc(nulls_last=True), 'id'))
+            for ci in ci_qs:
+                if ci.id not in seen:
+                    seen.add(ci.id)
+                    ordered_cost_ids.append(ci.id)
+
+        # Append any remaining cost items not covered by the provided COIs
+        all_ids_in_order = self._full_queue_ids()
+        for cid in all_ids_in_order:
+            if cid not in seen:
+                ordered_cost_ids.append(cid)
+
+        self._renumber(ordered_cost_ids)
+        return Response({'updated': len(ordered_cost_ids)})
+
+
         """Return ctx dict used by both the render endpoint and the
         send endpoint. `items` is an iterable of ManufacturingCostItem.
 
