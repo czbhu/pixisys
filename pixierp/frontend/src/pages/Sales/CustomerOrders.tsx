@@ -697,13 +697,26 @@ interface CustomerOrder {
                       { value: 'cancelled', label: 'Törölve', color: 'red' },
                     ];
                     const AT_OR_ABOVE_PROD = ['in_production', 'ready', 'in_delivery', 'delivered'];
-                    const children = flatItems.filter((it: any) => String(it._parent_coi_id) === String(r.id));
-                    const relevant = children.filter((c: any) => c.status !== 'cancelled');
-                    const progressCount = relevant.filter((c: any) => AT_OR_ABOVE_PROD.includes(c.status)).length;
-                    const progressTotal = relevant.length;
+                    // 1. Check child COIs (fa szerkezet)
+                    const childCOIs = flatItems.filter((it: any) => String(it._parent_coi_id) === String(r.id));
+                    const relevantChildCOIs = childCOIs.filter((c: any) => c.status !== 'cancelled');
+                    // 2. Check manufacturing cost items (altételek)
+                    const cp = r.cost_items_progress as { total: number; at_or_above: number } | null | undefined;
+                    let progressCount = 0;
+                    let progressTotal = 0;
+                    let progressLabel = '';
+                    if (relevantChildCOIs.length > 0) {
+                      progressTotal = relevantChildCOIs.length;
+                      progressCount = relevantChildCOIs.filter((c: any) => AT_OR_ABOVE_PROD.includes(c.status)).length;
+                      progressLabel = 'altétel';
+                    } else if (cp && cp.total > 0) {
+                      progressTotal = cp.total;
+                      progressCount = cp.at_or_above;
+                      progressLabel = 'altétel';
+                    }
                     const hasProgress = progressCount > 0 && progressTotal > 0;
-                    const cur = hasProgress ? 'in_production' : (r.status || 'new');
-                    const opt = ITEM_STATUS_OPTS.find(o => o.value === cur) || ITEM_STATUS_OPTS[0];
+                    const derivedStatus = hasProgress ? 'in_production' : (r.status || 'new');
+                    const opt = ITEM_STATUS_OPTS.find(o => o.value === derivedStatus) || ITEM_STATUS_OPTS[0];
                     const displayLabel = hasProgress ? `${opt.label} (${progressCount}/${progressTotal})` : opt.label;
                     const storedCur = r.status || 'new';
                     return (
@@ -714,7 +727,7 @@ interface CustomerOrder {
                         zIndex={9999}
                         content={
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                            {hasProgress && <div style={{ fontSize: 11, color: '#888', paddingBottom: 4 }}>{progressCount}/{progressTotal} altétel gyártásban vagy felette</div>}
+                            {hasProgress && <div style={{ fontSize: 11, color: '#888', paddingBottom: 4 }}>{progressCount}/{progressTotal} {progressLabel} gyártásban vagy felette</div>}
                             {ITEM_STATUS_OPTS.map(o => (
                               <Button key={o.value} size="small" type={o.value === storedCur ? 'primary' : 'text'}
                                 disabled={o.value === storedCur}
@@ -1046,7 +1059,11 @@ interface CustomerOrder {
     const AT_OR_ABOVE_PROD_ORDER = ['in_production', 'ready', 'in_delivery', 'delivered'];
     const orderItems: any[] = record.items || [];
     const relevantOrderItems = orderItems.filter((it: any) => it.status !== 'cancelled');
-    const orderProgressCount = relevantOrderItems.filter((it: any) => AT_OR_ABOVE_PROD_ORDER.includes(it.status)).length;
+    const orderProgressCount = relevantOrderItems.filter((it: any) => {
+      if (AT_OR_ABOVE_PROD_ORDER.includes(it.status)) return true;
+      const cp = it.cost_items_progress as { total: number; at_or_above: number } | null | undefined;
+      return cp && cp.at_or_above > 0;
+    }).length;
     const orderProgressTotal = relevantOrderItems.length;
     const hasOrderProgress = orderProgressCount > 0 && orderProgressTotal > 0;
     const displayStatus = hasOrderProgress ? 'in_production' : status;

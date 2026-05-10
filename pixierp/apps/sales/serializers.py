@@ -483,6 +483,7 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
     discounted_gross_total = serializers.SerializerMethodField()
     
     suggested_workflow = serializers.SerializerMethodField()
+    cost_items_progress = serializers.SerializerMethodField()
     
     class Meta:
         model = CustomerOrderItem
@@ -508,6 +509,24 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return None
+
+    def get_cost_items_progress(self, obj):
+        """Return {total, at_or_above_prod} for manufacturing cost items."""
+        AT_OR_ABOVE = {'in_production', 'ready', 'in_delivery', 'delivered'}
+        try:
+            from apps.manufacturing.models import ManufacturingCostItem
+            qi = obj.quote_item
+            mp = getattr(qi, 'manufacturing_product', None) if qi else None
+            if not mp:
+                return None
+            items = ManufacturingCostItem.objects.filter(product=mp).exclude(status='cancelled')
+            total = items.count()
+            if total == 0:
+                return None
+            at_or_above = items.filter(status__in=AT_OR_ABOVE).count()
+            return {'total': total, 'at_or_above': at_or_above}
+        except Exception:
+            return None
 
     def get_net_total(self, obj):
         """Calculate net total: quantity * net_unit_price"""
