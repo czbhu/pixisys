@@ -117,6 +117,7 @@ const TaskSettings: React.FC = () => {
 
   const openEdit = (task: TaskConfiguration) => {
     setEditingTask(task);
+    form.resetFields();
     form.setFieldsValue({
       ...task,
       employee_ids: task.employee_ids || [],
@@ -346,7 +347,24 @@ const TaskSettings: React.FC = () => {
       <Modal
         title={editingTask ? 'Tevékenység szerkesztése' : 'Új tevékenység'}
         open={modalOpen}
-        onCancel={() => setModalOpen(false)}
+        onCancel={() => {
+          if (form.isFieldsTouched()) {
+            Modal.confirm({
+              title: 'Biztosan bezárod?',
+              content: 'Az ablakban nem mentett módosítások vannak. Ha bezárod, a változtatások elvesznek.',
+              okText: 'Bezárás',
+              cancelText: 'Mégsem',
+              okButtonProps: { danger: true },
+              onOk: () => {
+                setModalOpen(false);
+                form.resetFields();
+              },
+            });
+          } else {
+            setModalOpen(false);
+            form.resetFields();
+          }
+        }}
         onOk={() => form.submit()}
         okText="Mentés"
         cancelText="Mégse"
