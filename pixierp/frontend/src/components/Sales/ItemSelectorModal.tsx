@@ -1682,7 +1682,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 70, render: (_: any, r: CostItem) => <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: 60 }} /> },
+    { title: 'Menny.', key: 'quantity', width: 100, render: (_: any, r: CostItem) => (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: 52 }} />
+        <Tooltip title="Tétel mennyiségének másolása">
+          <Button size="small" icon={<CopyOutlined />} onClick={() => manuUpdateCostItem(r.id, 'quantity', Number(manuForm.getFieldValue('quantity') || form.getFieldValue('quantity')) || 1)} style={{ padding: '0 4px' }} />
+        </Tooltip>
+      </div>
+    )},
     { title: 'Egység', key: 'unit', width: 75, render: (_: any, r: CostItem) => r.type === 'other'
         ? <AutoComplete
             size="small"
