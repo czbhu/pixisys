@@ -2519,9 +2519,7 @@ const RFQs: React.FC = () => {
             </Checkbox>
           </div>
           <Space wrap>
-            <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
-            <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
-            <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Tétel hozzáadása</Button>
             <Button
               onClick={() => {
                 const companyId = form.getFieldValue('company_id');
