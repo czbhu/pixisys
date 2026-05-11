@@ -410,7 +410,8 @@ class ServiceSerializer(serializers.ModelSerializer):
     group_names = serializers.SerializerMethodField()
     cost_summary = serializers.SerializerMethodField()
     is_protected = serializers.SerializerMethodField()
-    
+    cost_items_data = serializers.SerializerMethodField()
+
     class Meta:
         model = Service
         fields = '__all__'
@@ -441,6 +442,29 @@ class ServiceSerializer(serializers.ModelSerializer):
             elif ci.calculation_type in ('unit', 'click'):
                 unit_total += price
         return {'fixed': fixed_total, 'unit': unit_total}
+
+    def get_cost_items_data(self, obj):
+        """Return active cost items with supplier/department info for RFQ preload."""
+        result = []
+        for ci in obj.cost_items.filter(is_active=True):
+            result.append({
+                'id': ci.id,
+                'name': ci.name,
+                'unit': ci.unit,
+                'unit_price': float(ci.unit_price or 0),
+                'price_quantity': float(ci.price_quantity or 1),
+                'markup_percentage': float(ci.markup_percentage or 0),
+                'selling_price': float(ci.selling_price or 0),
+                'currency': ci.currency,
+                'calculation_type': ci.calculation_type,
+                'is_internal': ci.is_internal,
+                'supplier': ci.supplier_id,
+                'supplier_name': ci.supplier.name if ci.supplier else None,
+                'department': ci.department_id,
+                'department_name': ci.department.name if ci.department else None,
+                'price_calculation_version': ci.price_calculation_version,
+            })
+        return result
 
 
 class CalculatorTemplateSerializer(serializers.ModelSerializer):

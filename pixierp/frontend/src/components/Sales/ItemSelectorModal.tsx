@@ -911,7 +911,46 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     const cost = getRecordCostPrice(record);
     const priceNum = Number(price) || 0;
     const markup = (priceNum > 0 && cost > 0) ? parseFloat((((priceNum / cost) - 1) * 100).toFixed(2)) : 0;
-    form.setFieldsValue({ unit, net_unit_price: price, quantity: qty, cost_price: cost, markup_percent: markup });
+    form.setFieldsValue({ unit, net_unit_price: price, quantity: qty, cost_price: cost, markup_percent: markup, description: record.description || '' });
+
+    // For services: preload cost_items_data as sub-items
+    if (currentType === 'service') {
+      const rawCi: any[] = record.cost_items_data || [];
+      const items: CostItem[] = rawCi.map((c: any) => {
+        // Ensure department is in manuDepartments list
+        if (c.is_internal && c.department && !manuDepartments.find((d: any) => d.id === c.department)) {
+          const deptObj = { id: c.department, name: c.department_name || `#${c.department}` };
+          setManuDepartments(prev => [deptObj, ...prev]);
+        }
+        // Ensure supplier is in manuSuppliers list
+        if (!c.is_internal && c.supplier && !manuSuppliers.find((s: any) => s.id === c.supplier)) {
+          const supObj = { id: c.supplier, name: c.supplier_name || `#${c.supplier}` };
+          setManuSuppliers(prev => [supObj, ...prev]);
+        }
+        return {
+          id: Date.now() + Math.random(),
+          type: 'service' as const,
+          ref_id: record.id,
+          name: c.name || record.name,
+          unit: c.unit || unit,
+          quantity: Number(c.price_quantity) || 1,
+          unit_price: Number(c.unit_price) || 0,
+          cost_price: Number(c.unit_price) || 0,
+          markup_percent: Number(c.markup_percentage) || 0,
+          selling_unit_price: Number(c.selling_price) || 0,
+          selling_price: Number(c.selling_price) || 0,
+          is_per_unit: false,
+          is_internal: !!c.is_internal,
+          supplier_id: c.is_internal ? null : (c.supplier ?? null),
+          department_id: c.is_internal ? (c.department ?? null) : null,
+          currency_code: c.currency || manuCostCurrencyCode,
+          currency_id: manuCostCurrencyId,
+        };
+      });
+      setManuCostItems(items);
+    } else if (currentType !== 'manufacturing') {
+      setManuCostItems([]);
+    }
   };
 
   const confirmAdd = async (keepOpen: boolean = false) => {
@@ -938,7 +977,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         cost_type: v.cost_type || 'customer',
         customer_order_item: v.customer_order_item ?? null,
       };
-      await onAdd({ ...payload, files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen, formulas: itemFormFormulas } as any);
+      // For services with sub-items, include manuCostItems so the RFQ handler can create costs
+      const extraPayload: any = { files: pendingFiles, fileRemarks: pendingFileRemarks, keepOpen, formulas: itemFormFormulas };
+      if (concreteType === 'service' && manuCostItems.length > 0) {
+        extraPayload.manuCostItems = manuCostItems;
+      }
+      await onAdd({ ...payload, ...extraPayload } as any);
       setLastSavedAt(dayjs());
       if (!keepOpen) {
         setPendingFiles([]);
@@ -2464,6 +2508,46 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           <Form layout="vertical" form={form} onValuesChange={handleLineFormValuesChange}>
             {commonFields}
           </Form>
+        )}
+
+        {/* Service sub-items (altételek): show cost_items_data from the selected service */}
+        {activeKey === 'service' && selected && manuCostItems.length > 0 && (
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 4 }}>Altételek (forrás: {selected.name})</div>
+            <Table
+              dataSource={manuCostItems}
+              rowKey="id"
+              pagination={false}
+              size="small"
+              columns={[
+                { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+                { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+                { title: 'Menny.', dataIndex: 'quantity', key: 'quantity', width: 70 },
+                { title: 'E.ár', dataIndex: 'cost_price', key: 'cost_price', width: 85, render: (v: number) => v?.toLocaleString('hu-HU') },
+                {
+                  title: 'Forrás',
+                  key: 'supplier',
+                  render: (_: any, r: CostItem) => (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <Checkbox
+                        checked={r.is_internal}
+                        onChange={e => { manuUpdateCostItem(r.id, 'is_internal', e.target.checked); manuUpdateCostItem(r.id, 'department_id', null); manuUpdateCostItem(r.id, 'supplier_id', null); }}
+                      >Belső</Checkbox>
+                      {r.is_internal
+                        ? <Select size="small" style={{ width: 150 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
+                            {manuDepartments.map((d: any) => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
+                          </Select>
+                        : <Select size="small" style={{ width: 150 }} value={r.supplier_id} onChange={v => manuUpdateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Beszállító">
+                            {manuSuppliers.map((s: any) => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
+                          </Select>
+                      }
+                    </div>
+                  )
+                },
+                { title: '', key: 'del', width: 36, render: (_: any, r: CostItem) => <Button danger size="small" icon={<DeleteOutlined />} onClick={() => setManuCostItems(prev => prev.filter(x => x.id !== r.id))} /> },
+              ]}
+            />
+          </div>
         )}
       </Space>
       <ProductEditorModal
