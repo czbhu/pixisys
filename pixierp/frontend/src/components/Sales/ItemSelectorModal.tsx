@@ -1550,23 +1550,40 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
     const sellUnit = Number(record.unit_selling_price) || (cp > 0 ? cp * (1 + mu / 100) : 0);
     const costType: 'material' | 'service' = type === 'product' ? 'material' : 'service';
-    const recordSupplierId = (() => {
+    // Internal production handling (product only)
+    const isInternal = type === 'product' && !!record.is_internal_production;
+    const internalDeptId = isInternal
+      ? (() => {
+          const d = record.internal_production_department;
+          if (d == null) return null;
+          const id = typeof d === 'object' ? d.id : d;
+          return Number.isFinite(Number(id)) ? Number(id) : null;
+        })()
+      : null;
+    // Ensure internal dept is in manuDepartments list
+    if (isInternal && internalDeptId && !manuDepartments.find((d: any) => d.id === internalDeptId)) {
+      const deptObj = (typeof record.internal_production_department === 'object' && record.internal_production_department)
+        ? record.internal_production_department
+        : { id: internalDeptId, name: record.internal_production_department_name || `#${internalDeptId}` };
+      setManuDepartments(prev => [deptObj, ...prev]);
+    }
+    const recordSupplierId = isInternal ? null : (() => {
       const ds = record.default_supplier;
       if (ds == null) return null;
       const id = typeof ds === 'object' ? ds.id : ds;
       return Number.isFinite(Number(id)) ? Number(id) : null;
     })();
-    if (recordSupplierId && !manuSuppliers.find((s: any) => s.id === recordSupplierId)) {
+    if (!isInternal && recordSupplierId && !manuSuppliers.find((s: any) => s.id === recordSupplierId)) {
       const supObj = (typeof record.default_supplier === 'object' && record.default_supplier)
         ? record.default_supplier
         : { id: recordSupplierId, name: record.default_supplier_name || `#${recordSupplierId}` };
       setManuSuppliers(prev => [supObj, ...prev]);
     }
-    const fallbackSupplierId = manuSuppliers.find((s: any) =>
+    const fallbackSupplierId = !isInternal ? (manuSuppliers.find((s: any) =>
       (s.name || '').toLowerCase().includes('belső gyártás') ||
       (s.name || '').toLowerCase().includes('belső márka') ||
       (s.name || '').toLowerCase().includes('internal')
-    )?.id ?? null;
+    )?.id ?? null) : null;
     const newItem: CostItem = {
       id: Date.now() + Math.random(),
       type: costType,
@@ -1580,10 +1597,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : mu,
       selling_unit_price: sellUnit,
       selling_price: sellUnit,
-      supplier_id: recordSupplierId ?? fallbackSupplierId,
+      supplier_id: isInternal ? null : (recordSupplierId ?? fallbackSupplierId),
       is_per_unit: false,
-      is_internal: false,
-      department_id: null,
+      is_internal: isInternal,
+      department_id: isInternal ? internalDeptId : null,
       currency_code: manuCostCurrencyCode,
       currency_id: manuCostCurrencyId,
     };
