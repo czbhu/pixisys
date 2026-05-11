@@ -49,6 +49,16 @@ interface Item {
   parent?: number | null;
   attachments?: any[];
   remark?: string;
+  service_cost_items?: Array<{
+    id: number;
+    name: string;
+    supplier_name?: string;
+    is_internal?: boolean;
+    unit?: string;
+    unit_price?: number;
+    selling_price?: number;
+    currency?: string;
+  }>;
 }
 
 interface ItemsTableProps {
@@ -620,6 +630,59 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     }
   };
 
+  const renderServiceCostItems = (record: any) => {
+    const subs: any[] = Array.isArray(record.service_cost_items) ? record.service_cost_items : [];
+    if (!subs.length) return null;
+    const qty = Number(record.quantity) || 1;
+    return (
+      <div style={{ padding: '8px 24px', background: '#f0f5ff', borderRadius: 4 }}>
+        <div style={{ fontWeight: 600, marginBottom: 6, color: '#1d39c4', fontSize: 12, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          Beszállító árkalkuláció
+        </div>
+        <Table
+          size="small"
+          pagination={false}
+          dataSource={subs}
+          rowKey={(r: any) => `svc_ci_${r.id}`}
+          columns={[
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+            {
+              title: 'Beszállító',
+              key: 'supplier',
+              render: (_: any, r: any) => r.is_internal ? <Tag color="purple">Belső gyártás</Tag> : (r.supplier_name || '-'),
+              width: 160,
+            },
+            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 80 },
+            {
+              title: 'Bekerülési egységár',
+              key: 'unit_price',
+              width: 140,
+              align: 'right' as const,
+              render: (_: any, r: any) => `${Number(r.unit_price || 0).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency || ''}`,
+            },
+            {
+              title: 'Eladási egységár',
+              key: 'selling_price',
+              width: 140,
+              align: 'right' as const,
+              render: (_: any, r: any) => `${Number(r.selling_price || 0).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency || ''}`,
+            },
+            {
+              title: `Összesen (× ${qty})`,
+              key: 'total',
+              width: 160,
+              align: 'right' as const,
+              render: (_: any, r: any) => {
+                const total = Number(r.unit_price || 0) * qty;
+                return <strong>{total.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} {r.currency || ''}</strong>;
+              },
+            },
+          ]}
+        />
+      </div>
+    );
+  };
+
   const renderInlineExpand = (record: any) => {
     const coiId: number = record.id;
     const manuProductId = Number(record.manufacturing_product || record.quote_item?.manufacturing_product || 0);
@@ -770,7 +833,13 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                         }
                       },
                       expandedRowRender: renderInlineExpand,
-                    } : undefined}
+                    } : {
+                      rowExpandable: (record: any) =>
+                        record.item_type === 'service' &&
+                        Array.isArray(record.service_cost_items) &&
+                        record.service_cost_items.length > 0,
+                      expandedRowRender: (record: any) => renderServiceCostItems(record),
+                    }}
                 />
             </SortableContext>
         </DndContext>
