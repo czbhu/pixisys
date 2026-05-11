@@ -1966,7 +1966,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
             <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <strong>{manuCreatedId ? 'Egyedi gyártás szerkesztése' : 'Új egyedi gyártás'}</strong>
+                  <strong>{manuCreatedId ? 'Tétel szerkesztése' : 'Új tétel'}</strong>
                 </div>                <Form layout="vertical" form={manuForm}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div style={{ flex: '1 1 100%', marginBottom: 0 }}>
