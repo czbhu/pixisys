@@ -1587,15 +1587,15 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       ? record.name.replace(`[${record.code}] `, '')
       : record.name;
     const unit = record.unit || (type === 'service' ? 'alkalom' : 'db');
-    manuForm.setFieldsValue({ name: originalName, quantity_unit: unit });
+    manuForm.setFieldsValue({ name: originalName, quantity_unit: unit, description: record.description || '' });
     const cp = type === 'product'
       ? (Number(record.unit_cost_price) || Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
       : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
     const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
     const sellUnit = Number(record.unit_selling_price) || (cp > 0 ? cp * (1 + mu / 100) : 0);
     const costType: 'material' | 'service' = type === 'product' ? 'material' : 'service';
-    // Internal production handling (product only)
-    const isInternal = type === 'product' && !!record.is_internal_production;
+    // Internal production handling (product and service)
+    const isInternal = !!(record.is_internal_production);
     const internalDeptId = isInternal
       ? (() => {
           const d = record.internal_production_department;
