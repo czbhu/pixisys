@@ -2522,7 +2522,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               columns={[
                 { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
                 { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
-                { title: 'Menny.', dataIndex: 'quantity', key: 'quantity', width: 70 },
+                { title: 'Menny.', key: 'quantity', width: 95, render: (_: any, r: CostItem) => (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 52 }} />
+                    <Tooltip title="Tétel mennyiségének másolása">
+                      <Button size="small" icon={<CopyOutlined />} onClick={() => manuUpdateCostItem(r.id, 'quantity', Number(form.getFieldValue('quantity')) || 1)} style={{ padding: '0 4px' }} />
+                    </Tooltip>
+                  </div>
+                )},
                 { title: 'E.ár', dataIndex: 'cost_price', key: 'cost_price', width: 85, render: (v: number) => v?.toLocaleString('hu-HU') },
                 {
                   title: 'Forrás',
