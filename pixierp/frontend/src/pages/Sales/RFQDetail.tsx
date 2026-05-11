@@ -1051,11 +1051,9 @@ const RFQDetail: React.FC = () => {
               <Checkbox>Részlegesen megrendelhető</Checkbox>
             </Form.Item>
           </div>
-          <Space>
-            <Button onClick={() => { setSelectorType('product'); setSelectorOpen(true); }}>Termék</Button>
-            <Button onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Egyedi Gyártás</Button>
-            <Button onClick={() => { setSelectorType('service'); setSelectorOpen(true); }}>Szolgáltatás</Button>
-          </Space>
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>
+            Tétel hozzáadása
+          </Button>
           <div style={{ marginTop: 6 }}>
             <ItemsTable
               items={rfq.items || []}

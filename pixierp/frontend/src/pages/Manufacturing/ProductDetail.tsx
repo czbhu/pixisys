@@ -156,12 +156,6 @@ const ManufacturingProductDetail: React.FC = () => {
   const [attPreviewUrl, setAttPreviewUrl] = useState<string | null>(null);
   const [attPreviewTitle, setAttPreviewTitle] = useState('');
 
-  // Szolgáltatás sablon választó (csak kind === 'service' esetén jelenik meg)
-  const isService = product?.kind === 'service';
-  const [serviceTemplateModalOpen, setServiceTemplateModalOpen] = useState(false);
-  const [serviceTemplateSearch, setServiceTemplateSearch] = useState('');
-  const [loadingServiceTemplate, setLoadingServiceTemplate] = useState(false);
-
   // ── Load product + reference data ─────────────────────────────────────────
 
   const loadProduct = useCallback(async () => {
@@ -783,12 +777,7 @@ const ManufacturingProductDetail: React.FC = () => {
         title={
           <Space>
             <Button icon={<LeftOutlined />} onClick={() => navigate('/manufacturing/products')}>Vissza</Button>
-            <span>{isService ? 'Szolgáltatás' : 'Egyedi gyártás'} – {product.code || product.name}</span>
-            {isService && (
-              <Button size="small" onClick={() => setServiceTemplateModalOpen(true)}>
-                Szolgáltatás betöltése sablonból
-              </Button>
-            )}
+            <span>Egyedi gyártás – {product.code || product.name}</span>
           </Space>
         }
         extra={
@@ -909,8 +898,7 @@ const ManufacturingProductDetail: React.FC = () => {
             </Row>
           </div>
 
-          {/* ── Méretek és súly (szolgáltatásnál nem jelenik meg) ──────── */}
-          {!isService && (
+          {/* ── Méretek és súly ───────────────────────────────────────────── */}
           <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div
               style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}
@@ -970,7 +958,6 @@ const ManufacturingProductDetail: React.FC = () => {
               </>
             )}
           </div>
-          )}
 
           {/* ── Anyaglista / Műveletek ─────────────────────────────────────── */}
           <div style={{ background: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
@@ -1120,106 +1107,6 @@ const ManufacturingProductDetail: React.FC = () => {
         url={attPreviewUrl}
         onClose={() => { setAttPreviewOpen(false); setAttPreviewUrl(null); setAttPreviewTitle(''); }}
       />
-
-      {/* Szolgáltatás sablon választó modal */}
-      <Modal
-        title="Szolgáltatás sablon kiválasztása"
-        open={serviceTemplateModalOpen}
-        onCancel={() => setServiceTemplateModalOpen(false)}
-        footer={null}
-        width={900}
-      >
-        <Input.Search
-          placeholder="Keresés (név, cikkszám, leírás)"
-          allowClear
-          value={serviceTemplateSearch}
-          onChange={e => setServiceTemplateSearch(e.target.value)}
-          style={{ marginBottom: 12 }}
-        />
-        <Table
-          size="small"
-          rowKey="id"
-          loading={loadingServiceTemplate}
-          pagination={{ pageSize: 10 }}
-          dataSource={services.filter((s: any) => {
-            const q = serviceTemplateSearch.trim().toLowerCase();
-            if (!q) return true;
-            return (
-              (s.name || '').toLowerCase().includes(q) ||
-              (s.code || '').toLowerCase().includes(q) ||
-              (s.description || '').toLowerCase().includes(q)
-            );
-          })}
-          columns={[
-            { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 120 },
-            { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
-            { title: 'Leírás', dataIndex: 'description', key: 'description', ellipsis: true, render: (d: string) => <Tooltip title={d}>{d}</Tooltip> },
-            { title: 'Nettó ár', dataIndex: 'base_price', key: 'base_price', width: 100, align: 'right' as const, render: (v: any) => v != null ? Number(v).toLocaleString('hu-HU') : '-' },
-            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
-            {
-              title: '', key: 'action', width: 90,
-              render: (_: any, r: any) => (
-                <Button
-                  type="primary"
-                  size="small"
-                  onClick={async () => {
-                    setLoadingServiceTemplate(true);
-                    try {
-                      const res = await api.get(`/manufacturing/services/${r.id}/`);
-                      const tpl = res.data;
-                      // Form alap mezők frissítése
-                      form.setFieldsValue({
-                        name: tpl.name,
-                        code: tpl.code || '',
-                        description: stripHtmlToText(tpl.description),
-                        unit: tpl.unit || form.getFieldValue('quantity_unit') || 'óra',
-                      });
-                      // Cost items lecserélése a sablon ServiceCostItem-jeivel
-                      const tplCosts = (tpl.cost_items || []).filter((c: any) => c.is_active !== false);
-                      const mapped: CostItem[] = tplCosts.map((c: any) => {
-                        const up = Number(c.unit_price) || 0;
-                        const mk = Number(c.markup_percentage) || 0;
-                        const sup = Number(c.selling_price) || (up * (1 + mk / 100));
-                        return {
-                          id: Date.now() + Math.random(),
-                          type: 'service',
-                          ref_id: null,
-                          name: c.name,
-                          unit: c.unit || '',
-                          quantity: 1,
-                          unit_price: sup,
-                          cost_price: up,
-                          markup_percent: mk,
-                          selling_unit_price: sup,
-                          selling_price: sup,
-                          supplier_id: c.supplier || null,
-                          department_id: null,
-                          is_internal: !!c.is_internal,
-                          currency: c.currency || 'HUF',
-                          sort_order: 0,
-                          parent_local_id: null,
-                          status: 'new',
-                          notes: '',
-                        } as CostItem;
-                      });
-                      setCostItems(mapped);
-                      setProduct((prev: any) => prev ? { ...prev, source_service: tpl.id, source_service_name: tpl.name } : prev);
-                      message.success(`Sablon betöltve: ${tpl.name} (${mapped.length} altétel)`);
-                      setServiceTemplateModalOpen(false);
-                    } catch (e) {
-                      message.error('Nem sikerült betölteni a sablont');
-                    } finally {
-                      setLoadingServiceTemplate(false);
-                    }
-                  }}
-                >
-                  Betölt
-                </Button>
-              ),
-            },
-          ]}
-        />
-      </Modal>
     </div>
   );
 };

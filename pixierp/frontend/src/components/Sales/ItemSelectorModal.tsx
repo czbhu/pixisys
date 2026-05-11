@@ -208,6 +208,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [costSearchQuery, setCostSearchQuery] = useState('');
   const [costSearchEditId, setCostSearchEditId] = useState<number | null>(null); // if set, editing existing row
 
+  const [linkedItem, setLinkedItem] = useState<{ type: 'product' | 'service'; name: string; id: number } | null>(null);
+  const [linkSearchModal, setLinkSearchModal] = useState<{ open: boolean; type: 'product' | 'service' | null }>({ open: false, type: null });
+  const [linkSearchQuery, setLinkSearchQuery] = useState('');
+
   const manuWatchQty = Form.useWatch('manu_quantity', manuForm);
   const manuWatchPrice = Form.useWatch('manu_net_unit_price', manuForm);
 
@@ -345,6 +349,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuSellCurrencyId(null);
     setManuCostCurrencyCode('HUF');
     setManuCostCurrencyId(null);
+    setLinkedItem(null);
+    setLinkSearchQuery('');
     loadData();
     if (mode === 'edit') {
       if (initialValues) {
@@ -1530,6 +1536,59 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     }]);
   };
 
+  const handleLinkItemSelect = (record: any) => {
+    const type = linkSearchModal.type!;
+    manuForm.setFieldsValue({ name: record.name });
+    const unit = record.unit || (type === 'service' ? 'alkalom' : 'db');
+    const cp = type === 'product'
+      ? (Number(record.unit_cost_price) || Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
+      : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
+    const mu = record.markup_percentage ? Number(record.markup_percentage) : 35;
+    const sellUnit = Number(record.unit_selling_price) || (cp > 0 ? cp * (1 + mu / 100) : 0);
+    const costType: 'material' | 'service' = type === 'product' ? 'material' : 'service';
+    const recordSupplierId = (() => {
+      const ds = record.default_supplier;
+      if (ds == null) return null;
+      const id = typeof ds === 'object' ? ds.id : ds;
+      return Number.isFinite(Number(id)) ? Number(id) : null;
+    })();
+    if (recordSupplierId && !manuSuppliers.find((s: any) => s.id === recordSupplierId)) {
+      const supObj = (typeof record.default_supplier === 'object' && record.default_supplier)
+        ? record.default_supplier
+        : { id: recordSupplierId, name: `#${recordSupplierId}` };
+      setManuSuppliers(prev => [supObj, ...prev]);
+    }
+    const fallbackSupplierId = manuSuppliers.find((s: any) =>
+      (s.name || '').toLowerCase().includes('belső gyártás') ||
+      (s.name || '').toLowerCase().includes('belső márka') ||
+      (s.name || '').toLowerCase().includes('internal')
+    )?.id ?? null;
+    const newItem: CostItem = {
+      id: Date.now() + Math.random(),
+      type: costType,
+      ref_id: record.id,
+      code: record.code || '',
+      name: record.name,
+      unit,
+      quantity: 1,
+      unit_price: cp,
+      cost_price: cp,
+      markup_percent: manuDefaultMarkupActive ? manuDefaultMarkup : mu,
+      selling_unit_price: sellUnit,
+      selling_price: sellUnit,
+      supplier_id: recordSupplierId ?? fallbackSupplierId,
+      is_per_unit: false,
+      is_internal: false,
+      department_id: null,
+      currency_code: manuCostCurrencyCode,
+      currency_id: manuCostCurrencyId,
+    };
+    setManuCostItems(prev => [...prev, newItem]);
+    setLinkedItem({ type, name: record.name, id: record.id });
+    setManuCollapseKeys(prev => prev.includes('costs') ? prev : [...prev, 'costs']);
+    setLinkSearchModal({ open: false, type: null });
+  };
+
   const manuCostColumns: any[] = [
     { title: '', key: 'drag', width: 28, render: () => <CostDragHandle /> },
     { title: 'Megnevezés', key: 'name', width: 240, render: (_: any, r: CostItem) => {
@@ -1805,16 +1864,15 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       })()}
     >
       <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
-        <Tabs
-          activeKey={activeKey}
-          onChange={(k) => {
-            setActiveKey(k as ItemType);
-            // Don't reset selection/form when switching tabs to preserve data
-            // setSelected(null);
-            // form.resetFields();
-          }}
-          items={tabItems as any}
-        />
+        <div style={{ display: 'none' }}>
+          <Tabs
+            activeKey={activeKey}
+            onChange={(k) => {
+              setActiveKey(k as ItemType);
+            }}
+            items={tabItems as any}
+          />
+        </div>
 
         {/* Inline manufacturing form — shown on manufacturing tab in add mode, or when editing a manufacturing item */}
         {activeKey === 'manufacturing' && (mode === 'add' || (mode === 'edit' && initialSelection?.item_type === 'manufacturing')) && (
@@ -1839,9 +1897,24 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                   <strong>{manuCreatedId ? 'Egyedi gyártás szerkesztése' : 'Új egyedi gyártás'}</strong>
                 </div>                <Form layout="vertical" form={manuForm}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                    <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: '1 1 100%', marginBottom: 8 }}>
-                      <Input placeholder="Egyedi gyártás neve" />
-                    </Form.Item>
+                    <div style={{ flex: '1 1 100%', marginBottom: 0 }}>
+                      {linkedItem && (
+                        <div style={{ marginBottom: 4 }}>
+                          <Tag color={linkedItem.type === 'product' ? 'blue' : 'green'} closable onClose={() => setLinkedItem(null)}>
+                            {linkedItem.type === 'product' ? 'Termék' : 'Szolgáltatás'}: {linkedItem.name}
+                          </Tag>
+                        </div>
+                      )}
+                      <div style={{ display: 'flex', gap: 6, alignItems: 'flex-end' }}>
+                        <Form.Item label="Név" name="name" rules={[{ required: true, message: 'Kötelező' }]} style={{ flex: 1, marginBottom: 8 }}>
+                          <Input placeholder="Egyedi gyártás neve" />
+                        </Form.Item>
+                        <div style={{ marginBottom: 8, display: 'flex', gap: 4 }}>
+                          <Button size="small" onClick={() => { setLinkSearchQuery(''); setLinkSearchModal({ open: true, type: 'product' }); }}>Termék</Button>
+                          <Button size="small" onClick={() => { setLinkSearchQuery(''); setLinkSearchModal({ open: true, type: 'service' }); }}>Szolgáltatás</Button>
+                        </div>
+                      </div>
+                    </div>
                     <Form.Item label="Cikkszám" name="code" style={{ flex: '1 1 auto', marginBottom: 8, minWidth: 120 }}>
                       <Input placeholder="Auto-generál, ha üres" />
                     </Form.Item>
@@ -2555,6 +2628,77 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                 pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (t, r) => `${r[0]}-${r[1]} / ${t}` }}
                 onRow={(record) => ({
                   onClick: () => handleSelect(record),
+                  style: { cursor: 'pointer' },
+                })}
+                scroll={{ x: 'max-content' }}
+              />
+            </Space>
+          );
+        })()}
+      </Modal>
+
+      {/* ── Termék / Szolgáltatás betöltő modal ─────────────────── */}
+      <Modal
+        title={linkSearchModal.type === 'product' ? 'Termék kiválasztása' : 'Szolgáltatás kiválasztása'}
+        open={linkSearchModal.open}
+        onCancel={() => setLinkSearchModal({ open: false, type: null })}
+        footer={null}
+        width={860}
+        destroyOnClose
+      >
+        {(() => {
+          const isProd = linkSearchModal.type === 'product';
+          const list: any[] = isProd ? manuMaterials : manuCostServices;
+          const normQ = (s: string) => (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+          const q = normQ(linkSearchQuery);
+          const filtered2 = q
+            ? list.filter(r => normQ([r.code || '', r.name || '', r.description || '', r.unit || ''].join(' ')).includes(q))
+            : list;
+          const cols = isProd ? [
+            { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 110 },
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+            { title: 'Bek. e.ár', key: 'cost', width: 100, render: (r: any) => {
+              const v = Number(r.unit_cost_price) || Number(r.moving_average_cost) || Number(r.net_unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'El. e.ár', key: 'sell', width: 100, render: (r: any) => {
+              const v = Number(r.unit_selling_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+          ] : [
+            { title: 'Kód', dataIndex: 'code', key: 'code', width: 100 },
+            { title: 'Megnevezés', dataIndex: 'name', key: 'name', width: 200 },
+            { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
+            { title: 'Bek. e.ár', key: 'cost', width: 100, render: (r: any) => {
+              const v = Number(r.unit_cost_price) || Number(r.unit_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'El. e.ár', key: 'sell', width: 100, render: (r: any) => {
+              const v = Number(r.unit_selling_price) || 0;
+              return v > 0 ? v.toLocaleString('hu-HU', { maximumFractionDigits: 2 }) : '-';
+            }},
+            { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true },
+          ];
+          return (
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input.Search
+                placeholder="Keresés cikkszám, megnevezés szerint..."
+                allowClear
+                value={linkSearchQuery}
+                onChange={e => setLinkSearchQuery(e.target.value)}
+                style={{ marginBottom: 8 }}
+                autoFocus
+              />
+              <Table
+                size="small"
+                dataSource={filtered2}
+                columns={cols}
+                rowKey="id"
+                pagination={{ pageSize: 15, showSizeChanger: false, showTotal: (t, r) => `${r[0]}-${r[1]} / ${t}` }}
+                onRow={(record) => ({
+                  onClick: () => handleLinkItemSelect(record),
                   style: { cursor: 'pointer' },
                 })}
                 scroll={{ x: 'max-content' }}

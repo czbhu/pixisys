@@ -182,10 +182,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
 
       if (item.item_type === 'service') {
         if (item.service) {
-          const subItems: any[] = Array.isArray(item.service_cost_items) ? item.service_cost_items : [];
-          const hasSubs = subItems.length > 0;
           const cp = Number(item.service_unit_cost_price) || 0;
-          // Parent service row: ha vannak altételek, csak fejléc szerepe van (net_total = 0)
           blocks[blockIdx].push({
             _autoId: `svc_${item.id ?? blockIdx}`,
             _label: 'Szolgáltatás',
@@ -196,29 +193,9 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
             name: item.service_name || '-',
             quantity: qty,
             unit: item.unit || 'alkalom',
-            net_unit_price_orig: hasSubs ? 0 : cp,
-            net_total_orig: hasSubs ? 0 : cp * qty,
+            net_unit_price_orig: cp,
+            net_total_orig: cp * qty,
             supplier_name: '',
-          });
-          // Beszállító árkalkuláció altételek (cost_items)
-          subItems.forEach((sub: any, subIdx: number) => {
-            const subUnit = Number(sub.unit_price) || 0;
-            const subQty = qty;
-            const subCur = (sub.currency || item.service_currency || defaultCurrencyCode).toUpperCase();
-            blocks[blockIdx].push({
-              _autoId: `svc_ci_${item.id ?? blockIdx}_${sub.id ?? subIdx}`,
-              _label: 'Szolg. költség',
-              _color: 'cyan',
-              _sourceCurrency: subCur,
-              _depth: itemDepth + 1,
-              code: '',
-              name: sub.name || '-',
-              quantity: subQty,
-              unit: sub.unit || '',
-              net_unit_price_orig: subUnit,
-              net_total_orig: subUnit * subQty,
-              supplier_name: sub.is_internal ? 'Belső gyártás' : (sub.supplier_name || ''),
-            });
           });
         } else if (item.ref_id) {
           const sid = item.ref_id;

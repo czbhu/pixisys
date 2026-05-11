@@ -113,18 +113,6 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     ordered_at = serializers.SerializerMethodField()
 
     manufacturing_total_cost = serializers.SerializerMethodField()
-    service_cost_items = serializers.SerializerMethodField()
-
-    def get_service_cost_items(self, obj):
-        """Szolgáltatás beszállító árkalkuláció (cost_items) - altételként megjelenítendő."""
-        if not obj.service_id:
-            return []
-        try:
-            from apps.manufacturing.serializers import ServiceCostItemSerializer
-            qs = obj.service.cost_items.filter(is_active=True).order_by('supplier_id', 'name')
-            return ServiceCostItemSerializer(qs, many=True).data
-        except Exception:
-            return []
 
     def get_manufacturing_total_cost(self, obj):
         mp = getattr(obj, 'manufacturing_product', None)

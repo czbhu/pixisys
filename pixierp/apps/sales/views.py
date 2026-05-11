@@ -643,50 +643,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quantity_val = Decimal(str(quantity))
         except Exception:
             quantity_val = Decimal("1")
-        # Hozzunk létre egy ManufacturingProduct(kind='service') példányt a szolgáltatás-sablonból
-        # és másoljuk át a ServiceCostItem-eket ManufacturingCostItem-ekként, hogy ugyanazon a
-        # detail-oldalon szerkeszthetők legyenek mint az egyedi gyártás.
-        from datetime import date as _date, timedelta as _td
-        from apps.manufacturing.models import ManufacturingCostItem
-        mp = ManufacturingProduct.objects.create(
-            kind='service',
-            source_service=service,
-            name=service.name,
-            code=getattr(service, 'code', '') or '',
-            description=description or (getattr(service, 'description', '') or ''),
-            quantity=quantity_val,
-            quantity_unit=unit,
-            net_unit_price=net_unit_price,
-            deadline=_date.today() + _td(days=14),
-        )
-        # ServiceCostItem -> ManufacturingCostItem mapping
-        try:
-            for sci in service.cost_items.filter(is_active=True).order_by('id'):
-                up = sci.unit_price or Decimal('0')
-                mk = sci.markup_percentage or Decimal('0')
-                sup = sci.selling_price or (up * (Decimal('1') + mk / Decimal('100')))
-                ManufacturingCostItem.objects.create(
-                    product=mp,
-                    type='service',
-                    name=sci.name,
-                    quantity=Decimal('1'),
-                    unit=sci.unit or '',
-                    cost_price=up,
-                    unit_price=sup,
-                    markup_percent=mk,
-                    selling_unit_price=sup,
-                    selling_price=sup,
-                    supplier=sci.supplier,
-                    is_internal=bool(sci.is_internal),
-                    currency=sci.currency or 'HUF',
-                )
-        except Exception:
-            pass
         item = QuoteRequestItem.objects.create(
             quote_request=qr,
             item_type='service',
             service=service,
-            manufacturing_product=mp,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
