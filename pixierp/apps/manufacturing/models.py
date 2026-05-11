@@ -305,6 +305,12 @@ class ManufacturingProduct(models.Model):
         ('paid', 'Kifizetve'),
     ]
     
+    KIND_CHOICES = [
+        ('manufacturing', 'Egyedi gyártás'),
+        ('service', 'Szolgáltatás'),
+    ]
+    kind = models.CharField(max_length=20, choices=KIND_CHOICES, default='manufacturing', db_index=True, verbose_name="Típus")
+    source_service = models.ForeignKey('manufacturing.Service', null=True, blank=True, on_delete=models.SET_NULL, related_name='instances', verbose_name="Forrás szolgáltatás sablon")
     date = models.DateField(default=timezone.now, verbose_name="Dátum")
     name = models.CharField(max_length=200, verbose_name="Név")
     code = models.CharField(max_length=50, blank=True, null=True, verbose_name="Cikkszám")

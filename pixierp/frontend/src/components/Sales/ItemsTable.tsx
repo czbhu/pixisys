@@ -251,6 +251,9 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     const serviceId = record.service || record.quote_item?.service;
     if (record.item_type === 'manufacturing' && manuId) return `/manufacturing/products/${manuId}`;
     if (record.item_type === 'product' && productId) return `/warehouse/materials?id=${productId}`;
+    // Szolgáltatás: ha van per-RFQ ManufacturingProduct(kind='service') instance, a részletes
+    // szerkesztő-oldalra navigálunk; különben a sablon listára.
+    if (record.item_type === 'service' && manuId) return `/manufacturing/products/${manuId}`;
     if (record.item_type === 'service' && serviceId) return `/manufacturing/services?id=${serviceId}`;
     return null;
   };
