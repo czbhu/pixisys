@@ -215,6 +215,17 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const manuWatchQty = Form.useWatch('manu_quantity', manuForm);
   const manuWatchPrice = Form.useWatch('manu_net_unit_price', manuForm);
 
+  // Set of cost item IDs whose quantity should auto-sync with the main quantity
+  const [syncQtyRows, setSyncQtyRows] = useState<Set<number>>(new Set());
+
+  useEffect(() => {
+    const qty = Number(manuWatchQty) || 1;
+    if (!syncQtyRows.size) return;
+    setManuCostItems(prev => prev.map(r =>
+      syncQtyRows.has(r.id) ? { ...r, quantity: qty } : r
+    ));
+  }, [manuWatchQty]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const translateUnit = (unit: string | undefined | null) => {
     if (!unit) return '';
     const map: Record<string, string> = {
@@ -237,6 +248,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // Sync cost_price ↔ markup_percent ↔ net_unit_price in the line-item form.
   const handleLineFormValuesChange = (changed: any, all: any) => {
     const cost = Number(all.cost_price) || 0;
+    // Sync sub-item quantities when main quantity changes (service tab)
+    if ('quantity' in changed && syncQtyRows.size > 0) {
+      const qty = Number(changed.quantity) || 1;
+      setManuCostItems(prev => prev.map(r =>
+        syncQtyRows.has(r.id) ? { ...r, quantity: qty } : r
+      ));
+    }
     if (cost <= 0) return;
     if ('markup_percent' in changed) {
       const mu = Math.max(0, Number(changed.markup_percent) || 0);
@@ -330,6 +348,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setPendingFileRemarks({});
     manuForm.resetFields();
     setManuCostItems([]);
+    setSyncQtyRows(new Set());
     setManuDimensionsPerUnit(true);
     setManuCalculatedVolumes({ unit: 0, total: 0 });
     setManuCalculatedTotalDims(null);
@@ -1682,11 +1701,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       );
     }},
     { title: 'Típus', dataIndex: 'type', key: 'type', width: 70, render: (t: string) => t === 'material' ? 'Anyag' : t === 'service' ? 'Szv.' : 'Egyéb' },
-    { title: 'Menny.', key: 'quantity', width: 100, render: (_: any, r: CostItem) => (
+    { title: 'Menny.', key: 'quantity', width: 110, render: (_: any, r: CostItem) => (
       <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-        <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: 52 }} />
-        <Tooltip title="Tétel mennyiségének másolása">
-          <Button size="small" icon={<CopyOutlined />} onClick={() => manuUpdateCostItem(r.id, 'quantity', Number(manuForm.getFieldValue('manu_quantity') || form.getFieldValue('quantity')) || 1)} style={{ padding: '0 4px' }} />
+        <NumInput formula size="small" value={r.quantity} onChange={v => { manuUpdateCostItem(r.id, 'quantity', v); setSyncQtyRows(prev => { const n = new Set(prev); n.delete(r.id); return n; }); }} initialFormula={r.formulas?.quantity ?? undefined} onFormulaChange={f => manuUpdateCostItemFormula(r.id, 'quantity', f)} min={0} controls={false} style={{ width: 52 }} />
+        <Tooltip title={syncQtyRows.has(r.id) ? 'Automatikus szinkron BE — kattints a kikapcsoláshoz' : 'Kattints: főmennyiség folyamatos átvétele'}>
+          <Switch
+            size="small"
+            checked={syncQtyRows.has(r.id)}
+            onChange={checked => {
+              setSyncQtyRows(prev => { const n = new Set(prev); checked ? n.add(r.id) : n.delete(r.id); return n; });
+              if (checked) manuUpdateCostItem(r.id, 'quantity', Number(manuForm.getFieldValue('manu_quantity') || form.getFieldValue('quantity')) || 1);
+            }}
+          />
         </Tooltip>
       </div>
     )},
@@ -2529,11 +2555,18 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               columns={[
                 { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
                 { title: 'Egység', dataIndex: 'unit', key: 'unit', width: 70 },
-                { title: 'Menny.', key: 'quantity', width: 95, render: (_: any, r: CostItem) => (
+                { title: 'Menny.', key: 'quantity', width: 110, render: (_: any, r: CostItem) => (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-                    <NumInput formula size="small" value={r.quantity} onChange={v => manuUpdateCostItem(r.id, 'quantity', v)} min={0} controls={false} style={{ width: 52 }} />
-                    <Tooltip title="Tétel mennyiségének másolása">
-                      <Button size="small" icon={<CopyOutlined />} onClick={() => manuUpdateCostItem(r.id, 'quantity', Number(form.getFieldValue('quantity')) || 1)} style={{ padding: '0 4px' }} />
+                    <NumInput formula size="small" value={r.quantity} onChange={v => { manuUpdateCostItem(r.id, 'quantity', v); setSyncQtyRows(prev => { const n = new Set(prev); n.delete(r.id); return n; }); }} min={0} controls={false} style={{ width: 52 }} />
+                    <Tooltip title={syncQtyRows.has(r.id) ? 'Automatikus szinkron BE — kattints a kikapcsoláshoz' : 'Kattints: főmennyiség folyamatos átvétele'}>
+                      <Switch
+                        size="small"
+                        checked={syncQtyRows.has(r.id)}
+                        onChange={checked => {
+                          setSyncQtyRows(prev => { const n = new Set(prev); checked ? n.add(r.id) : n.delete(r.id); return n; });
+                          if (checked) manuUpdateCostItem(r.id, 'quantity', Number(form.getFieldValue('quantity')) || 1);
+                        }}
+                      />
                     </Tooltip>
                   </div>
                 )},
