@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import EnhancedTable from '../../components/EnhancedTable';
 import { useSearchParams } from 'react-router-dom';
-import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip } from 'antd';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, message, Space, Tag, Popconfirm, Tabs, AutoComplete, Switch, TreeSelect, Tooltip, Row, Col, Checkbox } from 'antd';
 import NumInput from '../../components/NumInput';
 import { PlusOutlined, EditOutlined, DeleteOutlined, ExclamationCircleOutlined, ThunderboltOutlined, SearchOutlined, MinusOutlined, CopyOutlined } from '@ant-design/icons';
 import api from '../../services/api';
@@ -66,12 +66,16 @@ interface CostItem {
   service: number;
   supplier?: number;
   supplier_name?: string;
+  department?: number;
+  department_name?: string;
   is_internal: boolean;
+  price_calculation_version?: string;
   name: string;
   calculation_type: string;
   calculation_type_display?: string;
   unit: string;
   unit_price: number;
+  price_quantity?: number;
   markup_percentage: number;
   selling_price?: number;
   currency: string;
@@ -102,7 +106,12 @@ const Services: React.FC = () => {
   
   // Cost items management
   const [costItems, setCostItems] = useState<CostItem[]>([]);
+  const [allCostItems, setAllCostItems] = useState<CostItem[]>([]);
   const [selectedSourceForCost, setSelectedSourceForCost] = useState<'internal' | number | null>(null);
+  const [selectedVersionForCost, setSelectedVersionForCost] = useState<string | null>(null);
+  const [versionNameModal, setVersionNameModal] = useState<{ visible: boolean; mode: 'add' | 'rename' | 'copy'; sourceVersion?: string } | null>(null);
+  const [versionNameInput, setVersionNameInput] = useState('');
+  const [netUnitPrice, setNetUnitPrice] = useState<number>(0);
   const [costItemForm] = Form.useForm();
   const [editingCostItem, setEditingCostItem] = useState<CostItem | null>(null);
   const [costItemModalVisible, setCostItemModalVisible] = useState(false);
@@ -166,6 +175,57 @@ const Services: React.FC = () => {
   const calculateMarkup = (unitPrice: number, sellingPrice: number): number => {
     if (unitPrice === 0) return 0;
     return ((sellingPrice - unitPrice) / unitPrice) * 100;
+  };
+
+  // ── Price version helpers (like Materials.tsx) ───────────────────────────
+  const getCostItemUnitAmount = (item: CostItem, priceField: 'unit_price' | 'selling_price' = 'selling_price') => {
+    const price = Number((item as any)[priceField] ?? item.unit_price ?? 0);
+    if (item.calculation_type === 'fixed') return price;
+    const quantity = Number(item.price_quantity || 1) || 1;
+    return price / quantity;
+  };
+
+  const getPriceVersionSummaries = () => {
+    const grouped = new Map<string, CostItem[]>();
+    allCostItems
+      .filter(item => item.is_active !== false)
+      .forEach(item => {
+        const version = (item.price_calculation_version || '1. verzió').trim() || '1. verzió';
+        grouped.set(version, [...(grouped.get(version) || []), item]);
+      });
+    return Array.from(grouped.entries()).map(([version, items]) => {
+      const unitCost = items.reduce((sum, item) => sum + getCostItemUnitAmount(item, 'unit_price'), 0);
+      const unitSelling = items.reduce((sum, item) => sum + getCostItemUnitAmount(item, 'selling_price'), 0);
+      const supplierNames = Array.from(new Set(
+        items.map(item => item.is_internal ? (item.department_name || 'Belső gyártás') : (item.supplier_name || '')).filter(Boolean)
+      ));
+      return { version, items, unitCost, unitSelling, supplierNames };
+    }).sort((a, b) => a.version.localeCompare(b.version, 'hu'));
+  };
+
+  const getOptimalPriceVersion = () => {
+    const summaries = getPriceVersionSummaries().filter(v => v.unitSelling > 0);
+    return summaries.length ? summaries.reduce((best, current) => current.unitSelling < best.unitSelling ? current : best) : undefined;
+  };
+
+  const applyCalculatedPriceMode = (mode: 'default_version' | 'optimal_version') => {
+    const summaries = getPriceVersionSummaries();
+    const selectedVersion = form.getFieldValue('default_price_calculation_version');
+    const summary = mode === 'optimal_version'
+      ? getOptimalPriceVersion()
+      : summaries.find(v => v.version === selectedVersion) || summaries[0];
+    if (!summary) {
+      message.warning('Nincs elérhető árkalkulációs verzió');
+      return;
+    }
+    const net = Number(summary.unitSelling.toFixed(2));
+    setNetUnitPrice(net);
+    form.setFieldsValue({
+      price_source_mode: mode,
+      unit_cost_price: Number(summary.unitCost.toFixed(2)),
+      unit_selling_price: net,
+      markup_percentage: summary.unitCost > 0 ? Number((((summary.unitSelling - summary.unitCost) / summary.unitCost) * 100).toFixed(2)) : 0,
+    });
   };
 
   useEffect(() => {
@@ -339,6 +399,87 @@ const Services: React.FC = () => {
     }
   };
 
+  const fetchAllCostItems = async (serviceId: number) => {
+    try {
+      const response = await api.get(`/manufacturing/service-cost-items/?service_id=${serviceId}`);
+      const data = Array.isArray(response.data) ? response.data : (response.data.results || []);
+      setAllCostItems(data);
+    } catch (error) {
+      console.error('Hiba az összes költség elem betöltésekor:', error);
+      setAllCostItems([]);
+    }
+  };
+
+  const handleAddVersion = (versionName: string) => {
+    setSelectedVersionForCost(versionName);
+    setVersionNameModal(null);
+    message.info(`Verzió létrehozva: ${versionName}. Válassz forrást és adj hozzá elemeket.`);
+  };
+
+  const handleCopyVersion = async (sourceVersionName: string, newVersionName: string) => {
+    if (!editingService) return;
+    const sourceItems = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === sourceVersionName
+    );
+    if (sourceItems.length === 0) {
+      message.warning('Nincs másolható elem ebben a verzióban');
+      return;
+    }
+    try {
+      for (const item of sourceItems) {
+        const { id, supplier_name, department_name, calculation_type_display, ...rest } = item as any;
+        await api.post('/manufacturing/service-cost-items/', {
+          ...rest,
+          price_calculation_version: newVersionName,
+        });
+      }
+      message.success(`Verzió másolva: ${newVersionName}`);
+      await fetchAllCostItems(editingService.id);
+      setSelectedVersionForCost(newVersionName);
+      setVersionNameModal(null);
+    } catch (error) {
+      message.error('Hiba a másolás során');
+      console.error(error);
+    }
+  };
+
+  const handleDeleteVersion = async (versionName: string) => {
+    if (!editingService) return;
+    const itemsToDelete = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === versionName
+    );
+    try {
+      for (const item of itemsToDelete) {
+        if (item.id) await api.delete(`/manufacturing/service-cost-items/${item.id}/`);
+      }
+      message.success('Verzió törölve');
+      await fetchAllCostItems(editingService.id);
+      if (selectedVersionForCost === versionName) setSelectedVersionForCost(null);
+    } catch (error) {
+      message.error('Hiba a törlés során');
+      console.error(error);
+    }
+  };
+
+  const handleRenameVersion = async (oldName: string, newName: string) => {
+    if (!editingService) return;
+    const itemsToRename = allCostItems.filter(item =>
+      (item.price_calculation_version || '1. verzió').trim() === oldName
+    );
+    try {
+      for (const item of itemsToRename) {
+        if (item.id) await api.patch(`/manufacturing/service-cost-items/${item.id}/`, { price_calculation_version: newName });
+      }
+      message.success('Verzió átnevezve');
+      await fetchAllCostItems(editingService.id);
+      if (selectedVersionForCost === oldName) setSelectedVersionForCost(newName);
+      setVersionNameModal(null);
+    } catch (error) {
+      message.error('Hiba az átnevezés során');
+      console.error(error);
+    }
+  };
+
   const fetchPrintCostItems = async (serviceId: number) => {
     try {
       const res = await api.get(`/manufacturing/service-cost-items/?service_id=${serviceId}&is_standalone=true`);
@@ -449,9 +590,12 @@ const Services: React.FC = () => {
     form.resetFields();
     setIsInternalProduction(false);
     setSelectedSourceForCost(null);
+    setSelectedVersionForCost(null);
     setCostItems([]);
+    setAllCostItems([]);
     setAddedSuppliers([]);
     setPrintCostItems([]);
+    setNetUnitPrice(0);
     setSupplierSearchValue('');
     setModalVisible(true);
   };
@@ -494,20 +638,17 @@ const Services: React.FC = () => {
         groups: service.groups || [],
         default_source_unified: defaultSourceUnified,
     });
-    
-    // Load added suppliers
+
+    // Set netUnitPrice from saved selling price
+    setNetUnitPrice(Number(service.unit_selling_price) || 0);
+
+    // Load added suppliers and all cost items
     fetchAddedSuppliers(service);
-    
-    if (service.is_internal_production) {
-      setSelectedSourceForCost('internal');
-      fetchCostItems(service.id, 'internal');
-    } else if (service.default_supplier) {
-      setSelectedSourceForCost(service.default_supplier);
-      fetchCostItems(service.id, service.default_supplier);
-    } else {
-        setSelectedSourceForCost(null);
-        setCostItems([]);
-    }
+    fetchAllCostItems(service.id);
+
+    setSelectedSourceForCost(null);
+    setCostItems([]);
+    setSelectedVersionForCost(null);
     setModalVisible(true);
   };
 
@@ -582,13 +723,19 @@ const Services: React.FC = () => {
 
   const handleSubmit = async (values: any) => {
     try {
+      // Sync unit_selling_price with the current netUnitPrice state
+      const payload = {
+        ...values,
+        unit_selling_price: values.unit_selling_price || netUnitPrice || 0,
+      };
+
       let savedService: any;
       if (editingService) {
-        const res = await api.patch(`/manufacturing/services/${editingService.id}/`, values);
+        const res = await api.patch(`/manufacturing/services/${editingService.id}/`, payload);
         savedService = res.data;
         message.success('Szolgáltatás frissítve');
       } else {
-        const res = await api.post('/manufacturing/services/', values);
+        const res = await api.post('/manufacturing/services/', payload);
         savedService = res.data;
         message.success('Szolgáltatás létrehozva');
       }
@@ -724,14 +871,22 @@ const Services: React.FC = () => {
     setEditingCostItem(null);
     setSelectedCalculationType('unit');
     costItemForm.resetFields();
+
+    // Determine is_internal and supplier/department from selectedSourceForCost
+    const isInternal = selectedSourceForCost === 'internal';
+    const supplierId = !isInternal && typeof selectedSourceForCost === 'number' ? selectedSourceForCost : undefined;
+
     costItemForm.setFieldsValue({
       service: editingService.id,
-      is_internal: selectedSourceForCost === 'internal',
-      supplier: selectedSourceForCost !== 'internal' ? selectedSourceForCost : undefined,
+      is_internal: isInternal,
+      supplier: supplierId,
+      department: undefined,
+      price_calculation_version: selectedVersionForCost || '1. verzió',
       calculation_type: 'unit',
       unit: 'db',
       currency: 'HUF',
       is_active: true,
+      price_quantity: 1,
       unit_price: 0,
       markup_percentage: 35,
       selling_price: 0,
@@ -750,8 +905,8 @@ const Services: React.FC = () => {
     try {
       await api.delete(`/manufacturing/service-cost-items/${id}/`);
       message.success('Költség elem törölve');
-      if (editingService && selectedSourceForCost) {
-        fetchCostItems(editingService.id, selectedSourceForCost);
+      if (editingService) {
+        fetchAllCostItems(editingService.id);
         fetchAddedSuppliers(editingService);
       }
     } catch (error) {
@@ -762,12 +917,13 @@ const Services: React.FC = () => {
 
   const handleCostItemSubmit = async (values: any) => {
     try {
-      // Ensure correct types for hidden fields
       const payload = {
         ...values,
         is_internal: values.is_internal === true || values.is_internal === 'true',
-        supplier: values.supplier ? Number(values.supplier) : null,
+        supplier: (values.is_internal === true || values.is_internal === 'true') ? null : (values.supplier ? Number(values.supplier) : null),
+        department: values.department ? Number(values.department) : null,
         service: Number(values.service),
+        price_calculation_version: values.price_calculation_version || selectedVersionForCost || '1. verzió',
       };
 
       if (editingCostItem) {
@@ -778,8 +934,8 @@ const Services: React.FC = () => {
         message.success('Költség elem létrehozva');
       }
       setCostItemModalVisible(false);
-      if (editingService && selectedSourceForCost) {
-        fetchCostItems(editingService.id, selectedSourceForCost);
+      if (editingService) {
+        fetchAllCostItems(editingService.id);
         fetchAddedSuppliers(editingService);
       }
     } catch (error: any) {
@@ -995,6 +1151,13 @@ const Services: React.FC = () => {
       key: 'name',
     },
     {
+      title: 'Forrás',
+      key: 'source',
+      render: (_: any, record: CostItem) => record.is_internal
+        ? <Tag color="green">{record.department_name || 'Belső gyártás'}</Tag>
+        : record.supplier_name ? <Tag color="blue">{record.supplier_name}</Tag> : <span style={{ color: '#ccc' }}>-</span>,
+    },
+    {
       title: 'Típus',
       dataIndex: 'calculation_type_display',
       key: 'calculation_type_display',
@@ -1008,7 +1171,14 @@ const Services: React.FC = () => {
       title: 'Egységár',
       dataIndex: 'unit_price',
       key: 'unit_price',
-      render: (value: number) => `${Number(value).toLocaleString()} HUF`,
+      render: (value: number, record: CostItem) => `${Number(value).toLocaleString()} ${record.currency || 'HUF'}`,
+    },
+    {
+      title: 'Ár mennyiségre',
+      key: 'price_quantity',
+      render: (_: any, record: CostItem) => record.calculation_type === 'fixed'
+        ? 'fix'
+        : `${Number(record.price_quantity || 1).toLocaleString('hu-HU')} ${record.unit || ''}`,
     },
     {
       title: 'Haszon (%)',
@@ -1020,7 +1190,12 @@ const Services: React.FC = () => {
       title: 'Eladási ár',
       dataIndex: 'selling_price',
       key: 'selling_price',
-      render: (value: number) => `${Number(value).toLocaleString()} HUF`,
+      render: (value: number, record: CostItem) => `${Number(value).toLocaleString()} ${record.currency || 'HUF'}`,
+    },
+    {
+      title: 'Egységre jutó nettó',
+      key: 'unit_selling_contribution',
+      render: (_: any, record: CostItem) => `${getCostItemUnitAmount(record, 'selling_price').toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${record.currency || 'HUF'}`,
     },
     {
       title: 'Műveletek',
@@ -1201,25 +1376,81 @@ const Services: React.FC = () => {
               </Form.Item>
 
               <Form.Item shouldUpdate noStyle>
-                {() => (
-                  <div style={{ 
-                    marginTop: 16, 
-                    marginBottom: 16, 
-                    padding: '12px 16px', 
-                    background: '#f5f5f5', 
-                    borderRadius: 4,
-                    border: '1px solid #d9d9d9'
-                  }}>
-                    <strong>1 egységre vonatkozó tájékoztató ár:</strong>
-                    <div style={{ marginTop: 8, fontSize: '13px' }}>
-                      Bekerülési: {Number(form.getFieldValue('unit_cost_price') || 0).toLocaleString()} HUF
-                      {' | '}
-                      Haszon: {Number(form.getFieldValue('markup_percentage') || 0).toFixed(2)}%
-                      {' | '}
-                      Eladási: {Number(form.getFieldValue('unit_selling_price') || 0).toLocaleString()} HUF
+                {() => {
+                  const summaries = getPriceVersionSummaries();
+                  const priceSourceMode = form.getFieldValue('price_source_mode') || 'manual';
+                  return (
+                    <div style={{ marginTop: 16, marginBottom: 16, padding: 16, background: '#fff7e6', borderRadius: 6, border: '1px solid #ffd591' }}>
+                      <strong style={{ fontSize: 15 }}>Nettó egységár</strong>
+                      <Row gutter={12} align="middle" style={{ marginTop: 8 }}>
+                        <Col xs={24} md={10}>
+                          <NumInput
+                            style={{ width: '100%', fontWeight: 600 }}
+                            value={netUnitPrice}
+                            disabled={priceSourceMode !== 'manual'}
+                            min={0}
+                            precision={2}
+                            addonAfter="HUF"
+                            onChange={(value) => {
+                              const net = value || 0;
+                              setNetUnitPrice(net);
+                              form.setFieldsValue({ price_source_mode: 'manual', unit_selling_price: net });
+                            }}
+                          />
+                        </Col>
+                        <Col xs={24} md={14}>
+                          <Checkbox
+                            checked={priceSourceMode !== 'manual'}
+                            onChange={(e) => {
+                              const nextMode = e.target.checked ? 'default_version' : 'manual';
+                              form.setFieldsValue({ price_source_mode: nextMode });
+                              if (nextMode !== 'manual') applyCalculatedPriceMode(nextMode);
+                            }}
+                          >
+                            Ár kalkuláció alapján
+                          </Checkbox>
+                        </Col>
+                      </Row>
+
+                      <Form.Item name="default_price_calculation_version" label="Alapértelmezett árkalkulációs verzió" style={{ marginTop: 12, marginBottom: 8 }}>
+                        <Select
+                          allowClear
+                          placeholder={summaries.length ? 'Válassz verziót' : 'Nincs még árkalkulációs verzió'}
+                          onChange={() => {
+                            if ((form.getFieldValue('price_source_mode') || 'manual') === 'default_version') {
+                              setTimeout(() => applyCalculatedPriceMode('default_version'), 0);
+                            }
+                          }}
+                        >
+                          {summaries.map(summary => (
+                            <Option key={summary.version} value={summary.version}>
+                              {summary.version}{summary.supplierNames?.length ? ` · ${summary.supplierNames.join(', ')}` : ''}{' – '}{summary.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} HUF / {form.getFieldValue('unit') || 'egység'}
+                            </Option>
+                          ))}
+                        </Select>
+                      </Form.Item>
+
+                      {summaries.length > 0 ? (
+                        <Table
+                          size="small"
+                          dataSource={summaries}
+                          rowKey="version"
+                          pagination={false}
+                          style={{ marginTop: 8 }}
+                          columns={[
+                            { title: 'Verzió', dataIndex: 'version', key: 'version' },
+                            { title: 'Beszállítók', key: 'suppliers', render: (_: any, r: any) => r.supplierNames?.join(', ') || '—' },
+                            { title: 'Elemek', key: 'items', render: (_: any, r: any) => r.items.length },
+                            { title: 'Bekerülési / egység', key: 'unitCost', align: 'right' as const, render: (_: any, r: any) => `${r.unitCost.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} HUF` },
+                            { title: 'Nettó ár / egység', key: 'unitSelling', align: 'right' as const, render: (_: any, r: any) => <strong>{r.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} HUF</strong> },
+                          ]}
+                        />
+                      ) : (
+                        <div style={{ marginTop: 8, color: '#8c8c8c', fontSize: 12 }}>Árkalkulációs verziót a <em>Beszállítók és árkalkuláció</em> fülön lehet rögzíteni.</div>
+                      )}
                     </div>
-                  </div>
-                )}
+                  );
+                }}
               </Form.Item>
 
               <Form.Item name="unit_cost_price" hidden initialValue={0}>
@@ -1232,6 +1463,10 @@ const Services: React.FC = () => {
               
               <Form.Item name="unit_selling_price" hidden initialValue={0}>
                 <NumInput />
+              </Form.Item>
+
+              <Form.Item name="price_source_mode" hidden initialValue="manual">
+                <Input />
               </Form.Item>
 
               <Form.Item 
@@ -1402,74 +1637,150 @@ const Services: React.FC = () => {
 
 
           <TabPane tab="Beszállítók és árkalkuláció" key="2" disabled={!editingService && addedSuppliers.length === 0}>
-            <div style={{ marginBottom: 16 }}>
-              <Space direction="vertical" style={{ width: '100%' }}>
-                <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                  <Select
-                    style={{ width: 400 }}
-                    placeholder="Válassz beszállítót a költségelemek kezeléséhez"
-                    onChange={(val: number | 'internal') => {
-                        setSelectedSourceForCost(val);
-                        if (editingService) {
-                           fetchCostItems(editingService.id, val);
-                        } else {
-                           // Allow new service creation flow -> filter local costItems? 
-                           // Currently costItems are single list.
-                           // If new service, we store costItems with reference to supplier?
-                           // The local costItems state is an array. We need to filter it visually?
-                           // NO, we should probably allow editing one context at a time.
-                        }
-                    }}
-                    value={selectedSourceForCost === 'internal' ? 'internal' : selectedSourceForCost}
-                    // Default value logic: currently 'selectedSourceForCost' state
-                    showSearch
-                    optionFilterProp="children"
-                    filterOption={(input, option) => (option?.children as unknown as string).toLowerCase().includes(input.toLowerCase())}
-                  >
-                    {addedSuppliers.map(supplier => (
-                      <Option 
-                        key={supplier.is_internal ? 'internal' : supplier.id} 
-                        value={supplier.is_internal ? 'internal' : supplier.id}
-                      >
-                        {supplier.name}
-                      </Option>
-                    ))}
-                  </Select>
-                  
-                  <Button 
-                    type="primary" 
-                    icon={<PlusOutlined />} 
-                    onClick={handleAddCostItem}
-                    disabled={!selectedSourceForCost}
-                  >
-                    Új költség elem
-                  </Button>
-                </div>
-                
-                {selectedSourceForCost && (
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '8px 16px', background: '#f0f0f0', borderRadius: 4 }}>
-                    <div style={{ flex: 1 }}>
-                      <strong>1 egységre vonatkozó összesítés:</strong> 
-                      {' '}Bekerülési: {getTotalCost().toLocaleString()} HUF
-                      {' | '}Haszon: {getAverageMarkup()}%
-                      {' | '}Eladási: {getTotalSelling().toLocaleString()} HUF
-                    </div>
-                    <Button onClick={handleTransferPrices}>
-                      Árak átvétele az alapadatokhoz
-                    </Button>
-                  </div>
-                )}
-              </Space>
+            {/* Version management */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <strong>Árkalkulációs verziók</strong>
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onClick={() => { setVersionNameInput(''); setVersionNameModal({ visible: true, mode: 'add' }); }}
+                >
+                  Új verzió
+                </Button>
+              </div>
+              <Table
+                size="small"
+                rowKey="version"
+                pagination={false}
+                dataSource={getPriceVersionSummaries()}
+                rowClassName={(record: any) => record.version === selectedVersionForCost ? 'ant-table-row-selected' : ''}
+                onRow={(record: any) => ({ onClick: () => setSelectedVersionForCost(selectedVersionForCost === record.version ? null : record.version) })}
+                locale={{ emptyText: 'Nincs árkalkulációs verzió. Kattints az "Új verzió" gombra.' }}
+                columns={[
+                  { title: 'Verzió', dataIndex: 'version', key: 'version', render: (v: string, r: any) => <span style={{ fontWeight: r.version === selectedVersionForCost ? 600 : undefined }}>{v}</span> },
+                  { title: 'Forrás', key: 'suppliers', render: (_: any, r: any) => r.supplierNames?.join(', ') || '—' },
+                  { title: 'Elemek', key: 'items', align: 'right' as const, render: (_: any, r: any) => r.items.length },
+                  { title: 'Ár / egység', key: 'selling', align: 'right' as const, render: (_: any, r: any) => `${r.unitSelling.toLocaleString('hu-HU', { maximumFractionDigits: 2 })} HUF` },
+                  {
+                    title: '',
+                    key: 'actions',
+                    width: 110,
+                    render: (_: any, record: any) => (
+                      <Space size={0} onClick={(e: React.MouseEvent) => e.stopPropagation()}>
+                        <Tooltip title="Átnevezés">
+                          <Button type="link" size="small" icon={<EditOutlined />} onClick={() => { setVersionNameInput(record.version); setVersionNameModal({ visible: true, mode: 'rename', sourceVersion: record.version }); }} />
+                        </Tooltip>
+                        <Tooltip title="Másolás">
+                          <Button type="link" size="small" icon={<CopyOutlined />} onClick={() => { setVersionNameInput(`${record.version} (másolat)`); setVersionNameModal({ visible: true, mode: 'copy', sourceVersion: record.version }); }} />
+                        </Tooltip>
+                        <Tooltip title="Törlés">
+                          <Popconfirm title={`Törli a(z) "${record.version}" verziót és összes elemét?`} onConfirm={() => handleDeleteVersion(record.version)} okText="Igen" cancelText="Nem">
+                            <Button type="link" danger size="small" icon={<DeleteOutlined />} />
+                          </Popconfirm>
+                        </Tooltip>
+                      </Space>
+                    ),
+                  },
+                ]}
+              />
             </div>
 
-            <Table
-              size="small"
-              columns={costItemColumns}
-              dataSource={costItems}
-              rowKey="id"
-              pagination={false}
-              scroll={{ x: 800 }}
-            />
+            {selectedVersionForCost && (
+              <>
+                <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 8, flexWrap: 'wrap' }}>
+                  <Tag color="blue" style={{ fontSize: 13, padding: '2px 10px' }}>{selectedVersionForCost}</Tag>
+                  <Select
+                    style={{ width: 300 }}
+                    placeholder="Forrás (belső osztály / külső szállító)"
+                    onChange={(val: string | number) => {
+                      if (val === 'internal' || String(val).startsWith('dept_')) {
+                        setSelectedSourceForCost('internal');
+                        if (editingService) fetchCostItems(editingService.id, 'internal');
+                      } else {
+                        setSelectedSourceForCost(val as number);
+                        if (editingService) fetchCostItems(editingService.id, val as number);
+                      }
+                    }}
+                    value={selectedSourceForCost === 'internal' ? 'internal' : selectedSourceForCost}
+                    showSearch
+                    optionFilterProp="children"
+                    allowClear
+                    onClear={() => { setSelectedSourceForCost(null); setCostItems([]); }}
+                  >
+                    {departments.map(d => (
+                      <Option key={`dept_${d.id}`} value={`dept_${d.id}`}>
+                        {`[Belső] ${d.name}`}
+                      </Option>
+                    ))}
+                    {suppliers.map(s => (
+                      <Option key={s.id} value={s.id}>{s.name}</Option>
+                    ))}
+                  </Select>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={handleAddCostItem}
+                  >
+                    Új elem
+                  </Button>
+                </div>
+
+                <Table
+                  size="small"
+                  columns={costItemColumns}
+                  dataSource={allCostItems.filter(item => (item.price_calculation_version || '1. verzió').trim() === selectedVersionForCost)}
+                  rowKey="id"
+                  pagination={false}
+                  scroll={{ x: 800 }}
+                />
+              </>
+            )}
+
+            {/* Version name modal */}
+            <Modal
+              title={
+                versionNameModal?.mode === 'add' ? 'Új verzió' :
+                versionNameModal?.mode === 'copy' ? `Másolás: ${versionNameModal.sourceVersion}` :
+                `Átnevezés: ${versionNameModal?.sourceVersion}`
+              }
+              open={!!versionNameModal?.visible}
+              onCancel={() => setVersionNameModal(null)}
+              onOk={async () => {
+                const name = versionNameInput.trim();
+                if (!name) { message.warning('Add meg a verzió nevét'); return; }
+                if (versionNameModal?.mode === 'add') {
+                  handleAddVersion(name);
+                } else if (versionNameModal?.mode === 'copy') {
+                  await handleCopyVersion(versionNameModal.sourceVersion!, name);
+                } else if (versionNameModal?.mode === 'rename') {
+                  await handleRenameVersion(versionNameModal.sourceVersion!, name);
+                }
+              }}
+              okText={versionNameModal?.mode === 'add' ? 'Létrehozás' : versionNameModal?.mode === 'copy' ? 'Másolás' : 'Átnevezés'}
+            >
+              <Form layout="vertical">
+                <Form.Item label="Verzió neve" required>
+                  <Input
+                    value={versionNameInput}
+                    onChange={(e) => setVersionNameInput(e.target.value)}
+                    onPressEnter={async () => {
+                      const name = versionNameInput.trim();
+                      if (!name) return;
+                      if (versionNameModal?.mode === 'add') { handleAddVersion(name); }
+                      else if (versionNameModal?.mode === 'copy') { await handleCopyVersion(versionNameModal.sourceVersion!, name); }
+                      else if (versionNameModal?.mode === 'rename') { await handleRenameVersion(versionNameModal.sourceVersion!, name); }
+                    }}
+                    placeholder="pl. 1. verzió, Acme árak 2026"
+                    autoFocus
+                  />
+                </Form.Item>
+                {versionNameModal?.mode === 'copy' && (
+                  <div style={{ color: '#8c8c8c', fontSize: 12 }}>A(z) „{versionNameModal.sourceVersion}" verzió összes eleme másolódik az új verzióba.</div>
+                )}
+              </Form>
+            </Modal>
           </TabPane>
         </Tabs>
       </Modal>
@@ -1490,13 +1801,30 @@ const Services: React.FC = () => {
           <Form.Item name="service" hidden>
             <Input />
           </Form.Item>
-
-          <Form.Item name="supplier" hidden>
+          <Form.Item name="is_internal" hidden>
+             <Input /> 
+          </Form.Item>
+          <Form.Item name="price_calculation_version" hidden>
             <Input />
           </Form.Item>
 
-          <Form.Item name="is_internal" hidden>
-             <Input /> 
+          <Form.Item shouldUpdate={true} noStyle>
+            {() => {
+              const isInternal = costItemForm.getFieldValue('is_internal') === true || costItemForm.getFieldValue('is_internal') === 'true';
+              return isInternal ? (
+                <Form.Item name="department" label="HR Osztály (belső gyártás)">
+                  <Select allowClear placeholder="Válassz osztályt" showSearch optionFilterProp="children">
+                    {departments.map(d => <Option key={d.id} value={d.id}>{d.name}</Option>)}
+                  </Select>
+                </Form.Item>
+              ) : (
+                <Form.Item name="supplier" label="Beszállító">
+                  <Select allowClear placeholder="Válassz beszállítót" showSearch optionFilterProp="children">
+                    {suppliers.map(s => <Option key={s.id} value={s.id}>{s.name}</Option>)}
+                  </Select>
+                </Form.Item>
+              );
+            }}
           </Form.Item>
 
           <Form.Item
@@ -1546,7 +1874,7 @@ const Services: React.FC = () => {
              name="rounding_step"
              label="Elszámolási egység (kerekítés)"
              initialValue={1}
-             help="Pl. 0.5 = minden megkezdett fél egység. 1 = egészre kerekítés. 10 = tizesével. Mindig felfelé kerekít."
+             help="Pl. 0.5 = minden megkezdett fél egység. 1 = egészre kerekítés. Mindig felfelé kerekít."
           >
             <NumInput min={0.0001} step={0.1} style={{ width: '100%' }} />
           </Form.Item>
@@ -1568,6 +1896,19 @@ const Services: React.FC = () => {
                 costItemForm.setFieldsValue({ selling_price: sellingPrice });
               }}
             />
+          </Form.Item>
+
+          <Form.Item shouldUpdate noStyle>
+            {() => costItemForm.getFieldValue('calculation_type') !== 'fixed' && (
+              <Form.Item
+                name="price_quantity"
+                label="Az ár hány mértékegységre vonatkozik?"
+                tooltip="Példa: ha az ár 10 db-ra vonatkozik, ide 10 kerül, így az egységár tizedelődik."
+                rules={[{ required: true, message: 'Kötelező mező' }]}
+              >
+                <NumInput style={{ width: '100%' }} min={0.0001} precision={4} addonAfter={costItemForm.getFieldValue('unit') || 'egység'} />
+              </Form.Item>
+            )}
           </Form.Item>
 
           <Form.Item

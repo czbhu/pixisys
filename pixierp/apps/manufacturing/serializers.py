@@ -550,15 +550,17 @@ class ServiceSupplierPriceSerializer(serializers.ModelSerializer):
 
 class ServiceCostItemSerializer(serializers.ModelSerializer):
     """Szolgáltatás költség elem serializer"""
-    supplier_name = serializers.CharField(source='supplier.name', read_only=True)
+    supplier_name = serializers.CharField(source='supplier.name', read_only=True, allow_null=True)
+    department_name = serializers.CharField(source='department.name', read_only=True, allow_null=True)
     calculation_type_display = serializers.CharField(source='get_calculation_type_display', read_only=True)
     
     class Meta:
         model = ServiceCostItem
         fields = [
-            'id', 'service', 'supplier', 'supplier_name', 'is_internal',
+            'id', 'service', 'supplier', 'supplier_name', 'department', 'department_name',
+            'is_internal', 'price_calculation_version',
             'name', 'calculation_type', 'calculation_type_display', 'unit',
-            'unit_price', 'markup_percentage', 'selling_price', 'currency',
+            'unit_price', 'price_quantity', 'markup_percentage', 'selling_price', 'currency',
             'rounding_step',
             'is_active', 'created_at', 'updated_at'
         ]

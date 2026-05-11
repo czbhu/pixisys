@@ -659,6 +659,26 @@ class Service(models.Model):
         help_text="Pl. 1 vágással hány ívet lehet feldolgozni. 0 = korlátlan.",
     )
 
+    # ── Árkalkulációs verzió ─────────────────────────────────────────────────
+    PRICE_SOURCE_MODE_CHOICES = [
+        ('manual', 'Kézi nettó egységár'),
+        ('default_version', 'Alapértelmezett árkalkuláció'),
+        ('optimal_version', 'Optimális árkalkuláció'),
+    ]
+    price_source_mode = models.CharField(
+        max_length=20,
+        choices=PRICE_SOURCE_MODE_CHOICES,
+        default='manual',
+        verbose_name="Ár forrása",
+    )
+    default_price_calculation_version = models.CharField(
+        max_length=100,
+        default='',
+        blank=True,
+        verbose_name="Alapértelmezett árkalkulációs verzió",
+        help_text="Melyik árkalkulációs verzió alapján számolja a nettó egységárat"
+    )
+
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
     is_protected = models.BooleanField(
         default=False, verbose_name="Védett",
@@ -1129,7 +1149,24 @@ class ServiceCostItem(models.Model):
         verbose_name="Beszállító",
         help_text="Null = belső gyártás"
     )
-    
+
+    department = models.ForeignKey(
+        'hr.Department',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='service_cost_items',
+        verbose_name="HR Osztály (belső gyártásnál)",
+    )
+
+    price_calculation_version = models.CharField(
+        max_length=100,
+        default='1. verzió',
+        blank=True,
+        verbose_name="Árkalkulációs verzió",
+        help_text="Azonos verziónév alá tartozó költségelemek együtt adnak egy egységárat"
+    )
+
     is_internal = models.BooleanField(
         default=False,
         verbose_name="Belső gyártás",
@@ -1171,6 +1208,15 @@ class ServiceCostItem(models.Model):
         validators=[MinValueValidator(0)],
         verbose_name="Egységár",
         help_text="Bekerülési egységár"
+    )
+
+    price_quantity = models.DecimalField(
+        max_digits=12,
+        decimal_places=4,
+        default=1,
+        validators=[MinValueValidator(0.0001)],
+        verbose_name="Ár mennyisége",
+        help_text="Az ár hány szolgáltatás mértékegységre vonatkozik. Pl. 10 darabos árnál 10."
     )
     
     markup_percentage = models.DecimalField(
