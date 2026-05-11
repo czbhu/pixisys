@@ -1538,8 +1538,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
   const handleLinkItemSelect = (record: any) => {
     const type = linkSearchModal.type!;
-    manuForm.setFieldsValue({ name: record.name });
+    // manuMaterials stores name as "[KOD] Nev" — recover the original name
+    const originalName = (type === 'product' && record.code)
+      ? record.name.replace(`[${record.code}] `, '')
+      : record.name;
     const unit = record.unit || (type === 'service' ? 'alkalom' : 'db');
+    manuForm.setFieldsValue({ name: originalName, quantity_unit: unit });
     const cp = type === 'product'
       ? (Number(record.unit_cost_price) || Number(record.moving_average_cost) || Number(record.net_unit_price) || 0)
       : (Number(record.unit_cost_price) || Number(record.unit_price) || 0);
@@ -1555,7 +1559,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     if (recordSupplierId && !manuSuppliers.find((s: any) => s.id === recordSupplierId)) {
       const supObj = (typeof record.default_supplier === 'object' && record.default_supplier)
         ? record.default_supplier
-        : { id: recordSupplierId, name: `#${recordSupplierId}` };
+        : { id: recordSupplierId, name: record.default_supplier_name || `#${recordSupplierId}` };
       setManuSuppliers(prev => [supObj, ...prev]);
     }
     const fallbackSupplierId = manuSuppliers.find((s: any) =>
@@ -1568,7 +1572,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       type: costType,
       ref_id: record.id,
       code: record.code || '',
-      name: record.name,
+      name: originalName,
       unit,
       quantity: 1,
       unit_price: cp,
@@ -1584,7 +1588,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       currency_id: manuCostCurrencyId,
     };
     setManuCostItems(prev => [...prev, newItem]);
-    setLinkedItem({ type, name: record.name, id: record.id });
+    setLinkedItem({ type, name: originalName, id: record.id });
     setManuCollapseKeys(prev => prev.includes('costs') ? prev : [...prev, 'costs']);
     setLinkSearchModal({ open: false, type: null });
   };
