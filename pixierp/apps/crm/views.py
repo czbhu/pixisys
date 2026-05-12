@@ -105,18 +105,6 @@ class CompanyViewSet(viewsets.ViewSet):
                 # Filter strictly based on the source data
                 items = [i for i in items if i.get('is_supplier') is True]
 
-                # Sync these suppliers to local DB and swap ID to local ID
-                synced_items = []
-                for item in items:
-                    local_comp = _sync_to_local_db(item)
-                    if local_comp:
-                        # Use local ID for the frontend to be compatible with ERP ForeignKeys
-                        item['external_id'] = item['id']  # Save PixInvoice UUID
-                        item['id'] = local_comp.id        # Swap to local Integer ID
-                        synced_items.append(item)
-
-                items = synced_items
-
             if is_customer_filter:
                 filtered_items = []
                 for item in items:
@@ -124,6 +112,18 @@ class CompanyViewSet(viewsets.ViewSet):
                     if flag is not False:
                         filtered_items.append(item)
                 items = filtered_items
+
+            # Always sync all returned items to local DB and swap UUID → local integer ID
+            synced_items = []
+            for item in items:
+                local_comp = _sync_to_local_db(item)
+                if local_comp:
+                    item['external_id'] = item['id']  # Save PixInvoice UUID
+                    item['id'] = local_comp.id        # Swap to local Integer ID
+                    synced_items.append(item)
+                else:
+                    synced_items.append(item)  # Keep as-is if sync failed
+            items = synced_items
 
             if compact_mode:
                 items = [
@@ -150,7 +150,19 @@ class CompanyViewSet(viewsets.ViewSet):
                 company_id = _ensure_company_id(client)
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            item = client.get_customer(pk, company_id=company_id)
+
+            # If pk looks like a local integer ID, resolve the PixInvoice UUID via external_id
+            pixinvoice_pk = pk
+            try:
+                local_id = int(pk)
+                from .models import Company as LocalCompany
+                local = LocalCompany.objects.filter(id=local_id).first()
+                if local and local.external_id:
+                    pixinvoice_pk = local.external_id
+            except (ValueError, TypeError):
+                pass  # pk is already a UUID string
+
+            item = client.get_customer(pixinvoice_pk, company_id=company_id)
             try:
                 if item is not None and not item.get('bank_accounts'):
                     item['bank_accounts'] = client.list_customer_bank_accounts(pk, company_id=company_id)
