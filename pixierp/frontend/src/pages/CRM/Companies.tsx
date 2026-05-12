@@ -74,16 +74,27 @@ type Company = {
     is_active?: boolean;
     vat_status?: string;
     is_hungarian_taxpayer?: boolean;
+    external_id?: string | null;
     bank_accounts?: BankAccount[];
 };
 
 type ContactSummary = {
     id: number | string;
     full_name?: string;
+    first_name?: string;
+    last_name?: string;
     email?: string;
     phone?: string;
+    mobile?: string;
+    position?: string;
+    department?: string;
     contact_type?: string;
     is_primary?: boolean;
+    is_active?: boolean;
+    is_receipt?: boolean;
+    company?: number | string | null;
+    customer?: number | string | null;
+    customer_id?: number | string | null;
 };
 
 const { Option } = Select;
@@ -138,7 +149,11 @@ const Companies: React.FC = () => {
     const [companyDetail, setCompanyDetail] = useState<Company | null>(null);
     const [companyContacts, setCompanyContacts] = useState<ContactSummary[]>([]);
     const [detailLoading, setDetailLoading] = useState(false);
+    const [isContactModalVisible, setIsContactModalVisible] = useState(false);
+    const [editingContact, setEditingContact] = useState<ContactSummary | null>(null);
+    const [contactSaving, setContactSaving] = useState(false);
     const [form] = Form.useForm();
+    const [contactForm] = Form.useForm();
     const [initialFormSnapshot, setInitialFormSnapshot] = useState('');
     const [taxThinking, setTaxThinking] = useState(false);
     const [viesThinking, setViesThinking] = useState(false);
@@ -379,6 +394,86 @@ const Companies: React.FC = () => {
         } catch (err) {
             message.error('Nem sikerült frissíteni a státuszt');
         }
+    };
+
+    const reloadContacts = async (company: Company) => {
+        const contactsResp = await crmService.getContactsByCompany(company.id);
+        const contactsData = (contactsResp as any)?.results || contactsResp || [];
+        setCompanyContacts(Array.isArray(contactsData) ? contactsData : []);
+    };
+
+    const openNewContactModal = () => {
+        setEditingContact(null);
+        contactForm.setFieldsValue({
+            first_name: '', last_name: '', email: '', phone: '', mobile: '',
+            position: '', department: '', contact_type: 'other',
+            is_primary: false, is_active: true, is_receipt: false,
+        });
+        setIsContactModalVisible(true);
+    };
+
+    const openEditContactModal = (ct: ContactSummary) => {
+        setEditingContact(ct);
+        contactForm.setFieldsValue({
+            first_name: ct.first_name || '',
+            last_name: ct.last_name || '',
+            email: ct.email || '',
+            phone: ct.phone || '',
+            mobile: ct.mobile || '',
+            position: ct.position || '',
+            department: ct.department || '',
+            contact_type: ct.contact_type || 'other',
+            is_primary: ct.is_primary ?? false,
+            is_active: ct.is_active ?? true,
+            is_receipt: ct.is_receipt ?? false,
+        });
+        setIsContactModalVisible(true);
+    };
+
+    const handleSaveContact = async () => {
+        try {
+            setContactSaving(true);
+            const values = await contactForm.validateFields();
+            const pixCompanyId = (companyDetail as any)?.external_id ?? null;
+            const payload = {
+                ...values,
+                company: values.is_receipt ? null : pixCompanyId,
+                customer: values.is_receipt ? null : pixCompanyId,
+            };
+            if (editingContact) {
+                await crmService.updateContact(editingContact.id, payload);
+                message.success('Kapcsolattartó frissítve');
+            } else {
+                await crmService.createContact(payload);
+                message.success('Kapcsolattartó létrehozva');
+            }
+            setIsContactModalVisible(false);
+            setEditingContact(null);
+            contactForm.resetFields();
+            if (viewingCompany) await reloadContacts(viewingCompany);
+        } catch (err) {
+            message.error('Hiba történt a mentés során');
+        } finally {
+            setContactSaving(false);
+        }
+    };
+
+    const handleDeleteContact = (ct: ContactSummary) => {
+        Modal.confirm({
+            title: `Biztosan törli: ${ct.full_name || [ct.last_name, ct.first_name].filter(Boolean).join(' ')}?`,
+            okText: 'Igen',
+            cancelText: 'Mégse',
+            centered: true,
+            onOk: async () => {
+                try {
+                    await crmService.deleteContact(ct.id);
+                    message.success('Kapcsolattartó törölve');
+                    if (viewingCompany) await reloadContacts(viewingCompany);
+                } catch (err) {
+                    message.error('Nem sikerült törölni');
+                }
+            },
+        });
     };
 
     const handleTaxLookup = async (value?: string) => {
@@ -996,21 +1091,34 @@ const Companies: React.FC = () => {
                             <Text type="secondary">Nincs rögzített bankszámla</Text>
                         )}
 
-                        <Divider orientation="left">Kapcsolattartók</Divider>
+                        <Divider orientation="left">
+                            <Space>
+                                Kapcsolattartók
+                                <Button size="small" type="primary" icon={<PlusOutlined />} onClick={openNewContactModal}>Új</Button>
+                            </Space>
+                        </Divider>
                         {companyContacts.length ? (
                             <List
                                 dataSource={companyContacts}
                                 renderItem={(ct) => (
-                                    <List.Item key={ct.id} onClick={() => navigate(`/crm/contacts?contact=${ct.id}`)} style={{ cursor: 'pointer' }}>
+                                    <List.Item
+                                        key={ct.id}
+                                        actions={[
+                                            <Button key="edit" icon={<EditOutlined />} size="small" type="link" onClick={() => openEditContactModal(ct)}>Szerkesztés</Button>,
+                                            <Button key="del" icon={<DeleteOutlined />} size="small" type="link" danger onClick={() => handleDeleteContact(ct)}>Törlés</Button>,
+                                        ]}
+                                    >
                                         <Space direction="vertical" size={2}>
                                             <Space size="small">
-                                                <Text strong>{ct.full_name}</Text>
+                                                <Text strong>{ct.full_name || [ct.last_name, ct.first_name].filter(Boolean).join(' ')}</Text>
                                                 {ct.is_primary && <Tag color="gold">Elsődleges</Tag>}
                                                 {ct.contact_type && <Tag color="blue">{ct.contact_type}</Tag>}
                                             </Space>
                                             <Space size="small">
                                                 {ct.email && <Text type="secondary">{ct.email}</Text>}
                                                 {ct.phone && <Text type="secondary">{ct.phone}</Text>}
+                                                {ct.mobile && <Text type="secondary">{ct.mobile}</Text>}
+                                                {ct.position && <Text type="secondary">{ct.position}</Text>}
                                             </Space>
                                         </Space>
                                     </List.Item>
@@ -1021,6 +1129,91 @@ const Companies: React.FC = () => {
                         )}
                     </Space>
                 )}
+            </Modal>
+
+            <Modal
+                open={isContactModalVisible}
+                title={editingContact ? 'Kapcsolattartó szerkesztése' : 'Új kapcsolattartó'}
+                onCancel={() => { setIsContactModalVisible(false); setEditingContact(null); contactForm.resetFields(); }}
+                onOk={handleSaveContact}
+                okText="Mentés"
+                cancelText="Mégse"
+                confirmLoading={contactSaving}
+                width={600}
+                destroyOnClose
+            >
+                <Form layout="vertical" form={contactForm}>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="last_name" label="Vezetéknév" rules={[{ required: true, message: 'Kötelező' }]}>
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="first_name" label="Keresztnév">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="email" label="E-mail">
+                                <Input type="email" />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="phone" label="Telefon">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="mobile" label="Mobil">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="position" label="Beosztás">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="contact_type" label="Típus">
+                                <Select>
+                                    <Option value="other">Általános</Option>
+                                    <Option value="primary">Elsődleges</Option>
+                                    <Option value="billing">Számlázási</Option>
+                                    <Option value="technical">Technikai</Option>
+                                </Select>
+                            </Form.Item>
+                        </Col>
+                        <Col xs={24} md={12}>
+                            <Form.Item name="department" label="Osztály">
+                                <Input />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                    <Row gutter={16}>
+                        <Col xs={8}>
+                            <Form.Item name="is_primary" label="Elsődleges" valuePropName="checked">
+                                <Switch />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={8}>
+                            <Form.Item name="is_active" label="Aktív" valuePropName="checked">
+                                <Switch />
+                            </Form.Item>
+                        </Col>
+                        <Col xs={8}>
+                            <Form.Item name="is_receipt" label="Számlaértesítés" valuePropName="checked">
+                                <Switch />
+                            </Form.Item>
+                        </Col>
+                    </Row>
+                </Form>
             </Modal>
         </Card>
     );

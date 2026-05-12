@@ -416,8 +416,11 @@ class ContactViewSet(viewsets.ViewSet):
             if customer_id_param and str(customer_id_param).isdigit():
                 try:
                     c = Company.objects.get(id=int(customer_id_param))
-                    # Try to find corresponding customer in PixInvoice
-                    if tenant_id:
+                    # Fastest path: use stored external_id directly
+                    if c.external_id:
+                        remote_customer_id = c.external_id
+                    # Fallback: Try to find corresponding customer in PixInvoice
+                    elif tenant_id:
                         # Fetch customers to match
                         customers = client.list_customers(company_id=tenant_id)
                         
