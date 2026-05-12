@@ -1513,7 +1513,7 @@ interface CustomerOrder {
               icon={<PrinterOutlined />}
               size="small"
               onClick={async () => {
-                const productId = record.quote_item?.manufacturing_product || record.manufacturing_product_id || record.manufacturing_product;
+                const productId = record.manufacturing_product_id || record.quote_item?.manufacturing_product;
                 if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
                 try {
                   const response = await api.get(
@@ -1845,7 +1845,7 @@ interface CustomerOrder {
       </Tooltip>
       <Tooltip title="Tétel munkalap">
         <Button icon={<PrinterOutlined />} size="small" onClick={async () => {
-          const productId = record.quote_item?.manufacturing_product || record.manufacturing_product_id || record.manufacturing_product;
+          const productId = record.manufacturing_product_id || record.quote_item?.manufacturing_product;
           if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
           try {
             const res = await api.get(`/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`, { responseType: 'blob' });

@@ -765,6 +765,7 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
     product_code = serializers.CharField(source='quote_item.product.code', read_only=True)
     material_name = serializers.CharField(source='quote_item.material.name', read_only=True)
     material_code = serializers.CharField(source='quote_item.material.code', read_only=True)
+    manufacturing_product_id = serializers.IntegerField(source='quote_item.manufacturing_product.id', read_only=True, allow_null=True, default=None)
     manufacturing_product_name = serializers.CharField(source='quote_item.manufacturing_product.name', read_only=True)
     manufacturing_product_code = serializers.CharField(source='quote_item.manufacturing_product.code', read_only=True)
     service_name = serializers.CharField(source='quote_item.service.name', read_only=True)
@@ -779,7 +780,8 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'quote_item_id', 'quantity', 'unit', 'net_unit_price', 'vat_rate', 'discount_percent',
             'description', 'status', 'product_name', 'product_code', 'material_name', 'material_code',
-            'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code',
+            'manufacturing_product_id', 'manufacturing_product_name', 'manufacturing_product_code',
+            'service_name', 'service_code',
             'product_description', 'internal_description', 'net_total', 'supplier_name'
         ]
 
