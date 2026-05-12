@@ -429,7 +429,8 @@ const RolesPage: React.FC = () => {
         onCancel={() => setPermissionsModalOpen(false)}
         okText="Mentés"
         cancelText="Mégse"
-        width={800}
+        width="min(1150px, 96vw)"
+        styles={{ body: { padding: '16px 20px' } }}
       >
         <div style={{ marginBottom: 16, padding: '12px 16px', background: '#f5f5f5', borderRadius: 4 }}>
           <Checkbox 
@@ -471,24 +472,24 @@ const RolesPage: React.FC = () => {
                 key={module.value}
                 extra={
                   // Modul szintű checkboxok
-                  <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
                     {/* Ha nincs almodul: megadott jogok összefoglalója */}
                     {(!moduleResources || moduleResources.resources.length === 0) && (() => {
                       const enabled = modulesAndActions.actions.filter(a => permissions[module.value]?.includes(a.value));
                       return enabled.length > 0
-                        ? <span style={{ display: 'flex', gap: 4, marginRight: 8 }}>
-                            {enabled.map(a => <Tag key={a.value} color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>{a.label}</Tag>)}
+                        ? <span style={{ display: 'flex', gap: 3, marginRight: 4 }}>
+                            {enabled.map(a => <Tag key={a.value} color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>{a.label}</Tag>)}
                           </span>
-                        : <span style={{ fontSize: 11, color: '#bbb', marginRight: 8 }}>–</span>;
+                        : <span style={{ fontSize: 11, color: '#bbb', marginRight: 4 }}>–</span>;
                     })()}
                     {modulesAndActions.actions.map(action => (
                       <Checkbox
                         key={action.value}
                         checked={isModuleActionChecked(module.value, action.value)}
                         onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
-                        style={{ marginLeft: 8 }}
+                        style={{ marginLeft: 2, fontSize: 11, whiteSpace: 'nowrap' }}
                       >
-                        {action.label}
+                        <span style={{ fontSize: 11 }}>{action.label}</span>
                       </Checkbox>
                     ))}
                   </div>
@@ -515,14 +516,15 @@ const RolesPage: React.FC = () => {
                           </div>
                         }
                       >
-                        <Row gutter={[16, 16]}>
+                        <Row gutter={[8, 8]}>
                           {modulesAndActions.actions.map(action => (
-                            <Col span={12} key={action.value}>
+                            <Col span={8} key={action.value}>
                               <Checkbox
                                 checked={permissions[resource.value]?.includes(action.value) || false}
                                 onChange={e => handlePermissionChange(resource.value, action.value, e.target.checked)}
+                                style={{ fontSize: 12 }}
                               >
-                                {action.label}
+                                <span style={{ fontSize: 12 }}>{action.label}</span>
                               </Checkbox>
                             </Col>
                           ))}
@@ -533,14 +535,15 @@ const RolesPage: React.FC = () => {
                   </Collapse>
                 ) : (
                   // Ha nincsenek almodulok, modul szinten jelenítsd meg
-                  <Row gutter={[16, 16]}>
+                  <Row gutter={[8, 8]}>
                     {modulesAndActions.actions.map(action => (
-                      <Col span={12} key={action.value}>
+                      <Col span={8} key={action.value}>
                         <Checkbox
                           checked={permissions[module.value]?.includes(action.value) || false}
                           onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
+                          style={{ fontSize: 12 }}
                         >
-                          {action.label}
+                          <span style={{ fontSize: 12 }}>{action.label}</span>
                         </Checkbox>
                       </Col>
                     ))}
