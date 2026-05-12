@@ -1513,16 +1513,21 @@ interface CustomerOrder {
               icon={<PrinterOutlined />}
               size="small"
               onClick={async () => {
+                const productId = record.quote_item?.manufacturing_product || record.manufacturing_product_id || record.manufacturing_product;
+                if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
                 try {
-                  const qriId = record.quote_item_id || record.id;
                   const response = await api.get(
-                    `/sales/customer-orders/${record.originalOrder.id}/item_work_sheet/?item_id=${qriId}`,
+                    `/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`,
                     { responseType: 'blob' }
                   );
                   const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
                   window.open(url, '_blank');
-                } catch (error) {
-                  message.error('Hiba a munkalap letöltése során');
+                } catch (e: any) {
+                  if (e?.response?.status === 404) {
+                    message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
+                  } else {
+                    message.error('Hiba a munkalap letöltése során');
+                  }
                 }
               }}
             />
@@ -1840,11 +1845,18 @@ interface CustomerOrder {
       </Tooltip>
       <Tooltip title="Tétel munkalap">
         <Button icon={<PrinterOutlined />} size="small" onClick={async () => {
+          const productId = record.quote_item?.manufacturing_product || record.manufacturing_product_id || record.manufacturing_product;
+          if (!productId) { message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.'); return; }
           try {
-            const qriId = record.quote_item_id || record.id;
-            const res = await api.get(`/sales/customer-orders/${record.originalOrder.id}/item_work_sheet/?item_id=${qriId}`, { responseType: 'blob' });
+            const res = await api.get(`/manufacturing/cost-items/work_sheet_for_product/?product_id=${productId}`, { responseType: 'blob' });
             window.open(window.URL.createObjectURL(new Blob([res.data], { type: 'application/pdf' })), '_blank');
-          } catch { message.error('Hiba a munkalap letöltése során'); }
+          } catch (e: any) {
+            if (e?.response?.status === 404) {
+              message.warning('Ehhez a tételhez nincs nyomtatható altétel munkalap.');
+            } else {
+              message.error('Hiba a munkalap letöltése során');
+            }
+          }
         }} />
       </Tooltip>
       <Tooltip title="Munkaóra indítása">
