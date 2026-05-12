@@ -1248,13 +1248,10 @@ const RFQs: React.FC = () => {
   };
 
   useEffect(() => {
-    if (searchParams.get('create') === 'true' && !loading) {
+    if (searchParams.get('create') === 'true' && !loading && !createOpen) {
        openCreate();
-       // Clear params to avoid loop? Or keep them until closed?
-       // Ideally we should wait for rfqs/projects to load first. 
-       // 'loading' flag handles that.
     }
-  }, [searchParams, loading]); // Trigger when params change or loading finishes
+  }, [searchParams, loading]); // eslint-disable-line
 
   useEffect(() => {
     if (!createOpen) return;
@@ -1446,7 +1443,7 @@ const RFQs: React.FC = () => {
                     : ''}
                 </Button>
               )}
-              <Button type="primary" icon={<PlusOutlined />} onClick={openCreate}>Új</Button>
+              <Button type="primary" icon={<PlusOutlined />} onClick={() => { if (!createOpen) navigate('/sales/rfqs?create=true', { replace: true }); }}>Új</Button>
               {/* Mobile filter drawer */}
               <Drawer
                 title="Szűrők"
