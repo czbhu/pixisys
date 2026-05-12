@@ -1915,7 +1915,7 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             # Active work log for this user
             awl = active_wl_map.get(user.id)
             active_work = None
-            if awl:
+            if awl and awl.customer_order_id:
                 try:
                     customer_name = (
                         awl.customer_order.quote_request.company.name
@@ -1948,17 +1948,17 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 try:
                     c_name = (
                         wl.customer_order.quote_request.company.name
-                        if wl.customer_order.quote_request and wl.customer_order.quote_request.company
+                        if wl.customer_order_id and wl.customer_order.quote_request and wl.customer_order.quote_request.company
                         else ''
                     )
-                    q_title = wl.customer_order.quote_request.title if wl.customer_order.quote_request else ''
+                    q_title = wl.customer_order.quote_request.title if wl.customer_order_id and wl.customer_order.quote_request else ''
                 except Exception:
                     c_name = ''
                     q_title = ''
                 work_log_list.append({
                     'id': wl.id,
-                    'order_number': wl.customer_order.order_number,
-                    'order_id': wl.customer_order.id,
+                    'order_number': wl.customer_order.order_number if wl.customer_order_id else '',
+                    'order_id': wl.customer_order.id if wl.customer_order_id else None,
                     'customer_name': c_name,
                     'quote_title': q_title,
                     'item_name': _item_name(wl.item),
