@@ -180,6 +180,14 @@ class CompanyViewSet(viewsets.ViewSet):
             return Response(item)
         except requests.HTTPError as e:
             code = e.response.status_code if e.response is not None else status.HTTP_502_BAD_GATEWAY
+            # Ha a PixInvoice 404-et ad vissza, töröljük az elavult external_id-t a local DB-ből
+            if code == 404:
+                try:
+                    local_id = int(pk)
+                    from .models import Company as LocalCompany
+                    LocalCompany.objects.filter(id=local_id).update(external_id=None)
+                except Exception:
+                    pass
             return Response({'error': str(e)}, status=code)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
