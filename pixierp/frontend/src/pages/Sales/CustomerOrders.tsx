@@ -1212,22 +1212,24 @@ interface CustomerOrder {
           )}
 
           {['confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'].includes(record.status) && (
-            <Tooltip title="Munkalap nyomtatás">
+            <Tooltip title="Munkalap nyomtatás (minden altétel)">
               <Button
                 icon={<PrinterOutlined />}
                 size="small"
                 onClick={async () => {
                   try {
                     const response = await api.get(
-                      `/sales/customer-orders/${record.id}/work_sheet/`,
-                      {
-                        responseType: 'blob',
-                      }
+                      `/manufacturing/cost-items/work_sheet_for_order/?order_id=${record.id}`,
+                      { responseType: 'blob' }
                     );
                     const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
                     window.open(url, '_blank');
-                  } catch (error: any) {
-                    message.error('Hiba a munkalap letöltése során');
+                  } catch (e: any) {
+                    if (e?.response?.status === 404) {
+                      message.warning('Ehhez a megrendeléshez nincs nyomtatható altétel munkalap.');
+                    } else {
+                      message.error('Hiba a munkalap letöltése során');
+                    }
                   }
                 }}
               />
@@ -1814,12 +1816,18 @@ interface CustomerOrder {
         </Tooltip>
       )}
       {['confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'].includes(record.status) && (
-        <Tooltip title="Munkalap nyomtatás">
+        <Tooltip title="Munkalap nyomtatás (minden altétel)">
           <Button icon={<PrinterOutlined />} size="small" onClick={async () => {
             try {
-              const response = await api.get(`/sales/customer-orders/${record.id}/work_sheet/`, { responseType: 'blob' });
+              const response = await api.get(`/manufacturing/cost-items/work_sheet_for_order/?order_id=${record.id}`, { responseType: 'blob' });
               window.open(window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' })), '_blank');
-            } catch { message.error('Hiba a munkalap letöltése során'); }
+            } catch (e: any) {
+              if (e?.response?.status === 404) {
+                message.warning('Ehhez a megrendeléshez nincs nyomtatható altétel munkalap.');
+              } else {
+                message.error('Hiba a munkalap letöltése során');
+              }
+            }
           }} />
         </Tooltip>
       )}
