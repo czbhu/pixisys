@@ -231,7 +231,7 @@ if [ "$PRODUCTION_MODE" != "true" ]; then
     # Start ERP frontend dev server
     echo -e "${BLUE}⚛️  Starting ERP Frontend dev server (port 3000)...${NC}"
     cd "$SCRIPT_DIR/pixierp/frontend"
-    PORT=3000 BROWSER=none HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=443 REACT_APP_API_URL=/api/v1 REACT_APP_DEV_MODE=true npm start > /tmp/pixierp_frontend.log 2>&1 &
+    PORT=3000 BROWSER=none HOST=0.0.0.0 DANGEROUSLY_DISABLE_HOST_CHECK=true WDS_SOCKET_PORT=443 WDS_SOCKET_PATH=/ws/hmr REACT_APP_API_URL=/api/v1 REACT_APP_DEV_MODE=true npm start > /tmp/pixierp_frontend.log 2>&1 &
     ERP_FRONTEND_PID=$!
     echo "$ERP_FRONTEND_PID" > "$ERP_FRONTEND_PIDFILE"
     echo -e "${GREEN}✅ ERP Frontend dev server started (PID: $ERP_FRONTEND_PID)${NC}"
