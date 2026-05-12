@@ -387,6 +387,8 @@ class Permission(models.Model):
         ('settings', 'Beállítások'),
         ('printshop', 'Nyomda'),
         ('storage', 'Tárhely'),
+        ('tickets', 'Jegyek'),
+        ('site_management', 'Weboldal kezelés'),
     ]
     
     # Almodulok/Erőforrások modulonként
@@ -396,59 +398,114 @@ class Permission(models.Model):
         ('hr.departments', 'HR - Osztályok'),
         ('hr.positions', 'HR - Pozíciók'),
         ('hr.attendance', 'HR - Jelenléti ív'),
-        ('hr.leave_requests', 'HR - Szabadság kérelmek'),
+        ('hr.work_logs', 'HR - Munkanaplók'),
+        ('hr.leave_requests', 'HR - Szabadságok'),
         ('hr.payroll', 'HR - Bérszámfejtés'),
-        
+        ('hr.analytics', 'HR - Teljesítmény elemzés'),
+        ('hr.activity_log', 'HR - Tevékenység napló'),
+        ('hr.task_settings', 'HR - Feladatok beállítása'),
+
         # Manufacturing
-        ('manufacturing.projects', 'Gyártás - Projektek'),
         ('manufacturing.products', 'Gyártás - Termékek'),
-        ('manufacturing.work_sheets', 'Gyártás - Munkalapok'),
+        ('manufacturing.product_editor', 'Gyártás - Termék szerkesztő'),
+        ('manufacturing.product_classes', 'Gyártás - Termékkategóriák'),
+        ('manufacturing.ordered_products', 'Gyártás - Megrendelt gyártások'),
+        ('manufacturing.queue', 'Gyártás - Gyártási sor'),
+        ('manufacturing.projects', 'Gyártás - Projektek'),
+        ('manufacturing.services', 'Gyártás - Szolgáltatások'),
+        ('manufacturing.service_groups', 'Gyártás - Szolgáltatás csoportok'),
         ('manufacturing.materials', 'Gyártás - Anyagok'),
-        
+        ('manufacturing.work_sheets', 'Gyártás - Munkalapok'),
+        ('manufacturing.print_templates', 'Gyártás - Nyomda sablonok'),
+        ('manufacturing.calculators', 'Gyártás - Kalkulátorok'),
+
         # Sales
         ('sales.rfqs', 'Értékesítés - Árajánlatok'),
-        ('sales.quotes', 'Értékesítés - Ajánlatok'),
         ('sales.orders', 'Értékesítés - Megrendelések'),
+        ('sales.delivery_notes', 'Értékesítés - Szállítólevelek'),
+        ('sales.invoicing', 'Értékesítés - Számlázás'),
+        ('sales.invitations', 'Értékesítés - Meghívók'),
+        ('sales.projects', 'Értékesítés - Projektek'),
         ('sales.leads', 'Értékesítés - Leadek'),
         ('sales.opportunities', 'Értékesítés - Lehetőségek'),
-        
+
         # CRM
         ('crm.companies', 'CRM - Cégek'),
         ('crm.contacts', 'CRM - Kapcsolattartók'),
         ('crm.activities', 'CRM - Tevékenységek'),
-        
+        ('crm.campaigns', 'CRM - Kampányok'),
+
         # Finance
         ('finance.invoices', 'Pénzügy - Számlák'),
         ('finance.payments', 'Pénzügy - Kifizetések'),
-        ('finance.expenses', 'Pénzügy - Kiadások'),
         ('finance.cash_registers', 'Pénzügy - Kasszák'),
+        ('finance.cash_register_setup', 'Pénzügy - Kassza beállítás'),
+        ('finance.budgets', 'Pénzügy - Költségvetések'),
+        ('finance.reports', 'Pénzügy - Jelentések'),
+        ('finance.expenses', 'Pénzügy - Kiadások'),
         ('finance.cash_transactions', 'Pénzügy - Kassza tranzakciók'),
-        
+
         # Warehouse
         ('warehouse.materials', 'Raktár - Anyagok'),
+        ('warehouse.material_groups', 'Raktár - Anyag csoportok'),
         ('warehouse.inventory', 'Raktár - Készlet'),
+        ('warehouse.receipts', 'Raktár - Bevételezések'),
+        ('warehouse.supplier_invoices', 'Raktár - Szállítói számlák'),
+        ('warehouse.scraps', 'Raktár - Selejtezések'),
+        ('warehouse.warehouses', 'Raktár - Raktárak'),
+        ('warehouse.suppliers', 'Raktár - Szállítók'),
+        ('warehouse.reports', 'Raktár - Jelentések'),
+        ('warehouse.picking', 'Raktár - Komissiózás'),
+        ('warehouse.picking_list', 'Raktár - Komissiózási lista'),
         ('warehouse.movements', 'Raktár - Mozgások'),
-        
+
         # Orders
         ('orders.customer_orders', 'Megrendelések - Vevői megrendelések'),
         ('orders.purchase_orders', 'Megrendelések - Beszerzési megrendelések'),
-        
+        ('orders.shipments', 'Megrendelések - Szállítmányok'),
+        ('orders.returns', 'Megrendelések - Visszaáruk'),
+        ('orders.suppliers', 'Megrendelések - Szállítók'),
+
         # POS
-        ('pos.transactions', 'POS - Tranzakciók'),
+        ('pos.sales', 'POS - Értékesítés'),
+        ('pos.registration', 'POS - Regisztráció'),
+        ('pos.terminals', 'POS - Terminálok'),
         ('pos.products', 'POS - Termékek'),
-        
+
         # Settings
         ('settings.users', 'Beállítások - Felhasználók'),
         ('settings.roles', 'Beállítások - Szerepkörök'),
         ('settings.company', 'Beállítások - Cégadatok'),
-        ('settings.email', 'Beállítások - E-mail'),
+        ('settings.currencies', 'Beállítások - Pénznemek'),
+        ('settings.email', 'Beállítások - E-mail szerver'),
+        ('settings.email_templates', 'Beállítások - E-mail sablonok'),
+        ('settings.signatures', 'Beállítások - Aláírások'),
+        ('settings.zones', 'Beállítások - Zónák'),
         ('settings.integrations', 'Beállítások - Integrációk'),
-        
+        ('settings.access_control', 'Beállítások - Beléptető rendszer'),
+        ('settings.attendance_kiosk', 'Beállítások - Jelenlét kioszk'),
+        ('settings.pixinvoice', 'Beállítások - PIXINVOICE'),
+        ('settings.hestia', 'Beállítások - Hestia'),
+        ('settings.backup', 'Beállítások - Backup'),
+        ('settings.public_site', 'Beállítások - Publikus oldal'),
+        ('settings.iot', 'Beállítások - IoT eszközök'),
+        ('settings.nfc', 'Beállítások - NFC tagek'),
+        ('settings.print_products', 'Beállítások - Termékszerkesztők'),
+
         # Printshop
         ('printshop.preview', 'Nyomda - Preview'),
+        ('printshop.sheet', 'Nyomda - Íves nyomtatás'),
+        ('printshop.shop', 'Nyomda - Nyomdai megrendelés'),
 
         # Storage
         ('storage.manage', 'Tárhely - Teljes hozzáférés (admin)'),
+
+        # Tickets
+        ('tickets.list', 'Jegyek - Lista'),
+        ('tickets.settings', 'Jegyek - Beállítások'),
+
+        # Site management
+        ('site_management.manage', 'Weboldal kezelés'),
     ]
     
     ACTION_CHOICES = [
