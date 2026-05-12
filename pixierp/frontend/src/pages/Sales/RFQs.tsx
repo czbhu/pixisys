@@ -1252,6 +1252,8 @@ const RFQs: React.FC = () => {
         }
         if (Array.isArray(draft.newItems) && draft.newItems.length > 0) setNewItems(draft.newItems);
         if (draft.currency) setCurrency(draft.currency);
+        if (Array.isArray(draft.companies) && draft.companies.length > 0) setCompanies(draft.companies);
+        if (Array.isArray(draft.contacts) && draft.contacts.length > 0) setContacts(draft.contacts);
       }
     } catch {}
 
@@ -1277,6 +1279,8 @@ const RFQs: React.FC = () => {
         formValues: serialized,
         newItems,
         currency,
+        companies,
+        contacts,
       }));
     } catch {}
   };
