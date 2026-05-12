@@ -828,7 +828,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         <Form.Item label="Megjegyzés" name="description" style={{ marginBottom: 8 }}> 
           <Input.TextArea autoSize={{ minRows: 1, maxRows: 4 }} />
         </Form.Item>
-        {existingAttachments.length > 0 && (
+        {existingAttachments.length > 0 && activeKey !== 'service' && (
           <div style={{ marginBottom: 8 }}>
             <div style={{ fontWeight: 500, marginBottom: 4, fontSize: 13 }}>Meglévő csatolmányok:</div>
             {existingAttachments.map((att: any) => (
@@ -852,7 +852,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             ))}
           </div>
         )}
-        {(
+        {activeKey !== 'service' && (
         <Upload.Dragger
           name="files"
           multiple
@@ -874,7 +874,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a tallózáshoz</p>
         </Upload.Dragger>
         )}
-        {pendingFiles.length > 0 && (
+        {pendingFiles.length > 0 && activeKey !== 'service' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {pendingFiles.map((f: any) => {
               const key = (f as any)?.uid || (f as any)?.name;
@@ -887,6 +887,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             })}
           </div>
         )}
+        {activeKey !== 'service' && (
         <Space style={{ gap: 12, flexWrap: 'wrap' }}>
           <Form.Item label="Kedvezmény %" name="discount_percent" style={{ marginBottom: 8 }}>
             <NumInput formula min={0} max={100} style={{ width: 120 }} initialFormula={itemFormFormulas.discount_percent ?? undefined} onFormulaChange={f => setItemFormFormulas(prev => ({ ...prev, discount_percent: f }))} />
@@ -913,6 +914,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             }}
           </Form.Item>
         </Space>
+        )}
       </Space>
     </>
   );
