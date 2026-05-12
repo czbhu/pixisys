@@ -219,6 +219,17 @@ const RolesPage: React.FC = () => {
     );
   };
 
+  // Segédfüggvény: részleges pipálás (indeterminate) — van, de nem az összes
+  const isModuleActionIndeterminate = (moduleCode: string, action: string): boolean => {
+    const moduleResources = modulesAndActions.resources[moduleCode];
+    if (!moduleResources || !moduleResources.resources || moduleResources.resources.length === 0) {
+      return false;
+    }
+    const some = moduleResources.resources.some(r => permissions[r.value]?.includes(action));
+    const all = moduleResources.resources.every(r => permissions[r.value]?.includes(action));
+    return some && !all;
+  };
+
   const handleCopyPermissionsFromRole = () => {
     if (!copyFromRoleId) {
       message.warning('Válassz forrás szerepkört');
@@ -486,6 +497,7 @@ const RolesPage: React.FC = () => {
                       <Checkbox
                         key={action.value}
                         checked={isModuleActionChecked(module.value, action.value)}
+                        indeterminate={isModuleActionIndeterminate(module.value, action.value)}
                         onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
                         style={{ marginLeft: 2, fontSize: 11, whiteSpace: 'nowrap' }}
                       >
