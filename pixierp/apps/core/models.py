@@ -376,6 +376,7 @@ class Role(models.Model):
 class Permission(models.Model):
     """Jogosultság - modul/almodul/művelet szintű hozzáférés"""
     MODULE_CHOICES = [
+        ('dashboard', 'Dashboard'),
         ('hr', 'HR'),
         ('sales', 'Értékesítés'),
         ('manufacturing', 'Gyártás'),
@@ -393,6 +394,10 @@ class Permission(models.Model):
     
     # Almodulok/Erőforrások modulonként
     RESOURCE_CHOICES = [
+        # Dashboard
+        ('dashboard.manufacturing', 'Dashboard - Általános / Gyártás nézet'),
+        ('dashboard.sales', 'Dashboard - Értékesítési nézet'),
+
         # HR
         ('hr.employees', 'HR - Alkalmazottak'),
         ('hr.departments', 'HR - Osztályok'),
