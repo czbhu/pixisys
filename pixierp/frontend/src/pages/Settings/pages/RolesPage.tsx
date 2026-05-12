@@ -466,7 +466,16 @@ const RolesPage: React.FC = () => {
                 key={module.value}
                 extra={
                   // Modul szintű checkboxok
-                  <div onClick={e => e.stopPropagation()}>
+                  <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    {/* Ha nincs almodul: megadott jogok összefoglalója */}
+                    {(!moduleResources || moduleResources.resources.length === 0) && (() => {
+                      const enabled = modulesAndActions.actions.filter(a => permissions[module.value]?.includes(a.value));
+                      return enabled.length > 0
+                        ? <span style={{ display: 'flex', gap: 4, marginRight: 8 }}>
+                            {enabled.map(a => <Tag key={a.value} color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>{a.label}</Tag>)}
+                          </span>
+                        : <span style={{ fontSize: 11, color: '#bbb', marginRight: 8 }}>–</span>;
+                    })()}
                     {modulesAndActions.actions.map(action => (
                       <Checkbox
                         key={action.value}
@@ -483,8 +492,24 @@ const RolesPage: React.FC = () => {
                 {moduleResources && moduleResources.resources.length > 0 ? (
                   // Ha vannak almodulok (resources), jelenítsd meg őket
                   <Collapse>
-                    {moduleResources.resources.map(resource => (
-                      <Panel header={resource.label} key={resource.value} className="ml-4">
+                    {moduleResources.resources.map(resource => {
+                      const enabledActions = modulesAndActions.actions.filter(a => permissions[resource.value]?.includes(a.value));
+                      return (
+                      <Panel
+                        header={resource.label}
+                        key={resource.value}
+                        className="ml-4"
+                        extra={
+                          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                            {enabledActions.length === 0
+                              ? <span style={{ fontSize: 11, color: '#bbb' }}>–</span>
+                              : enabledActions.map(a => (
+                                <Tag key={a.value} color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>{a.label}</Tag>
+                              ))
+                            }
+                          </div>
+                        }
+                      >
                         <Row gutter={[16, 16]}>
                           {modulesAndActions.actions.map(action => (
                             <Col span={12} key={action.value}>
@@ -498,7 +523,8 @@ const RolesPage: React.FC = () => {
                           ))}
                         </Row>
                       </Panel>
-                    ))}
+                      );
+                    })}
                   </Collapse>
                 ) : (
                   // Ha nincsenek almodulok, modul szinten jelenítsd meg
