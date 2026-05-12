@@ -211,6 +211,7 @@ interface CustomerOrder {
 
   // Megrendelés lista kibontható sorok
   const [expandedOrderKeys, setExpandedOrderKeys] = useState<React.Key[]>([]);
+  const [itemsViewExpandedKeys, setItemsViewExpandedKeys] = useState<React.Key[]>([]);
   const [orderExpandedItems, setOrderExpandedItems] = useState<Record<number, any[]>>({});
   const [orderExpandedLoading, setOrderExpandedLoading] = useState<Record<number, boolean>>({});
   // Tétel csatolmányok a listán
@@ -2288,34 +2289,17 @@ interface CustomerOrder {
           loading={loading}
           size="small"
           expandable={isItemsView ? {
-            rowExpandable: (record: any) => {
-              const productId = Number(record.quote_item?.manufacturing_product || record.manufacturing_product || 0);
-              return productId > 0;
+            rowExpandable: () => true,
+            expandedRowKeys: itemsViewExpandedKeys,
+            onExpand: (expanded: boolean, record: any) => {
+              if (expanded) {
+                setItemsViewExpandedKeys(prev => Array.from(new Set([...prev, record.uniqueId])));
+                loadOrderExpandedItems(record.originalOrder);
+              } else {
+                setItemsViewExpandedKeys(prev => prev.filter(k => k !== record.uniqueId));
+              }
             },
-            expandedRowRender: (record: any) => {
-              const productId = Number(record.quote_item?.manufacturing_product || record.manufacturing_product || 0);
-              const orderId = record.originalOrder?.id;
-              const coiId = record.id;
-              const itemName = record.product_name || record.manufacturing_product_name || record.name || '';
-              if (!productId) return <div style={{ padding: '8px 16px', color: '#999' }}>Nincs altétel.</div>;
-              return (
-                <div style={{ padding: '8px 0 8px 28px' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                    {itemName && <span style={{ fontSize: 12, color: '#555', fontWeight: 500 }}>{itemName}</span>}
-                    {orderId && (
-                      <Button
-                        size="small"
-                        icon={<EyeOutlined />}
-                        onClick={() => navigate(`/sales/customer-orders/${orderId}?edit_item=${coiId}`)}
-                      >
-                        Tétel megnyitása
-                      </Button>
-                    )}
-                  </div>
-                  <ProductSubItemsTable productId={productId} />
-                </div>
-              );
-            },
+            expandedRowRender: (record: any) => renderExpandedOrderRow(record.originalOrder),
           } : {
             expandedRowKeys: expandedOrderKeys,
             onExpand: (expanded: boolean, record: any) => {
