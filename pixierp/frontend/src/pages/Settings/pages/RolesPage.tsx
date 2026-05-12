@@ -149,6 +149,36 @@ const RolesPage: React.FC = () => {
     setPermissionsModalOpen(true);
   };
 
+  const allActionValues = modulesAndActions.actions.map(a => a.value);
+
+  /** Ha 'manage' be van jelölve: az összes többi action is bekerül.
+   *  Ha 'manage' ki van jelölve: az összes action törlődik.
+   *  Ha bármely más action ki van jelölve: 'manage' is törlődik. */
+  const applyManageLogic = (current: string[], action: string, checked: boolean, allActions: string[]): string[] => {
+    let result = [...current];
+    if (action === 'manage') {
+      if (checked) {
+        // Teljes jogosultság: minden action bekerül
+        result = [...allActions];
+      } else {
+        // Teljes jogosultság levéve: mindet töröljük
+        result = [];
+      }
+    } else {
+      if (checked) {
+        if (!result.includes(action)) result.push(action);
+        // Ha most minden action be van jelölve (manage kivételével), tegyük be a manage-t is
+        const otherActions = allActions.filter(a => a !== 'manage');
+        if (otherActions.every(a => result.includes(a)) && !result.includes('manage')) {
+          result.push('manage');
+        }
+      } else {
+        result = result.filter(a => a !== action && a !== 'manage');
+      }
+    }
+    return result;
+  };
+
   const handlePermissionChange = (resourceOrModule: string, action: string, checked: boolean) => {
     setPermissions(prev => {
       const updated = { ...prev };
@@ -159,43 +189,18 @@ const RolesPage: React.FC = () => {
         const moduleResources = modulesAndActions.resources[resourceOrModule];
         if (moduleResources && moduleResources.resources && moduleResources.resources.length > 0) {
           moduleResources.resources.forEach(resource => {
-            if (!updated[resource.value]) {
-              updated[resource.value] = [];
-            }
-            if (checked) {
-              if (!updated[resource.value].includes(action)) {
-                updated[resource.value].push(action);
-              }
-            } else {
-              updated[resource.value] = updated[resource.value].filter(a => a !== action);
-            }
+            if (!updated[resource.value]) updated[resource.value] = [];
+            updated[resource.value] = applyManageLogic(updated[resource.value], action, checked, allActionValues);
           });
         } else {
           // Nincs almodul: közvetlenül a modulra mentjük a jogosultságot
-          if (!updated[resourceOrModule]) {
-            updated[resourceOrModule] = [];
-          }
-          if (checked) {
-            if (!updated[resourceOrModule].includes(action)) {
-              updated[resourceOrModule].push(action);
-            }
-          } else {
-            updated[resourceOrModule] = updated[resourceOrModule].filter(a => a !== action);
-          }
+          if (!updated[resourceOrModule]) updated[resourceOrModule] = [];
+          updated[resourceOrModule] = applyManageLogic(updated[resourceOrModule], action, checked, allActionValues);
         }
       } else {
         // Resource szintű változtatás
-        if (!updated[resourceOrModule]) {
-          updated[resourceOrModule] = [];
-        }
-        
-        if (checked) {
-          if (!updated[resourceOrModule].includes(action)) {
-            updated[resourceOrModule].push(action);
-          }
-        } else {
-          updated[resourceOrModule] = updated[resourceOrModule].filter(a => a !== action);
-        }
+        if (!updated[resourceOrModule]) updated[resourceOrModule] = [];
+        updated[resourceOrModule] = applyManageLogic(updated[resourceOrModule], action, checked, allActionValues);
       }
       
       return updated;
