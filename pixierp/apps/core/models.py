@@ -377,18 +377,18 @@ class Permission(models.Model):
     """Jogosultság - modul/almodul/művelet szintű hozzáférés"""
     MODULE_CHOICES = [
         ('hr', 'HR'),
-        ('manufacturing', 'Gyártás'),
         ('sales', 'Értékesítés'),
-        ('crm', 'CRM'),
+        ('manufacturing', 'Gyártás'),
         ('finance', 'Pénzügy'),
-        ('warehouse', 'Raktár'),
+        ('crm', 'CRM'),
         ('orders', 'Megrendelések'),
+        ('warehouse', 'Raktár'),
         ('pos', 'POS'),
-        ('settings', 'Beállítások'),
-        ('printshop', 'Nyomda'),
-        ('storage', 'Tárhely'),
         ('tickets', 'Jegyek'),
         ('site_management', 'Weboldal kezelés'),
+        ('storage', 'Tárhely'),
+        ('printshop', 'Nyomda'),
+        ('settings', 'Beállítások'),
     ]
     
     # Almodulok/Erőforrások modulonként
