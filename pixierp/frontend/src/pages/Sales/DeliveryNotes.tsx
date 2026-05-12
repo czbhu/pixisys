@@ -38,6 +38,7 @@ interface OrderItemForDelivery {
   order_number: string;
   order_item_id: number;
   item_name: string;
+  item_description?: string;
   unit: string;
   unit_price: number;
   ordered_quantity: number;
@@ -611,6 +612,15 @@ const DeliveryNotes: React.FC = () => {
         title: 'Tétel',
         dataIndex: 'item_name',
         key: 'item_name',
+        render: (name: string, record: OrderItemForDelivery) => {
+            const rawDesc = record.item_description || '';
+            const plainDesc = rawDesc.replace(/<[^>]*>/g, '').trim();
+            return plainDesc ? (
+                <Tooltip title={plainDesc}>
+                    <span style={{ cursor: 'default' }}>{name}</span>
+                </Tooltip>
+            ) : name;
+        },
     },
     {
         title: 'Mértékegység',

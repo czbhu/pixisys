@@ -5564,6 +5564,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                         'order_number': order.order_number,
                         'order_item_id': item.id,
                         'item_name': item_name,
+                        'item_description': quote_item.description if quote_item else '',
                         'unit': item.unit,
                         'unit_price': item.net_unit_price,
                         'ordered_quantity': ordered,
