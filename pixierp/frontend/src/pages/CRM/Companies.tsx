@@ -296,11 +296,10 @@ const Companies: React.FC = () => {
         try {
             const rawDetail = await crmService.getCompany(company.id);
             const detail = normalizeDetail(rawDetail);
-            const contactsResp = await crmService.getContacts({ customer_id: company.id });
+            const contactsResp = await crmService.getContactsByCompany(company.id);
             const contactsData = (contactsResp as any)?.results || contactsResp || [];
-            const filteredContacts = contactsData.filter((ct: any) => String(ct.customer || ct.customer_id || ct.company || ct.company_id) === String(company.id));
             setCompanyDetail(detail);
-            setCompanyContacts(filteredContacts);
+            setCompanyContacts(Array.isArray(contactsData) ? contactsData : []);
         } catch (err) {
             message.error('Nem sikerült lekérni a cég adatlapját');
         } finally {
