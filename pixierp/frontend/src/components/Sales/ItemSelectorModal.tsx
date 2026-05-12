@@ -1731,7 +1731,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             checked={syncQtyRows.has(r.id)}
             onChange={checked => {
               setSyncQtyRows(prev => { const n = new Set(prev); checked ? n.add(r.id) : n.delete(r.id); return n; });
-              if (checked) manuUpdateCostItem(r.id, 'quantity', Number(manuForm.getFieldValue('manu_quantity') || form.getFieldValue('quantity')) || 1);
+              if (checked) {
+                const mainQty = Number(manuForm.getFieldValue('manu_quantity') || form.getFieldValue('quantity')) || 1;
+                const mainUnit = manuForm.getFieldValue('quantity_unit') || form.getFieldValue('unit') || '';
+                manuUpdateCostItem(r.id, 'quantity', mainQty);
+                if (mainUnit) manuUpdateCostItem(r.id, 'unit', mainUnit);
+              }
             }}
           />
         </Tooltip>
@@ -1772,7 +1777,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       <div style={{ display:'flex', alignItems:'center', gap:4 }}>
         <Checkbox checked={r.is_internal} onChange={e => { manuUpdateCostItem(r.id, 'is_internal', e.target.checked); manuUpdateCostItem(r.id, 'department_id', null); manuUpdateCostItem(r.id, 'supplier_id', null); }}>Belső</Checkbox>
         {r.is_internal
-          ? <Select size="small" style={{ width:150 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
+          ? <Select size="small" style={{ width:200 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
               {manuDepartments.map((d: any) => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
             </Select>
           : <Select size="small" style={{ width:150 }} value={r.supplier_id} onChange={v => manuUpdateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Beszállító">
@@ -2602,7 +2607,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                         onChange={e => { manuUpdateCostItem(r.id, 'is_internal', e.target.checked); manuUpdateCostItem(r.id, 'department_id', null); manuUpdateCostItem(r.id, 'supplier_id', null); }}
                       >Belső</Checkbox>
                       {r.is_internal
-                        ? <Select size="small" style={{ width: 150 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
+                        ? <Select size="small" style={{ width: 200 }} value={r.department_id} onChange={v => manuUpdateCostItem(r.id, 'department_id', v)} allowClear placeholder="Részleg">
                             {manuDepartments.map((d: any) => <Select.Option key={d.id} value={d.id}>{d.name}</Select.Option>)}
                           </Select>
                         : <Select size="small" style={{ width: 150 }} value={r.supplier_id} onChange={v => manuUpdateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Beszállító">
