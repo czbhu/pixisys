@@ -506,6 +506,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         const items: CostItem[] = rawCi.map((c: any, idx: number) => {
           const localId = c.id ?? Date.now() + idx;
           if (typeof c.id === 'number') backendIdToLocal.set(c.id, localId);
+          // Ensure supplier is in manuSuppliers list (same as service cost item handling)
+          if (!c.is_internal && c.supplier && c.supplier_name) {
+            setManuSuppliers(prev => {
+              if (prev.find((s: any) => s.id === c.supplier)) return prev;
+              return [{ id: c.supplier, name: c.supplier_name }, ...prev];
+            });
+          }
           return {
             id: localId,
             type: (c.type as any) || 'other',
