@@ -396,6 +396,31 @@ class ManufacturingCostItem(models.Model):
     def __str__(self):
         return f"{self.name} ({self.product.name})"
 
+    def save(self, *args, **kwargs):
+        old_status = None
+        if self.pk:
+            try:
+                old_status = type(self).objects.only('status').get(pk=self.pk).status
+            except type(self).DoesNotExist:
+                pass
+        super().save(*args, **kwargs)
+        if self.status == 'cancelled' and old_status != 'cancelled':
+            self._check_parent_order_item_cancelled()
+
+    def _check_parent_order_item_cancelled(self):
+        """Ha a termék összes altétele törölve státuszba kerül,
+        a kapcsolódó megrendelés tétel(ek)et is töröltté teszi."""
+        if self.product.cost_items.exclude(status='cancelled').exists():
+            return  # vannak még aktív altételek
+        if not self.product.cost_items.exists():
+            return  # nincs egyáltalán altétel
+        from apps.sales.models import CustomerOrderItem
+        for qi in self.product.quoterequestitem_set.all():
+            for oi in qi.customerorderitem_set.all():
+                if oi.status != 'cancelled':
+                    oi.status = 'cancelled'
+                    oi.save()
+
 
 class ServiceGroup(models.Model):
     """Szolgáltatás csoport modell"""

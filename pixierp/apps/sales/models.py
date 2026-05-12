@@ -266,10 +266,17 @@ class CustomerOrderItem(models.Model):
 
     def check_parent_status(self):
         STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
-        if self.status not in STATUS_ORDER: return
-        if self.status == 'cancelled': return
-
         parent = self.customer_order
+
+        if self.status == 'cancelled':
+            # Ha az összes tétel törölve, a megrendelés is legyen törölve
+            if parent.status != 'cancelled' and parent.items.exists():
+                if not parent.items.exclude(status='cancelled').exists():
+                    parent.status = 'cancelled'
+                    parent.save(update_fields=['status'])
+            return
+
+        if self.status not in STATUS_ORDER: return
         if parent.status not in STATUS_ORDER: return
         
         # Calculate the minimum status rank of all items
