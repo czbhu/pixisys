@@ -1597,8 +1597,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       );
       if (ds) defaultSupplierId = ds.id;
     }
+    const newCostItemId = Date.now() + Math.random();
     setManuCostItems(prev => [...prev, {
-      id: Date.now() + Math.random(),
+      id: newCostItemId,
       type,
       name: type === 'other' ? 'Egyéb költség' : '',
       unit: 'db',
@@ -1615,6 +1616,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       currency_code: manuCostCurrencyCode,
       currency_id: manuCostCurrencyId,
     }]);
+    setSyncQtyRows(prev => { const n = new Set(prev); n.add(newCostItemId); return n; });
   };
 
   const handleLinkItemSelect = (record: any) => {
@@ -1686,6 +1688,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       currency_id: manuCostCurrencyId,
     };
     setManuCostItems(prev => [...prev, newItem]);
+    setSyncQtyRows(prev => { const n = new Set(prev); n.add(newItem.id); return n; });
     setLinkedItem({ type, name: originalName, id: record.id });
     setManuCollapseKeys(prev => prev.includes('costs') ? prev : [...prev, 'costs']);
     setLinkSearchModal({ open: false, type: null });
@@ -2776,6 +2779,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               setCostSearchEditId(null);
             } else {
               setManuCostItems(prev => [...prev, newItem]);
+              setSyncQtyRows(prev => { const n = new Set(prev); n.add(newItem.id); return n; });
             }
             setCostSearchModal({ open: false, type: null });
           };
