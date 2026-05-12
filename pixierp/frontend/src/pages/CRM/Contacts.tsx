@@ -51,9 +51,11 @@ type Contact = {
     company?: number | string | null;
     company_name?: string;
     customer_name?: string;
+    customer?: number | string | null;
+    customer_id?: number | string | null;
 };
 
-type CompanyOption = { id: number; name: string };
+type CompanyOption = { id: number; name: string; external_id?: string };
 
 const { Option } = Select;
 const { Title, Text } = Typography;
@@ -212,7 +214,16 @@ const Contacts: React.FC = () => {
 
     const showEditModal = (contact: Contact) => {
         setEditingContact(contact);
-        form.setFieldsValue({ ...defaultContactValues, ...contact });
+        // A PixInvoice kontaktus company mezője egy UUID (external_id), de a dropdown helyi id-t használ
+        const pixCompanyId = contact.company || contact.customer || contact.customer_id;
+        const localCompany = pixCompanyId
+            ? companies.find(c => c.external_id && String(c.external_id) === String(pixCompanyId))
+            : null;
+        form.setFieldsValue({
+            ...defaultContactValues,
+            ...contact,
+            company: localCompany?.id ?? null,
+        });
         setIsModalVisible(true);
     };
 
@@ -245,9 +256,15 @@ const Contacts: React.FC = () => {
     const handleSubmit = async () => {
         try {
             const values = await form.validateFields();
-            const payload = { 
-                ...values, 
-                company: values.is_receipt ? null : (values.company || null) 
+            // Helyi company id → PixInvoice external_id (UUID) visszamappelés mentés előtt
+            const selectedLocalCompany = values.company
+                ? companies.find(c => c.id === values.company)
+                : null;
+            const pixCompanyId = selectedLocalCompany?.external_id ?? values.company ?? null;
+            const payload = {
+                ...values,
+                company: values.is_receipt ? null : pixCompanyId,
+                customer: values.is_receipt ? null : pixCompanyId,
             };
             if (editingContact) {
                 await crmService.updateContact(editingContact.id, payload);
