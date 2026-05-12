@@ -2946,8 +2946,11 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 return qr.customer.name or ''
             try:
                 first_contact = qr.contacts.first()
-                if first_contact and getattr(first_contact, 'company', None):
-                    return first_contact.company.name or ''
+                if first_contact:
+                    if getattr(first_contact, 'company', None):
+                        return first_contact.company.name or ''
+                    # Magánszemély: nincs cég → a kapcsolattartó neve
+                    return getattr(first_contact, 'name', '') or ''
             except Exception:
                 pass
             return ''
