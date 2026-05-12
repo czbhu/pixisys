@@ -5271,6 +5271,26 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             else:
                 dn.notes = notes
         dn.save()
+
+        # Auto-update CustomerOrderItem status based on delivered quantities
+        for dn_item in dn.items.all():
+            coi = dn_item.customer_order_item
+            if coi.status == 'cancelled':
+                continue
+            ordered = coi.quantity
+            delivered_total = DeliveryNoteItem.objects.filter(
+                customer_order_item=coi,
+                delivery_note__is_confirmed=True,
+            ).aggregate(total=models.Sum('quantity'))['total'] or 0
+            if delivered_total >= ordered:
+                if coi.status != 'delivered':
+                    coi.status = 'delivered'
+                    coi.save()
+            else:
+                if coi.status not in ('in_delivery', 'delivered'):
+                    coi.status = 'in_delivery'
+                    coi.save()
+
         return Response({'status': 'ok'})
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)/pdf')
@@ -5513,7 +5533,7 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         # querying only those is safe. But technically we could deliver 'confirmed' items too.
         # Let's stick to what allows delivery.
         
-        filters = Q(status__in=['in_production', 'ready'])
+        filters = Q(status__in=['in_production', 'ready', 'in_delivery'])
         
         if customer_id:
             filters &= (Q(quote_request__company_id=customer_id) | Q(quote_request__customer_id=customer_id))
@@ -5608,6 +5628,26 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         note.confirmed_at = timezone.now()
         note.confirmed_by_user = request.user
         note.save()
+
+        # Auto-update CustomerOrderItem status based on delivered quantities
+        for dn_item in note.items.all():
+            coi = dn_item.customer_order_item
+            if coi.status == 'cancelled':
+                continue
+            ordered = coi.quantity
+            delivered_total = DeliveryNoteItem.objects.filter(
+                customer_order_item=coi,
+                delivery_note__is_confirmed=True,
+            ).aggregate(total=models.Sum('quantity'))['total'] or 0
+            if delivered_total >= ordered:
+                if coi.status != 'delivered':
+                    coi.status = 'delivered'
+                    coi.save()
+            else:
+                if coi.status not in ('in_delivery', 'delivered'):
+                    coi.status = 'in_delivery'
+                    coi.save()
+
         return Response({'status': 'ok'})
 
     @action(detail=True, methods=['post'])

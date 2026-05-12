@@ -1330,6 +1330,15 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
                 delivery_note=delivery_note,
                 **item_data
             )
+
+        # Auto-set CustomerOrderItem status to 'in_delivery' if currently below
+        STATUS_ORDER = ['new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered']
+        for dn_item in delivery_note.items.all():
+            coi = dn_item.customer_order_item
+            if coi.status not in ('in_delivery', 'delivered', 'cancelled'):
+                coi.status = 'in_delivery'
+                coi.save()
+
         return delivery_note
 
 
