@@ -1980,7 +1980,51 @@ const RFQs: React.FC = () => {
                     <Button 
                       icon={<PlusCircleOutlined />}
                       onClick={() => {
-                        window.open('/crm/companies?action=create', '_blank');
+                        const popup = window.open('/crm/companies?action=create', '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                const [list, topList] = await Promise.all([
+                                  crmService.getCompanies({ is_customer: true, compact: true }),
+                                  salesService.getTopCompanies().catch(() => [])
+                                ]);
+                                const all: any[] = list.results ?? list;
+                                const top: any[] = Array.isArray(topList) ? topList : [];
+                                const normalize = (value: any) => (value ?? '').toString().trim().toLowerCase();
+                                const normalizeTax = (value: any) => (value ?? '').toString().replace(/\D+/g, '').slice(0, 8);
+                                const companyKey = (c: any) => {
+                                  const tax = normalizeTax(c?.tax_number || c?.full_tax_number || c?.taxNumber || c?.fullTaxNumber);
+                                  const name = normalize(c?.name || c?.full_name);
+                                  return `${tax}|${name}`;
+                                };
+                                const allByKey = new Map<string, any>();
+                                for (const company of all) allByKey.set(companyKey(company), company);
+                                const ordered: any[] = [];
+                                const seenKeys = new Set<string>();
+                                for (const topCompany of top) {
+                                  const key = companyKey(topCompany);
+                                  const canonical = allByKey.get(key) || topCompany;
+                                  const dedupeKey = companyKey(canonical) || `id:${canonical?.id}`;
+                                  if (seenKeys.has(dedupeKey)) continue;
+                                  seenKeys.add(dedupeKey);
+                                  ordered.push(canonical);
+                                }
+                                for (const company of all) {
+                                  const dedupeKey = companyKey(company) || `id:${company?.id}`;
+                                  if (seenKeys.has(dedupeKey)) continue;
+                                  seenKeys.add(dedupeKey);
+                                  ordered.push(company);
+                                }
+                                setCompanies(ordered);
+                                message.success('Cégek listája frissítve');
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }
+                          }, 500);
+                        }
                       }}
                     />
                   </Tooltip>
@@ -2071,7 +2115,29 @@ const RFQs: React.FC = () => {
                             url += `&company_name=${encodeURIComponent(company.name)}`;
                           }
                         }
-                        window.open(url, '_blank');
+                        const popup = window.open(url, '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                if (companyId === 'private') {
+                                  const list = await crmService.getPrivateContacts();
+                                  setContacts(list.results ?? list);
+                                } else if (companyId) {
+                                  const list = await crmService.getContactsByCompany(companyId);
+                                  setContacts(list.results ?? list);
+                                } else {
+                                  const list = await crmService.getContacts();
+                                  setContacts((list.results ?? list) || []);
+                                }
+                                message.success('Kapcsolattartók listája frissítve');
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }
+                          }, 500);
+                        }
                       }}
                     />
                   </Tooltip>
@@ -2193,7 +2259,53 @@ const RFQs: React.FC = () => {
                   <Tooltip title="Új cég hozzáadása">
                     <Button 
                       icon={<PlusCircleOutlined />}
-                      onClick={() => { window.open('/crm/companies?action=create', '_blank'); }}
+                      onClick={() => {
+                        const popup = window.open('/crm/companies?action=create', '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                const [list, topList] = await Promise.all([
+                                  crmService.getCompanies({ is_customer: true, compact: true }),
+                                  salesService.getTopCompanies().catch(() => [])
+                                ]);
+                                const all: any[] = list.results ?? list;
+                                const top: any[] = Array.isArray(topList) ? topList : [];
+                                const normalize = (value: any) => (value ?? '').toString().trim().toLowerCase();
+                                const normalizeTax = (value: any) => (value ?? '').toString().replace(/\D+/g, '').slice(0, 8);
+                                const companyKey = (c: any) => {
+                                  const tax = normalizeTax(c?.tax_number || c?.full_tax_number || c?.taxNumber || c?.fullTaxNumber);
+                                  const name = normalize(c?.name || c?.full_name);
+                                  return `${tax}|${name}`;
+                                };
+                                const allByKey = new Map<string, any>();
+                                for (const company of all) allByKey.set(companyKey(company), company);
+                                const ordered: any[] = [];
+                                const seenKeys = new Set<string>();
+                                for (const topCompany of top) {
+                                  const key = companyKey(topCompany);
+                                  const canonical = allByKey.get(key) || topCompany;
+                                  const dedupeKey = companyKey(canonical) || `id:${canonical?.id}`;
+                                  if (seenKeys.has(dedupeKey)) continue;
+                                  seenKeys.add(dedupeKey);
+                                  ordered.push(canonical);
+                                }
+                                for (const company of all) {
+                                  const dedupeKey = companyKey(company) || `id:${company?.id}`;
+                                  if (seenKeys.has(dedupeKey)) continue;
+                                  seenKeys.add(dedupeKey);
+                                  ordered.push(company);
+                                }
+                                setCompanies(ordered);
+                                message.success('Cégek listája frissítve');
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }
+                          }, 500);
+                        }
+                      }}
                     />
                   </Tooltip>
                 </Space.Compact>
@@ -2299,7 +2411,29 @@ const RFQs: React.FC = () => {
                           const company = companies.find((c: any) => c.id === companyId);
                           if (company?.name) url += `&company_name=${encodeURIComponent(company.name)}`;
                         }
-                        window.open(url, '_blank');
+                        const popup = window.open(url, '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                if (companyId === 'private') {
+                                  const list = await crmService.getPrivateContacts();
+                                  setContacts(list.results ?? list);
+                                } else if (companyId) {
+                                  const list = await crmService.getContactsByCompany(companyId);
+                                  setContacts(list.results ?? list);
+                                } else {
+                                  const list = await crmService.getContacts();
+                                  setContacts((list.results ?? list) || []);
+                                }
+                                message.success('Kapcsolattartók listája frissítve');
+                              } catch (err) {
+                                console.error(err);
+                              }
+                            }
+                          }, 500);
+                        }
                       }}
                     />
                   </Tooltip>
