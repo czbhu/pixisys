@@ -280,8 +280,15 @@ const Companies: React.FC = () => {
     const showEditModal = async (company: Company) => {
         try {
             setLoading(true);
-            const rawDetail = await crmService.getCompany(company.id);
-            const detail = normalizeDetail(rawDetail);
+            // Use company data from list directly (avoids 404 when external_id is missing)
+            // Try fetching details for bank_accounts; fall back to list data on error
+            let detail = normalizeDetail(company);
+            try {
+                const rawDetail = await crmService.getCompany(company.id);
+                detail = normalizeDetail(rawDetail);
+            } catch (err) {
+                // 404 or other error: use list data as fallback
+            }
             const bankAccounts = (detail as any)?.bank_accounts || [];
             
             // Vat Status initialization (Default DOMESTIC if not present)
@@ -306,17 +313,16 @@ const Companies: React.FC = () => {
 
     const openViewModal = async (company: Company) => {
         setViewingCompany(company);
+        setCompanyDetail(normalizeDetail(company));
+        setCompanyContacts([]);
         setIsViewModalVisible(true);
         setDetailLoading(true);
         try {
-            const rawDetail = await crmService.getCompany(company.id);
-            const detail = normalizeDetail(rawDetail);
             const contactsResp = await crmService.getContactsByCompany(company.id);
             const contactsData = (contactsResp as any)?.results || contactsResp || [];
-            setCompanyDetail(detail);
             setCompanyContacts(Array.isArray(contactsData) ? contactsData : []);
         } catch (err) {
-            message.error('Nem sikerült lekérni a cég adatlapját');
+            message.error('Nem sikerült lekérni a kapcsolattartókat');
         } finally {
             setDetailLoading(false);
         }
