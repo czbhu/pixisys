@@ -96,6 +96,8 @@ interface CostItem {
   parent_local_id?: number | null;
   // Képletek tárolása mezőnként (pl. { quantity: '100*1.5', cost_price: '200+50' })
   formulas?: Record<string, string | null>;
+  // Automatikus mennyiség szinkron állapot
+  syncQty?: boolean;
 }
 
 const { Search } = Input;
@@ -452,6 +454,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           });
           const items: CostItem[] = p._costItemsState || [];
           setManuCostItems(items);
+          // Restore syncQtyRows from persisted syncQty flags
+          const syncSet = new Set(items.filter(i => i.syncQty).map(i => i.id));
+          setSyncQtyRows(syncSet);
           if (typeof p.price_from_cost_calc === 'boolean') {
             setManuPriceFromCalc(p.price_from_cost_calc);
           } else {
@@ -1205,7 +1210,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         setSelected({ ...v, id: tempId, __type: 'manufacturing' });
         const deferredPayload = {
           ...payload,
-          _costItemsState: manuCostItems,
+          _costItemsState: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
           _currency: { id: manuSellCurrencyId, code: manuSellCurrencyCode },
           _costCurrency: { id: manuCostCurrencyId, code: manuCostCurrencyCode },
         };
@@ -1338,7 +1343,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         // Store the full creation payload (with CostItem state and currency) for later
         const deferredPayload = {
           ...payload,
-          _costItemsState: manuCostItems,
+          _costItemsState: manuCostItems.map(ci => ({ ...ci, syncQty: syncQtyRows.has(ci.id) })),
           _currency: { id: manuSellCurrencyId, code: manuSellCurrencyCode },
           _costCurrency: { id: manuCostCurrencyId, code: manuCostCurrencyCode },
         };
