@@ -550,6 +550,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         });
         items.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setManuCostItems(items);
+        // Default: sync quantity ON for all cost items when loading a product
+        setSyncQtyRows(new Set(items.map(i => i.id)));
         // Restore saved checkbox state; fall back to heuristic for legacy records
         if (typeof p.price_from_cost_calc === 'boolean') {
           setManuPriceFromCalc(p.price_from_cost_calc);
@@ -979,6 +981,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         };
       });
       setManuCostItems(items);
+      // Default: sync quantity ON for all cost items when loading a service
+      setSyncQtyRows(new Set(items.map(i => i.id)));
     } else if (currentType !== 'manufacturing') {
       setManuCostItems([]);
     }
