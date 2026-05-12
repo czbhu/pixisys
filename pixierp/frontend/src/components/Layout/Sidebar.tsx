@@ -614,28 +614,31 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/hr/departments': 'hr.departments',
     '/hr/positions': 'hr.positions',
     '/hr/attendance': 'hr.attendance',
-    '/hr/work-logs': 'hr.attendance',
+    '/hr/work-logs': 'hr.work_logs',
     '/hr/payroll': 'hr.payroll',
     '/hr/leaves': 'hr.leave_requests',
-    '/hr/analytics': 'hr.employees',
-    '/hr/task-settings': 'hr.employees',
+    '/hr/analytics': 'hr.analytics',
+    '/hr/activity-log': 'hr.activity_log',
+    '/hr/task-settings': 'hr.task_settings',
 
     // Sales
     '/sales/rfqs': 'sales.rfqs',
-    '/sales/customer-orders': 'orders.customer_orders',
-    '/sales/delivery-notes': 'sales.orders', 
-    '/sales/invoicing': 'finance.invoices',
-    '/sales/invitations': 'sales.rfqs',
-    '/sales/projects': 'manufacturing.projects',
+    '/sales/customer-orders': 'sales.orders',
+    '/sales/delivery-notes': 'sales.delivery_notes',
+    '/sales/invoicing': 'sales.invoicing',
+    '/sales/invitations': 'sales.invitations',
+    '/sales/projects': 'sales.projects',
     '/sales/forecasts': 'sales.opportunities',
     
     // Manufacturing
     '/manufacturing/products': 'manufacturing.products',
-    '/manufacturing/ordered-products': 'manufacturing.products',
-    '/manufacturing/queue': 'manufacturing.products',
-    '/manufacturing/product-classes': 'manufacturing.products',
-    '/manufacturing/product-editor': 'manufacturing.products',
-    '/manufacturing/services': 'manufacturing.products',
+    '/manufacturing/ordered-products': 'manufacturing.ordered_products',
+    '/manufacturing/queue': 'manufacturing.queue',
+    '/manufacturing/product-classes': 'manufacturing.product_classes',
+    '/manufacturing/product-editor': 'manufacturing.product_editor',
+    '/manufacturing/services': 'manufacturing.services',
+    '/manufacturing/service-groups': 'manufacturing.service_groups',
+    '/manufacturing/print-templates': 'manufacturing.print_templates',
     '/manufacturing/boms': 'manufacturing.materials',
     '/manufacturing/inventory': 'warehouse.inventory',
     '/manufacturing/work-orders': 'manufacturing.work_sheets',
@@ -644,64 +647,66 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     // Finance
     '/finance/payments': 'finance.payments',
     '/finance/cash-registers': 'finance.cash_registers',
-    '/finance/cash-register-setup': 'finance.cash_registers',
-    '/finance/budgets': 'finance.expenses',
-    '/finance/reports': 'finance.invoices',
+    '/finance/cash-register-setup': 'finance.cash_register_setup',
+    '/finance/budgets': 'finance.budgets',
+    '/finance/reports': 'finance.reports',
     'pixinvoice-sso': 'finance.invoices',
 
     // CRM
     '/crm/companies': 'crm.companies',
     '/crm/contacts': 'crm.contacts',
     '/crm/activities': 'crm.activities',
-    '/crm/campaigns': 'crm.activities',
+    '/crm/campaigns': 'crm.campaigns',
     '/crm/deals': 'sales.opportunities',
 
     // Orders
     '/orders/orders': 'orders.customer_orders',
-    '/orders/shipments': 'orders.customer_orders',
-    '/orders/returns': 'orders.customer_orders',
-    '/orders/suppliers': 'crm.companies',
+    '/orders/shipments': 'orders.shipments',
+    '/orders/returns': 'orders.returns',
+    '/orders/suppliers': 'orders.suppliers',
 
     // Warehouse
     '/warehouse/materials': 'warehouse.materials',
-    '/warehouse/material-groups': 'warehouse.materials',
+    '/warehouse/material-groups': 'warehouse.material_groups',
     '/warehouse/inventory': 'warehouse.inventory',
-    '/warehouse/receipts': 'warehouse.movements',
-    '/warehouse/supplier-invoices': 'finance.expenses',
-    '/warehouse/scraps': 'warehouse.inventory',
-    '/warehouse/warehouses': 'warehouse.inventory',
-    '/warehouse/suppliers': 'crm.companies',
-    '/warehouse/reports': 'warehouse.inventory',
-    '/warehouse/picking': 'warehouse.inventory',
-    '/warehouse/picking-list': 'warehouse.inventory',
+    '/warehouse/receipts': 'warehouse.receipts',
+    '/warehouse/supplier-invoices': 'warehouse.supplier_invoices',
+    '/warehouse/scraps': 'warehouse.scraps',
+    '/warehouse/warehouses': 'warehouse.warehouses',
+    '/warehouse/suppliers': 'warehouse.suppliers',
+    '/warehouse/reports': 'warehouse.reports',
+    '/warehouse/picking': 'warehouse.picking',
+    '/warehouse/picking-list': 'warehouse.picking_list',
 
     // POS
-    '/pos/sales': 'pos',
-    '/pos/registration': 'pos',
-    '/pos/terminals': 'pos',
-    '/pos/products': 'pos',
+    '/pos/sales': 'pos.sales',
+    '/pos/registration': 'pos.registration',
+    '/pos/terminals': 'pos.terminals',
+    '/pos/products': 'pos.products',
     '/pos/customers': 'pos',
     '/pos/reports': 'pos',
-    '/pos/transactions': 'pos', 
+    '/pos/transactions': 'pos',
     '/pos/inventory': 'pos',
 
     // Settings
-    '/settings/access-control': 'settings',
-    '/settings/attendance-kiosk': 'settings',
-    '/settings/companies': 'settings',
-    '/settings/currencies': 'settings',
-    '/settings/roles': 'settings',
-    '/settings/email-server': 'settings',
-    '/settings/email-templates': 'settings',
-    '/settings/signatures': 'settings',
-    '/settings/integrations': 'settings',
-    '/settings/pixinvoice': 'settings',
-    '/settings/hestia': 'settings',
-    '/settings/backup': 'settings',
-    '/settings/public-site': 'settings',
-    '/settings/iot': 'settings',
-    '/settings/nfc': 'settings',
-    '/site-management': 'settings',
+    '/settings/access-control': 'settings.access_control',
+    '/settings/attendance-kiosk': 'settings.attendance_kiosk',
+    '/settings/companies': 'settings.company',
+    '/settings/currencies': 'settings.currencies',
+    '/settings/roles': 'settings.roles',
+    '/settings/email-server': 'settings.email',
+    '/settings/email-templates': 'settings.email_templates',
+    '/settings/signatures': 'settings.signatures',
+    '/settings/integrations': 'settings.integrations',
+    '/settings/pixinvoice': 'settings.pixinvoice',
+    '/settings/hestia': 'settings.hestia',
+    '/settings/backup': 'settings.backup',
+    '/settings/public-site': 'settings.public_site',
+    '/settings/iot': 'settings.iot',
+    '/settings/nfc': 'settings.nfc',
+    '/settings/zones': 'settings.zones',
+    '/settings/print-products': 'settings.print_products',
+    '/site-management': 'site_management.manage',
     '/personal/cash-registers': 'finance.cash_registers',
   };
 
@@ -739,12 +744,13 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     // 2. Check Resource Map first
     const resource = RESOURCE_MAP[itemKey];
     if (resource) {
-        // If it's a 'settings' or 'pos' simplified string, check module
+        // If it's a module-only string (no dot), check module
         if (!resource.includes('.')) {
              return perms.some((p: any) => p.module === resource && p.allowed);
         }
-        // Exact resource match
-        return perms.some((p: any) => p.resource === resource && p.allowed);
+        const [resModule] = resource.split('.');
+        // Exact resource match OR module-wide permission (empty resource = full module access)
+        return perms.some((p: any) => p.allowed && (p.resource === resource || (p.module === resModule && !p.resource)));
     }
 
     // 3. Fallback to Module Check
