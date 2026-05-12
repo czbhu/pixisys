@@ -1069,6 +1069,7 @@ const RFQs: React.FC = () => {
       }
 
       message.success('Árajánlat létrehozva');
+      clearDraft();
       setCreateOpen(false);
       form.resetFields();
       setNewItems([]);
@@ -1238,6 +1239,22 @@ const RFQs: React.FC = () => {
     
     setCreateOpen(true);
 
+    // Restore draft if this is a page-refresh reopen
+    try {
+      const raw = sessionStorage.getItem('rfq_create_draft');
+      if (raw) {
+        const draft = JSON.parse(raw);
+        if (draft.formValues) {
+          const fv = { ...draft.formValues };
+          if (fv.issue_date) fv.issue_date = dayjs(fv.issue_date);
+          if (fv.deadline) fv.deadline = dayjs(fv.deadline);
+          setPendingFormValues(fv);
+        }
+        if (Array.isArray(draft.newItems) && draft.newItems.length > 0) setNewItems(draft.newItems);
+        if (draft.currency) setCurrency(draft.currency);
+      }
+    } catch {}
+
     // Defer form.setFieldsValue until after the modal renders (via useEffect)
     if (pendingCompanyId || pendingContactId) {
       const vals: Record<string, any> = {};
@@ -1246,6 +1263,30 @@ const RFQs: React.FC = () => {
       setPendingFormValues(vals);
     }
   };
+
+  const DRAFT_KEY = 'rfq_create_draft';
+
+  const saveDraft = () => {
+    try {
+      const vals = form.getFieldsValue(true);
+      // Serialize dayjs to ISO string
+      const serialized: any = { ...vals };
+      if (vals.issue_date?.toISOString) serialized.issue_date = vals.issue_date.toISOString();
+      if (vals.deadline?.toISOString) serialized.deadline = vals.deadline.toISOString();
+      sessionStorage.setItem(DRAFT_KEY, JSON.stringify({
+        formValues: serialized,
+        newItems,
+        currency,
+      }));
+    } catch {}
+  };
+
+  const clearDraft = () => { try { sessionStorage.removeItem(DRAFT_KEY); } catch {} };
+
+  // Auto-save draft when items change
+  useEffect(() => {
+    if (createOpen) saveDraft();
+  }, [newItems, createOpen]); // eslint-disable-line
 
   useEffect(() => {
     if (searchParams.get('create') === 'true' && !loading && !createOpen) {
@@ -1284,12 +1325,14 @@ const RFQs: React.FC = () => {
         okText: 'Bezár',
         cancelText: 'Mégse',
         onOk: () => {
+          clearDraft();
           setCreateOpen(false);
           form.resetFields();
           clearParams();
         },
       });
     } else {
+      clearDraft();
       setCreateOpen(false);
       form.resetFields();
       clearParams();
@@ -1808,7 +1851,7 @@ const RFQs: React.FC = () => {
         styles={isMobile ? { body: { padding: '8px 12px 0' }, footer: { padding: '8px 12px' } } : {}}
         forceRender
       >
-        <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }}>
+        <Form layout="vertical" form={form} size="small" initialValues={{ issue_date: dayjs() }} onValuesChange={() => { if (createOpen) saveDraft(); }}>
           {/* ── Alap adatok ─────────────────────────────────────────────── */}
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
