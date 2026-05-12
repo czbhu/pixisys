@@ -2729,7 +2729,6 @@ const Materials: React.FC = () => {
             {
               key: '2',
               label: 'Beszállítók és árkalkuláció',
-              disabled: !editingMaterial,
               forceRender: true,
               children: (
             <>
