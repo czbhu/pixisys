@@ -289,7 +289,7 @@ const CartDrawer: React.FC = () => {
         onClose={() => setDrawerOpen(false)}
         width={520}
         placement="right"
-        bodyStyle={{ padding: '12px 16px' }}
+        styles={{ body: { padding: '12px 16px' } }}
       >
         <Tabs
           activeKey={activeTab}
