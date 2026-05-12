@@ -251,7 +251,25 @@ class CompanyViewSet(viewsets.ViewSet):
                 company_id = _ensure_company_id(client)
             if not company_id:
                 return Response({'error': 'PixInvoice company_id hiányzik'}, status=status.HTTP_400_BAD_REQUEST)
-            client.delete_customer(pk, company_id=company_id)
+
+            # Resolve integer pk → PixInvoice UUID via local DB
+            pixinvoice_pk = pk
+            local_obj = None
+            try:
+                local_id = int(pk)
+                from .models import Company as LocalCompany
+                local_obj = LocalCompany.objects.filter(id=local_id).first()
+                if local_obj and local_obj.external_id:
+                    pixinvoice_pk = local_obj.external_id
+            except (ValueError, TypeError):
+                pass
+
+            client.delete_customer(pixinvoice_pk, company_id=company_id)
+
+            # Also delete from local DB
+            if local_obj:
+                local_obj.delete()
+
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_502_BAD_GATEWAY)
