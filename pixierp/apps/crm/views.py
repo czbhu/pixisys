@@ -77,7 +77,7 @@ def _ensure_company_id(client):
     return None
 
 
-from .utils import sync_company_to_local_db as _sync_to_local_db
+from .utils import sync_company_to_local_db as _sync_to_local_db, bulk_sync_companies_to_local_db as _bulk_sync
 
 
 class CompanyViewSet(viewsets.ViewSet):
@@ -114,15 +114,19 @@ class CompanyViewSet(viewsets.ViewSet):
                 items = filtered_items
 
             # Always sync all returned items to local DB and swap UUID → local integer ID
+            # Use bulk sync for efficiency (single DB round-trip instead of N queries)
+            try:
+                synced_map = _bulk_sync(items)
+            except Exception:
+                synced_map = {}
             synced_items = []
             for item in items:
-                local_comp = _sync_to_local_db(item)
+                cid = str(item.get('id') or item.get('customer_id') or '')
+                local_comp = synced_map.get(cid)
                 if local_comp:
-                    item['external_id'] = item['id']  # Save PixInvoice UUID
-                    item['id'] = local_comp.id        # Swap to local Integer ID
-                    synced_items.append(item)
-                else:
-                    synced_items.append(item)  # Keep as-is if sync failed
+                    item['external_id'] = item['id']
+                    item['id'] = local_comp.id
+                synced_items.append(item)
             items = synced_items
 
             if compact_mode:
@@ -295,16 +299,35 @@ class ContactViewSet(viewsets.ViewSet):
                 ]
             items = _filter_by_query(items, request.query_params.get('q'))
             # Enrich with customer_name so the frontend can display "Name — Company"
+            # Use local DB lookup instead of a second API call to PixInvoice
             try:
-                customers = client.list_customers(company_id=company_id)
-                customer_map = {
-                    str(c.get('id') or c.get('customer_id') or ''): c.get('name') or c.get('full_name') or ''
-                    for c in (customers or []) if c.get('id') or c.get('customer_id')
+                cids = set()
+                for it in items:
+                    cid = str((it or {}).get('customer') or (it or {}).get('customer_id') or (it or {}).get('company') or (it or {}).get('company_id') or '')
+                    if cid:
+                        cids.add(cid)
+                # First try local DB (fast)
+                from .models import Company as LocalCompany
+                local_map = {
+                    str(c.external_id): c.name
+                    for c in LocalCompany.objects.filter(external_id__in=list(cids))
+                    if c.external_id
                 }
+                # For any missing, fall back to PixInvoice API in one call
+                missing_cids = cids - set(local_map.keys())
+                if missing_cids:
+                    try:
+                        customers = client.list_customers(company_id=company_id)
+                        for c in (customers or []):
+                            cid = str(c.get('id') or c.get('customer_id') or '')
+                            if cid and cid not in local_map:
+                                local_map[cid] = c.get('name') or c.get('full_name') or ''
+                    except Exception:
+                        pass
                 for it in items:
                     cid = str((it or {}).get('customer') or (it or {}).get('customer_id') or (it or {}).get('company') or (it or {}).get('company_id') or '')
                     if cid and not it.get('customer_name'):
-                        it['customer_name'] = customer_map.get(cid) or ''
+                        it['customer_name'] = local_map.get(cid) or ''
             except Exception:
                 pass
             return Response(items)

@@ -73,3 +73,109 @@ def sync_company_to_local_db(data):
         print(f"Error syncing company {data.get('id')} to local DB: {e}")
         # traceback.print_exc()
         return None
+
+
+def bulk_sync_companies_to_local_db(items):
+    """
+    Efficiently syncs a list of PixInvoice company items to the local DB.
+    Uses bulk queries instead of per-item DB hits.
+    Returns a dict: {external_id: local_company} for all successfully synced items.
+    """
+    if not items:
+        return {}
+
+    ext_ids = [str(item.get('id') or item.get('customer_id') or '') for item in items]
+    ext_ids = [eid for eid in ext_ids if eid]
+
+    # Load all existing companies by external_id in ONE query
+    existing_by_ext = {
+        str(c.external_id): c
+        for c in Company.objects.filter(external_id__in=ext_ids)
+    }
+
+    # Also load by tax number for fallback (those without external_id yet)
+    tax_numbers = [
+        str(item.get('tax_number') or '')
+        for item in items
+        if item.get('tax_number') and str(item.get('id') or '') not in existing_by_ext
+    ]
+    existing_by_tax = {}
+    if tax_numbers:
+        existing_by_tax = {
+            str(c.tax_number): c
+            for c in Company.objects.filter(tax_number__in=tax_numbers)
+            if c.tax_number
+        }
+
+    to_update = []
+    to_create = []
+    result = {}
+
+    for item in items:
+        cid = str(item.get('id') or item.get('customer_id') or '')
+        if not cid:
+            continue
+        name = item.get('name') or item.get('customer_name') or ''
+        is_supplier = bool(item.get('is_supplier', False))
+        is_customer = item.get('is_customer', True)
+        if is_customer is None:
+            is_customer = True
+        tax = item.get('tax_number') or ''
+
+        company = existing_by_ext.get(cid)
+        if not company and tax:
+            company = existing_by_tax.get(str(tax))
+
+        if company:
+            changed = False
+            if str(company.external_id or '') != cid:
+                company.external_id = cid
+                changed = True
+            if is_supplier and not company.is_supplier:
+                company.is_supplier = True
+                changed = True
+            if is_customer and not company.is_customer:
+                company.is_customer = True
+                changed = True
+            if not company.tax_number and tax:
+                company.tax_number = tax
+                changed = True
+            cur = company.name or ''
+            if name and (cur.startswith('External Client') or not cur or cur == 'Névtelen'):
+                company.name = name
+                changed = True
+            if changed:
+                to_update.append(company)
+            result[cid] = company
+            existing_by_ext[cid] = company  # ensure indexed
+        else:
+            new_company = Company(
+                external_id=cid,
+                name=name or f'External Client {cid[:8]}',
+                is_supplier=is_supplier,
+                is_customer=bool(is_customer),
+                tax_number=tax or None,
+            )
+            to_create.append((cid, new_company))
+
+    # Bulk update
+    if to_update:
+        Company.objects.bulk_update(
+            to_update,
+            ['external_id', 'is_supplier', 'is_customer', 'tax_number', 'name'],
+            batch_size=200,
+        )
+
+    # Bulk create
+    if to_create:
+        new_objs = [obj for _, obj in to_create]
+        created = Company.objects.bulk_create(new_objs, ignore_conflicts=False, batch_size=200)
+        for obj in created:
+            if obj.external_id:
+                result[str(obj.external_id)] = obj
+
+    for cid, company in result.items():
+        pass  # already populated above
+
+    return result
+

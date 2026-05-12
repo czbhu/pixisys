@@ -2143,6 +2143,7 @@ const RFQs: React.FC = () => {
                   </Tooltip>
                   <Button 
                     type="default"
+                    htmlType="button"
                     onClick={async () => {
                       const companyId = form.getFieldValue('company_id');
                       if (companyId) {
@@ -2439,6 +2440,7 @@ const RFQs: React.FC = () => {
                   </Tooltip>
                   <Button 
                     type="default"
+                    htmlType="button"
                     onClick={async () => {
                       const companyId = form.getFieldValue('company_id');
                       if (companyId) {
