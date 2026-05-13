@@ -1166,6 +1166,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 qr.currency = Currency.objects.get(id=int(curr_id))
             except Exception:
                 pass
+        # Boolean flags
+        if 'partial_order_allowed' in data:
+            qr.partial_order_allowed = bool(data['partial_order_allowed'])
         qr.save()
         # Many-to-many contacts
         contact_ids = data.get('contact_ids') or data.get('contacts') or []
@@ -1941,6 +1944,7 @@ def public_order_view(request, token: str):
         'description': qr.description,
         'status': qr.status,
         'issue_date': qr.issue_date,
+        'partial_order_allowed': qr.partial_order_allowed,
         'customer': customer_data,
         'supplier': supplier_data,
         'items': QuoteRequestItemSerializer(qr.items.all(), many=True, context={'request': request}).data,

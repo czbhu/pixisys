@@ -40,6 +40,7 @@ interface QuoteData {
   description: string;
   status: string;
   issue_date: string;
+  partial_order_allowed: boolean;
   customer: {
     name: string;
     tax_number: string;
@@ -198,8 +199,9 @@ const PublicQuoteOrder: React.FC = () => {
   const totalVat = totalGross - totalNet;
 
   const orderableItems = data.items.filter(it => !it.is_ordered);
+  const partialAllowed = data.partial_order_allowed !== false;
   const allSelected = orderableItems.length > 0 && selectedItems.size === orderableItems.length;
-  const indeterminate = selectedItems.size > 0 && selectedItems.size < orderableItems.length;
+  const indeterminate = partialAllowed && selectedItems.size > 0 && selectedItems.size < orderableItems.length;
 
   const columns = [
     { 
@@ -208,6 +210,7 @@ const PublicQuoteOrder: React.FC = () => {
           checked={allSelected}
           indeterminate={indeterminate}
           onChange={(e) => handleSelectAll(e.target.checked)}
+          disabled={!partialAllowed}
           className="no-print"
         >
           Összes
@@ -232,6 +235,7 @@ const PublicQuoteOrder: React.FC = () => {
         return (
           <Checkbox
             checked={selectedItems.has(record.id)}
+            disabled={!partialAllowed}
             onChange={(e) => handleItemToggle(record.id, e.target.checked)}
           />
         );
@@ -436,7 +440,9 @@ const PublicQuoteOrder: React.FC = () => {
         </Descriptions>
         
         <Paragraph type="secondary" className="no-print">
-          Jelölje be a megrendelni kívánt tételeket, majd kattintson a megrendelés gombra.
+          {data.partial_order_allowed !== false
+            ? 'Jelölje be a megrendelni kívánt tételeket, majd kattintson a megrendelés gombra.'
+            : 'Az ajánlat csak egészben rendelhető meg. Az összes tételt egyszerre kell megrendelni.'}
         </Paragraph>
 
         <Table
