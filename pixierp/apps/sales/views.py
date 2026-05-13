@@ -3850,19 +3850,41 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             p.setFont(font_name, 10) # Ensure font is reset
             p.drawString(2*cm, y, f"Projekt: {project_name}")
             y -= 0.6*cm
-            
+
+            # Helper: wrap long text into multiple lines, returns new y
+            def draw_wrapped(label, text, font_size=10, line_height=0.55*cm):
+                avail_w = width - 4*cm  # 2cm left + 2cm right margin
+                full = f"{label}{text}"
+                p.setFont(font_name, font_size)
+                words = full.split()
+                lines = []
+                current = ''
+                for word in words:
+                    test = f"{current} {word}".strip()
+                    if p.stringWidth(test, font_name, font_size) <= avail_w:
+                        current = test
+                    else:
+                        if current:
+                            lines.append(current)
+                        current = word
+                if current:
+                    lines.append(current)
+                cur_y = y
+                for line in lines:
+                    p.drawString(2*cm, cur_y, line)
+                    cur_y -= line_height
+                return cur_y
+
             # Description
             desc_text = rfq.description if rfq and rfq.description else ''
             if desc_text:
-                p.drawString(2*cm, y, f"Leírás: {desc_text[:60]}")
-                y -= 0.6*cm
-            
+                y = draw_wrapped("Leírás: ", desc_text)
+
             # Internal description (only in second section)
             if include_internal_desc:
                 int_desc = rfq.internal_description if rfq and rfq.internal_description else ''
                 if int_desc:
-                    p.drawString(2*cm, y, f"Belső leírás: {int_desc[:60]}")
-                    y -= 0.6*cm
+                    y = draw_wrapped("Belső leírás: ", int_desc)
             
             # Items
             y -= 0.4*cm
@@ -3912,13 +3934,45 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                     text_x = 2*cm
 
                 # Draw item info
+                p.setFont(font_name, 9)
                 p.drawString(text_x, y, f"Cikkszám: {item_code}")
                 y -= 0.5*cm
-                p.drawString(text_x, y, f"Név: {item_name[:50]}")
-                y -= 0.5*cm
-                if item_description:
-                    p.drawString(text_x, y, f"Leírás: {item_description[:120]}")
+                # Item name — wrap if long
+                name_words = item_name.split()
+                avail_w_item = width - text_x - 2*cm
+                name_lines = []
+                cur_line = ''
+                for w in name_words:
+                    test = f"{cur_line} {w}".strip()
+                    if p.stringWidth(test, font_name, 9) <= avail_w_item:
+                        cur_line = test
+                    else:
+                        if cur_line:
+                            name_lines.append(cur_line)
+                        cur_line = w
+                if cur_line:
+                    name_lines.append(cur_line)
+                for i, nl in enumerate(name_lines):
+                    p.drawString(text_x, y, f"Név: {nl}" if i == 0 else f"     {nl}")
                     y -= 0.5*cm
+                if item_description:
+                    # Wrap item description
+                    desc_words = item_description.split()
+                    desc_lines = []
+                    cur_dl = ''
+                    for w in desc_words:
+                        test = f"{cur_dl} {w}".strip()
+                        if p.stringWidth(test, font_name, 9) <= avail_w_item:
+                            cur_dl = test
+                        else:
+                            if cur_dl:
+                                desc_lines.append(cur_dl)
+                            cur_dl = w
+                    if cur_dl:
+                        desc_lines.append(cur_dl)
+                    for i, dl in enumerate(desc_lines):
+                        p.drawString(text_x, y, f"Leírás: {dl}" if i == 0 else f"        {dl}")
+                        y -= 0.5*cm
                 p.drawString(text_x, y, f"Mennyiség: {float(item.quantity)} {quote_item.unit}")
                 y -= 0.7*cm
             
