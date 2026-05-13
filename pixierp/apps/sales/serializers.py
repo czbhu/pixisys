@@ -784,10 +784,6 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
                 return ''
         return ''
     
-    def get_deadline(self, obj):
-        """Get deadline from quote_request"""
-        return obj.quote_request.deadline if obj.quote_request else None
-
 
 class CustomerOrderListItemSerializer(serializers.ModelSerializer):
     quote_item_id = serializers.IntegerField(source='quote_item.id', read_only=True)

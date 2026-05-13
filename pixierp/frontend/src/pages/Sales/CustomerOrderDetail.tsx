@@ -107,7 +107,7 @@ const CustomerOrderDetail: React.FC = () => {
           number: orderData.order_number,
           created_by_name: createdByName,
           issue_date: rfq?.issue_date ? dayjs(rfq.issue_date) : null,
-          deadline: rfq?.deadline ? dayjs(rfq.deadline) : null,
+          deadline: orderData.deadline ? dayjs(orderData.deadline) : null,
           company_id: rfq?.company?.name || rfq?.company_name || rfq?.contacts?.[0]?.company_name || '',
           contact_ids: rfq?.contact_names || '',
           title: rfq?.title || '',
@@ -500,8 +500,23 @@ const CustomerOrderDetail: React.FC = () => {
               </Form.Item>
             </Col>
             <Col span={6}>
-              <Form.Item label="Határidő" name="deadline">
-                <DatePicker style={{ width: '100%' }} disabled />
+              <Form.Item label="Szállítási határidő" name="deadline" style={{ marginBottom: 0 }}>
+                <DatePicker
+                  style={{ width: '100%' }}
+                  allowClear
+                  placeholder="Nincs megadva"
+                  onChange={async (d) => {
+                    try {
+                      await api.patch(`/sales/customer-orders/${id}/`, {
+                        deadline: d ? d.format('YYYY-MM-DD') : null,
+                      });
+                      message.success('Határidő mentve');
+                      setOrder((prev: any) => ({ ...prev, deadline: d ? d.format('YYYY-MM-DD') : null }));
+                    } catch {
+                      message.error('Nem sikerült menteni a határidőt');
+                    }
+                  }}
+                />
               </Form.Item>
             </Col>
           </Row>
