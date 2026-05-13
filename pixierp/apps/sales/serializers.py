@@ -644,7 +644,7 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
     created_by_name = serializers.SerializerMethodField()
     contact_names = serializers.SerializerMethodField()
     contact_email = serializers.SerializerMethodField()
-    deadline = serializers.SerializerMethodField()
+    deadline = serializers.DateField(allow_null=True, required=False)
     pending_approval = serializers.SerializerMethodField()
     last_rejection = serializers.SerializerMethodField()
     
@@ -990,6 +990,9 @@ class CustomerOrderListSerializer(serializers.ModelSerializer):
         return ''
 
     def get_deadline(self, obj):
+        # CustomerOrder saját deadline mezője, fallback: RFQ deadline
+        if obj.deadline:
+            return obj.deadline
         return obj.quote_request.deadline if obj.quote_request else None
 
 
