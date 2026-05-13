@@ -92,6 +92,7 @@ const RFQs: React.FC = () => {
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
   const [partialLoading, setPartialLoading] = useState(false);
   const [partialDeadline, setPartialDeadline] = useState<any>(null);
+  const [creating, setCreating] = useState(false);
   const [orderAllOpenId, setOrderAllOpenId] = useState<number | null>(null);
   const [orderAllDeadline, setOrderAllDeadline] = useState<any>(null);
   const [orderAllLoading, setOrderAllLoading] = useState(false);
@@ -916,6 +917,7 @@ const RFQs: React.FC = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+      setCreating(true);
       
       const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
       const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
@@ -1057,6 +1059,8 @@ const RFQs: React.FC = () => {
       loadData();
     } catch (e) {
       // validation or api error
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -1877,6 +1881,9 @@ const RFQs: React.FC = () => {
         onCancel={handleCancel}
         okText="Létrehozás"
         cancelText="Mégse"
+        okButtonProps={{ loading: creating }}
+        closable={!creating}
+        maskClosable={false}
         width={isMobile ? '100vw' : 1100}
         wrapClassName={isMobile ? 'pixi-fullscreen-wrap' : undefined}
         style={isMobile ? { margin: 0, padding: 0 } : {}}
