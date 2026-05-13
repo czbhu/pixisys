@@ -138,10 +138,14 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         return None
 
     def get_is_ordered(self, obj):
-        return obj.customerorderitem_set.exclude(customer_order__status='cancelled').exists()
+        return obj.customerorderitem_set.exclude(
+            customer_order__status='cancelled'
+        ).exclude(status='cancelled').exists()
 
     def get_ordered_at(self, obj):
-        coi = obj.customerorderitem_set.exclude(customer_order__status='cancelled').order_by('customer_order__created_at').first()
+        coi = obj.customerorderitem_set.exclude(
+            customer_order__status='cancelled'
+        ).exclude(status='cancelled').order_by('customer_order__created_at').first()
         if not coi:
             return None
         return coi.customer_order.created_at
