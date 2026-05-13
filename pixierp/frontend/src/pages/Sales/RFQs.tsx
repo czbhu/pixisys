@@ -91,6 +91,10 @@ const RFQs: React.FC = () => {
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
   const [partialLoading, setPartialLoading] = useState(false);
+  const [partialDeadline, setPartialDeadline] = useState<any>(null);
+  const [orderAllOpenId, setOrderAllOpenId] = useState<number | null>(null);
+  const [orderAllDeadline, setOrderAllDeadline] = useState<any>(null);
+  const [orderAllLoading, setOrderAllLoading] = useState(false);
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatures, setSignatures] = useState<any[]>([]);
   const [statusFilter, setStatusFilter] = useState<string[]>(() => {
@@ -734,15 +738,9 @@ const RFQs: React.FC = () => {
                     type="primary"
                     disabled={allOrdered || someOrdered}
                     style={{ height: 'auto', padding: '3px 10px', lineHeight: 1 }}
-                    onClick={async () => {
-                      try {
-                        const res = await salesService.orderAllFromRfq(record.id);
-                        message.success(`Megrendelés létrehozva: ${res.order_number}`);
-                        loadData();
-                        setTimeout(() => navigate('/sales/customer-orders'), 1000);
-                      } catch (e: any) {
-                        message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
-                      }
+                    onClick={() => {
+                      setOrderAllOpenId(record.id);
+                      setOrderAllDeadline(null);
                     }}
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
@@ -918,31 +916,6 @@ const RFQs: React.FC = () => {
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
-      console.log('[RFQs] Form values:', values);
-      console.log('[RFQs] contact_ids type:', typeof values.contact_ids, 'isArray:', Array.isArray(values.contact_ids));
-      console.log('[RFQs] contact_ids value:', values.contact_ids);
-      
-      // Ellenőrizzük a határidőt
-      if (!values.deadline) {
-        const suggestedDate = addWorkdays(values.issue_date || dayjs(), 14);
-        const confirmed = await new Promise<boolean>((resolve) => {
-          Modal.confirm({
-            title: 'Nincs határidő megadva',
-            content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
-            okText: 'Igen',
-            cancelText: 'Mégsem',
-            onOk: () => resolve(true),
-            onCancel: () => resolve(false),
-          });
-        });
-        
-        if (confirmed) {
-          values.deadline = suggestedDate;
-          form.setFieldValue('deadline', suggestedDate);
-        } else {
-          return; // Vissza az ajánlatba
-        }
-      }
       
       const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
       const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
@@ -1793,17 +1766,60 @@ const RFQs: React.FC = () => {
       </Modal>
 
       <Modal
+        title="Összes tétel megrendelése"
+        open={orderAllOpenId !== null}
+        onCancel={() => { setOrderAllOpenId(null); setOrderAllDeadline(null); }}
+        onOk={async () => {
+          if (!orderAllOpenId) return;
+          try {
+            setOrderAllLoading(true);
+            const res = await salesService.orderAllFromRfq(
+              orderAllOpenId,
+              orderAllDeadline ? orderAllDeadline.format('YYYY-MM-DD') : undefined
+            );
+            message.success(`Megrendelés létrehozva: ${res.order_number}`);
+            setOrderAllOpenId(null);
+            setOrderAllDeadline(null);
+            loadData();
+            setTimeout(() => navigate('/sales/customer-orders'), 1000);
+          } catch (e: any) {
+            message.error(e?.response?.data?.error || 'Hiba a megrendelés létrehozásakor');
+          } finally { setOrderAllLoading(false); }
+        }}
+        okText="Megrendelés"
+        okButtonProps={{ loading: orderAllLoading }}
+        cancelText="Mégse"
+      >
+        <div style={{ marginBottom: 8 }}>
+          <span style={{ marginRight: 8 }}>Szállítási határidő (nem kötelező):</span>
+          <DatePicker
+            value={orderAllDeadline}
+            onChange={(d) => setOrderAllDeadline(d)}
+            placeholder="Válassz dátumot"
+            style={{ width: 200 }}
+            allowClear
+          />
+        </div>
+        <p>Az árajánlat összes tételét megrendeli. Folytatja?</p>
+      </Modal>
+
+      <Modal
         title="Részleges megrendelés"
         open={partialOrderOpenId !== null}
-        onCancel={() => { setPartialOrderOpenId(null); setPartialSelection([]); }}
+        onCancel={() => { setPartialOrderOpenId(null); setPartialSelection([]); setPartialDeadline(null); }}
         onOk={async () => {
           if (!partialOrderOpenId) return;
           try {
             setPartialLoading(true);
-            const res = await salesService.orderPartialFromRfq(partialOrderOpenId, partialSelection);
+            const res = await salesService.orderPartialFromRfq(
+              partialOrderOpenId,
+              partialSelection,
+              partialDeadline ? partialDeadline.format('YYYY-MM-DD') : undefined
+            );
             message.success(`Megrendelés létrehozva: ${res.order_number}`);
             setPartialOrderOpenId(null);
             setPartialSelection([]);
+            setPartialDeadline(null);
             loadData();
             // Navigálás a megrendelésekhez
             setTimeout(() => navigate('/sales/customer-orders'), 1000);
@@ -1817,27 +1833,39 @@ const RFQs: React.FC = () => {
           const rec = (filtered || rfqs || []).find(r => r.id === partialOrderOpenId);
           const items = rec?.items || [];
           return (
-            <List
-              dataSource={items}
-              renderItem={(it: any) => (
-                <List.Item>
-                  <Checkbox
-                    checked={partialSelection.includes(it.id)}
-                    disabled={!!it.is_ordered}
-                    onChange={(e) => {
-                      const checked = e.target.checked;
-                      setPartialSelection((prev) => checked ? [...prev, it.id] : prev.filter(id => id !== it.id));
-                    }}
-                  >
-                    <span style={{ color: it.is_ordered ? '#aaa' : undefined }}>
-                      {(it.product_name || it.manufacturing_product_name || it.service_name || it.description || '-')}
-                      {' '}— {Number(it.quantity)} {it.unit || ''} × {Number(it.net_unit_price).toLocaleString('hu-HU')} Ft
-                    </span>
-                    {it.is_ordered && <Tag style={{ marginLeft: 8 }} color="purple">Megrendelve</Tag>}
-                  </Checkbox>
-                </List.Item>
-              )}
-            />
+            <>
+              <div style={{ marginBottom: 12 }}>
+                <span style={{ marginRight: 8 }}>Szállítási határidő (nem kötelező):</span>
+                <DatePicker
+                  value={partialDeadline}
+                  onChange={(d) => setPartialDeadline(d)}
+                  placeholder="Válassz dátumot"
+                  style={{ width: 180 }}
+                  allowClear
+                />
+              </div>
+              <List
+                dataSource={items}
+                renderItem={(it: any) => (
+                  <List.Item>
+                    <Checkbox
+                      checked={partialSelection.includes(it.id)}
+                      disabled={!!it.is_ordered}
+                      onChange={(e) => {
+                        const checked = e.target.checked;
+                        setPartialSelection((prev) => checked ? [...prev, it.id] : prev.filter(id => id !== it.id));
+                      }}
+                    >
+                      <span style={{ color: it.is_ordered ? '#aaa' : undefined }}>
+                        {(it.product_name || it.manufacturing_product_name || it.service_name || it.description || '-')}
+                        {' '}— {Number(it.quantity)} {it.unit || ''} × {Number(it.net_unit_price).toLocaleString('hu-HU')} Ft
+                      </span>
+                      {it.is_ordered && <Tag style={{ marginLeft: 8 }} color="purple">Megrendelve</Tag>}
+                    </Checkbox>
+                  </List.Item>
+                )}
+              />
+            </>
           );
         })()}
       </Modal>

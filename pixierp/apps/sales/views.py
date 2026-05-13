@@ -1765,11 +1765,22 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             last_seq += 1
             order_number = f"{prefix}{last_seq + 1:02d}"
         
+        # Optional deadline from request
+        deadline_raw = request.data.get('deadline') or None
+        deadline_val = None
+        if deadline_raw:
+            try:
+                from datetime import date
+                deadline_val = date.fromisoformat(str(deadline_raw))
+            except Exception:
+                pass
+
         # Create CustomerOrder
         order = CustomerOrder.objects.create(
             quote_request=qr,
             order_number=order_number,
             status='new',
+            deadline=deadline_val,
             created_by=request.user if request.user.is_authenticated else None
         )
         
@@ -1999,6 +2010,16 @@ def public_submit_order(request, token: str):
     
     order_number = f'O{date_str}{new_seq:02d}'
     
+    # Optional desired delivery date from customer
+    deadline_raw = request.data.get('desired_date') or None
+    deadline_val = None
+    if deadline_raw:
+        try:
+            from datetime import date as _date
+            deadline_val = _date.fromisoformat(str(deadline_raw))
+        except Exception:
+            pass
+
     order_details = []
     
     try:
@@ -2009,10 +2030,9 @@ def public_submit_order(request, token: str):
                 order_number=order_number,
                 status='new',
                 notes=request.data.get('notes', ''),
+                deadline=deadline_val,
                 # created_by None, mivel publikus
             )
-            
-            # Tételek létrehozása és lista összeállítás emailhez
             for item_data in items_data:
                 item = qr.items.get(id=item_data['item_id'])
                 quantity = item_data['quantity']
@@ -2062,6 +2082,7 @@ Megrendelésszám: {order_number}
 
 Megrendelt tételek:
 {chr(10).join(order_details)}
+{f'{chr(10)}Kért szállítási határidő: {deadline_raw}' if deadline_raw else ''}
 {f'{chr(10)}Megjegyzés: {request.data.get("notes", "").strip()}' if request.data.get('notes', '').strip() else ''}
 """
         # EmailServerConfig használata

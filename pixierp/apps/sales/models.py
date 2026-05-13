@@ -141,6 +141,7 @@ class CustomerOrder(models.Model):
     delivery_confirmed_at = models.DateTimeField(null=True, blank=True, verbose_name="Visszaigazolás ideje")
     show_prices = models.BooleanField(default=True, verbose_name="Árak láthatóak a szállítólevélen")
     invoice_number = models.CharField(max_length=100, blank=True, null=True, verbose_name="Számla szám")
+    deadline = models.DateField(null=True, blank=True, verbose_name="Szállítási határidő")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

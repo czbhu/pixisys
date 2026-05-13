@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col, Checkbox } from 'antd';
+import { Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col, Checkbox, DatePicker } from 'antd';
 import { ShoppingCartOutlined, PrinterOutlined } from '@ant-design/icons';
 import axios from 'axios';
+import dayjs, { Dayjs } from 'dayjs';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -68,6 +69,7 @@ const PublicQuoteOrder: React.FC = () => {
   const [data, setData] = useState<QuoteData | null>(null);
   const [selectedItems, setSelectedItems] = useState<Set<number>>(new Set());
   const [submitting, setSubmitting] = useState(false);
+  const [desiredDate, setDesiredDate] = useState<Dayjs | null>(null);
 
   useEffect(() => {
     loadData();
@@ -141,7 +143,8 @@ const PublicQuoteOrder: React.FC = () => {
     try {
       setSubmitting(true);
       await axios.post(`${API_BASE_URL}/sales/quote-requests/public/${token}/submit-order/`, {
-        items: orderItems
+        items: orderItems,
+        ...(desiredDate ? { desired_date: desiredDate.format('YYYY-MM-DD') } : {}),
       });
       message.success('Megrendelés sikeresen elküldve!');
       // Azonnal frissítjük a helyi adatokat: a megrendelt tételeket megrendeltként jelöljük
@@ -503,7 +506,18 @@ const PublicQuoteOrder: React.FC = () => {
           )}
         />
 
-        <Row gutter={16} justify="end" className="no-print">
+        <Row gutter={[16, 12]} justify="end" align="middle" className="no-print" style={{ marginTop: 16 }}>
+          <Col>
+            <span style={{ marginRight: 8 }}>Ekkora szeretném (nem kötelező):</span>
+            <DatePicker
+              value={desiredDate}
+              onChange={(d) => setDesiredDate(d)}
+              placeholder="Válassz dátumot"
+              style={{ width: 180 }}
+              allowClear
+              disabledDate={(d) => d && d.isBefore(dayjs().startOf('day'))}
+            />
+          </Col>
           <Col>
             <Button 
               type="default" 

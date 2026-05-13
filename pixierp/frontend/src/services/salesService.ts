@@ -266,12 +266,12 @@ export const salesService = {
         const response = await api.post(`/sales/quote-requests/${id}/set_project/`, { project_id: projectId });
         return response.data;
     },
-    async orderAllFromRfq(id: number) {
-        const response = await api.post(`/sales/quote-requests/${id}/order_all/`, {});
+    async orderAllFromRfq(id: number, deadline?: string) {
+        const response = await api.post(`/sales/quote-requests/${id}/order_all/`, deadline ? { deadline } : {});
         return response.data;
     },
-    async orderPartialFromRfq(id: number, itemIds: number[]) {
-        const response = await api.post(`/sales/quote-requests/${id}/order_partial/`, { item_ids: itemIds });
+    async orderPartialFromRfq(id: number, itemIds: number[], deadline?: string) {
+        const response = await api.post(`/sales/quote-requests/${id}/order_partial/`, { item_ids: itemIds, ...(deadline ? { deadline } : {}) });
         return response.data;
     },
 
