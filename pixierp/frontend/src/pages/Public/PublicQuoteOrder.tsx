@@ -144,6 +144,21 @@ const PublicQuoteOrder: React.FC = () => {
         items: orderItems
       });
       message.success('Megrendelés sikeresen elküldve!');
+      // Azonnal frissítjük a helyi adatokat: a megrendelt tételeket megrendeltként jelöljük
+      const now = new Date().toISOString();
+      const orderedIds = new Set(orderItems.map(oi => oi.item_id));
+      setData(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          items: prev.items.map(item =>
+            orderedIds.has(item.id)
+              ? { ...item, is_ordered: true, ordered_at: now }
+              : item
+          ),
+        };
+      });
+      setSelectedItems(new Set());
     } catch (err: any) {
       message.error(err.response?.data?.error || 'Hiba történt a megrendelés küldésekor');
     } finally {
