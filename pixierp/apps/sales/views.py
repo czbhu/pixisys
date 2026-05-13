@@ -3948,15 +3948,56 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         response['Content-Disposition'] = f'attachment; filename="munkalap_{order.order_number}.pdf"'
         return response
     
+    def destroy(self, request, *args, **kwargs):
+        order = self.get_object()
+        qr = order.quote_request
+        response = super().destroy(request, *args, **kwargs)
+        # Ha törlés után nincs aktív megrendelés, az RFQ visszaáll 'quoted' státuszra
+        try:
+            if qr and qr.status == 'ordered':
+                active_orders = qr.customer_orders.exclude(status='cancelled').count()
+                if active_orders == 0:
+                    qr.status = 'quoted'
+                    qr.save(update_fields=['status'])
+                    try:
+                        QuoteLog.objects.create(
+                            quote=qr,
+                            user=request.user if request.user.is_authenticated else None,
+                            action=f'Megrendelés törölve ({order.order_number}); RFQ visszaállítva: ordered → quoted'
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return response
+
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
-        """Megrendelés törlése"""
+        """Megrendelés stornózása"""
         order = self.get_object()
         if order.status == 'delivered':
             return Response({'error': 'Kiszállított megrendelés nem törölhető'}, status=status.HTTP_400_BAD_REQUEST)
         
         order.status = 'cancelled'
         order.save()
+        # Ha stornó után nincs aktív megrendelés, az RFQ visszaáll 'quoted' státuszra
+        try:
+            qr = order.quote_request
+            if qr and qr.status == 'ordered':
+                active_orders = qr.customer_orders.exclude(status='cancelled').count()
+                if active_orders == 0:
+                    qr.status = 'quoted'
+                    qr.save(update_fields=['status'])
+                    try:
+                        QuoteLog.objects.create(
+                            quote=qr,
+                            user=request.user if request.user.is_authenticated else None,
+                            action=f'Megrendelés stornózva ({order.order_number}); RFQ visszaállítva: ordered → quoted'
+                        )
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         return Response(self.get_serializer(order).data)
     
     @action(detail=False, methods=['get'])
