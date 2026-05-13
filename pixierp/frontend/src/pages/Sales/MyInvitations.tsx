@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Card, Tag, Space, Button, message, Tooltip } from 'antd';
+import { Card, Tag, Space, Button, message, Typography, Table, Descriptions, Collapse } from 'antd';
+import { CheckOutlined, CloseOutlined, FolderOpenOutlined } from '@ant-design/icons';
 import EnhancedTable from '../../components/EnhancedTable';
 import { useNavigate } from 'react-router-dom';
 import { salesService } from '../../services/salesService';
 import { deepSearchMatch } from '../../utils/searchUtils';
+
+const { Text, Paragraph } = Typography;
+const { Panel } = Collapse;
 
 const MyInvitations: React.FC = () => {
   const navigate = useNavigate();
@@ -26,7 +30,6 @@ const MyInvitations: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
-  // Keresési logika
   useEffect(() => {
     if (!query?.trim()) { setFiltered(rows); return; }
     const next = rows.filter(inv => deepSearchMatch(query, inv));
@@ -34,34 +37,115 @@ const MyInvitations: React.FC = () => {
   }, [query, rows]);
 
   const columns = [
-    { title: 'Ajánlatkérő/Megrendelések', dataIndex: 'quote_request_number', key: 'rfq', sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || '') },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', render: (s: string): React.ReactNode => <Tag>{s}</Tag>, sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || '') },
-    { title: 'Meghívás ideje', dataIndex: 'created_at', key: 'created_at', render: (d: string): React.ReactNode => d ? new Date(d).toLocaleString('hu-HU') : '', sorter: (a: any, b: any) => (a.created_at || '').localeCompare(b.created_at || '') },
-    { title: 'Műveletek', key: 'actions', render: (_: any, r: any): React.ReactNode => (
-      <Space>
-        <Tooltip title={
-          <div style={{ fontSize: '12px' }}>
-            <div><b>Cég:</b> {r.company_name} - {r.contact_names}</div>
-            <div><b>Megnevezés:</b> {r.qr_title}</div>
-            <div><b>Leírás:</b> {r.qr_description}</div>
-            <div><b>Belső leírás:</b> {r.qr_internal_description}</div>
-            <div><b>Tételek:</b> {r.item_count} db</div>
-            <div><b>Keltezés:</b> {r.issue_date}</div>
-            <div><b>Határidő:</b> {r.qr_deadline}</div>
-          </div>
-        }>
-            <Button size="small" onClick={() => navigate(`/sales/rfqs/${r.quote_request}`)}>Megnyitás</Button>
-        </Tooltip>
-        <Button type="primary" size="small" onClick={async () => {
-          try { await salesService.acceptInvitation(r.quote_request); message.success('Elfogadva'); load(); }
-          catch { message.error('Nem sikerült elfogadni'); }
-        }}>Elfogad</Button>
-        <Button danger size="small" onClick={async () => {
-          try { await salesService.declineInvitation(r.quote_request); message.success('Elutasítva'); load(); }
-          catch { message.error('Nem sikerült elutasítani'); }
-        }}>Elutasít</Button>
-      </Space>
-    ) },
+    {
+      title: 'Ajánlat',
+      key: 'rfq_info',
+      render: (_: any, r: any) => (
+        <div>
+          <div style={{ fontWeight: 600 }}>{r.quote_request_number || `#${r.quote_request}`}</div>
+          <div style={{ color: '#555' }}>{r.qr_title}</div>
+          {r.company_name && <div style={{ fontSize: 12, color: '#888' }}>{r.company_name}{r.contact_names ? ` · ${r.contact_names}` : ''}</div>}
+        </div>
+      ),
+      sorter: (a: any, b: any) => (a.quote_request_number || '').localeCompare(b.quote_request_number || ''),
+    },
+    {
+      title: 'Leírás',
+      key: 'description',
+      render: (_: any, r: any) => (
+        <div style={{ maxWidth: 320 }}>
+          {r.qr_description
+            ? <Paragraph ellipsis={{ rows: 2, expandable: true }} style={{ marginBottom: 0 }}>{r.qr_description}</Paragraph>
+            : <Text type="secondary">—</Text>}
+        </div>
+      ),
+    },
+    {
+      title: 'Tételek',
+      key: 'items',
+      render: (_: any, r: any) => {
+        const items: any[] = r.items || [];
+        if (!items.length) return <Text type="secondary">Nincs tétel</Text>;
+        return (
+          <Collapse ghost size="small" style={{ minWidth: 200 }}>
+            <Panel header={<Text type="secondary" style={{ fontSize: 12 }}>{items.length} tétel (kattints)</Text>} key="1">
+              <Table
+                dataSource={items}
+                rowKey="id"
+                size="small"
+                pagination={false}
+                showHeader={false}
+                columns={[
+                  { dataIndex: 'name', key: 'name', render: (v: string) => <span style={{ fontSize: 12 }}>{v}</span> },
+                  { dataIndex: 'quantity', key: 'qty', width: 60, render: (v: string, row: any) => <span style={{ fontSize: 12 }}>{v} {row.unit}</span> },
+                  { dataIndex: 'net_unit_price', key: 'price', width: 100, align: 'right' as const, render: (v: string) => <span style={{ fontSize: 12 }}>{Number(v).toLocaleString('hu-HU')} Ft</span> },
+                ]}
+              />
+            </Panel>
+          </Collapse>
+        );
+      },
+    },
+    {
+      title: 'Határidő / Keltezés',
+      key: 'dates',
+      width: 140,
+      render: (_: any, r: any) => (
+        <div style={{ fontSize: 12 }}>
+          {r.qr_deadline && <div>Határidő: <b>{r.qr_deadline}</b></div>}
+          {r.issue_date && <div>Keltezés: {r.issue_date}</div>}
+          <div style={{ color: '#aaa' }}>{r.created_at ? new Date(r.created_at).toLocaleString('hu-HU') : ''}</div>
+        </div>
+      ),
+    },
+    {
+      title: 'Műveletek',
+      key: 'actions',
+      width: 200,
+      render: (_: any, r: any) => (
+        <Space>
+          <Button
+            icon={<FolderOpenOutlined />}
+            size="small"
+            onClick={() => navigate(`/sales/rfqs/${r.quote_request}`)}
+          >
+            Megnyitás
+          </Button>
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckOutlined />}
+            onClick={async () => {
+              try {
+                await salesService.acceptInvitation(r.quote_request);
+                message.success('Meghívás elfogadva');
+                load();
+              } catch {
+                message.error('Nem sikerült elfogadni');
+              }
+            }}
+          >
+            Elfogad
+          </Button>
+          <Button
+            danger
+            size="small"
+            icon={<CloseOutlined />}
+            onClick={async () => {
+              try {
+                await salesService.declineInvitation(r.quote_request);
+                message.success('Meghívás elutasítva');
+                load();
+              } catch {
+                message.error('Nem sikerült elutasítani');
+              }
+            }}
+          >
+            Elutasít
+          </Button>
+        </Space>
+      ),
+    },
   ] as any[];
 
   return (
@@ -74,7 +158,7 @@ const MyInvitations: React.FC = () => {
         dataSource={filtered}
         searchValue={query}
         onSearchChange={setQuery}
-        searchPlaceholder="Keresés (ajánlatkérő, státusz)..."
+        searchPlaceholder="Keresés (ajánlat száma, cím, cég)..."
         pagination={{ pageSize: 10 }}
         size="small"
         cardBreakpoint={600}
@@ -84,3 +168,4 @@ const MyInvitations: React.FC = () => {
 };
 
 export default MyInvitations;
+

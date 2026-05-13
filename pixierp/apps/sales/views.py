@@ -1637,9 +1637,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def accept_invite(self, request, pk=None):
-        qr = self.get_object()
         if not request.user or not request.user.is_authenticated:
             return Response({'error': 'Auth required'}, status=401)
+        # Bypass OwnDataFilterMixin – invitee may not be the creator
+        qr = get_object_or_404(QuoteRequest, pk=pk, is_deleted=False)
         inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user, status='pending').first()
         if not inv:
             return Response({'error': 'Nincs függő meghívás'}, status=404)
@@ -1656,9 +1657,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def decline_invite(self, request, pk=None):
-        qr = self.get_object()
         if not request.user or not request.user.is_authenticated:
             return Response({'error': 'Auth required'}, status=401)
+        # Bypass OwnDataFilterMixin – invitee may not be the creator
+        qr = get_object_or_404(QuoteRequest, pk=pk, is_deleted=False)
         inv = QuoteRequestInvitation.objects.filter(quote_request=qr, invitee=request.user, status='pending').first()
         if not inv:
             return Response({'error': 'Nincs függő meghívás'}, status=404)

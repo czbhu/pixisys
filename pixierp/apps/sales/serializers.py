@@ -358,7 +358,7 @@ class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     invitee_name = serializers.SerializerMethodField()
     quote_request_number = serializers.CharField(source='quote_request.number', read_only=True)
     
-    # Tooltip fields
+    # Tooltip / detail fields
     company_name = serializers.SerializerMethodField()
     contact_names = serializers.SerializerMethodField()
     qr_title = serializers.CharField(source='quote_request.title', read_only=True)
@@ -367,13 +367,14 @@ class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
     item_count = serializers.SerializerMethodField()
     issue_date = serializers.DateField(source='quote_request.issue_date', read_only=True)
     qr_deadline = serializers.DateField(source='quote_request.deadline', read_only=True)
+    items = serializers.SerializerMethodField()
 
     class Meta:
         model = QuoteRequestInvitation
         fields = ['id', 'quote_request', 'quote_request_number', 'invitee', 'invitee_name', 
                   'invited_by', 'status', 'created_at', 'responded_at',
                   'company_name', 'contact_names', 'qr_title', 'qr_description', 
-                  'qr_internal_description', 'item_count', 'issue_date', 'qr_deadline']
+                  'qr_internal_description', 'item_count', 'issue_date', 'qr_deadline', 'items']
 
     def get_invitee_name(self, obj):
         return obj.invitee.get_full_name() or obj.invitee.username
@@ -397,6 +398,28 @@ class QuoteRequestInvitationSerializer(serializers.ModelSerializer):
         if obj.quote_request:
             return obj.quote_request.items.count()
         return 0
+
+    def get_items(self, obj):
+        if not obj.quote_request:
+            return []
+        items = obj.quote_request.items.all()
+        result = []
+        for it in items:
+            name = (
+                getattr(it.product, 'name', None) or
+                getattr(it.material, 'name', None) or
+                getattr(it.service, 'name', None) or
+                getattr(it.manufacturing_product, 'name', None) or
+                it.description or ''
+            )
+            result.append({
+                'id': it.id,
+                'name': name,
+                'quantity': str(it.quantity),
+                'unit': it.unit or '',
+                'net_unit_price': str(it.net_unit_price),
+            })
+        return result
 
 class ServiceSerializer(ManufacturingServiceSerializer):
     class Meta(ManufacturingServiceSerializer.Meta):
