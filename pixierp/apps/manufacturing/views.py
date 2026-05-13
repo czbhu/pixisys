@@ -1207,6 +1207,8 @@ class ManufacturingCostItemViewSet(
         deadline = ''
         item_note = ''
         item_qty_str = ''
+        rfq_desc = ''
+        rfq_internal_desc = ''
         if order and order.quote_request:
             rfq = order.quote_request
             if rfq.company:
@@ -1227,6 +1229,8 @@ class ManufacturingCostItemViewSet(
                 project_name = rfq.project.name
             if rfq.deadline:
                 deadline = rfq.deadline.strftime('%Y.%m.%d')
+            rfq_desc = strip_html(rfq.description or '')
+            rfq_internal_desc = strip_html(rfq.internal_description or '')
         if coi:
             try:
                 item_qty_str = f"{float(coi.quantity):g}"
@@ -1438,40 +1442,35 @@ class ManufacturingCostItemViewSet(
                 p.drawString(left + 2.6 * cm, y - i * 0.4 * cm, line)
             y -= 0.45 * cm
 
-            if product_desc:
+            def draw_text_block(label, text, max_lines_external=6):
+                nonlocal y
+                lines = wrap_to_width(text, font_normal, 9, width - left - right_margin)
+                if not internal:
+                    lines = lines[:max_lines_external]
                 p.setFont(font_bold, 9)
-                p.drawString(left, y, "Leírás:")
+                p.drawString(left, y, label)
                 y -= 0.4 * cm
                 p.setFont(font_normal, 9)
-                max_lines = 4 if internal else 6
-                for line in wrap_to_width(product_desc, font_normal, 9,
-                                          width - left - right_margin)[:max_lines]:
+                for line in lines:
                     p.drawString(left, y, line)
                     y -= 0.38 * cm
                 y -= 0.05 * cm
+
+            if product_desc:
+                draw_text_block("Leírás:", product_desc)
 
             # The following blocks are BELSŐ only.
             if internal and product_internal_desc:
-                p.setFont(font_bold, 9)
-                p.drawString(left, y, "Belső leírás:")
-                y -= 0.4 * cm
-                p.setFont(font_normal, 9)
-                for line in wrap_to_width(product_internal_desc, font_normal, 9,
-                                          width - left - right_margin)[:4]:
-                    p.drawString(left, y, line)
-                    y -= 0.38 * cm
-                y -= 0.05 * cm
+                draw_text_block("Belső leírás:", product_internal_desc)
 
-            if internal and item_note:
-                p.setFont(font_bold, 9)
-                p.drawString(left, y, "Megjegyzés:")
-                y -= 0.4 * cm
-                p.setFont(font_normal, 9)
-                for line in wrap_to_width(item_note, font_normal, 9,
-                                          width - left - right_margin)[:5]:
-                    p.drawString(left, y, line)
-                    y -= 0.38 * cm
-                y -= 0.05 * cm
+            if internal and item_note and item_note.strip() != product_desc.strip():
+                draw_text_block("Megjegyzés:", item_note)
+
+            if internal and rfq_desc:
+                draw_text_block("Ajánlat leírása:", rfq_desc)
+
+            if internal and rfq_internal_desc:
+                draw_text_block("Ajánlat belső leírása:", rfq_internal_desc)
 
             # ── Altételek ──────────────────────────────────────────── (csak BELSŐ)
             if not internal:

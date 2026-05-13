@@ -27,6 +27,13 @@ import RFQMaterialNeedsPanel from './components/RFQMaterialNeedsPanel';
 const normAccents = (s: string) =>
   (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
+/** Convert plain-text (with \n) to HTML for ReactQuill; leave existing HTML untouched. */
+const toQuillHtml = (text: string | null | undefined): string => {
+  if (!text) return '';
+  if (/<[a-z][\s\S]*>/i.test(text)) return text;
+  return '<p>' + text.split('\n').map(l => l || '<br>').join('</p><p>') + '</p>';
+};
+
 const filterOptionAccents = (input: string, option: any) =>
   normAccents(option?.label?.toString() || '').includes(normAccents(input));
 
@@ -181,8 +188,8 @@ const RFQDetail: React.FC = () => {
           contact_ids: (rfqRes.contacts || []).map((c: any) => String(c.id)),
           title: computedDemandTitle,
           project_id: rfqRes.project?.id || rfqRes.project,
-          description: rfqRes.description,
-          internal_description: rfqRes.internal_description,
+          description: toQuillHtml(rfqRes.description),
+          internal_description: toQuillHtml(rfqRes.internal_description),
           currency_code: rfqRes.currency_code || 'HUF',
           partial_order_allowed: rfqRes.partial_order_allowed ?? true,
         });
