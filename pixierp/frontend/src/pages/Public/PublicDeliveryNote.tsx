@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, message, Tag, Typography, Descriptions, Spin, Checkbox, Button, Input, Alert, Modal, Row, Col, List } from 'antd';
+import { Card, Table, message, Tag, Typography, Descriptions, Spin, Checkbox, Button, Input, Alert, Modal, Row, Col } from 'antd';
 import { CheckCircleOutlined, PrinterOutlined, FilePdfOutlined, FileOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
@@ -8,6 +8,43 @@ import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { TextArea } = Input;
+
+const getFileExt = (filename: string) => filename.slice(filename.lastIndexOf('.') + 1).toLowerCase();
+const isImage = (filename: string) => ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'svg'].includes(getFileExt(filename));
+const isPdf = (filename: string) => getFileExt(filename) === 'pdf';
+
+const DocThumbnail: React.FC<{ doc: DocAttachment; size?: 'small' | 'large' }> = ({ doc, size = 'large' }) => {
+    const w = size === 'small' ? 64 : '100%';
+    const h = size === 'small' ? 48 : 160;
+    if (!doc.file_url) return <FileOutlined style={{ fontSize: size === 'small' ? 28 : 48, color: '#aaa' }} />;
+    if (isImage(doc.filename)) {
+        return (
+            <img
+                src={doc.file_url}
+                alt={doc.filename}
+                style={{ width: w, height: h, objectFit: 'cover', borderRadius: 4, display: 'block', border: '1px solid #eee' }}
+            />
+        );
+    }
+    if (isPdf(doc.filename)) {
+        return (
+            <div style={{ width: w, height: h, overflow: 'hidden', borderRadius: 4, border: '1px solid #eee', background: '#fafafa', position: 'relative' }}>
+                <object
+                    data={doc.file_url + '#toolbar=0&navpanes=0&scrollbar=0&view=FitH'}
+                    type="application/pdf"
+                    style={{ width: size === 'small' ? '400%' : '100%', height: size === 'small' ? '400%' : '100%', transformOrigin: 'top left', transform: size === 'small' ? 'scale(0.25)' : 'none', pointerEvents: 'none', border: 'none' }}
+                >
+                    <FilePdfOutlined style={{ fontSize: size === 'small' ? 28 : 48, color: '#ff4d4f', position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%,-50%)' }} />
+                </object>
+            </div>
+        );
+    }
+    return (
+        <div style={{ width: w, height: h, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5', borderRadius: 4, border: '1px solid #eee' }}>
+            <FileOutlined style={{ fontSize: size === 'small' ? 28 : 48, color: '#aaa' }} />
+        </div>
+    );
+};
 
 interface DocAttachment {
     att_id: number;
@@ -135,33 +172,24 @@ const PublicDeliveryNote: React.FC = () => {
             title: 'Dokumentáció',
             key: 'documentation',
             align: 'center',
-            width: 150,
+            width: 100,
             render: (_: any, r: DeliveryNoteItem) => {
                 const docs = r.documentation || [];
                 if (docs.length === 0) return <span style={{ color: '#ccc' }}>—</span>;
-                if (docs.length === 1 && docs[0].file_url) {
-                    return (
-                        <Button
-                            type="link"
-                            size="small"
-                            icon={<FilePdfOutlined style={{ color: '#1677ff' }} />}
-                            onClick={() => window.open(docs[0].file_url!, '_blank')}
-                            style={{ padding: 0 }}
-                        >
-                            <Tag color="green" style={{ cursor: 'pointer', marginLeft: 4 }}>Kész dok.</Tag>
-                        </Button>
-                    );
-                }
+                const openDoc = () => {
+                    if (docs.length === 1 && docs[0].file_url) {
+                        window.open(docs[0].file_url, '_blank');
+                    } else {
+                        setDocsModal({ visible: true, docs, itemName: r.item_name });
+                    }
+                };
                 return (
-                    <Button
-                        type="link"
-                        size="small"
-                        icon={<FilePdfOutlined style={{ color: '#1677ff' }} />}
-                        onClick={() => setDocsModal({ visible: true, docs, itemName: r.item_name })}
-                        style={{ padding: 0 }}
-                    >
-                        <Tag color="green" style={{ cursor: 'pointer', marginLeft: 4 }}>Kész dok. ({docs.length})</Tag>
-                    </Button>
+                    <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4, cursor: 'pointer' }} onClick={openDoc}>
+                        <DocThumbnail doc={docs[0]} size="small" />
+                        <Tag color="green" style={{ margin: 0, fontSize: 11 }}>
+                            Kész dok.{docs.length > 1 ? ` (${docs.length})` : ''}
+                        </Tag>
+                    </div>
                 );
             },
         },
@@ -360,31 +388,37 @@ const PublicDeliveryNote: React.FC = () => {
                 open={docsModal.visible}
                 onCancel={() => setDocsModal({ visible: false, docs: [], itemName: '' })}
                 footer={null}
-                width={500}
+                width={640}
             >
-                <List
-                    dataSource={docsModal.docs}
-                    renderItem={(doc) => (
-                        <List.Item
-                            actions={doc.file_url ? [
-                                <Button
-                                    type="primary"
-                                    size="small"
-                                    icon={<FilePdfOutlined />}
-                                    onClick={() => window.open(doc.file_url!, '_blank')}
-                                >
-                                    Megnyitás
-                                </Button>
-                            ] : []}
-                        >
-                            <List.Item.Meta
-                                avatar={<FileOutlined style={{ fontSize: 22, color: '#1677ff' }} />}
-                                title={doc.filename || 'Dokumentum'}
-                                description={doc.remark || undefined}
-                            />
-                        </List.Item>
-                    )}
-                />
+                <Row gutter={[16, 16]} style={{ marginTop: 8 }}>
+                    {docsModal.docs.map((doc) => (
+                        <Col key={doc.att_id} xs={24} sm={12}>
+                            <div
+                                style={{ border: '1px solid #eee', borderRadius: 8, overflow: 'hidden', background: '#fafafa', cursor: doc.file_url ? 'pointer' : 'default' }}
+                                onClick={() => doc.file_url && window.open(doc.file_url, '_blank')}
+                            >
+                                <div style={{ background: '#f0f0f0' }}>
+                                    <DocThumbnail doc={doc} size="large" />
+                                </div>
+                                <div style={{ padding: '8px 10px' }}>
+                                    <div style={{ fontSize: 13, fontWeight: 500, wordBreak: 'break-all', marginBottom: 6 }}>{doc.filename || 'Dokumentum'}</div>
+                                    {doc.remark && <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{doc.remark}</div>}
+                                    {doc.file_url && (
+                                        <Button
+                                            type="primary"
+                                            size="small"
+                                            icon={<FilePdfOutlined />}
+                                            onClick={(e) => { e.stopPropagation(); window.open(doc.file_url!, '_blank'); }}
+                                            block
+                                        >
+                                            Megnyitás
+                                        </Button>
+                                    )}
+                                </div>
+                            </div>
+                        </Col>
+                    ))}
+                </Row>
             </Modal>
         </div>
     );
