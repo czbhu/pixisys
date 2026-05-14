@@ -4562,7 +4562,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
                 data.append({
                     'id': a.id,
                     'file_url': request.build_absolute_uri(a.file.url) if a.file else None,
-                    'original_filename': a.file.name.split('/')[-1] if a.file else '',
+                    'original_filename': a.original_filename or (a.file.name.split('/')[-1] if a.file else ''),
                     'file_size': a.file.size if a.file else 0,
                     'remark': a.remark,
                     'storage_file_id': a.storage_file_id,
@@ -4577,6 +4577,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
             return Response({'error': 'file kötelező'}, status=status.HTTP_400_BAD_REQUEST)
         att = QuoteRequestItemAttachment.objects.create(
             quote_item=qi, file=file_obj, remark=remark,
+            original_filename=request.data.get('original_filename', '') or file_obj.name,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
         # Storage bejegyzés
@@ -4597,13 +4598,25 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
         return Response({
             'id': att.id,
             'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
-            'original_filename': att.file.name.split('/')[-1] if att.file else '',
+            'original_filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
             'file_size': att.file.size if att.file else 0,
             'remark': att.remark,
             'storage_file_id': att.storage_file_id,
             'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',
             'created_at': att.created_at.isoformat() if att.created_at else '',
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
+    def update_attachment_rename(self, request, pk=None, att_id=None):
+        from .models import QuoteRequestItemAttachment
+        item = self.get_object()
+        qi = item.quote_item
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
+        new_name = request.data.get('original_filename', '').strip()
+        if new_name:
+            att.original_filename = new_name
+            att.save(update_fields=['original_filename'])
+        return Response({'original_filename': att.original_filename})
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/remark')
     def update_attachment_remark(self, request, pk=None, att_id=None):

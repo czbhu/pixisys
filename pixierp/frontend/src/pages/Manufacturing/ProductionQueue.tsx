@@ -35,6 +35,7 @@ import {
     SendOutlined,
     FileTextOutlined,
     PaperClipOutlined,
+    EditOutlined,
     DeleteOutlined,
     DownloadOutlined,
 } from '@ant-design/icons';
@@ -171,6 +172,8 @@ const ProductionQueue: React.FC = () => {
     const [costItemAttRemark, setCostItemAttRemark] = useState<Record<number, string>>({});
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
+    const [editingAttNameId, setEditingAttNameId] = useState<number | null>(null);
+    const [editingAttNameVal, setEditingAttNameVal] = useState('');
     const [queueAttPreviewUrl, setQueueAttPreviewUrl] = useState<string | null>(null);
 
     // --- Clipboard paste for attachment upload rows ---
@@ -790,15 +793,47 @@ const ProductionQueue: React.FC = () => {
                             {atts.map((att: any) => (
                                 <Space key={att.id} size={6} align="center">
                                     <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
-                                    <a
-                                        href={att.file_url}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        style={{ fontSize: 12 }}
-                                        onClick={(e) => { e.preventDefault(); setQueueAttPreviewUrl(att.file_url); setQueueAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); setQueueAttPreviewOpen(true); }}
-                                    >
-                                        {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
-                                    </a>
+                                    {editingAttNameId === att.id ? (
+                                        <Space size={4}>
+                                            <Input
+                                                size="small"
+                                                autoFocus
+                                                value={editingAttNameVal}
+                                                style={{ width: 180 }}
+                                                onChange={e => setEditingAttNameVal(e.target.value)}
+                                                onPressEnter={async () => {
+                                                    try {
+                                                        const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                                        setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                                        setEditingAttNameId(null);
+                                                    } catch { message.error('Átnevezés sikertelen'); }
+                                                }}
+                                            />
+                                            <Button size="small" type="primary" onClick={async () => {
+                                                try {
+                                                    const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                                    setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                                    setEditingAttNameId(null);
+                                                } catch { message.error('Átnevezés sikertelen'); }
+                                            }}>✓</Button>
+                                            <Button size="small" onClick={() => setEditingAttNameId(null)}>✗</Button>
+                                        </Space>
+                                    ) : (
+                                        <Space size={2}>
+                                            <a
+                                                href={att.file_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                style={{ fontSize: 12 }}
+                                                onClick={(e) => { e.preventDefault(); setQueueAttPreviewUrl(att.file_url); setQueueAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); setQueueAttPreviewOpen(true); }}
+                                            >
+                                                {att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}
+                                            </a>
+                                            <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
+                                                onClick={() => { setEditingAttNameId(att.id); setEditingAttNameVal(att.original_filename || att.file_url?.split('/').pop() || ''); }}
+                                            />
+                                        </Space>
+                                    )}
                                     {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                                     <Tooltip title="Letöltés">
                                         <Button

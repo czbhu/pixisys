@@ -1559,6 +1559,7 @@ class ManufacturingCostItemAttachment(models.Model):
     """Gyártási költség elem csatolmány"""
     cost_item = models.ForeignKey(ManufacturingCostItem, on_delete=models.CASCADE, related_name='attachments', verbose_name="Költség elem")
     file = models.FileField(upload_to='cost_item_attachments/%Y/%m/%d/', verbose_name="Fájl")
+    original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=500, blank=True, verbose_name="Megjegyzés")
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name="Storage fájl ID")
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Feltöltötte")

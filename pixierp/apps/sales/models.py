@@ -519,6 +519,7 @@ class QuoteRequestAttachment(models.Model):
 class QuoteRequestItemAttachment(models.Model):
     quote_item = models.ForeignKey(QuoteRequestItem, on_delete=models.CASCADE, related_name='attachments')
     file = models.FileField(upload_to='quote_items/%Y/%m/%d/')
+    original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=255, blank=True)
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)

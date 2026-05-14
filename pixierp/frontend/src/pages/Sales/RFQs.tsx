@@ -91,6 +91,9 @@ const RFQs: React.FC = () => {
   const [currencyList, setCurrencyList] = useState<MCurrency[]>([]);
   const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
   const [rfqFileRemarks, setRfqFileRemarks] = useState<Record<string, string>>({});
+  const [rfqFileDisplayNames, setRfqFileDisplayNames] = useState<Record<string, string>>({});
+  const [editingRfqNameKey, setEditingRfqNameKey] = useState<string | null>(null);
+  const [editingRfqNameVal, setEditingRfqNameVal] = useState<string>('');
   const [remarkModalOpen, setRemarkModalOpen] = useState(false);
   const [remarkModalKey, setRemarkModalKey] = useState<string>('');
   const [remarkModalValue, setRemarkModalValue] = useState<string>('');
@@ -979,7 +982,12 @@ const RFQs: React.FC = () => {
           try {
             const key = (f as any)?.uid || (f as any)?.name;
             const remark = rfqFileRemarks[key];
-            await salesService.uploadQuoteRequestAttachment(created.id, (f as any).originFileObj || (f as any), remark);
+            const displayName = rfqFileDisplayNames[key];
+            const rawFile: File = (f as any).originFileObj || (f as any);
+            const uploadFile = displayName && displayName !== rawFile.name
+              ? new File([rawFile], displayName, { type: rawFile.type })
+              : rawFile;
+            await salesService.uploadQuoteRequestAttachment(created.id, uploadFile, remark);
           } catch {}
         }
       }
@@ -1064,6 +1072,7 @@ const RFQs: React.FC = () => {
       setNewCosts([]);
       setRfqFiles([]);
       setRfqFileRemarks({});
+      setRfqFileDisplayNames({});
       
       if (searchParams.get('create') === 'true') {
         navigate('/sales/rfqs', { replace: true });
@@ -2693,16 +2702,42 @@ const RFQs: React.FC = () => {
                     {rfqFiles.map((f) => {
                       const key = (f as any).uid || (f as any).name;
                       const remark = rfqFileRemarks[key] || '';
+                      const displayName = rfqFileDisplayNames[key] || f.name;
                       return (
                         <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <Button type="link" size="small" style={{ padding: 0, flex: 1, textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
-                            const fileObj = (f as any).originFileObj || f;
-                            const savedUrl = (f as any).url;
-                            // Saved PDF → open in Print Preview
-                            if (savedUrl && isPdf(savedUrl)) { openPdfPreview(savedUrl); return; }
-                            const url = savedUrl || (fileObj ? URL.createObjectURL(fileObj) : undefined);
-                            if (url) { setPreviewUrl(url); setPreviewTitle(f.name); setPreviewOpen(true); }
-                          }} title={f.name}>{f.name}</Button>
+                          {editingRfqNameKey === key ? (
+                            <Space size={4} style={{ flex: 1 }}>
+                              <Input
+                                size="small"
+                                autoFocus
+                                value={editingRfqNameVal}
+                                style={{ width: 160 }}
+                                onChange={e => setEditingRfqNameVal(e.target.value)}
+                                onPressEnter={() => {
+                                  if (editingRfqNameVal.trim()) setRfqFileDisplayNames(prev => ({ ...prev, [key]: editingRfqNameVal.trim() }));
+                                  setEditingRfqNameKey(null);
+                                }}
+                              />
+                              <Button size="small" type="primary" onClick={() => {
+                                if (editingRfqNameVal.trim()) setRfqFileDisplayNames(prev => ({ ...prev, [key]: editingRfqNameVal.trim() }));
+                                setEditingRfqNameKey(null);
+                              }}>✓</Button>
+                              <Button size="small" onClick={() => setEditingRfqNameKey(null)}>✗</Button>
+                            </Space>
+                          ) : (
+                            <Space size={2} style={{ flex: 1, overflow: 'hidden' }}>
+                              <Button type="link" size="small" style={{ padding: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
+                                const fileObj = (f as any).originFileObj || f;
+                                const savedUrl = (f as any).url;
+                                if (savedUrl && isPdf(savedUrl)) { openPdfPreview(savedUrl); return; }
+                                const url = savedUrl || (fileObj ? URL.createObjectURL(fileObj) : undefined);
+                                if (url) { setPreviewUrl(url); setPreviewTitle(displayName); setPreviewOpen(true); }
+                              }} title={displayName}>{displayName}</Button>
+                              <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
+                                onClick={() => { setEditingRfqNameKey(key); setEditingRfqNameVal(displayName); }}
+                              />
+                            </Space>
+                          )}
                           {isMobile ? (
                             <Button
                               size="small"
@@ -2725,6 +2760,7 @@ const RFQs: React.FC = () => {
                           <Button danger size="small" onClick={() => {
                             setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
                             setRfqFileRemarks((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
+                            setRfqFileDisplayNames((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
                           }}>✕</Button>
                         </div>
                       );

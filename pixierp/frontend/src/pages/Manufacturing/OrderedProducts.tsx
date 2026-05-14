@@ -33,6 +33,7 @@ import {
     MessageOutlined,
     SendOutlined,
     PaperClipOutlined,
+    EditOutlined,
     DeleteOutlined,
     MenuOutlined,
 } from '@ant-design/icons';
@@ -207,6 +208,8 @@ const OrderedProducts: React.FC = () => {
     const [orderItemAttRemark, setOrderItemAttRemark] = useState<Record<number, string>>({});
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
+    const [editingAttNameId, setEditingAttNameId] = useState<number | null>(null);
+    const [editingAttNameVal, setEditingAttNameVal] = useState('');
 
     // --- Clipboard paste for attachment upload rows ---
     const lastPasteCoiIdRef = useRef<number | null>(null);
@@ -815,11 +818,43 @@ const OrderedProducts: React.FC = () => {
                                 {itemAtts.map((att: any) => (
                                     <Space key={att.id} size={4} align="center">
                                         <PaperClipOutlined style={{ color: '#888', fontSize: 12 }} />
-                                        <a
-                                        href={att.file_url}
-                                        style={{ fontSize: 12 }}
-                                        onClick={(e) => { e.preventDefault(); openPreview(att.file_url, att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); }}
-                                    >{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
+                                        {editingAttNameId === att.id ? (
+                                            <Space size={4}>
+                                                <Input
+                                                    size="small"
+                                                    autoFocus
+                                                    value={editingAttNameVal}
+                                                    style={{ width: 180 }}
+                                                    onChange={e => setEditingAttNameVal(e.target.value)}
+                                                    onPressEnter={async () => {
+                                                        try {
+                                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                                            setEditingAttNameId(null);
+                                                        } catch { message.error('Átnevezés sikertelen'); }
+                                                    }}
+                                                />
+                                                <Button size="small" type="primary" onClick={async () => {
+                                                    try {
+                                                        const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                                        setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                                        setEditingAttNameId(null);
+                                                    } catch { message.error('Átnevezés sikertelen'); }
+                                                }}>✓</Button>
+                                                <Button size="small" onClick={() => setEditingAttNameId(null)}>✗</Button>
+                                            </Space>
+                                        ) : (
+                                            <Space size={2}>
+                                                <a
+                                                href={att.file_url}
+                                                style={{ fontSize: 12 }}
+                                                onClick={(e) => { e.preventDefault(); openPreview(att.file_url, att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`); }}
+                                            >{att.original_filename || att.file_url?.split('/').pop() || `#${att.id}`}</a>
+                                                <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
+                                                    onClick={() => { setEditingAttNameId(att.id); setEditingAttNameVal(att.original_filename || att.file_url?.split('/').pop() || ''); }}
+                                                />
+                                            </Space>
+                                        )}
                                         {att.file_size ? <span style={{ fontSize: 11, color: '#999' }}>{formatBytes(att.file_size)}</span> : null}
                                         {editingAttRemarkId === att.id ? (
                                             <Space size={4}>

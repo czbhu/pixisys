@@ -4,7 +4,7 @@ import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
-import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined, PaperClipOutlined, MenuOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { PrinterOutlined, EyeOutlined, CheckOutlined, ToolOutlined, CarOutlined, CheckCircleOutlined, CloseCircleOutlined, UnorderedListOutlined, RocketOutlined, FilterOutlined, DeleteOutlined, EditOutlined, SyncOutlined, CloseOutlined, QuestionCircleOutlined, ExclamationCircleOutlined, FieldTimeOutlined, MailOutlined, SearchOutlined, ReloadOutlined, SortAscendingOutlined, SortDescendingOutlined, AppstoreOutlined, FileTextOutlined, PaperClipOutlined, MenuOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core';
 import type { DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, horizontalListSortingStrategy, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
@@ -223,6 +223,8 @@ interface CustomerOrder {
   const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
   const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
   const [editingAttRemarkVal, setEditingAttRemarkVal] = useState<string>('');
+  const [editingAttNameId, setEditingAttNameId] = useState<number | null>(null);
+  const [editingAttNameVal, setEditingAttNameVal] = useState<string>('');
 
   // --- Clipboard paste for attachment upload rows ---
   const lastPasteCoiIdRef = useRef<number | null>(null);
@@ -903,11 +905,43 @@ interface CustomerOrder {
                               <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                                 {atts.map((att: any) => (
                                   <Space key={att.id} size={4} align="center">
-                                    <a
-                                      href={att.file_url}
-                                      style={{ fontSize: 12 }}
-                                      onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url); setCoAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
-                                    >{att.original_filename}</a>
+                                    {editingAttNameId === att.id ? (
+                                      <Space size={4}>
+                                        <Input
+                                          size="small"
+                                          autoFocus
+                                          value={editingAttNameVal}
+                                          style={{ width: 180 }}
+                                          onChange={e => setEditingAttNameVal(e.target.value)}
+                                          onPressEnter={async () => {
+                                            try {
+                                              const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                              setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                              setEditingAttNameId(null);
+                                            } catch { message.error('Átnevezés sikertelen'); }
+                                          }}
+                                        />
+                                        <Button size="small" type="primary" onClick={async () => {
+                                          try {
+                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
+                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                            setEditingAttNameId(null);
+                                          } catch { message.error('Átnevezés sikertelen'); }
+                                        }}>✓</Button>
+                                        <Button size="small" onClick={() => setEditingAttNameId(null)}>✗</Button>
+                                      </Space>
+                                    ) : (
+                                      <Space size={2}>
+                                        <a
+                                          href={att.file_url}
+                                          style={{ fontSize: 12 }}
+                                          onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url); setCoAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
+                                        >{att.original_filename}</a>
+                                        <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
+                                          onClick={() => { setEditingAttNameId(att.id); setEditingAttNameVal(att.original_filename || ''); }}
+                                        />
+                                      </Space>
+                                    )}
                                     {editingAttRemarkId === att.id ? (
                                       <Space size={4}>
                                         <Input
