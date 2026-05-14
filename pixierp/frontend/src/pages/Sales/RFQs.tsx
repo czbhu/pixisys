@@ -237,6 +237,16 @@ const RFQs: React.FC = () => {
     return newName + ext;
   };
 
+  const nameWithExt = (att: any): string => {
+    const name = att.original_filename || '';
+    if (!name) return att.file?.split('/').pop() || '';
+    if (name.includes('.')) return name;
+    const filePath = att.file_url || att.file || '';
+    const base = filePath.split('/').pop()?.split('?')[0] || '';
+    const dotIdx = base.lastIndexOf('.');
+    return dotIdx !== -1 ? name + base.slice(dotIdx) : name;
+  };
+
   const renderExpandedRfqRow = (record: any) => {
     const rfqId = Number(record?.id || 0);
     const loadingItems = !!rfqExpandedLoading[rfqId];
@@ -262,18 +272,18 @@ const RFQs: React.FC = () => {
                       onChange={e => setRfqAttRenameVal(e.target.value)}
                       onPressEnter={async () => {
                         try {
-                          const finalName = ensureExtension(rfqAttRenameVal, att.original_filename || att.file?.split('/').pop() || '');
+                          const finalName = ensureExtension(rfqAttRenameVal, nameWithExt(att));
                           const res = await salesService.renameQuoteRequestAttachment(rfqId, att.id, finalName);
-                          setRfqAttachments(prev => ({ ...prev, [rfqId]: (prev[rfqId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename } : a) }));
+                          setRfqAttachments(prev => ({ ...prev, [rfqId]: (prev[rfqId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
                           setRfqAttRenameId(null);
                         } catch { message.error('Átnevezés sikertelen'); }
                       }}
                     />
                     <Button size="small" type="primary" onClick={async () => {
                       try {
-                        const finalName = ensureExtension(rfqAttRenameVal, att.original_filename || att.file?.split('/').pop() || '');
+                        const finalName = ensureExtension(rfqAttRenameVal, nameWithExt(att));
                         const res = await salesService.renameQuoteRequestAttachment(rfqId, att.id, finalName);
-                        setRfqAttachments(prev => ({ ...prev, [rfqId]: (prev[rfqId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename } : a) }));
+                        setRfqAttachments(prev => ({ ...prev, [rfqId]: (prev[rfqId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
                         setRfqAttRenameId(null);
                       } catch { message.error('Átnevezés sikertelen'); }
                     }}>✓</Button>
@@ -289,7 +299,7 @@ const RFQs: React.FC = () => {
                       <PaperClipOutlined style={{ marginRight: 3 }} />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
                     </a>
                     <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 10 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
-                      onClick={() => { setRfqAttRenameId(att.id); setRfqAttRenameVal(att.original_filename || att.file?.split('/').pop() || ''); }}
+                      onClick={() => { setRfqAttRenameId(att.id); setRfqAttRenameVal(nameWithExt(att)); }}
                     />
                     <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 10 }} />}
                       onClick={async () => {
@@ -411,18 +421,18 @@ const RFQs: React.FC = () => {
                                   onChange={e => setRfqItemAttRenameVal(e.target.value)}
                                   onPressEnter={async () => {
                                     try {
-                                      const finalName = ensureExtension(rfqItemAttRenameVal, att.original_filename || att.file?.split('/').pop() || '');
+                                      const finalName = ensureExtension(rfqItemAttRenameVal, nameWithExt(att));
                                       const res = await salesService.renameQuoteRequestItemAttachment(itemId, att.id, finalName);
-                                      setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename } : a) }));
+                                      setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
                                       setRfqItemAttRenameId(null);
                                     } catch { message.error('Átnevezés sikertelen'); }
                                   }}
                                 />
                                 <Button size="small" type="primary" onClick={async () => {
                                   try {
-                                    const finalName = ensureExtension(rfqItemAttRenameVal, att.original_filename || att.file?.split('/').pop() || '');
+                                    const finalName = ensureExtension(rfqItemAttRenameVal, nameWithExt(att));
                                     const res = await salesService.renameQuoteRequestItemAttachment(itemId, att.id, finalName);
-                                    setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename } : a) }));
+                                    setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
                                     setRfqItemAttRenameId(null);
                                   } catch { message.error('Átnevezés sikertelen'); }
                                 }}>✓</Button>
@@ -438,7 +448,7 @@ const RFQs: React.FC = () => {
                                   <PaperClipOutlined />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
                                 </a>
                                 <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 10 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
-                                  onClick={() => { setRfqItemAttRenameId(att.id); setRfqItemAttRenameVal(att.original_filename || att.file?.split('/').pop() || ''); }}
+                                  onClick={() => { setRfqItemAttRenameId(att.id); setRfqItemAttRenameVal(nameWithExt(att)); }}
                                 />
                                 <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 10 }} />}
                                   onClick={async () => {

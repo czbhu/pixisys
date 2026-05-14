@@ -514,6 +514,24 @@ interface CustomerOrder {
     }
   };
 
+  const ensureExtension = (newName: string, originalName: string): string => {
+    const dotIdx = originalName.lastIndexOf('.');
+    if (dotIdx === -1) return newName;
+    const ext = originalName.slice(dotIdx);
+    if (newName.toLowerCase().endsWith(ext.toLowerCase())) return newName;
+    return newName + ext;
+  };
+
+  const nameWithExt = (att: any): string => {
+    const name = att.original_filename || '';
+    if (!name) return att.file_url?.split('/').pop()?.split('?')[0] || '';
+    if (name.includes('.')) return name;
+    const filePath = att.file_url || '';
+    const base = filePath.split('/').pop()?.split('?')[0] || '';
+    const dotIdx = base.lastIndexOf('.');
+    return dotIdx !== -1 ? name + base.slice(dotIdx) : name;
+  };
+
   const renderExpandedOrderRow = (record: any) => {
     const orderId = Number(record?.id || 0);
     const loadingItems = !!orderExpandedLoading[orderId];
@@ -915,16 +933,18 @@ interface CustomerOrder {
                                           onChange={e => setEditingAttNameVal(e.target.value)}
                                           onPressEnter={async () => {
                                             try {
-                                              const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
-                                              setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                              const finalName = ensureExtension(editingAttNameVal, nameWithExt(att));
+                                              const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: finalName });
+                                              setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename, file_url: res.data.file_url ?? a.file_url } : a) }));
                                               setEditingAttNameId(null);
                                             } catch { message.error('Átnevezés sikertelen'); }
                                           }}
                                         />
                                         <Button size="small" type="primary" onClick={async () => {
                                           try {
-                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: editingAttNameVal });
-                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename } : a) }));
+                                            const finalName = ensureExtension(editingAttNameVal, nameWithExt(att));
+                                            const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/rename/`, { original_filename: finalName });
+                                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.data.original_filename, file_url: res.data.file_url ?? a.file_url } : a) }));
                                             setEditingAttNameId(null);
                                           } catch { message.error('Átnevezés sikertelen'); }
                                         }}>✓</Button>
@@ -938,7 +958,7 @@ interface CustomerOrder {
                                           onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url); setCoAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
                                         >{att.original_filename}</a>
                                         <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
-                                          onClick={() => { setEditingAttNameId(att.id); setEditingAttNameVal(att.original_filename || ''); }}
+                                          onClick={() => { setEditingAttNameId(att.id); setEditingAttNameVal(nameWithExt(att)); }}
                                         />
                                       </Space>
                                     )}

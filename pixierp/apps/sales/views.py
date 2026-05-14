@@ -431,13 +431,28 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def rename_attachment(self, request, pk=None, att_id=None):
+        import os
+        from django.core.files.storage import default_storage
         qr = self.get_object()
         att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
         new_name = request.data.get('original_filename', '').strip()
         if new_name:
+            if att.file and att.file.name and default_storage.exists(att.file.name):
+                directory = os.path.dirname(att.file.name)
+                new_path = (directory + '/' + new_name) if directory else new_name
+                if att.file.name != new_path:
+                    try:
+                        old_abs = default_storage.path(att.file.name)
+                        new_abs = default_storage.path(new_path)
+                        if not os.path.exists(new_abs):
+                            os.rename(old_abs, new_abs)
+                            att.file.name = new_path
+                    except Exception:
+                        pass
             att.original_filename = new_name
-            att.save(update_fields=['original_filename'])
-        return Response({'original_filename': att.original_filename})
+            att.save(update_fields=['original_filename', 'file'])
+        file_url = request.build_absolute_uri(att.file.url) if att.file else None
+        return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
 
     @action(detail=True, methods=['post'])
     def set_project(self, request, pk=None):
@@ -2389,13 +2404,28 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def rename_attachment(self, request, pk=None, att_id=None):
+        import os
+        from django.core.files.storage import default_storage
         item = self.get_object()
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
         new_name = request.data.get('original_filename', '').strip()
         if new_name:
+            if att.file and att.file.name and default_storage.exists(att.file.name):
+                directory = os.path.dirname(att.file.name)
+                new_path = (directory + '/' + new_name) if directory else new_name
+                if att.file.name != new_path:
+                    try:
+                        old_abs = default_storage.path(att.file.name)
+                        new_abs = default_storage.path(new_path)
+                        if not os.path.exists(new_abs):
+                            os.rename(old_abs, new_abs)
+                            att.file.name = new_path
+                    except Exception:
+                        pass
             att.original_filename = new_name
-            att.save(update_fields=['original_filename'])
-        return Response({'original_filename': att.original_filename})
+            att.save(update_fields=['original_filename', 'file'])
+        file_url = request.build_absolute_uri(att.file.url) if att.file else None
+        return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
@@ -4642,15 +4672,30 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def update_attachment_rename(self, request, pk=None, att_id=None):
+        import os
+        from django.core.files.storage import default_storage
         from .models import QuoteRequestItemAttachment
         item = self.get_object()
         qi = item.quote_item
         att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
         new_name = request.data.get('original_filename', '').strip()
         if new_name:
+            if att.file and att.file.name and default_storage.exists(att.file.name):
+                directory = os.path.dirname(att.file.name)
+                new_path = (directory + '/' + new_name) if directory else new_name
+                if att.file.name != new_path:
+                    try:
+                        old_abs = default_storage.path(att.file.name)
+                        new_abs = default_storage.path(new_path)
+                        if not os.path.exists(new_abs):
+                            os.rename(old_abs, new_abs)
+                            att.file.name = new_path
+                    except Exception:
+                        pass
             att.original_filename = new_name
-            att.save(update_fields=['original_filename'])
-        return Response({'original_filename': att.original_filename})
+            att.save(update_fields=['original_filename', 'file'])
+        file_url = request.build_absolute_uri(att.file.url) if att.file else None
+        return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/remark')
     def update_attachment_remark(self, request, pk=None, att_id=None):
