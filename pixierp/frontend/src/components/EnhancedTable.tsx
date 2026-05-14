@@ -560,7 +560,8 @@ function EnhancedTable<T extends object = any>({
   const origPageSize = (pag && typeof pag === 'object') ? ((pag as any).pageSize ?? 20) : 20;
   const origCurrent = (pag && typeof pag === 'object') ? (pag as any).current : undefined;
   const origOnChange = (pag && typeof pag === 'object') ? (pag as any).onChange : undefined;
-  const dataLen = (tableProps.dataSource ?? []).length;
+  const fullDataSource = (tableProps.dataSource ?? []) as any[];
+  const dataLen = fullDataSource.length;
 
   const [intPage, setIntPage] = useState(1);
   const [intPageSize, setIntPageSize] = useUserPreference<number>(`${tableKey}_pageSize`, origPageSize);
@@ -568,6 +569,22 @@ function EnhancedTable<T extends object = any>({
   const size = intPageSize;
   const handlePageChange = (p: number) => { setIntPage(p); origOnChange?.(p, size); };
   const handleSizeChange = (s: number) => { setIntPageSize(s); setIntPage(1); origOnChange?.(1, s); };
+
+  // When search value or dataSource length changes, reset to page 1
+  const prevDataLenRef = React.useRef(dataLen);
+  React.useEffect(() => {
+    if (prevDataLenRef.current !== dataLen) {
+      prevDataLenRef.current = dataLen;
+      if (!origCurrent) setIntPage(1);
+    }
+  }, [dataLen, origCurrent]);
+
+  // Slice dataSource for client-side pagination (only when pag is not false and no external current)
+  const pagedDataSource = useMemo(() => {
+    if (pag === false || origCurrent !== undefined) return fullDataSource;
+    const start = (page - 1) * size;
+    return fullDataSource.slice(start, start + size);
+  }, [fullDataSource, pag, origCurrent, page, size]);
 
   const pagSizeOptions = [{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }, { value: 200, label: '200 / oldal' }, { value: 500, label: '500 / oldal' }, { value: 1000, label: '1000 / oldal' }];
 
@@ -668,6 +685,7 @@ function EnhancedTable<T extends object = any>({
                 <Table<T>
                   key={tableResetKey}
                   {...tableProps}
+                  dataSource={pagedDataSource as T[]}
                   tableLayout="fixed"
                   scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}
                   pagination={topPag}
