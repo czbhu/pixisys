@@ -1,343 +1,345 @@
-import React, { useState } from 'react';
-import { useQuery, useMutation, useQueryClient } from 'react-query';
-import { useNavigate } from 'react-router-dom';
-import { toast } from 'react-toastify';
-import { Shield, Plus, ArrowLeft, Edit, Trash2, ToggleLeft, ToggleRight } from 'lucide-react';
-import styled from 'styled-components';
+import React, { useEffect, useState } from 'react';
+import { Card, Table, Button, Space, Modal, Form, Input, message, Popconfirm, Tag, Checkbox, Row, Col } from 'antd';
+import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined, LockOutlined, CopyOutlined } from '@ant-design/icons';
 import { roleAPI } from '../services/api';
 
-const Container = styled.div`
-  background: white;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  padding: 24px;
-`;
-
-const Header = styled.div`
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-  padding-bottom: 16px;
-  border-bottom: 1px solid #ecf0f1;
-`;
-
-const Title = styled.h1`
-  font-size: 24px;
-  font-weight: 600;
-  margin: 0;
-  color: #2c3e50;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-`;
-
-const ButtonGroup = styled.div`
-  display: flex;
-  gap: 12px;
-`;
-
-const Button = styled.button`
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background-color: ${props => props.variant === 'primary' ? '#3498db' : props.variant === 'secondary' ? '#95a5a6' : '#e74c3c'};
-  color: white;
-  border: none;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover {
-    background-color: ${props => props.variant === 'primary' ? '#2980b9' : props.variant === 'secondary' ? '#7f8c8d' : '#c0392b'};
-    transform: translateY(-1px);
-  }
-
-  &:disabled {
-    background-color: #bdc3c7;
-    cursor: not-allowed;
-    transform: none;
-  }
-`;
-
-const SearchAndFilter = styled.div`
-  display: flex;
-  gap: 16px;
-  margin-bottom: 16px;
-`;
-
-const SearchInput = styled.input`
-  flex: 1;
-  padding: 12px 16px;
-  border: 1px solid #ddd;
-  border-radius: 6px;
-  font-size: 14px;
-  transition: border-color 0.2s;
-
-  &:focus {
-    outline: none;
-    border-color: #3498db;
-    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.25);
-  }
-`;
-
-const Table = styled.table`
-  width: 100%;
-  border-collapse: collapse;
-  margin-top: 16px;
-`;
-
-const TableHeader = styled.thead`
-  background-color: #f8f9fa;
-`;
-
-const TableHeaderCell = styled.th`
-  padding: 12px 16px;
-  text-align: left;
-  font-weight: 600;
-  color: #2c3e50;
-  border-bottom: 1px solid #e9ecef;
-`;
-
-const TableBody = styled.tbody``;
-
-const TableRow = styled.tr`
-  border-bottom: 1px solid #f8f9fa;
-
-  &:hover {
-    background-color: #f8f9fa;
-  }
-`;
-
-const TableCell = styled.td`
-  padding: 12px 16px;
-  font-size: 14px;
-  color: #34495e;
-`;
-
-const Badge = styled.span`
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  background-color: #e3f2fd;
-  color: #1976d2;
-  margin-right: 6px;
-`;
-
-const StatusBadge = styled.span`
-  display: inline-block;
-  padding: 4px 8px;
-  border-radius: 4px;
-  font-size: 12px;
-  font-weight: 500;
-  text-transform: uppercase;
-
-  &.active {
-    background-color: #d4edda;
-    color: #155724;
-  }
-
-  &.inactive {
-    background-color: #f8d7da;
-    color: #721c24;
-  }
-`;
-
-const ActionButtons = styled.div`
-  display: flex;
-  gap: 8px;
-`;
-
-const IconButton = styled.button`
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 32px;
-  height: 32px;
-  border: none;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.2s;
-  color: white;
-
-  &.edit { background-color: #3498db; }
-  &.delete { background-color: #e74c3c; }
-  &.toggle { background-color: #95a5a6; }
-
-  &:hover { opacity: 0.9; }
-`;
-
-const LoadingSpinner = styled.div`
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 200px;
-  font-size: 18px;
-  color: #7f8c8d;
-`;
-
-const EmptyState = styled.div`
-  text-align: center;
-  padding: 40px;
-  color: #7f8c8d;
-`;
+const { TextArea } = Input;
 
 const Roles = () => {
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
-  const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [roles, setRoles] = useState([]);
+  const [menuOptions, setMenuOptions] = useState([]);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [permissionsModalOpen, setPermissionsModalOpen] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form] = Form.useForm();
+  const [selectedRole, setSelectedRole] = useState(null);
+  const [selectedMenus, setSelectedMenus] = useState([]);
+  const [copyFromRoleId, setCopyFromRoleId] = useState(undefined);
+  const [saving, setSaving] = useState(false);
+  const [savingPerms, setSavingPerms] = useState(false);
 
-  const { data: roles, isLoading, error } = useQuery(
-    ['roles', { search: searchTerm, is_active: statusFilter }],
-    () => roleAPI.getRoles({
-      search: searchTerm || undefined,
-      is_active: statusFilter || undefined,
-    }),
+  useEffect(() => {
+    loadRoles();
+    loadMenuOptions();
+  }, []);
+
+  const loadRoles = async () => {
+    try {
+      setLoading(true);
+      const res = await roleAPI.getRoles();
+      const data = res.data?.results || res.data || [];
+      setRoles(Array.isArray(data) ? data : []);
+    } catch {
+      message.error('Nem sikerült betölteni a szerepköröket');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadMenuOptions = async () => {
+    try {
+      const res = await roleAPI.menuOptions();
+      setMenuOptions(res.data?.menus || []);
+    } catch {
+      setMenuOptions([]);
+    }
+  };
+
+  const handleCreate = () => {
+    setEditing(null);
+    form.resetFields();
+    setModalOpen(true);
+  };
+
+  const handleEdit = (role) => {
+    setEditing(role);
+    form.setFieldsValue({ name: role.name, description: role.description || '', is_active: role.is_active });
+    setModalOpen(true);
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await roleAPI.deleteRole(id);
+      message.success('Szerepkör törölve');
+      loadRoles();
+    } catch {
+      message.error('Nem sikerült törölni a szerepkört');
+    }
+  };
+
+  const getDuplicateRoleName = (baseName) => {
+    const normalizedBase = `${baseName} másolat`;
+    const existingNames = new Set(roles.map(r => r.name));
+    if (!existingNames.has(normalizedBase)) return normalizedBase;
+    let counter = 2;
+    while (existingNames.has(`${normalizedBase} ${counter}`)) counter++;
+    return `${normalizedBase} ${counter}`;
+  };
+
+  const handleDuplicate = async (role) => {
+    try {
+      const cloned = await roleAPI.createRole({
+        name: getDuplicateRoleName(role.name),
+        description: role.description || '',
+        is_active: role.is_active,
+        menu_permissions: role.menu_permissions || [],
+      });
+      if (cloned) {
+        message.success('Szerepkör másolva');
+        loadRoles();
+      }
+    } catch {
+      message.error('Nem sikerült másolni a szerepkört');
+    }
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      setSaving(true);
+      if (editing) {
+        await roleAPI.updateRole(editing.id, values);
+        message.success('Szerepkör frissítve');
+      } else {
+        await roleAPI.createRole({ ...values, menu_permissions: [] });
+        message.success('Szerepkör létrehozva');
+      }
+      setModalOpen(false);
+      loadRoles();
+    } catch {
+      message.error('Nem sikerült menteni a szerepkört');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleManagePermissions = (role) => {
+    setSelectedRole(role);
+    setSelectedMenus(role.menu_permissions || []);
+    setCopyFromRoleId(undefined);
+    setPermissionsModalOpen(true);
+  };
+
+  const handleCopyPermissions = () => {
+    if (!copyFromRoleId) { message.warning('Válassz forrás szerepkört'); return; }
+    const source = roles.find(r => r.id === copyFromRoleId);
+    if (!source) { message.error('A forrás szerepkör nem található'); return; }
+    setSelectedMenus(source.menu_permissions || []);
+    message.success(`Jogosultságok átmásolva: ${source.name}`);
+  };
+
+  const handleSavePermissions = async () => {
+    if (!selectedRole) return;
+    try {
+      setSavingPerms(true);
+      await roleAPI.updateRole(selectedRole.id, {
+        name: selectedRole.name,
+        description: selectedRole.description || '',
+        is_active: selectedRole.is_active,
+        menu_permissions: selectedMenus,
+      });
+      message.success('Jogosultságok frissítve');
+      setPermissionsModalOpen(false);
+      loadRoles();
+    } catch {
+      message.error('Nem sikerült frissíteni a jogosultságokat');
+    } finally {
+      setSavingPerms(false);
+    }
+  };
+
+  const toggleAllMenus = (checked) => {
+    setSelectedMenus(checked ? menuOptions.map(m => m.key || m) : []);
+  };
+
+  const allSelected = menuOptions.length > 0 && menuOptions.every(m => selectedMenus.includes(m.key || m));
+  const someSelected = selectedMenus.length > 0 && !allSelected;
+
+  const columns = [
     {
-      select: (response) => response.data || response,
-    }
-  );
-
-  const deleteMutation = useMutation((id) => roleAPI.deleteRole(id), {
-    onSuccess: () => {
-      queryClient.invalidateQueries(['roles']);
-      toast.success('Szerepkör törölve');
+      title: 'Szerepkör neve',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text, record) => (
+        <>
+          {text}
+          {record.is_active === false && <Tag color="red" style={{ marginLeft: 8 }}>Inaktív</Tag>}
+        </>
+      ),
     },
-    onError: () => toast.error('Hiba történt a törlés során'),
-  });
-
-  const toggleActiveMutation = useMutation(({ id, isActive }) => roleAPI.updateRole(id, { is_active: isActive }), {
-    onSuccess: () => {
-      queryClient.invalidateQueries(['roles']);
-      toast.success('Szerepkör frissítve');
+    {
+      title: 'Leírás',
+      dataIndex: 'description',
+      key: 'description',
+      render: (v) => v || <span style={{ color: '#bbb' }}>–</span>,
     },
-    onError: () => toast.error('Hiba történt a frissítés során'),
-  });
-
-  const handleDelete = (role) => {
-    if (window.confirm(`Biztosan törlöd a(z) "${role.name}" szerepkört?`)) {
-      deleteMutation.mutate(role.id);
-    }
-  };
-
-  const handleToggle = (role) => {
-    toggleActiveMutation.mutate({ id: role.id, isActive: !role.is_active });
-  };
-
-  if (isLoading) {
-    return <LoadingSpinner>Betöltés...</LoadingSpinner>;
-  }
-
-  if (error) {
-    return <Container>Hiba történt a szerepkörök betöltésekor</Container>;
-  }
-
-  const list = roles?.results || roles || [];
+    {
+      title: 'Menü jogosultságok',
+      key: 'menu_permissions',
+      render: (_, record) => {
+        const perms = record.menu_permissions || [];
+        if (perms.length === 0) return <span style={{ color: '#bbb', fontSize: 12 }}>–</span>;
+        return perms.slice(0, 5).map((m) => (
+          <Tag key={m} color="blue" style={{ marginBottom: 2 }}>{m}</Tag>
+        )).concat(perms.length > 5 ? [<Tag key="more">+{perms.length - 5}</Tag>] : []);
+      },
+    },
+    {
+      title: 'Felhasználók',
+      dataIndex: 'users_count',
+      key: 'users_count',
+      render: (count) => count != null ? `${count} fő` : <span style={{ color: '#bbb' }}>–</span>,
+      width: 100,
+    },
+    {
+      title: 'Műveletek',
+      key: 'actions',
+      render: (_, record) => (
+        <Space>
+          <Button
+            icon={<KeyOutlined />}
+            size="small"
+            onClick={() => handleManagePermissions(record)}
+          >
+            Jogosultságok
+          </Button>
+          <Button
+            icon={<CopyOutlined />}
+            size="small"
+            title="Duplikálás"
+            onClick={() => handleDuplicate(record)}
+          />
+          <Button
+            icon={<EditOutlined />}
+            size="small"
+            onClick={() => handleEdit(record)}
+          />
+          <Popconfirm
+            title="Biztosan törölni szeretnéd?"
+            onConfirm={() => handleDelete(record.id)}
+            okText="Igen"
+            cancelText="Nem"
+          >
+            <Button icon={<DeleteOutlined />} size="small" danger />
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
-    <Container>
-      <Header>
-        <Title>
-          <Shield size={24} />
-          Jogosultságok
-        </Title>
-        <ButtonGroup>
-          <Button variant="secondary" onClick={() => navigate('/settings')}>
-            <ArrowLeft size={16} />
-            Vissza
-          </Button>
-          <Button variant="primary" onClick={() => navigate('/settings/roles/new')}>
-            <Plus size={16} />
+    <div style={{ padding: 24 }}>
+      <Card
+        title={
+          <Space>
+            <LockOutlined />
+            Jogosultságok kezelése
+          </Space>
+        }
+        extra={
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>
             Új szerepkör
           </Button>
-        </ButtonGroup>
-      </Header>
-
-      <SearchAndFilter>
-        <SearchInput
-          placeholder="Keresés név alapján..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
+        }
+      >
+        <Table
+          size="small"
+          columns={columns}
+          dataSource={roles}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 20, hideOnSinglePage: true }}
         />
-        <select
-          value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value)}
-          style={{ padding: '12px 16px', border: '1px solid #ddd', borderRadius: '6px' }}
-        >
-          <option value="">Minden státusz</option>
-          <option value="true">Aktív</option>
-          <option value="false">Inaktív</option>
-        </select>
-      </SearchAndFilter>
+      </Card>
 
-      {(!list || list.length === 0) ? (
-        <EmptyState>Nincs megjeleníthető szerepkör</EmptyState>
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHeaderCell>Név</TableHeaderCell>
-              <TableHeaderCell>Leírás</TableHeaderCell>
-              <TableHeaderCell>Menük</TableHeaderCell>
-              <TableHeaderCell>Státusz</TableHeaderCell>
-              <TableHeaderCell>Műveletek</TableHeaderCell>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {list.map((role) => (
-              <TableRow key={role.id}>
-                <TableCell>{role.name}</TableCell>
-                <TableCell>{role.description || '-'}</TableCell>
-                <TableCell>
-                  {(role.menu_permissions || []).map((m) => (
-                    <Badge key={m}>{m}</Badge>
-                  ))}
-                </TableCell>
-                <TableCell>
-                  <StatusBadge className={role.is_active ? 'active' : 'inactive'}>
-                    {role.is_active ? 'Aktív' : 'Inaktív'}
-                  </StatusBadge>
-                </TableCell>
-                <TableCell>
-                  <ActionButtons>
-                    <IconButton
-                      className="edit"
-                      onClick={() => navigate(`/settings/roles/${role.id}/edit`)}
-                      title="Szerkesztés"
-                      aria-label="Szerkesztés"
-                    >
-                      <Edit size={16} />
-                    </IconButton>
-                    <IconButton
-                      className="toggle"
-                      onClick={() => handleToggle(role)}
-                      title={role.is_active ? 'Inaktiválás' : 'Aktiválás'}
-                      aria-label={role.is_active ? 'Inaktiválás' : 'Aktiválás'}
-                    >
-                      {role.is_active ? <ToggleRight size={16} /> : <ToggleLeft size={16} />}
-                    </IconButton>
-                    <IconButton
-                      className="delete"
-                      onClick={() => handleDelete(role)}
-                      title="Törlés"
-                      aria-label="Törlés"
-                    >
-                      <Trash2 size={16} />
-                    </IconButton>
-                  </ActionButtons>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      )}
-    </Container>
+      {/* Létrehozás / Szerkesztés modal */}
+      <Modal
+        title={editing ? 'Szerepkör szerkesztése' : 'Új szerepkör'}
+        open={modalOpen}
+        onOk={handleSubmit}
+        onCancel={() => setModalOpen(false)}
+        okText={editing ? 'Mentés' : 'Létrehozás'}
+        cancelText="Mégse"
+        okButtonProps={{ loading: saving }}
+      >
+        <Form form={form} layout="vertical" style={{ marginTop: 12 }}>
+          <Form.Item label="Neve" name="name" rules={[{ required: true, message: 'Kötelező' }]}>
+            <Input placeholder="Pl. Admin, Pénzügy" />
+          </Form.Item>
+          <Form.Item label="Leírás" name="description">
+            <TextArea rows={2} placeholder="Rövid leírás (opcionális)" />
+          </Form.Item>
+          <Form.Item name="is_active" valuePropName="checked" initialValue={true}>
+            <Checkbox>Aktív</Checkbox>
+          </Form.Item>
+        </Form>
+      </Modal>
+
+      {/* Menü jogosultságok modal */}
+      <Modal
+        title={`Menü jogosultságok – ${selectedRole?.name || ''}`}
+        open={permissionsModalOpen}
+        onCancel={() => setPermissionsModalOpen(false)}
+        onOk={handleSavePermissions}
+        okText="Mentés"
+        cancelText="Mégse"
+        okButtonProps={{ loading: savingPerms }}
+        width={600}
+      >
+        {roles.length > 1 && (
+          <div style={{ marginBottom: 16, display: 'flex', alignItems: 'center', gap: 8, background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 6, padding: '8px 12px' }}>
+            <span style={{ fontSize: 12, color: '#555' }}>Másolás másik szerepkörből:</span>
+            <select
+              value={copyFromRoleId || ''}
+              onChange={(e) => setCopyFromRoleId(e.target.value ? Number(e.target.value) : undefined)}
+              style={{ flex: 1, padding: '4px 8px', borderRadius: 4, border: '1px solid #d9d9d9', fontSize: 13 }}
+            >
+              <option value="">– válassz –</option>
+              {roles.filter(r => r.id !== selectedRole?.id).map(r => (
+                <option key={r.id} value={r.id}>{r.name}</option>
+              ))}
+            </select>
+            <Button size="small" onClick={handleCopyPermissions}>Másolás</Button>
+          </div>
+        )}
+        <div style={{ marginBottom: 12, borderBottom: '1px solid #f0f0f0', paddingBottom: 8 }}>
+          <Checkbox
+            indeterminate={someSelected}
+            checked={allSelected}
+            onChange={(e) => toggleAllMenus(e.target.checked)}
+          >
+            <strong>Összes kijelölése</strong>
+          </Checkbox>
+        </div>
+        {menuOptions.length === 0 ? (
+          <div style={{ color: '#aaa', textAlign: 'center', padding: 24 }}>Nincsenek menü opciók</div>
+        ) : (
+          <Row gutter={[8, 8]}>
+            {menuOptions.map((opt) => {
+              const key = opt.key || opt;
+              const label = opt.label || opt.name || key;
+              return (
+                <Col span={12} key={key}>
+                  <Checkbox
+                    checked={selectedMenus.includes(key)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedMenus(prev => [...prev, key]);
+                      } else {
+                        setSelectedMenus(prev => prev.filter(k => k !== key));
+                      }
+                    }}
+                  >
+                    {label}
+                  </Checkbox>
+                </Col>
+              );
+            })}
+          </Row>
+        )}
+      </Modal>
+    </div>
   );
 };
 
