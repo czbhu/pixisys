@@ -1703,6 +1703,7 @@ class ManufacturingCostItemViewSet(
                     'original_filename': a.original_filename or (a.file.name.split('/')[-1] if a.file else ''),
                     'file_size': a.file.size if a.file else 0,
                     'remark': a.remark,
+                    'is_documentation': a.is_documentation,
                     'storage_file_id': a.storage_file_id,
                     'uploaded_by_name': a.uploaded_by.get_full_name() if a.uploaded_by else '',
                     'created_at': a.created_at.isoformat() if a.created_at else '',
@@ -1747,10 +1748,21 @@ class ManufacturingCostItemViewSet(
             'original_filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
             'file_size': att.file.size if att.file else 0,
             'remark': att.remark,
+            'is_documentation': att.is_documentation,
             'storage_file_id': att.storage_file_id,
             'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',
             'created_at': att.created_at.isoformat() if att.created_at else '',
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/documentation')
+    def update_attachment_documentation(self, request, pk=None, att_id=None):
+        """PATCH is_documentation flag on a cost item attachment."""
+        from apps.manufacturing.models import ManufacturingCostItemAttachment
+        ci = self.get_object()
+        att = get_object_or_404(ManufacturingCostItemAttachment, id=att_id, cost_item=ci)
+        att.is_documentation = bool(request.data.get('is_documentation', False))
+        att.save(update_fields=['is_documentation'])
+        return Response({'is_documentation': att.is_documentation})
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def update_attachment_rename(self, request, pk=None, att_id=None):

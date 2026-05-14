@@ -984,6 +984,18 @@ interface CustomerOrder {
                                         } catch { message.error('Törlés sikertelen'); }
                                       }}
                                     />
+                                    <Button
+                                      type={att.is_documentation ? 'primary' : 'dashed'}
+                                      size="small"
+                                      style={{ fontSize: 10, padding: '0 5px', height: 20, lineHeight: '18px', color: att.is_documentation ? undefined : '#888' }}
+                                      title="Kész dokumentáció jelölés"
+                                      onClick={async () => {
+                                        try {
+                                          const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/documentation`, { is_documentation: !att.is_documentation });
+                                          setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, is_documentation: res.data.is_documentation } : a) }));
+                                        } catch { message.error('Mentés sikertelen'); }
+                                      }}
+                                    >📋</Button>
                                   </Space>
                                 ))}
                               </div>

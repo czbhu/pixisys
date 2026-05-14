@@ -1561,6 +1561,7 @@ class ManufacturingCostItemAttachment(models.Model):
     file = models.FileField(upload_to='cost_item_attachments/%Y/%m/%d/', verbose_name="Fájl")
     original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=500, blank=True, verbose_name="Megjegyzés")
+    is_documentation = models.BooleanField(default=False, verbose_name='Kész dokumentáció')
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name="Storage fájl ID")
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, verbose_name="Feltöltötte")
     created_at = models.DateTimeField(auto_now_add=True, verbose_name="Feltöltve")

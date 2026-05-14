@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip } from 'antd';
+import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip, Checkbox, Image } from 'antd';
 import NumInput from '../../components/NumInput';
-import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined } from '@ant-design/icons';
+import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined, FileImageOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
 import type { ColumnsType } from 'antd/es/table';
 import EnhancedTable from '../../components/EnhancedTable';
@@ -111,6 +111,57 @@ const DeliveryNotes: React.FC = () => {
   const [deliveryNoteNotes, setDeliveryNoteNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState(dayjs().format('YYYY-MM-DD'));
   
+  // Documentation modal state
+  const [docModalOpen, setDocModalOpen] = useState(false);
+  const [docModalNoteId, setDocModalNoteId] = useState<number | null>(null);
+  const [docModalNoteNumber, setDocModalNoteNumber] = useState('');
+  const [availableDocs, setAvailableDocs] = useState<any[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<any[]>([]);
+  const [docLoading, setDocLoading] = useState(false);
+
+  const openDocModal = async (noteId: number, noteNumber: string) => {
+    setDocModalNoteId(noteId);
+    setDocModalNoteNumber(noteNumber);
+    setDocModalOpen(true);
+    setDocLoading(true);
+    try {
+      const [availRes, selRes] = await Promise.all([
+        api.get(`/sales/delivery-notes/${noteId}/available-docs/`),
+        api.get(`/sales/delivery-notes/${noteId}/docs/`),
+      ]);
+      setAvailableDocs(availRes.data);
+      setSelectedDocs(selRes.data);
+    } catch {
+      message.error('Hiba a dokumentáció betöltésekor');
+    } finally {
+      setDocLoading(false);
+    }
+  };
+
+  const isDocSelected = (type: string, att_id: number) =>
+    selectedDocs.some(d => d.type === type && d.att_id === att_id);
+
+  const toggleDoc = async (doc: any) => {
+    if (!docModalNoteId) return;
+    const sel = isDocSelected(doc.type, doc.att_id);
+    try {
+      if (sel) {
+        const existing = selectedDocs.find(d => d.type === doc.type && d.att_id === doc.att_id);
+        if (existing) {
+          await api.delete(`/sales/delivery-notes/${docModalNoteId}/docs/${existing.doc_id}/`);
+          setSelectedDocs(prev => prev.filter(d => d.doc_id !== existing.doc_id));
+        }
+      } else {
+        const res = await api.post(`/sales/delivery-notes/${docModalNoteId}/docs/`, { type: doc.type, att_id: doc.att_id });
+        setSelectedDocs(prev => [...prev, { doc_id: res.data.doc_id, type: doc.type, att_id: doc.att_id, filename: doc.filename, file_url: doc.file_url, remark: doc.remark }]);
+      }
+    } catch {
+      message.error('Művelet sikertelen');
+    }
+  };
+
+  const isImageUrl = (url: string) => /\.(png|jpg|jpeg|gif|webp|bmp|svg)$/i.test(url || '');
+
   // Email modal state
   const [emailModalOpen, setEmailModalOpen] = useState(false);
   const [emailTemplates, setEmailTemplates] = useState<EmailTemplate[]>([]);
@@ -595,6 +646,12 @@ const DeliveryNotes: React.FC = () => {
                     title="Törlés"
                 />
               </Popconfirm>
+              <Button
+                type="text"
+                icon={<FileImageOutlined />}
+                title="Dokumentáció"
+                onClick={() => openDocModal(record.delivery_note, record.delivery_note_number)}
+              />
         </Space>
       )
     }
@@ -872,6 +929,84 @@ const DeliveryNotes: React.FC = () => {
                 </div>
                 </>
            )}
+      </Modal>
+
+      {/* Dokumentáció modal */}
+      <Modal
+        title={`Dokumentáció – ${docModalNoteNumber}`}
+        open={docModalOpen}
+        onCancel={() => setDocModalOpen(false)}
+        footer={<Button onClick={() => setDocModalOpen(false)}>Bezárás</Button>}
+        width={900}
+      >
+        {docLoading ? (
+          <div style={{ textAlign: 'center', padding: 32 }}>Betöltés...</div>
+        ) : availableDocs.length === 0 ? (
+          <div style={{ color: '#aaa', textAlign: 'center', padding: 24 }}>
+            Nincs "kész dokumentáció"-ként jelölt csatolmány a szállítólevél tételeihez.<br />
+            <small>Jelöld meg a csatolmányokat a 📋 gombbal a CustomerOrders / OrderedProducts / ProductionQueue oldalakon.</small>
+          </div>
+        ) : (
+          <div>
+            <div style={{ marginBottom: 12, fontSize: 13, color: '#555' }}>
+              Jelöld ki azokat a dokumentumokat, amelyeket ehhez a szállítólevélhez szeretnél csatolni:
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+              {availableDocs.map((doc) => {
+                const sel = isDocSelected(doc.type, doc.att_id);
+                const isImg = isImageUrl(doc.file_url || '');
+                return (
+                  <div
+                    key={`${doc.type}-${doc.att_id}`}
+                    onClick={() => toggleDoc(doc)}
+                    style={{
+                      border: sel ? '2px solid #1677ff' : '2px solid #d9d9d9',
+                      borderRadius: 8,
+                      padding: 8,
+                      width: 180,
+                      cursor: 'pointer',
+                      background: sel ? '#e6f4ff' : '#fafafa',
+                      position: 'relative',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <Checkbox checked={sel} style={{ position: 'absolute', top: 6, right: 6 }} onChange={() => toggleDoc(doc)} onClick={e => e.stopPropagation()} />
+                    <div style={{ height: 110, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', marginBottom: 6, background: '#f0f0f0', borderRadius: 4 }}>
+                      {isImg ? (
+                        <Image
+                          src={doc.file_url}
+                          style={{ maxHeight: 110, maxWidth: '100%', objectFit: 'contain' }}
+                          preview={{ mask: 'Előnézet' }}
+                          onClick={e => e.stopPropagation()}
+                        />
+                      ) : (
+                        <a href={doc.file_url} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()} style={{ fontSize: 32, color: '#1677ff' }}>
+                          <FileImageOutlined />
+                        </a>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.filename}>{doc.filename}</div>
+                    {doc.item_name && <div style={{ fontSize: 10, color: '#888', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.item_name}>{doc.item_name}</div>}
+                    {doc.remark && <div style={{ fontSize: 10, color: '#aaa', fontStyle: 'italic', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.remark}</div>}
+                  </div>
+                );
+              })}
+            </div>
+            {selectedDocs.length > 0 && (
+              <div style={{ marginTop: 16, borderTop: '1px solid #e8e8e8', paddingTop: 12 }}>
+                <b style={{ fontSize: 13 }}>Kijelölt dokumentumok ({selectedDocs.length} db):</b>
+                <ul style={{ margin: '8px 0 0 0', paddingLeft: 18 }}>
+                  {selectedDocs.map(d => (
+                    <li key={d.doc_id} style={{ fontSize: 12 }}>
+                      <a href={d.file_url} target="_blank" rel="noreferrer">{d.filename}</a>
+                      {d.remark && <span style={{ color: '#888', marginLeft: 6 }}>— {d.remark}</span>}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
       </Modal>
     </div>
   );

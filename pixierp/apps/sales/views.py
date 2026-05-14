@@ -4565,6 +4565,7 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
                     'original_filename': a.original_filename or (a.file.name.split('/')[-1] if a.file else ''),
                     'file_size': a.file.size if a.file else 0,
                     'remark': a.remark,
+                    'is_documentation': a.is_documentation,
                     'storage_file_id': a.storage_file_id,
                     'uploaded_by_name': a.uploaded_by.get_full_name() if a.uploaded_by else '',
                     'created_at': a.created_at.isoformat() if a.created_at else '',
@@ -4601,10 +4602,21 @@ class CustomerOrderItemViewSet(viewsets.ModelViewSet):
             'original_filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
             'file_size': att.file.size if att.file else 0,
             'remark': att.remark,
+            'is_documentation': att.is_documentation,
             'storage_file_id': att.storage_file_id,
             'uploaded_by_name': att.uploaded_by.get_full_name() if att.uploaded_by else '',
             'created_at': att.created_at.isoformat() if att.created_at else '',
         }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/documentation')
+    def update_attachment_documentation(self, request, pk=None, att_id=None):
+        from .models import QuoteRequestItemAttachment
+        item = self.get_object()
+        qi = item.quote_item
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=qi)
+        att.is_documentation = bool(request.data.get('is_documentation', False))
+        att.save(update_fields=['is_documentation'])
+        return Response({'is_documentation': att.is_documentation})
 
     @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
     def update_attachment_rename(self, request, pk=None, att_id=None):
@@ -5384,6 +5396,105 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
              
         return Response(DeliveryNoteSerializer(dn).data)
 
+    @action(detail=True, methods=['get'], url_path='available-docs')
+    def available_docs(self, request, pk=None):
+        """GET all is_documentation=True attachments from order items in this delivery note."""
+        dn = self.get_object()
+        result = []
+        seen = set()
+        for dni in dn.items.select_related('customer_order_item__quote_item'):
+            coi = dni.customer_order_item
+            qi = coi.quote_item if coi else None
+            if qi:
+                for att in qi.attachments.filter(is_documentation=True):
+                    key = ('quote', att.id)
+                    if key not in seen:
+                        seen.add(key)
+                        result.append({
+                            'type': 'quote',
+                            'att_id': att.id,
+                            'filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
+                            'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
+                            'remark': att.remark,
+                            'item_name': coi.description or (qi.description[:60] if qi.description else ''),
+                            'created_at': att.created_at.isoformat() if att.created_at else '',
+                        })
+                try:
+                    from apps.manufacturing.models import ManufacturingCostItem
+                    for ci in ManufacturingCostItem.objects.filter(quote_request_item=qi):
+                        for ci_att in ci.attachments.filter(is_documentation=True):
+                            key = ('cost', ci_att.id)
+                            if key not in seen:
+                                seen.add(key)
+                                result.append({
+                                    'type': 'cost',
+                                    'att_id': ci_att.id,
+                                    'filename': ci_att.original_filename or (ci_att.file.name.split('/')[-1] if ci_att.file else ''),
+                                    'file_url': request.build_absolute_uri(ci_att.file.url) if ci_att.file else None,
+                                    'remark': ci_att.remark,
+                                    'item_name': ci.description[:60] if ci.description else '',
+                                    'created_at': ci_att.created_at.isoformat() if ci_att.created_at else '',
+                                })
+                except Exception:
+                    pass
+        return Response(result)
+
+    @action(detail=True, methods=['get', 'post'], url_path='docs')
+    def docs(self, request, pk=None):
+        """GET or POST delivery note documentation."""
+        dn = self.get_object()
+        from .models import DeliveryNoteDocumentation
+        if request.method == 'GET':
+            result = []
+            for doc in dn.documentation_items.all():
+                if doc.quote_item_attachment:
+                    att = doc.quote_item_attachment
+                    result.append({
+                        'doc_id': doc.id,
+                        'type': 'quote',
+                        'att_id': att.id,
+                        'filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
+                        'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
+                        'remark': att.remark,
+                    })
+                elif doc.cost_item_attachment:
+                    att = doc.cost_item_attachment
+                    result.append({
+                        'doc_id': doc.id,
+                        'type': 'cost',
+                        'att_id': att.id,
+                        'filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
+                        'file_url': request.build_absolute_uri(att.file.url) if att.file else None,
+                        'remark': att.remark,
+                    })
+            return Response(result)
+        # POST: add a doc
+        att_type = request.data.get('type')
+        att_id = request.data.get('att_id')
+        if att_type not in ('quote', 'cost') or not att_id:
+            return Response({'error': 'type és att_id kötelező'}, status=status.HTTP_400_BAD_REQUEST)
+        if att_type == 'quote':
+            from .models import QuoteRequestItemAttachment
+            att = get_object_or_404(QuoteRequestItemAttachment, id=att_id)
+            if DeliveryNoteDocumentation.objects.filter(delivery_note=dn, quote_item_attachment=att).exists():
+                return Response({'error': 'Már hozzáadva'}, status=status.HTTP_400_BAD_REQUEST)
+            doc = DeliveryNoteDocumentation.objects.create(delivery_note=dn, quote_item_attachment=att)
+        else:
+            from apps.manufacturing.models import ManufacturingCostItemAttachment
+            att = get_object_or_404(ManufacturingCostItemAttachment, id=att_id)
+            if DeliveryNoteDocumentation.objects.filter(delivery_note=dn, cost_item_attachment=att).exists():
+                return Response({'error': 'Már hozzáadva'}, status=status.HTTP_400_BAD_REQUEST)
+            doc = DeliveryNoteDocumentation.objects.create(delivery_note=dn, cost_item_attachment=att)
+        return Response({'doc_id': doc.id}, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['delete'], url_path=r'docs/(?P<doc_id>\d+)')
+    def delete_doc(self, request, pk=None, doc_id=None):
+        """DELETE a doc entry from a delivery note."""
+        dn = self.get_object()
+        from .models import DeliveryNoteDocumentation
+        doc = get_object_or_404(DeliveryNoteDocumentation, id=doc_id, delivery_note=dn)
+        doc.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     @action(detail=False, methods=['post'], permission_classes=[AllowAny], url_path=r'public/(?P<token>[^/.]+)/confirm')
     def public_delivery_note_confirm(self, request, token=None):

@@ -521,6 +521,7 @@ class QuoteRequestItemAttachment(models.Model):
     file = models.FileField(upload_to='quote_items/%Y/%m/%d/')
     original_filename = models.CharField(max_length=255, blank=True, verbose_name='Eredeti fájlnév')
     remark = models.CharField(max_length=255, blank=True)
+    is_documentation = models.BooleanField(default=False, verbose_name='Kész dokumentáció')
     storage_file_id = models.IntegerField(null=True, blank=True, verbose_name='Storage fájl ID')
     uploaded_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -780,6 +781,21 @@ class DeliveryNoteItem(models.Model):
     @property
     def net_total(self):
         return self.quantity * self.net_unit_price
+
+
+class DeliveryNoteDocumentation(models.Model):
+    """Szállítólevélhez rendelt dokumentáció csatolmány"""
+    delivery_note = models.ForeignKey(DeliveryNote, on_delete=models.CASCADE, related_name='documentation_items', verbose_name='Szállítólevél')
+    quote_item_attachment = models.ForeignKey('QuoteRequestItemAttachment', null=True, blank=True, on_delete=models.CASCADE, verbose_name='Ajánlat tétel csatolmány')
+    cost_item_attachment = models.ForeignKey('manufacturing.ManufacturingCostItemAttachment', null=True, blank=True, on_delete=models.CASCADE, verbose_name='Gyártási csatolmány')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Szállítólevél dokumentáció'
+        verbose_name_plural = 'Szállítólevél dokumentációk'
+
+    def __str__(self):
+        return f'Doc for delivery note {self.delivery_note_id}'
 
 
 class ApprovalRequest(models.Model):
