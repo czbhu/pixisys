@@ -461,7 +461,16 @@ def password_reset_confirm_view(request):
 @permission_classes([IsAuthenticated])
 def switch_user_view(request):
     """Switch to another system user. Only available for Django superusers."""
-    if not request.user.is_superuser:
+    # Allow if Django superuser OR if the linked SystemUser has no role restrictions
+    is_allowed = request.user.is_superuser
+    if not is_allowed:
+        try:
+            su = SystemUser.objects.get(email__iexact=request.user.email, is_active=True)
+            _, menus = _serialize_roles_for_user(su)
+            is_allowed = len(menus) == 0 and su.roles.exists() is False
+        except SystemUser.DoesNotExist:
+            pass
+    if not is_allowed:
         return Response(
             {'error': 'Csak szuperadmin jogosultsággal elérhető.'},
             status=status.HTTP_403_FORBIDDEN
