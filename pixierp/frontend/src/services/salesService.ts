@@ -146,8 +146,12 @@ export const salesService = {
 
     // Quote Requests
     async getQuoteRequests() {
-          const response = await api.get('/sales/quote-requests/');
-          return response.data;
+      const response = await api.get('/sales/quote-requests/?page_size=1000');
+      const data = response.data;
+      if (data && Array.isArray(data.results)) {
+        return data.results;
+      }
+      return data;
     },
     async createDemand(data: Partial<{ title: string; description: string; deadline: string; company_id: number; contact_ids: number[]; currency_code: string }>) {
         const response = await api.post('/sales/quote-requests/create_demand/', data || {});

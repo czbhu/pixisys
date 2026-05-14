@@ -184,6 +184,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     permission_module = 'sales'
     permission_resource = 'sales.rfqs'
     own_data_user_field = 'created_by'  # QuoteRequest.created_by = User
+    own_data_extra_user_fields = ['assignees', 'owner']  # assignee vagy owner is látja
 
     def get_queryset(self):
         """Alapértelmezetten csak a nem törölt árajánlatok + OwnDataFilterMixin szűrés"""

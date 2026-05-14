@@ -132,6 +132,7 @@ class OwnDataFilterMixin:
     
     own_data_user_field = 'user'  # Default: közvetlen user mező
     own_data_project_field = None  # Opcionális: projekt kapcsolat
+    own_data_extra_user_fields = []  # Opcionális: további user mezők (OR feltétel, pl. M2M assignees)
     
     def get_queryset(self):
         queryset = super().get_queryset()
@@ -161,6 +162,10 @@ class OwnDataFilterMixin:
             filter_kwargs = {self.own_data_user_field: user}
             own_queryset = queryset.filter(**filter_kwargs)
             
+            # Extra user mezők szerinti szűrés (pl. assignees M2M)
+            for extra_field in getattr(self, 'own_data_extra_user_fields', []):
+                own_queryset = own_queryset | queryset.filter(**{extra_field: user})
+
             # Projekt szerinti szűrés (ha van)
             if self.own_data_project_field:
                 project_filter = {f"{self.own_data_project_field}__members": user}
