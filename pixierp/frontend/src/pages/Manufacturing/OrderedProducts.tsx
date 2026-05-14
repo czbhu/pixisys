@@ -905,7 +905,7 @@ const OrderedProducts: React.FC = () => {
                                             title="Kész dokumentáció jelölés"
                                             onClick={async () => {
                                                 try {
-                                                    const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/documentation`, { is_documentation: !att.is_documentation });
+                                                    const res = await api.patch(`/sales/customer-order-items/${coiId}/attachments/${att.id}/documentation/`, { is_documentation: !att.is_documentation });
                                                     setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).map((a: any) => a.id === att.id ? { ...a, is_documentation: res.data.is_documentation } : a) }));
                                                 } catch { message.error('Mentés sikertelen'); }
                                             }}

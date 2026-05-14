@@ -904,7 +904,7 @@ const ProductionQueue: React.FC = () => {
                                         title="Kész dokumentáció jelölés"
                                         onClick={async () => {
                                             try {
-                                                const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/documentation`, { is_documentation: !att.is_documentation });
+                                                const res = await api.patch(`/manufacturing/cost-items/${ciId}/attachments/${att.id}/documentation/`, { is_documentation: !att.is_documentation });
                                                 setCostItemAtts(prev => ({ ...prev, [ciId]: (prev[ciId] || []).map((a: any) => a.id === att.id ? { ...a, is_documentation: res.data.is_documentation } : a) }));
                                             } catch { message.error('Mentés sikertelen'); }
                                         }}
