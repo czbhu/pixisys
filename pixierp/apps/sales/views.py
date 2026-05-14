@@ -2706,7 +2706,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             result.append(d)
 
         # 2. Tétel-szintű csatolmányok (a kötődő QuoteRequestItem-ek révén)
-        for oi in order.items.select_related('quote_item').all():
+        for oi in CustomerOrderItem.objects.filter(customer_order=order).select_related('quote_item'):
             qi = oi.quote_item
             item_name = oi.description or (qi.description if qi else '') or f'Tétel #{oi.id}'
             item_name = item_name[:50]
