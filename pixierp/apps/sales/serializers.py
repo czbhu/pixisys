@@ -1151,7 +1151,18 @@ class WorkLogSerializer(serializers.ModelSerializer):
     def get_item_name(self, obj):
         try:
             if obj.item:
-                return obj.item.description
+                qi = obj.item.quote_item
+                if qi.product_id and qi.product:
+                    return qi.product.name
+                if qi.material_id and qi.material:
+                    return qi.material.name
+                if qi.manufacturing_product_id and qi.manufacturing_product:
+                    return qi.manufacturing_product.name
+                if qi.service_id and qi.service:
+                    return qi.service.name
+                # fallback: strip HTML from description
+                from django.utils.html import strip_tags
+                return strip_tags(obj.item.description or '') or None
         except Exception:
             pass
         return None
