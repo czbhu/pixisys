@@ -394,6 +394,10 @@ export const salesService = {
         const response = await api.post(`/sales/quote-requests/${id}/delete_attachment/`, { attachment_id: attachmentId });
         return response.data;
     },
+    async renameQuoteRequestAttachment(id: number, attachmentId: number, original_filename: string) {
+        const response = await api.patch(`/sales/quote-requests/${id}/attachments/${attachmentId}/rename/`, { original_filename });
+        return response.data;
+    },
 
     // Services
     async getServices() {
@@ -465,6 +469,10 @@ export const salesService = {
     },
     async deleteQuoteRequestItemAttachment(itemId: number, attachmentId: number) {
         await api.post(`/sales/quote-request-items/${itemId}/delete_attachment/`, { attachment_id: attachmentId });
+    },
+    async renameQuoteRequestItemAttachment(itemId: number, attachmentId: number, original_filename: string) {
+        const response = await api.patch(`/sales/quote-request-items/${itemId}/attachments/${attachmentId}/rename/`, { original_filename });
+        return response.data;
     },
 
     // Costs

@@ -59,7 +59,7 @@ class QuoteRequestItemAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     class Meta:
         model = QuoteRequestItemAttachment
-        fields = ['id', 'file', 'file_url', 'remark', 'uploaded_by', 'created_at']
+        fields = ['id', 'file', 'file_url', 'original_filename', 'remark', 'uploaded_by', 'created_at']
         read_only_fields = ['file_url', 'uploaded_by', 'created_at']
 
     def get_file_url(self, obj):
@@ -75,7 +75,7 @@ class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
     file_url = serializers.SerializerMethodField()
     class Meta:
         model = QuoteRequestAttachment
-        fields = ['id', 'file', 'file_url', 'remark', 'uploaded_by', 'created_at']
+        fields = ['id', 'file', 'file_url', 'original_filename', 'remark', 'uploaded_by', 'created_at']
         read_only_fields = ['file_url', 'uploaded_by', 'created_at']
 
     def get_file_url(self, obj):

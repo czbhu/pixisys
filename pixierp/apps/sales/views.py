@@ -358,6 +358,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             file=file_obj,
             remark=remark,
+            original_filename=file_obj.name,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
         # Egyidejűleg Storage bejegyzés létrehozása rfq/{request_number}/ alá
@@ -427,6 +428,16 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
         att.delete()
         return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
+    def rename_attachment(self, request, pk=None, att_id=None):
+        qr = self.get_object()
+        att = get_object_or_404(QuoteRequestAttachment, id=att_id, quote_request=qr)
+        new_name = request.data.get('original_filename', '').strip()
+        if new_name:
+            att.original_filename = new_name
+            att.save(update_fields=['original_filename'])
+        return Response({'original_filename': att.original_filename})
 
     @action(detail=True, methods=['post'])
     def set_project(self, request, pk=None):
@@ -2311,6 +2322,7 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
             quote_item=item,
             file=file_obj,
             remark=remark,
+            original_filename=file_obj.name,
             uploaded_by=request.user if request.user and request.user.is_authenticated else None
         )
         # Storage bejegyzés létrehozása az RFQ és összes kapcsolódó megrendelés mappájában
@@ -2374,6 +2386,16 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         att.file.delete(save=False)
         att.delete()
         return Response({'status': 'ok'})
+
+    @action(detail=True, methods=['patch'], url_path=r'attachments/(?P<att_id>\d+)/rename')
+    def rename_attachment(self, request, pk=None, att_id=None):
+        item = self.get_object()
+        att = get_object_or_404(QuoteRequestItemAttachment, id=att_id, quote_item=item)
+        new_name = request.data.get('original_filename', '').strip()
+        if new_name:
+            att.original_filename = new_name
+            att.save(update_fields=['original_filename'])
+        return Response({'original_filename': att.original_filename})
 
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
