@@ -589,8 +589,6 @@ const Layout = ({ children }) => {
               value={user?.id}
               loading={switching}
               onChange={handleSwitchUser}
-              showSearch
-              optionFilterProp="label"
               popupMatchSelectWidth={false}
               options={switchUsers.map(u => ({
                 value: u.id,
