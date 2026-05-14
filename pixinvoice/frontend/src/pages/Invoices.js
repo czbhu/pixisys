@@ -1156,16 +1156,37 @@ const Invoices = () => {
     }).format(num);
   };
 
-  const getItemsTooltipText = (invoice) => {
+  const getItemsTooltipContent = (invoice) => {
     const items = Array.isArray(invoice?.items) ? invoice.items : [];
-    if (!items.length) return '';
-    return items.map((item) => {
-      const name = String(item?.description || item?.name || '-').trim() || '-';
-      const quantity = formatNumberPlain(item?.quantity, { min: 0, max: 4 });
-      const unitNet = formatNumberPlain(item?.unit_price, { min: 0, max: 2 });
-      const rowNet = formatNumberPlain(item?.net_amount, { min: 0, max: 2 });
-      return `${name}|${quantity}|${unitNet}|${rowNet}`;
-    }).join('\n');
+    if (!items.length) return null;
+    const currency = invoice?.currency || 'HUF';
+    return (
+      <div style={{ minWidth: 380 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left', padding: '3px 8px', borderBottom: '1px solid rgba(255,255,255,0.4)', fontWeight: 600, whiteSpace: 'nowrap' }}>Megnevezés</th>
+              <th style={{ textAlign: 'right', padding: '3px 8px', borderBottom: '1px solid rgba(255,255,255,0.4)', fontWeight: 600, whiteSpace: 'nowrap' }}>Menny.</th>
+              <th style={{ textAlign: 'right', padding: '3px 8px', borderBottom: '1px solid rgba(255,255,255,0.4)', fontWeight: 600, whiteSpace: 'nowrap' }}>Egységár</th>
+              <th style={{ textAlign: 'right', padding: '3px 8px', borderBottom: '1px solid rgba(255,255,255,0.4)', fontWeight: 600, whiteSpace: 'nowrap' }}>Nettó</th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((item, idx) => {
+              const name = String(item?.description || item?.name || '-').trim() || '-';
+              return (
+                <tr key={idx} style={{ borderBottom: idx < items.length - 1 ? '1px solid rgba(255,255,255,0.15)' : 'none' }}>
+                  <td style={{ padding: '3px 8px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</td>
+                  <td style={{ textAlign: 'right', padding: '3px 8px', whiteSpace: 'nowrap' }}>{formatNumberPlain(item?.quantity, { min: 0, max: 4 })} {item?.unit || ''}</td>
+                  <td style={{ textAlign: 'right', padding: '3px 8px', whiteSpace: 'nowrap' }}>{formatCurrency(item?.unit_price, currency)}</td>
+                  <td style={{ textAlign: 'right', padding: '3px 8px', whiteSpace: 'nowrap' }}>{formatCurrency(item?.net_amount, currency)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    );
   };
 
   const formatDate = (dateString) => {
@@ -1377,8 +1398,10 @@ const Invoices = () => {
                     <IconButton
                       variant="view"
                       title="Megnyitás (olvasás)"
-                      as={Link}
-                      to={`/invoices/${invoice.id}/edit?mode=view`}
+                      as="a"
+                      href={`/invoices/${invoice.id}/edit?mode=view`}
+                      target="_blank"
+                      rel="noopener noreferrer"
                     >
                       <Eye size={16} />
                     </IconButton>
@@ -1464,12 +1487,12 @@ const Invoices = () => {
                 );
                 return (
               <React.Fragment key={invoice.id}>
+              <Tooltip title={getItemsTooltipContent(invoice)} placement="bottom" overlayStyle={{ maxWidth: 620 }} mouseEnterDelay={0.4}>
               <TableRow
                 $storno={isSt}
                 $cancelled={isCancelled}
                 $paid={isPaid}
                 $unpaid={isUnpaid}
-                title={getItemsTooltipText(invoice) || undefined}
                 onContextMenu={(event) => handleRowContextMenu(event, invoice.id)}
                 onTouchEnd={(event) => handleRowTouchTap(event, invoice.id)}
               >
@@ -1587,6 +1610,7 @@ const Invoices = () => {
                   {actionButtons}
                 </TableCell>
               </TableRow>
+              </Tooltip>
               <MobileActionsRow $open={mobileActionsInvoiceId === invoice.id}>
                 <MobileActionsCell colSpan={3}>
                   {actionButtons}

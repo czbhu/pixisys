@@ -1648,6 +1648,18 @@ const InvoiceForm = () => {
     }
   }, [isReadOnly, autoPrint, invoiceLoading]);
 
+  // ESC key closes the tab when viewing an invoice (opened in new tab)
+  useEffect(() => {
+    if (!isReadOnly) return;
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        window.close();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isReadOnly]);
+
   // Set document title so browser print/save suggests invoice-specific filename
   React.useEffect(() => {
     if (!isReadOnly || !invoice) return undefined;
