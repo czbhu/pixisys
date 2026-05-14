@@ -19,6 +19,7 @@ import styled from 'styled-components';
 import { Dropdown, Avatar, Select, message } from 'antd';
 import CompanySelector from './CompanySelector';
 import { useAuth } from '../contexts/AuthContext';
+import { systemUserAPI } from '../services/api';
 
 const LayoutContainer = styled.div`
   display: flex;
@@ -326,7 +327,7 @@ const Layout = ({ children }) => {
 
   useEffect(() => {
     if (isSuperuser) {
-      axios.get('/api/system-users/', { params: { is_active: true, page_size: 200 } })
+      systemUserAPI.getSystemUsers({ is_active: true })
         .then(res => {
           const list = Array.isArray(res.data) ? res.data : res.data?.results || [];
           setSwitchUsers(list);
@@ -588,6 +589,8 @@ const Layout = ({ children }) => {
               value={user?.id}
               loading={switching}
               onChange={handleSwitchUser}
+              showSearch
+              optionFilterProp="label"
               popupMatchSelectWidth={false}
               options={switchUsers.map(u => ({
                 value: u.id,
