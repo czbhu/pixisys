@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer } from 'antd';
@@ -56,6 +57,16 @@ const RFQs: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useAuth();
+
+  // --- Clipboard paste for create modal ---
+  const handleCreateModalPaste = useCallback((file: File) => {
+    const f = file as any;
+    const key = f.uid || f.name;
+    setRfqFiles(prev => [...prev, f]);
+    setRfqFileRemarks(prev => ({ ...prev, [key]: '' }));
+    message.info('Kép beillesztve a csatolmányok közé');
+  }, []);
+  // (hook call placed after createOpen state is declared — see below)
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
@@ -64,6 +75,8 @@ const RFQs: React.FC = () => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  // Ctrl+V paste support in create modal
+  useClipboardImagePaste(handleCreateModalPaste, createOpen);
   const [nextNumber, setNextNumber] = useState<string>('');
   const [currentUserName, setCurrentUserName] = useState<string>('');
   const [form] = Form.useForm();
@@ -2667,7 +2680,8 @@ const RFQs: React.FC = () => {
                   >
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 4 }}>
                       <span style={{ fontSize: 24 }}>📎</span>
-                      <span style={{ fontSize: 11, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>Húzd ide vagy kattints</span>
+                      <span style={{ fontSize: 11, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>Húzd ide, kattints</span>
+                      <span style={{ fontSize: 10, color: '#bbb', textAlign: 'center', lineHeight: 1.2 }}>vagy Ctrl+V</span>
                     </div>
                   </Upload.Dragger>
                   )}

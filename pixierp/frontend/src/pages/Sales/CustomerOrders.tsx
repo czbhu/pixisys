@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import { Table, Card, Button, Tag, Space, message, Modal, Tooltip, Input, Select, DatePicker, Switch, Dropdown, Popover, Grid, Form, Pagination, Upload } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -222,6 +223,28 @@ interface CustomerOrder {
   const [orderItemAttExpanded, setOrderItemAttExpanded] = useState<number[]>([]);
   const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
   const [editingAttRemarkVal, setEditingAttRemarkVal] = useState<string>('');
+
+  // --- Clipboard paste for attachment upload rows ---
+  const lastPasteCoiIdRef = useRef<number | null>(null);
+  const orderItemAttRemarkRef = useRef<Record<number, string>>({});
+  useEffect(() => { orderItemAttRemarkRef.current = orderItemAttRemark; }, [orderItemAttRemark]);
+  const handleCOPasteFile = useCallback((file: File) => {
+    const coiId = lastPasteCoiIdRef.current;
+    if (!coiId) return;
+    setOrderItemAttUploading(prev => ({ ...prev, [coiId]: (prev[coiId] || 0) + 1 }));
+    const fd = new FormData();
+    fd.append('file', file);
+    const remark = orderItemAttRemarkRef.current[coiId] || '';
+    if (remark) fd.append('remark', remark);
+    api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then(res => {
+        setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+        message.success('Kép feltöltve');
+      })
+      .catch(() => message.error('Feltöltés sikertelen'))
+      .finally(() => setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })));
+  }, []);
+  useClipboardImagePaste(handleCOPasteFile, orderItemAttExpanded.length > 0);
   // Gyökér-szintű (rendelés-szintű) csatolmányok
   const [orderLevelAtts, setOrderLevelAtts] = useState<Record<number, any[]>>({});
   // AttachmentPreviewModal
@@ -844,6 +867,9 @@ interface CustomerOrder {
                               size="small" value={attRemark} style={{ width: 340 }}
                               onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
                             />
+                            <div
+                              onMouseEnter={() => { lastPasteCoiIdRef.current = coiId; }}
+                            >
                             <Upload.Dragger
                               multiple
                               showUploadList={false}
@@ -867,9 +893,10 @@ interface CustomerOrder {
                             >
                               {uploading
                                 ? <><AntSpin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
-                                : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                                : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, kattints &middot; vagy Ctrl+V</span>
                               }
                             </Upload.Dragger>
+                            </div>
                             {!loaded ? <AntSpin size="small" /> : atts.length === 0 ? (
                               <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
                             ) : (

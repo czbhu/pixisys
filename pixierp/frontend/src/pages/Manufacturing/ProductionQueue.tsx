@@ -1,4 +1,5 @@
-import React, { useEffect, useMemo, useState, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
@@ -171,6 +172,28 @@ const ProductionQueue: React.FC = () => {
     const [editingAttRemarkId, setEditingAttRemarkId] = useState<number | null>(null);
     const [editingAttRemarkVal, setEditingAttRemarkVal] = useState('');
     const [queueAttPreviewUrl, setQueueAttPreviewUrl] = useState<string | null>(null);
+
+    // --- Clipboard paste for attachment upload rows ---
+    const lastPasteCiIdRef = useRef<number | null>(null);
+    const costItemAttRemarkRef = useRef<Record<number, string>>({});
+    useEffect(() => { costItemAttRemarkRef.current = costItemAttRemark; }, [costItemAttRemark]);
+    const handleQueuePasteFile = useCallback((file: File) => {
+        const ciId = lastPasteCiIdRef.current;
+        if (!ciId) return;
+        setCostItemAttUploading(prev => ({ ...prev, [ciId]: (prev[ciId] || 0) + 1 }));
+        const fd = new FormData();
+        fd.append('file', file);
+        const remark = costItemAttRemarkRef.current[ciId] || '';
+        if (remark) fd.append('remark', remark);
+        api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+            .then(res => {
+                setCostItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
+                message.success('Kép feltöltve');
+            })
+            .catch(() => message.error('Feltöltés sikertelen'))
+            .finally(() => setCostItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })));
+    }, []);
+    useClipboardImagePaste(handleQueuePasteFile, expandedRowKeys.length > 0);
     const [queueAttPreviewTitle, setQueueAttPreviewTitle] = useState('');
     const [queueAttPreviewOpen, setQueueAttPreviewOpen] = useState(false);
 
@@ -728,6 +751,9 @@ const ProductionQueue: React.FC = () => {
                         style={{ width: 340 }}
                         onChange={e => setCostItemAttRemark(prev => ({ ...prev, [ciId]: e.target.value }))}
                     />
+                    <div
+                        onMouseEnter={() => { lastPasteCiIdRef.current = ciId; }}
+                    >
                     <Upload.Dragger
                         multiple
                         showUploadList={false}
@@ -751,9 +777,10 @@ const ProductionQueue: React.FC = () => {
                     >
                         {uploading
                             ? <><Spin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
-                            : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                            : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, kattints &middot; vagy Ctrl+V</span>
                         }
                     </Upload.Dragger>
+                    </div>
                     {!loaded ? (
                         <Spin size="small" />
                     ) : atts.length === 0 ? (
