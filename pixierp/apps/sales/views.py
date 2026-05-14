@@ -116,6 +116,22 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
         order.delivered_at = now
 
     order.save()
+
+    # When order is marked delivered, confirm all associated unconfirmed DeliveryNotes
+    if new_status == 'delivered':
+        try:
+            from apps.sales.models import DeliveryNote
+            DeliveryNote.objects.filter(
+                items__customer_order_item__customer_order=order,
+                is_confirmed=False,
+            ).distinct().update(
+                is_confirmed=True,
+                confirmed_at=now,
+                confirmed_by_info='Auto (megrendelés leszállítva)',
+            )
+        except Exception:
+            pass
+
     return order
 
 
