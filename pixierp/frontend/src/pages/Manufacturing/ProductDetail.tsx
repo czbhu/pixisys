@@ -18,6 +18,7 @@ import api from '../../services/api';
 import NumInput from '../../components/NumInput';
 import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -155,6 +156,23 @@ const ManufacturingProductDetail: React.FC = () => {
   const [attPreviewOpen, setAttPreviewOpen] = useState(false);
   const [attPreviewUrl, setAttPreviewUrl] = useState<string | null>(null);
   const [attPreviewTitle, setAttPreviewTitle] = useState('');
+  const [attDragOver, setAttDragOver] = useState(false);
+
+  const doUploadAttachment = useCallback(async (file: File) => {
+    setUploadingAtt(true);
+    try {
+      const att = await manufacturingService.uploadProductAttachment(Number(id), file, pendingRemark || undefined);
+      setAttachments(prev => [...prev, att]);
+      setPendingRemark('');
+      message.success('Feltöltve');
+    } catch {
+      message.error('Feltöltés sikertelen');
+    } finally {
+      setUploadingAtt(false);
+    }
+  }, [id, pendingRemark]);
+
+  useClipboardImagePaste(doUploadAttachment, true);
 
   // ── Load product + reference data ─────────────────────────────────────────
 
@@ -987,9 +1005,20 @@ const ManufacturingProductDetail: React.FC = () => {
           </div>
 
           {/* ── Csatolmányok ──────────────────────────────────────────────── */}
-          <div style={{ background: '#fafafa', border: '1px solid #d9d9d9', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10 }}>
+          <div
+            style={{ background: attDragOver ? '#e6f4ff' : '#fafafa', border: attDragOver ? '2px dashed #1677ff' : '1px solid #d9d9d9', borderRadius: 8, padding: '8px 14px 12px', marginBottom: 10, transition: 'all 0.15s' }}
+            onDragOver={e => { e.preventDefault(); setAttDragOver(true); }}
+            onDragLeave={() => setAttDragOver(false)}
+            onDrop={e => {
+              e.preventDefault();
+              setAttDragOver(false);
+              const files = Array.from(e.dataTransfer.files);
+              files.forEach(f => doUploadAttachment(f));
+            }}
+          >
             <div style={{ fontSize: 11, fontWeight: 600, color: '#595959', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
               <PaperClipOutlined style={{ marginRight: 6 }} />Csatolmányok
+              <span style={{ fontWeight: 400, fontSize: 10, color: '#aaa', marginLeft: 8, textTransform: 'none' }}>— húzd ide vagy Ctrl+V</span>
             </div>
             <Row gutter={8} style={{ marginBottom: 8 }} align="middle">
               <Col>
@@ -1005,17 +1034,7 @@ const ManufacturingProductDetail: React.FC = () => {
                 <Upload
                   showUploadList={false}
                   beforeUpload={async (file) => {
-                    setUploadingAtt(true);
-                    try {
-                      const att = await manufacturingService.uploadProductAttachment(Number(id), file, pendingRemark || undefined);
-                      setAttachments(prev => [...prev, att]);
-                      setPendingRemark('');
-                      message.success('Feltöltve');
-                    } catch {
-                      message.error('Feltöltés sikertelen');
-                    } finally {
-                      setUploadingAtt(false);
-                    }
+                    await doUploadAttachment(file);
                     return false;
                   }}
                 >
