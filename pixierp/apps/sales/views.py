@@ -6318,6 +6318,18 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         if dn.customer and dn.customer.email:
              if dn.customer.email not in suggested_recipients:
                  suggested_recipients.append(dn.customer.email)
+
+        # Add contacts from the associated order's QuoteRequest
+        try:
+            order_ids = dn.items.values_list('customer_order_item__customer_order_id', flat=True).distinct()
+            from apps.sales.models import CustomerOrder as CO
+            for order in CO.objects.filter(id__in=order_ids).select_related('quote_request').prefetch_related('quote_request__contacts'):
+                if order.quote_request:
+                    for c in order.quote_request.contacts.all():
+                        if c.email and c.email not in suggested_recipients:
+                            suggested_recipients.append(c.email)
+        except Exception:
+            pass
         
         # Check datetime for template compatibility
         d_val = dn.delivery_date or dn.created_at
