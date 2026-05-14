@@ -1,13 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { Card, Table, message, Tag, Typography, Descriptions, Spin, Checkbox, Button, Input, Alert, Modal, Row, Col } from 'antd';
-import { CheckCircleOutlined, PrinterOutlined } from '@ant-design/icons';
+import { Card, Table, message, Tag, Typography, Descriptions, Spin, Checkbox, Button, Input, Alert, Modal, Row, Col, List } from 'antd';
+import { CheckCircleOutlined, PrinterOutlined, FilePdfOutlined, FileOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import api from '../../services/api';
 import dayjs from 'dayjs';
 
 const { Title } = Typography;
 const { TextArea } = Input;
+
+interface DocAttachment {
+    att_id: number;
+    type: string;
+    filename: string;
+    file_url: string | null;
+    remark?: string;
+}
 
 interface DeliveryNoteItem {
     id: number;
@@ -17,6 +25,7 @@ interface DeliveryNoteItem {
     unit: string;
     net_unit_price: number;
     order_number?: string;
+    documentation?: DocAttachment[];
 }
 
 interface ContactData {
@@ -57,6 +66,7 @@ const PublicDeliveryNote: React.FC = () => {
     const [submitting, setSubmitting] = useState(false);
     const [showPrices, setShowPrices] = useState(false);
     const [modalVisible, setModalVisible] = useState(false);
+    const [docsModal, setDocsModal] = useState<{ visible: boolean; docs: DocAttachment[]; itemName: string }>({ visible: false, docs: [], itemName: '' });
 
     const fetchDeliveryData = async () => {
         try {
@@ -120,6 +130,40 @@ const PublicDeliveryNote: React.FC = () => {
             key: 'quantity', 
             align: 'right',
             render: (_: any, r: DeliveryNoteItem) => <span style={{fontSize: 16}}>{r.quantity} {r.unit}</span> 
+        },
+        {
+            title: 'Dokumentáció',
+            key: 'documentation',
+            align: 'center',
+            width: 150,
+            render: (_: any, r: DeliveryNoteItem) => {
+                const docs = r.documentation || [];
+                if (docs.length === 0) return <span style={{ color: '#ccc' }}>—</span>;
+                if (docs.length === 1 && docs[0].file_url) {
+                    return (
+                        <Button
+                            type="link"
+                            size="small"
+                            icon={<FilePdfOutlined style={{ color: '#1677ff' }} />}
+                            onClick={() => window.open(docs[0].file_url!, '_blank')}
+                            style={{ padding: 0 }}
+                        >
+                            <Tag color="green" style={{ cursor: 'pointer', marginLeft: 4 }}>Kész dok.</Tag>
+                        </Button>
+                    );
+                }
+                return (
+                    <Button
+                        type="link"
+                        size="small"
+                        icon={<FilePdfOutlined style={{ color: '#1677ff' }} />}
+                        onClick={() => setDocsModal({ visible: true, docs, itemName: r.item_name })}
+                        style={{ padding: 0 }}
+                    >
+                        <Tag color="green" style={{ cursor: 'pointer', marginLeft: 4 }}>Kész dok. ({docs.length})</Tag>
+                    </Button>
+                );
+            },
         },
     ];
 
@@ -310,6 +354,38 @@ const PublicDeliveryNote: React.FC = () => {
             <div style={{textAlign: 'center', color: '#999', paddingBottom: 20}}>
                 PixiSys ERP
             </div>
+
+            <Modal
+                title={`Dokumentáció — ${docsModal.itemName}`}
+                open={docsModal.visible}
+                onCancel={() => setDocsModal({ visible: false, docs: [], itemName: '' })}
+                footer={null}
+                width={500}
+            >
+                <List
+                    dataSource={docsModal.docs}
+                    renderItem={(doc) => (
+                        <List.Item
+                            actions={doc.file_url ? [
+                                <Button
+                                    type="primary"
+                                    size="small"
+                                    icon={<FilePdfOutlined />}
+                                    onClick={() => window.open(doc.file_url!, '_blank')}
+                                >
+                                    Megnyitás
+                                </Button>
+                            ] : []}
+                        >
+                            <List.Item.Meta
+                                avatar={<FileOutlined style={{ fontSize: 22, color: '#1677ff' }} />}
+                                title={doc.filename || 'Dokumentum'}
+                                description={doc.remark || undefined}
+                            />
+                        </List.Item>
+                    )}
+                />
+            </Modal>
         </div>
     );
 }

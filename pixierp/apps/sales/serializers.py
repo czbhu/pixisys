@@ -1211,6 +1211,7 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     delivery_note_public_url = serializers.SerializerMethodField()
     item_code = serializers.SerializerMethodField()
     invoice_number = serializers.CharField(source='customer_order_item.customer_order.invoice_number', read_only=True)
+    documentation = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryNoteItem
@@ -1250,6 +1251,39 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
         from django.conf import settings
         frontend_url = getattr(settings, 'FRONTEND_BASE_URL', '')
         return f"{frontend_url}/public/delivery-note/{dn.public_token}"
+
+    def get_documentation(self, obj):
+        docs = []
+        request = self.context.get('request')
+        try:
+            qi = obj.customer_order_item.quote_item
+            for att in qi.attachments.filter(is_documentation=True):
+                file_url = request.build_absolute_uri(att.file.url) if (request and att.file) else (att.file.url if att.file else None)
+                docs.append({
+                    'att_id': att.id,
+                    'type': 'quote',
+                    'filename': att.original_filename or (att.file.name.split('/')[-1] if att.file else ''),
+                    'file_url': file_url,
+                    'remark': att.remark,
+                })
+        except Exception:
+            pass
+        try:
+            qi = obj.customer_order_item.quote_item
+            from apps.manufacturing.models import ManufacturingCostItem
+            for ci in ManufacturingCostItem.objects.filter(quote_request_item=qi):
+                for ci_att in ci.attachments.filter(is_documentation=True):
+                    file_url = request.build_absolute_uri(ci_att.file.url) if (request and ci_att.file) else (ci_att.file.url if ci_att.file else None)
+                    docs.append({
+                        'att_id': ci_att.id,
+                        'type': 'cost',
+                        'filename': ci_att.original_filename or (ci_att.file.name.split('/')[-1] if ci_att.file else ''),
+                        'file_url': file_url,
+                        'remark': ci_att.remark,
+                    })
+        except Exception:
+            pass
+        return docs
 
 class DeliveryNoteSerializer(serializers.ModelSerializer):
     items = DeliveryNoteItemSerializer(many=True, read_only=True)
