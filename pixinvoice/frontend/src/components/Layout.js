@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { 
   Home, 
@@ -15,7 +16,7 @@ import {
   User
 } from 'lucide-react';
 import styled from 'styled-components';
-import { Dropdown, Avatar } from 'antd';
+import { Dropdown, Avatar, Select, message } from 'antd';
 import CompanySelector from './CompanySelector';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -313,8 +314,56 @@ const Layout = ({ children }) => {
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, logout } = useAuth();
+  const { user, setUser, logout } = useAuth();
   const isSidebarVisuallyCollapsed = !isMobile && isCollapsed;
+
+  // User switcher (superadmin only)
+  const isSuperuser = !!user?.is_superuser;
+  const [switchUsers, setSwitchUsers] = useState([]);
+  const [switching, setSwitching] = useState(false);
+  const [originalToken, setOriginalToken] = useState(null);
+  const [originalUserId, setOriginalUserId] = useState(null);
+
+  useEffect(() => {
+    if (isSuperuser) {
+      axios.get('/api/system-users/', { params: { is_active: true, page_size: 200 } })
+        .then(res => {
+          const list = Array.isArray(res.data) ? res.data : res.data?.results || [];
+          setSwitchUsers(list);
+        })
+        .catch(() => {});
+    }
+  }, [isSuperuser]);
+
+  const handleSwitchUser = useCallback(async (userId) => {
+    const superToken = originalToken || localStorage.getItem('access_token');
+    if (!originalToken) {
+      setOriginalToken(superToken);
+      setOriginalUserId(user?.id);
+    }
+    setSwitching(true);
+    try {
+      const res = await axios.post('/api/auth/switch-user/', { user_id: userId }, {
+        headers: { Authorization: `Bearer ${superToken}` },
+      });
+      const { user: newUser, tokens } = res.data;
+      const normalized = {
+        ...newUser,
+        roles: Array.isArray(newUser.roles) ? newUser.roles : [],
+        allowed_menus: Array.isArray(newUser.allowed_menus) ? newUser.allowed_menus : [],
+      };
+      localStorage.setItem('access_token', tokens.access);
+      localStorage.setItem('refresh_token', tokens.refresh);
+      localStorage.setItem('user', JSON.stringify(normalized));
+      axios.defaults.headers.common['Authorization'] = `Bearer ${tokens.access}`;
+      setUser(normalized);
+      message.success(`Átváltva: ${newUser.email}`);
+    } catch (err) {
+      message.error(err?.response?.data?.error || 'Nem sikerült a felhasználó váltás');
+    } finally {
+      setSwitching(false);
+    }
+  }, [originalToken, user, setUser]);
 
   // Global ESC key: close the topmost open modal/drawer, or navigate back if none are open.
   const handleGlobalEsc = useCallback((e) => {
@@ -530,6 +579,25 @@ const Layout = ({ children }) => {
             })}
           </SidebarNav>
         </NavScroll>
+        {isSuperuser && !isSidebarVisuallyCollapsed && switchUsers.length > 0 && (
+          <div style={{ padding: '8px', borderTop: '1px solid #34495e' }}>
+            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginBottom: 4, paddingLeft: 2 }}>Felhasználó váltás</div>
+            <Select
+              size="small"
+              style={{ width: '100%' }}
+              value={user?.id}
+              loading={switching}
+              onChange={handleSwitchUser}
+              showSearch
+              optionFilterProp="label"
+              popupMatchSelectWidth={false}
+              options={switchUsers.map(u => ({
+                value: u.id,
+                label: `${u.email}${u.id === originalUserId ? ' ★' : ''}`,
+              }))}
+            />
+          </div>
+        )}
       </Sidebar>
       
       <MainContent $collapsed={isCollapsed} $isMobile={isMobile}>

@@ -1,6 +1,6 @@
 from rest_framework import status
 from rest_framework.decorators import api_view, permission_classes
-from rest_framework.permissions import AllowAny
+from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from django.contrib.auth import authenticate, get_user_model
@@ -305,6 +305,7 @@ def login_view(request):
                     'companies': companies_data,
                     'roles': roles_data,
                     'allowed_menus': allowed_menus,
+                    'is_superuser': django_user.is_superuser,
                 },
                 'tokens': {
                     'access': str(refresh.access_token),
@@ -454,3 +455,62 @@ def password_reset_confirm_view(request):
             {'error': 'Érvénytelen link'},
             status=status.HTTP_400_BAD_REQUEST
         )
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def switch_user_view(request):
+    """Switch to another system user. Only available for Django superusers."""
+    if not request.user.is_superuser:
+        return Response(
+            {'error': 'Csak szuperadmin jogosultsággal elérhető.'},
+            status=status.HTTP_403_FORBIDDEN
+        )
+
+    target_user_id = request.data.get('user_id')
+    if not target_user_id:
+        return Response({'error': 'user_id szükséges.'}, status=status.HTTP_400_BAD_REQUEST)
+
+    try:
+        system_user = SystemUser.objects.get(id=target_user_id, is_active=True)
+    except (SystemUser.DoesNotExist, Exception):
+        return Response({'error': 'A felhasználó nem található.'}, status=status.HTTP_404_NOT_FOUND)
+
+    # Get or create linked Django user for token generation
+    django_user, created = User.objects.get_or_create(
+        email=system_user.email,
+        defaults={
+            'username': system_user.email,
+            'first_name': system_user.first_name,
+            'last_name': system_user.last_name,
+            'is_active': True,
+        }
+    )
+    if created:
+        django_user.set_unusable_password()
+        django_user.save()
+
+    refresh = RefreshToken.for_user(django_user)
+    roles_data, allowed_menus = _serialize_roles_for_user(system_user)
+    companies_data = [
+        {'id': str(c.id), 'name': c.name, 'short_name': c.short_name}
+        for c in system_user.companies.filter(is_active=True)
+    ]
+
+    return Response({
+        'user': {
+            'id': str(system_user.id),
+            'email': system_user.email,
+            'first_name': system_user.first_name,
+            'last_name': system_user.last_name,
+            'full_name': system_user.full_name,
+            'companies': companies_data,
+            'roles': roles_data,
+            'allowed_menus': allowed_menus,
+            'is_superuser': django_user.is_superuser,
+        },
+        'tokens': {
+            'access': str(refresh.access_token),
+            'refresh': str(refresh),
+        },
+    })
