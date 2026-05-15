@@ -1334,6 +1334,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
         new_number = f"{today_str}{daily_count:02d}"
 
+        # Use the source deadline only if it's still in the future; otherwise
+        # leave it unset so the auto-archive logic in list() doesn't immediately
+        # archive the copy when it has an already-passed deadline.
+        future_deadline = src.deadline if (src.deadline and src.deadline > today) else None
+
         dst = QuoteRequest.objects.create(
             number=new_number,
             request_number=new_number,
@@ -1345,7 +1350,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             internal_description=src.internal_description,
             status='new',
             requested_by=request.user if request.user.is_authenticated else src.requested_by,
-            deadline=src.deadline,
+            deadline=future_deadline,
             project=src.project,
             currency=src.currency,
         )
