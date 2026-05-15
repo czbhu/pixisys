@@ -219,10 +219,11 @@ const ProductionQueue: React.FC = () => {
         const orderParam = Number(searchParams.get('order') || 0);
         if (orderParam > 0) {
             setFilterOrder(orderParam);
+            setFilterSupplier(null); // QR scan: clear persisted supplier filter so urlDeptFilter takes effect
             // QR scan: auto-apply the logged-in user's first HR department as dept filter
             const deptIds: number[] = (user as any)?.department_ids || [];
             if (deptIds.length > 0) {
-                setUrlDeptFilter(deptIds[0]);
+                setUrlDeptFilter(Number(deptIds[0]));
             }
         }
     }, [searchParams, user]);
@@ -247,6 +248,11 @@ const ProductionQueue: React.FC = () => {
                 sup.set(r.supplier_id, r.supplier_name);
             }
         });
+        // Ensure urlDeptFilter always has a label option even if no rows exist for it yet
+        if (urlDeptFilter != null && !dep.has(urlDeptFilter)) {
+            const found = allDepartments.find((d: any) => d.id === urlDeptFilter);
+            if (found) dep.set(urlDeptFilter, found.name || `Belső #${urlDeptFilter}`);
+        }
         const opts: any[] = [];
         if (sup.size) {
             opts.push({
@@ -267,7 +273,7 @@ const ProductionQueue: React.FC = () => {
             });
         }
         return opts;
-    }, [rows]);
+    }, [rows, urlDeptFilter, allDepartments]);
 
     const normalize = (s: any) =>
         (s ?? '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
