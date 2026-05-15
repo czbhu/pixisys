@@ -442,7 +442,7 @@ export default function IncomingProformas() {
       const m = String(d.getMonth() + 1).padStart(2, '0');
       const day = String(d.getDate()).padStart(2, '0');
       const params = {
-        format: 'pain.001',
+        export_format: 'pain.001',
         execution_date: `${y}-${m}-${day}`,
         company_id: companyId,
       };
@@ -788,15 +788,13 @@ export default function IncomingProformas() {
                           <SmallMuted>Bruttó összesen: {totalText}</SmallMuted>
                         </div>
                         <div style={{ display:'flex', gap:8, flexWrap:'wrap' }}>
+                          <BatchActionButton onClick={()=>markBatchPaid(b)} title="Tételek kifizetve jelölése">
+                            Kifizetve
+                          </BatchActionButton>
                           {batchTab==='pending' && (
-                            <>
-                              <BatchActionButton onClick={()=>markBatchPaid(b)} title="Tételek kifizetve jelölése">
-                                Kifizetve
-                              </BatchActionButton>
-                              <BatchActionButton onClick={()=>startEditBatch(b)} title="Csomag módosítása">
-                                <Edit2 size={16}/> Módosítás
-                              </BatchActionButton>
-                            </>
+                            <BatchActionButton onClick={()=>startEditBatch(b)} title="Csomag módosítása">
+                              <Edit2 size={16}/> Módosítás
+                            </BatchActionButton>
                           )}
                           <BatchActionButton onClick={()=>exportBatchCsv(b)} title="Export CSV">
                             <FileDown size={16}/> Export

@@ -344,3 +344,91 @@ def get_exchange_rate(request):
         logger.error(f"Failed to fetch MNB rate for {code} on {target_date}: {e}")
         return JsonResponse({'error': str(e)}, status=500)
 
+
+@csrf_exempt
+def menu_badge_counts(request):
+    """
+    GET /api/menu-badges/?company_id=X&since_invoices=ISO&since_scheduled_invoices=ISO&...
+    Returns count of new items per menu section since the given timestamps.
+    Sections: invoices, scheduled_invoices, incoming_invoices, incoming_invoices_external,
+              proformas, incoming_proformas, cash_registers
+    """
+    from rest_framework.decorators import api_view, permission_classes as pc_decorator
+    from rest_framework.permissions import IsAuthenticated
+    from rest_framework_simplejwt.authentication import JWTAuthentication
+    from rest_framework.request import Request as DRFRequest
+
+    # Wrap in DRF request to run JWT authentication
+    drf_request = DRFRequest(request, authenticators=[JWTAuthentication()])
+    try:
+        drf_request._authenticate()
+    except Exception:
+        pass
+
+    if not drf_request.user or not drf_request.user.is_authenticated:
+        return JsonResponse({'error': 'Authentication required'}, status=401)
+
+    company_id = request.GET.get('company_id', '').strip()
+    if not company_id:
+        return JsonResponse({})
+
+    try:
+        from invoices.models import (
+            Company, Invoice, ScheduledInvoice, IncomingInvoiceDigest,
+            ProformaInvoice, CashRegisterTransaction, IncomingProforma,
+        )
+        from django.utils.dateparse import parse_datetime
+
+        try:
+            company = Company.objects.get(id=company_id)
+        except Company.DoesNotExist:
+            return JsonResponse({})
+
+        def _since(key):
+            v = request.GET.get(key, '').strip()
+            if not v:
+                return None
+            try:
+                dt = parse_datetime(v)
+                if dt and dt.tzinfo is None:
+                    import pytz
+                    dt = pytz.utc.localize(dt)
+                return dt
+            except Exception:
+                return None
+
+        result = {}
+
+        s = _since('since_invoices')
+        if s:
+            result['invoices'] = Invoice.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_scheduled_invoices')
+        if s:
+            result['scheduled_invoices'] = ScheduledInvoice.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_incoming_invoices')
+        if s:
+            result['incoming_invoices'] = IncomingInvoiceDigest.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_incoming_invoices_external')
+        if s:
+            result['incoming_invoices_external'] = IncomingInvoiceDigest.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_proformas')
+        if s:
+            result['proformas'] = ProformaInvoice.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_incoming_proformas')
+        if s:
+            result['incoming_proformas'] = IncomingProforma.objects.filter(company=company, created_at__gt=s).count()
+
+        s = _since('since_cash_registers')
+        if s:
+            result['cash_registers'] = CashRegisterTransaction.objects.filter(company=company, created_at__gt=s).count()
+
+        return JsonResponse(result)
+
+    except Exception as e:
+        logger.error(f"menu_badge_counts error: {e}")
+        return JsonResponse({})

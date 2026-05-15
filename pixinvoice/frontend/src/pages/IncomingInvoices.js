@@ -1608,7 +1608,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
       const m = String(execDate.getMonth()+1).padStart(2, '0');
       const d = String(execDate.getDate()).padStart(2, '0');
       let res;
-      const params = { format: 'pain.001', execution_date: `${y}-${m}-${d}`, company_id: companyId };
+      const params = { export_format: 'pain.001', execution_date: `${y}-${m}-${d}`, company_id: companyId };
       if (opts.skipMissing) {
         params.skip_missing = '1';
       }
@@ -1638,6 +1638,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
         toast.success('Banki export elkészült');
       }
       try { await fetchBatchLists(); } catch {}
+      fetchDigest(1, { replace: true });
     } catch (e) {
       const parsed = await parseExportError(e);
       const resp = parsed || {};
@@ -2163,7 +2164,7 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
                   <div>{row.grossAmount}</div>
                   {row.currency && row.currency !== 'HUF' && row.netAmountHUF && (
                     <SmallMuted>
-                      {Number(row.netAmountHUF) + Number(row.vatAmountHUF || 0)} HUF
+                      {(Number(row.netAmountHUF) + Number(row.vatAmountHUF || 0)).toLocaleString('hu-HU', { maximumFractionDigits: 0 })} HUF
                     </SmallMuted>
                   )}
                 </TableCell>
@@ -2735,11 +2736,11 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
 
       {/* Pending Batches Modal */}
       {showBatches && (
-        <ModalOverlay onClick={()=>setShowBatches(false)}>
+        <ModalOverlay onClick={()=>{ setShowBatches(false); fetchDigest(1, { replace: true }); }}>
           <ModalContent onClick={(e)=>e.stopPropagation()}>
             <ModalHeader>
               <ModalTitle>Fizetési csomagok</ModalTitle>
-              <CloseBtn onClick={()=>setShowBatches(false)}>Bezárás</CloseBtn>
+              <CloseBtn onClick={()=>{ setShowBatches(false); fetchDigest(1, { replace: true }); }}>Bezárás</CloseBtn>
             </ModalHeader>
             <ModalBody>
               <div style={{ display:'flex', gap:8, marginBottom:12 }}>

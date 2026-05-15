@@ -146,6 +146,10 @@ function parseIncomingXmlForPrint(xmlRaw) {
         totalGross += line.gross || ((line.net || 0) + (line.vat || 0));
       });
     }
+    const totalNetHUF = number(firstText('invoiceNetAmountHUF')) || null;
+    const totalVatHUF = number(firstText('invoiceVatAmountHUF')) || null;
+    const totalGrossHUF = number(firstText('invoiceGrossAmountHUF')) || (totalNetHUF != null ? (totalNetHUF + (totalVatHUF || 0)) : null);
+    const exchangeRate = number(firstText('exchangeRate')) || null;
 
     const vatSummary = Array.from(doc.getElementsByTagNameNS('*', 'summaryByVatRate')).map((group) => {
       const ratePct = number(textFrom(group, 'vatPercentage'));
@@ -181,6 +185,12 @@ function parseIncomingXmlForPrint(xmlRaw) {
         vat: totalVat,
         gross: totalGross,
       },
+      totalsHUF: (totalNetHUF != null || totalVatHUF != null) ? {
+        net: totalNetHUF,
+        vat: totalVatHUF,
+        gross: totalGrossHUF,
+      } : null,
+      exchangeRate,
     };
   } catch (_) {
     return null;
@@ -702,6 +712,14 @@ export default function IncomingInvoiceOpen() {
           <div><strong>Nettó:</strong> {fmt(parsed.totals?.net)}</div>
           <div><strong>ÁFA:</strong> {fmt(parsed.totals?.vat)}</div>
           <div><strong>Összesen:</strong> {fmt(parsed.totals?.gross)} {parsed.currency || ''}</div>
+          {parsed.currency && parsed.currency !== 'HUF' && parsed.totalsHUF && (
+            <div style={{ marginTop: 6, paddingTop: 6, borderTop: '1px solid #eee', color: '#555', fontSize: 13 }}>
+              <div><strong>Nettó (HUF):</strong> {fmt(parsed.totalsHUF?.net)}</div>
+              <div><strong>ÁFA (HUF):</strong> {fmt(parsed.totalsHUF?.vat)}</div>
+              <div><strong>Összesen (HUF):</strong> {fmt(parsed.totalsHUF?.gross)} HUF</div>
+              {parsed.exchangeRate && <div style={{ fontSize: 11, color: '#888' }}>Árfolyam: 1 {parsed.currency} = {parsed.exchangeRate} HUF</div>}
+            </div>
+          )}
         </div>
       </div>
 

@@ -14291,7 +14291,7 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['get', 'post'], url_path='bank-export')
     def export_file(self, request, pk=None):
         batch = self.get_object()
-        fmt = (request.data.get('format') or request.query_params.get('format') or 'sepa').lower()
+        fmt = (request.data.get('export_format') or request.query_params.get('export_format') or request.data.get('format') or request.query_params.get('format') or 'sepa').lower()
         exec_date_str = request.data.get('execution_date') or request.query_params.get('execution_date')
         try:
             exec_date = datetime.strptime(exec_date_str, '%Y-%m-%d').date() if exec_date_str else timezone.now().date()
@@ -14462,6 +14462,21 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
         except Exception:
             pass
 
+        # Auto-mark matching proformas as paid (same logic as mark_paid action)
+        try:
+            from invoices.models import IncomingProforma as _InProforma
+            for it in batch.items.all():
+                pqs = _InProforma.objects.filter(
+                    company=batch.company,
+                    proforma_number=it.invoice_number,
+                    status='unpaid',
+                )
+                if it.supplier_tax_number:
+                    pqs = pqs.filter(supplier_tax_number=it.supplier_tax_number)
+                pqs.update(status='paid', payment_date=exec_date)
+        except Exception:
+            pass
+
         resp = HttpResponse(content, content_type=content_type)
         resp['Content-Disposition'] = f'attachment; filename="{filename}"'
         if skipped_missing:
@@ -14584,6 +14599,11 @@ class PaymentBatchViewSet(viewsets.ModelViewSet):
             instd = ET.SubElement(amt, ET.QName(ns, 'InstdAmt'))
             instd.set('Ccy', it['currency'])
             instd.text = f"{decimal.Decimal(it['amount']):.2f}"
+            swift = (it.get('swift_bic') or '').strip()
+            if swift:
+                cdtr_agt = ET.SubElement(tx, ET.QName(ns, 'CdtrAgt'))
+                fin_instn = ET.SubElement(cdtr_agt, ET.QName(ns, 'FinInstnId'))
+                ET.SubElement(fin_instn, ET.QName(ns, 'BIC')).text = swift
             cdtr = ET.SubElement(tx, ET.QName(ns, 'Cdtr'))
             ET.SubElement(cdtr, ET.QName(ns, 'Nm')).text = self._sanitize_xml_text(it['name'])
             cdtr_acct = ET.SubElement(tx, ET.QName(ns, 'CdtrAcct'))
