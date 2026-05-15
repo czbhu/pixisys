@@ -856,6 +856,45 @@ class ManufacturingCostItemViewSet(
         p.save()
         return buffer.getvalue()
 
+    def _build_group_context(self, items):
+        """Build rendering context for a group of ManufacturingCostItem objects.
+        Returns dict with item_count, item_table_html, item_list_text."""
+        item_count = len(items)
+        rows_html = ''
+        rows_text = []
+        for ci in items:
+            name = ci.name or ''
+            qty = ci.quantity
+            unit = ci.unit or 'db'
+            notes = ci.notes or ''
+            rows_html += (
+                f'<tr>'
+                f'<td style="padding:4px 8px;border:1px solid #ddd;">{name}</td>'
+                f'<td style="padding:4px 8px;border:1px solid #ddd;text-align:right;">{qty}</td>'
+                f'<td style="padding:4px 8px;border:1px solid #ddd;">{unit}</td>'
+                f'<td style="padding:4px 8px;border:1px solid #ddd;">{notes}</td>'
+                f'</tr>'
+            )
+            note_part = f' ({notes})' if notes else ''
+            rows_text.append(f'- {name}: {qty} {unit}{note_part}')
+        item_table_html = (
+            '<table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:13px;">'
+            '<thead><tr style="background:#f0f0f0;">'
+            '<th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Megnevezés</th>'
+            '<th style="padding:6px 8px;border:1px solid #ddd;text-align:right;">Mennyiség</th>'
+            '<th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Egység</th>'
+            '<th style="padding:6px 8px;border:1px solid #ddd;text-align:left;">Megjegyzés</th>'
+            '</tr></thead>'
+            f'<tbody>{rows_html}</tbody>'
+            '</table>'
+        ) if items else ''
+        item_list_text = '\n'.join(rows_text)
+        return {
+            'item_count': item_count,
+            'item_table_html': item_table_html,
+            'item_list_text': item_list_text,
+        }
+
     @action(detail=False, methods=['post'], url_path='render_supplier_order')
     def render_supplier_order(self, request):
         """Body: { cost_item_ids: [int, ...] }
