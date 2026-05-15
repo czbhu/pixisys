@@ -156,6 +156,31 @@ const NavItem = styled(Link)`
   }
 `;
 
+const NavItemWrap = styled.div`
+  position: relative;
+  display: flex;
+  align-items: stretch;
+`;
+
+const NavBadge = styled.span`
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  background: #e74c3c;
+  color: white;
+  border-radius: 10px;
+  min-width: 18px;
+  height: 18px;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 4px;
+  pointer-events: none;
+  z-index: 1;
+`;
+
 const MainContent = styled.main`
   flex: 1;
   margin-left: ${(p) => (p.$isMobile ? '0' : (p.$collapsed ? '74px' : '250px'))};
@@ -437,46 +462,132 @@ const Layout = ({ children }) => {
     }
   }, [location.pathname, isMobile]);
 
+  // --- Badge counts ---
+  const BADGE_PATHS = {
+    '/invoices': 'invoices',
+    '/scheduled-invoices': 'scheduled_invoices',
+    '/incoming-invoices': 'incoming_invoices',
+    '/incoming-invoices-external': 'incoming_invoices_external',
+    '/proformas': 'proformas',
+    '/incoming-proformas': 'incoming_proformas',
+    '/cash-registers': 'cash_registers',
+  };
+  const BADGE_KEYS = Object.values(BADGE_PATHS);
+  const companyId = selectedCompany?.id || null;
+  const [badgeCounts, setBadgeCounts] = useState({});
+
+  useEffect(() => {
+    BADGE_KEYS.forEach(k => {
+      if (!localStorage.getItem('badge_seen_' + k)) {
+        localStorage.setItem('badge_seen_' + k, new Date().toISOString());
+      }
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    const badgeKey = BADGE_PATHS[location.pathname];
+    if (badgeKey) {
+      localStorage.setItem('badge_seen_' + badgeKey, new Date().toISOString());
+      setBadgeCounts(prev => ({ ...prev, [badgeKey]: 0 }));
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.pathname]);
+
+  const fetchBadgeCounts = useCallback(async () => {
+    try {
+      const params = {};
+      if (companyId) params.company_id = companyId;
+      BADGE_KEYS.forEach(k => {
+        const ts = localStorage.getItem('badge_seen_' + k);
+        if (ts) params['since_' + k] = ts;
+      });
+      const res = await axios.get('/api/menu-badges/', { params });
+      setBadgeCounts(res.data || {});
+    } catch (err) {
+      // fail silently
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [companyId]);
+
+  useEffect(() => {
+    fetchBadgeCounts();
+    const interval = setInterval(fetchBadgeCounts, 60000);
+    return () => clearInterval(interval);
+  }, [fetchBadgeCounts]);
+
+  // Favicon badge
+  useEffect(() => {
+    const total = Object.values(badgeCounts).reduce((s, v) => s + (Number(v) || 0), 0);
+    const link = document.querySelector("link[rel='icon']") || document.querySelector("link[rel='shortcut icon']");
+    if (!link) return;
+    if (total === 0) {
+      link.href = '/favicon.svg';
+      return;
+    }
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = 32;
+      canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, 32, 32);
+      ctx.beginPath();
+      ctx.arc(26, 6, 7, 0, 2 * Math.PI);
+      ctx.fillStyle = '#e74c3c';
+      ctx.fill();
+      link.href = canvas.toDataURL('image/png');
+    };
+    img.src = '/favicon.svg';
+  }, [badgeCounts]);
+  // --- /Badge counts ---
+
   const navigation = [
     { path: '/', label: 'Dashboard', icon: Home, key: 'dashboard' },
     {
       path: '/invoices',
       label: 'Számlák',
       key: 'invoices',
+      badgeKey: 'invoices',
       iconNode: <OutgoingInvoiceIcon />
     },
     {
       path: '/scheduled-invoices',
       label: 'Időzített számlák',
       key: 'scheduled_invoices',
+      badgeKey: 'scheduled_invoices',
       iconNode: <OutgoingInvoiceIcon />
     },
     {
       path: '/incoming-invoices',
       label: 'Bejövő számlák',
       key: 'incoming_invoices',
+      badgeKey: 'incoming_invoices',
       iconNode: <IncomingInvoiceIcon />
     },
     {
       path: '/incoming-invoices-external',
       label: 'Kimenő számlák (külső)',
       key: 'incoming_invoices',
+      badgeKey: 'incoming_invoices_external',
       iconNode: <IncomingInvoiceIcon />
     },
     {
       path: '/proformas',
       label: 'Díjbekérők',
       key: 'proformas',
+      badgeKey: 'proformas',
       iconNode: <ProformaIcon />
     },
     {
       path: '/incoming-proformas',
       label: 'Bejövő Díjbekérők',
       key: 'incoming_proformas',
+      badgeKey: 'incoming_proformas',
       iconNode: <IncomingInvoiceIcon />
     },
     { path: '/bank-statements', label: 'Bank', icon: CreditCard, key: 'bank_statements' },
-    { path: '/cash-registers', label: 'Kassza', icon: CreditCard, key: 'bank_statements' },
+    { path: '/cash-registers', label: 'Kassza', icon: CreditCard, key: 'bank_statements', badgeKey: 'cash_registers' },
     { path: '/arrears', label: 'Kintlévőség', icon: CreditCard, key: 'arrears' },
     { path: '/customers', label: 'Ügyfelek', icon: Users, key: 'customers' },
     { path: '/contacts', label: 'Kapcsolattartók', icon: UserCheck, key: 'contacts' },
@@ -564,18 +675,21 @@ const Layout = ({ children }) => {
             {navigation.filter((item) => canSee(item.key)).map((item) => {
               const IconComp = item.icon;
               const isActive = location.pathname === item.path;
+              const badgeCount = item.badgeKey ? (badgeCounts[item.badgeKey] || 0) : 0;
               return (
-                <NavItem
-                  key={item.path}
-                  to={item.path}
-                  className={isActive ? 'active' : ''}
-                  onClick={() => {}}
-                  $collapsed={isSidebarVisuallyCollapsed}
-                  title={isSidebarVisuallyCollapsed ? item.label : undefined}
-                >
-                  {item.iconNode ? item.iconNode : <IconComp />}
-                  {!isSidebarVisuallyCollapsed && item.label}
-                </NavItem>
+                <NavItemWrap key={item.path}>
+                  <NavItem
+                    to={item.path}
+                    className={isActive ? 'active' : ''}
+                    onClick={() => {}}
+                    $collapsed={isSidebarVisuallyCollapsed}
+                    title={isSidebarVisuallyCollapsed ? item.label : undefined}
+                  >
+                    {item.iconNode ? item.iconNode : <IconComp />}
+                    {!isSidebarVisuallyCollapsed && item.label}
+                  </NavItem>
+                  {badgeCount > 0 && <NavBadge>{badgeCount}</NavBadge>}
+                </NavItemWrap>
               );
             })}
           </SidebarNav>
