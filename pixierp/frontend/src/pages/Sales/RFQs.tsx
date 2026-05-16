@@ -1018,12 +1018,62 @@ const RFQs: React.FC = () => {
         const entry = itemById.get(item.id);
         if (!entry) return;
         const node = { ...entry.enriched };
-        if (entry.childrenList.length > 0) node.children = entry.childrenList;
+        if (entry.childrenList.length > 0) node.sub_items = entry.childrenList;
         res.push(node);
       });
     });
     return res;
   }, [filtered, isItemsView]);
+
+  const renderExpandedItemRow = useCallback((r: any) => {
+    const subItems: any[] = r.sub_items || [];
+    const isMfg = r.item_type === 'manufacturing' && r.manufacturing_product;
+    return (
+      <div style={{ padding: '8px 0 8px 28px' }}>
+        {subItems.length > 0 && (
+          <Table
+            size="small"
+            pagination={false}
+            dataSource={subItems}
+            rowKey="uniqueId"
+            columns={[
+              {
+                title: 'Megnevezés', key: 'name',
+                render: (_: any, sr: any) => sr.product_name || sr.manufacturing_product_name || sr.service_name || sr.name || '—',
+              },
+              {
+                title: 'Mennyiség', key: 'quantity', width: 110, align: 'right' as const,
+                render: (_: any, sr: any) => `${Number(sr.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${sr.unit || 'db'}`,
+              },
+              {
+                title: 'Nettó egység ár', key: 'net_unit_price', width: 140, align: 'right' as const,
+                render: (_: any, sr: any) => sr.net_unit_price
+                  ? `${Number(sr.net_unit_price).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${sr.currency_symbol || 'Ft'}`
+                  : '—',
+              },
+              {
+                title: 'Nettó összeg', key: 'net_total', width: 130, align: 'right' as const,
+                render: (_: any, sr: any) => `${(Number(sr.quantity || 0) * Number(sr.net_unit_price || 0)).toLocaleString('hu-HU')} ${sr.currency_symbol || 'Ft'}`,
+              },
+            ]}
+          />
+        )}
+        {isMfg && (
+          <>
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
+            <MaterialNeedsTree
+              manufacturingProductId={Number(r.manufacturing_product)}
+              quantity={Number(r.quantity || 1)}
+              sourceType="rfq"
+              sourceId={Number(r.rfq_id || 0)}
+              sourceNumber={r.rfq_number || String(r.rfq_id || '')}
+              sourceItemName={r.manufacturing_product_name || r.product_name || r.name || ''}
+            />
+          </>
+        )}
+      </div>
+    );
+  }, []);
 
   const itemsColumns = useMemo((): ColumnsType<any> => ([
     {
@@ -1048,6 +1098,18 @@ const RFQs: React.FC = () => {
         return nameA.localeCompare(nameB, 'hu');
       },
       render: (_: any, r: any) => r.product_name || r.manufacturing_product_name || r.service_name || r.name || '—',
+    },
+    {
+      title: 'Darabszám', key: 'quantity', width: 100, align: 'right' as const,
+      sorter: (a: any, b: any) => Number(a.quantity || 0) - Number(b.quantity || 0),
+      render: (_: any, r: any) => `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+    },
+    {
+      title: 'Nettó egység ár', key: 'net_unit_price', width: 130, align: 'right' as const,
+      sorter: (a: any, b: any) => Number(a.net_unit_price || 0) - Number(b.net_unit_price || 0),
+      render: (_: any, r: any) => r.net_unit_price
+        ? `${Number(r.net_unit_price).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} ${r.currency_symbol || 'Ft'}`
+        : '—',
     },
     {
       title: 'Leírás', dataIndex: 'product_description', key: 'product_description', width: 200,
@@ -1126,12 +1188,22 @@ const RFQs: React.FC = () => {
       },
     },
     {
-      title: 'Műveletek', key: 'actions', width: 90,
+      title: 'Műveletek', key: 'actions', width: 160,
       render: (_: any, r: any) => (
-        <Space size="small">
+        <Space size="small" wrap>
           <Tooltip title="Megnyitás">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}`)} />
           </Tooltip>
+          {r.status !== 'in_progress' && (
+            <Tooltip title="Nyitás">
+              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async () => { await salesService.setQuoteRequestStatus(r.rfq_id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
+            </Tooltip>
+          )}
+          {r.status !== 'quoted' && (
+            <Tooltip title="Zárás (Árazva)">
+              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async () => { await salesService.setQuoteRequestStatus(r.rfq_id, 'quoted'); message.success('Lezárva'); loadData(); }} />
+            </Tooltip>
+          )}
           <Tooltip title="Tétel törlése">
             <Button danger icon={<DeleteOutlined />} size="small" onClick={() => {
               Modal.confirm({
@@ -1155,7 +1227,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, statusTag]);
+  ]), [navigate, statusTag, loadData]);
 
   const handleCreate = async () => {
     try {
@@ -1833,7 +1905,10 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={!isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
+          rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
+          expandedRowRender: renderExpandedItemRow,
+        } : {
           expandedRowKeys: expandedRfqKeys,
           onExpand: (expanded: boolean, record: any) => {
             if (expanded) {
@@ -1849,7 +1924,7 @@ const RFQs: React.FC = () => {
             const attCount = Array.isArray(record?.attachments) ? record.attachments.length : 0;
             return count > 0 || attCount > 0;
           },
-        } : undefined} />
+        }} />
       </Card>
       <Modal 
         title={`Ajánlat kérő kiküldése: ${(() => {
