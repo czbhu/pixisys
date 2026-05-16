@@ -1330,50 +1330,69 @@ const RFQs: React.FC = () => {
     try {
       const values = await form.validateFields();
       setCreating(true);
-      
-      const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
-      const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
-      const createPayload = {
-        title: computedTitle,
-        description: computedDescription,
-        issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
-        deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
-        partial_order_allowed: partialOrderAllowed,
-      } as any;
-      
-      console.log('[RFQs] Creating RFQ with:', createPayload);
-      const created = await salesService.createQuoteRequest(createPayload);
-      console.log('[RFQs] Created RFQ:', created);
-      
-      // Immediately enrich basic fields that serializer would reject on create
-      const updateData: any = {
+
+      // Helper: resolve item display name
+      const itemDisplayName = (it: any) =>
+        it.name || it.product_name || it.manufacturing_product_name || it.service_name || '';
+
+      // Common header update payload (company, contacts, project, currency…)
+      const baseUpdateData: any = {
         contact_ids: values.contact_ids || [],
         currency_code: currency,
         project_id: values.project_id,
         internal_description: values.internal_description || '',
       };
-      
-      // Set company_id: null for private, or the actual ID
       if (values.company_id === 'private') {
-        updateData.company_id = null;
-        console.log('[RFQs] Setting company_id to null (private)');
+        baseUpdateData.company_id = null;
       } else if (values.company_id) {
-        updateData.company_id = values.company_id;
-        console.log('[RFQs] Setting company_id to:', values.company_id);
+        baseUpdateData.company_id = values.company_id;
       }
-      
-      console.log('[RFQs] Updating with:', updateData);
-      try {
-        const updated = await salesService.updateQuoteRequestBasic(created.id, updateData);
-        console.log('[RFQs] Update successful:', updated);
-        console.log('[RFQs] Updated contacts:', updated.contacts);
-      } catch (err) {
-        console.error('[RFQs] Update basic failed:', err);
-        message.error('Nem sikerült menteni a cég/kapcsolattartó adatokat');
-        throw err; // Re-throw to prevent continuing
-      }
-      // Upload RFQ-level attachments, if any
-      if (rfqFiles.length) {
+
+      // Helper: add one item to a given RFQ id
+      const addItemToRfq = async (rfqId: number, it: any) => {
+        if (it.item_type === 'product') {
+          const createdItem = await salesService.addRfqProductItem(rfqId, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
+          if (createdItem?.id && it.files?.length) {
+            for (const f of it.files) {
+              const key = (f as any)?.uid || (f as any)?.name;
+              const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
+              try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+            }
+          }
+        } else if (it.item_type === 'manufacturing') {
+          let manuRefId = it.ref_id;
+          if ((it as any).pendingManuPayload && it.ref_id < 0) {
+            try {
+              const { _costItemsState: _cs, _currency: _cur, ...manuPayload } = (it as any).pendingManuPayload;
+              const createdProduct = await manufacturingService.createProduct(manuPayload);
+              manuRefId = createdProduct.id;
+            } catch {
+              message.error(`Egyedi gyártás létrehozása sikertelen: ${it.name}`);
+              return;
+            }
+          }
+          const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+          if (createdItem?.id && it.files?.length) {
+            for (const f of it.files) {
+              const key = (f as any)?.uid || (f as any)?.name;
+              const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
+              try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+            }
+          }
+        } else {
+          const createdItem = await salesService.addRfqServiceItem(rfqId, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+          if (createdItem?.id && it.files?.length) {
+            for (const f of it.files) {
+              const key = (f as any)?.uid || (f as any)?.name;
+              const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
+              try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
+            }
+          }
+        }
+      };
+
+      // Helper: upload RFQ-level attachments to a given RFQ
+      const uploadRfqFiles = async (rfqId: number) => {
         for (const f of rfqFiles) {
           try {
             const key = (f as any)?.uid || (f as any)?.name;
@@ -1383,84 +1402,75 @@ const RFQs: React.FC = () => {
             const uploadFile = displayName && displayName !== rawFile.name
               ? new File([rawFile], displayName, { type: rawFile.type })
               : rawFile;
-            await salesService.uploadQuoteRequestAttachment(created.id, uploadFile, remark);
+            await salesService.uploadQuoteRequestAttachment(rfqId, uploadFile, remark);
           } catch {}
         }
-      }
-      // add items if any
-      if (newItems.length) {
-        for (const it of newItems) {
-          if (it.item_type === 'product') {
-            const createdItem = await salesService.addRfqProductItem(created.id, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
-            if (createdItem?.id && it.files?.length) {
-              for (const f of it.files) {
-                const key = (f as any)?.uid || (f as any)?.name;
-                const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
-                try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
-              }
-            }
-          } else if (it.item_type === 'manufacturing') {
-            // For pending items (not yet saved), create the product first
-            let manuRefId = it.ref_id;
-            if ((it as any).pendingManuPayload && it.ref_id < 0) {
-              try {
-                const { _costItemsState: _cs, _currency: _cur, ...createPayload } = (it as any).pendingManuPayload;
-                const createdProduct = await manufacturingService.createProduct(createPayload);
-                manuRefId = createdProduct.id;
-              } catch (productErr) {
-                message.error(`Egyedi gyártás létrehozása sikertelen: ${it.name}`);
-                continue; // skip adding RFQ item for this
-              }
-            }
-            const createdItem = await salesService.addRfqManufacturingItem(created.id, manuRefId, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
-            if (createdItem?.id && it.files?.length) {
-              for (const f of it.files) {
-                const key = (f as any)?.uid || (f as any)?.name;
-                const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
-                try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
-              }
-            }
-          } else {
-            const createdItem = await salesService.addRfqServiceItem(created.id, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
-            if (createdItem?.id && it.files?.length) {
-              for (const f of it.files) {
-                const key = (f as any)?.uid || (f as any)?.name;
-                const remark = (it as any).fileRemarks ? (it as any).fileRemarks[key] : undefined;
-                try { await salesService.uploadQuoteRequestItemAttachment(createdItem.id, f as any, remark); } catch {}
-              }
-            }
-          }
-        }
-      }
+      };
 
-      // add costs if any
-      if (newCosts.length) {
-        for (const c of newCosts) {
-            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const isMulti = newItems.length > 1;
+
+      if (isMulti) {
+        // Create one separate RFQ per item
+        for (const it of newItems) {
+          const title = itemDisplayName(it) || (nextNumber || '');
+          const rfq = await salesService.createQuoteRequest({
+            title,
+            description: title || 'Új árajánlat',
+            issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
+            deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+            partial_order_allowed: partialOrderAllowed,
+          });
+          try {
+            await salesService.updateQuoteRequestBasic(rfq.id, baseUpdateData);
+          } catch (err) {
+            message.error('Nem sikerült menteni a cég/kapcsolattartó adatokat');
+            throw err;
+          }
+          if (rfqFiles.length) await uploadRfqFiles(rfq.id);
+          await addItemToRfq(rfq.id, it);
+        }
+        message.success(`${newItems.length} árajánlat létrehozva`);
+      } else {
+        // Single RFQ (0 or 1 items) — original behaviour
+        const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
+        const computedDescription = (values.description && values.description.trim()) ? values.description.trim() : (computedTitle || 'Új árajánlat');
+        const created = await salesService.createQuoteRequest({
+          title: computedTitle,
+          description: computedDescription,
+          issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
+          deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+          partial_order_allowed: partialOrderAllowed,
+        });
+        try {
+          await salesService.updateQuoteRequestBasic(created.id, baseUpdateData);
+        } catch (err) {
+          message.error('Nem sikerült menteni a cég/kapcsolattartó adatokat');
+          throw err;
+        }
+        if (rfqFiles.length) await uploadRfqFiles(created.id);
+        if (newItems.length) {
+          await addItemToRfq(created.id, newItems[0]);
+        }
+        // add costs if any (costs only in single-RFQ mode)
+        if (newCosts.length) {
+          for (const c of newCosts) {
             const payload: any = {
               ...c,
               quote_request: created.id,
-              // normalize field names: manu cost items use supplier_id / selling_unit_price
               supplier: c.supplier ?? c.supplier_id ?? null,
               net_unit_price: c.net_unit_price ?? c.selling_unit_price ?? 0,
               currency_code: (c.currency_code || c.currency || 'HUF').toUpperCase(),
-              name: c.name || undefined, // prevent blank string (causes 400)
+              name: c.name || undefined,
             };
-            delete payload.id; // temporary ID
+            delete payload.id;
             delete payload._rfqItemRef;
-            if (!payload.name) {
-              console.warn('Skipping cost with empty name:', c);
-              continue;
-            }
-            try {
-                await salesService.createQuoteRequestCost(payload);
-            } catch (err) {
-                console.error('Failed to create cost:', err);
-            }
+            if (!payload.name) continue;
+            try { await salesService.createQuoteRequestCost(payload); } catch (err) { console.error('Failed to create cost:', err); }
+          }
         }
+        message.success('Árajánlat létrehozva');
       }
 
-      message.success('Árajánlat létrehozva');
       clearDraft();
       setCreateOpen(false);
       form.resetFields();
@@ -1469,11 +1479,10 @@ const RFQs: React.FC = () => {
       setRfqFiles([]);
       setRfqFileRemarks({});
       setRfqFileDisplayNames({});
-      
+
       if (searchParams.get('create') === 'true') {
         navigate('/sales/rfqs', { replace: true });
       }
-
       loadData();
     } catch (e) {
       // validation or api error
