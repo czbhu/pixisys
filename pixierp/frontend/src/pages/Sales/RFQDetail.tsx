@@ -786,38 +786,6 @@ const RFQDetail: React.FC = () => {
               </Col>
             </Row>
           </div>
-          {/* ── Tartalom ─────────────────────────────────────────────────── */}
-          <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tartalom</div>
-            <Row gutter={[8, 4]}>
-              <Col xs={24} md={14}>
-                <Form.Item label="Megnevezés" name="title" style={{ marginBottom: 6 }}>
-                  <Input placeholder="Ha üres, az ajánlatszám lesz" />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={10}>
-                <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 6 }}>
-                  <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                    {(projects || []).map((p: any) => (
-                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                    ))}
-                  </Select>
-                </Form.Item>
-              </Col>
-            </Row>
-            <Row gutter={[8, 4]}>
-              <Col xs={24} md={12}>
-                <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                  <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Külső ajánlati leírás" />
-                </Form.Item>
-              </Col>
-              <Col xs={24} md={12}>
-                <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                  <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Belső ajánlati leírás" />
-                </Form.Item>
-              </Col>
-            </Row>
-          </div>
 
         {/* Assignment controls under the save button */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
@@ -923,136 +891,21 @@ const RFQDetail: React.FC = () => {
           </Space>
         </div>
 
-        {/* ── Csatolmányok ──────────────────────────────────────────────── */}
-        <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Csatolmányok</div>
-          <div style={{ marginBottom: 8 }}>
-            <Upload.Dragger
-              multiple
-              fileList={rfqFiles}
-              showUploadList={false}
-              beforeUpload={async (file) => {
-                try {
-                  const res = await salesService.uploadQuoteRequestAttachment(Number(id), file as any, rfqPendingRemark || undefined);
-                  setRfqFiles((prev) => [...prev, { uid: String(res.id), name: file.name, status: 'done', url: res.file_url || res.file, response: res }]);
-                  message.success(`${file.name} feltöltve`);
-                } catch {
-                  message.error(`${file.name} feltöltése nem sikerült`);
-                }
-                return Upload.LIST_IGNORE;
-              }}
-              onRemove={undefined}
-            >
-              <p className="ant-upload-drag-icon">📎</p>
-              <p className="ant-upload-text">Húzd ide a fájlokat vagy kattints a feltöltéshez</p>
-            </Upload.Dragger>
-            <div style={{ marginTop: 8 }}>
-              <Input placeholder="Megjegyzés a következő feltöltéshez" value={rfqPendingRemark} onChange={(e) => setRfqPendingRemark(e.target.value)} />
-            </div>
-          </div>
-          <List
-            size="small"
-            bordered
-            dataSource={(rfqFiles || [])}
-            locale={{ emptyText: 'Nincs csatolmány' }}
-            renderItem={(f: UploadFile & { response?: any }) => {
-              const isImage = (f.name || '').match(/\.(jpg|jpeg|png|gif|webp)$/i);
-              const handleDownload = async () => {
-                const url = f.url;
-                if (!url) return;
-                try {
-                  const response = await fetch(url);
-                  const blob = await response.blob();
-                  const blobUrl = window.URL.createObjectURL(blob);
-                  const link = document.createElement('a');
-                  link.href = blobUrl;
-                  const rfqNum = rfq?.number || rfq?.request_number || 'Ajanlat';
-                  link.download = `${rfqNum}_${f.name}`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  window.URL.revokeObjectURL(blobUrl);
-                } catch (e) {
-                  console.error('Download error:', e);
-                  window.open(url, '_blank');
-                }
-              };
-              const linkBtn = (
-                <Button
-                  type="link"
-                  style={{ padding: 0 }}
-                  onClick={() => {
-                    if (f.url && isPdf(f.url)) {
-                      setFilePreviewUrl(f.url);
-                      setFilePreviewTitle(f.name);
-                      setFilePreviewOpen(true);
-                    } else {
-                      handleDownload();
-                    }
-                  }}
-                >{f.name}</Button>
-              );
-              return (
-                <List.Item>
-                  <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-                    <Space>
-                      {isImage && f.url ? (
-                        <Popover
-                          content={<img src={f.url} alt={f.name} style={{ maxWidth: '300px', maxHeight: '300px', objectFit: 'contain' }} />}
-                          title={f.name}
-                        >
-                          {linkBtn}
-                        </Popover>
-                      ) : linkBtn}
-                      <span style={{ color: '#888' }}>{f.response?.created_at ? new Date(f.response.created_at).toLocaleString('hu-HU') : ''}</span>
-                    </Space>
-                    <Space>
-                      <Input
-                        defaultValue={f.response?.remark || ''}
-                        placeholder="Megjegyzés"
-                        style={{ width: 260 }}
-                        onBlur={async (e) => {
-                          const val = e.target.value;
-                          const att = f.response;
-                          if (!att) return;
-                          if ((att.remark || '') === val) return;
-                          try {
-                            await salesService.updateQuoteRequestAttachmentRemark(Number(id), att.id, val);
-                            message.success('Megjegyzés mentve');
-                          } catch {
-                            message.error('Nem sikerült menteni a megjegyzést');
-                          }
-                        }}
-                      />
-                      <Popconfirm
-                        title="Csatolmány törlése"
-                        okText="Törlés"
-                        cancelText="Mégse"
-                        onConfirm={async () => {
-                          const att = f.response;
-                          if (!att) return;
-                          try {
-                            await salesService.deleteQuoteRequestAttachment(Number(id), att.id);
-                            setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
-                            message.success('Csatolmány törölve');
-                          } catch {
-                            message.error('Nem sikerült törölni');
-                          }
-                        }}
-                      >
-                        <Button danger size="small">Törlés</Button>
-                      </Popconfirm>
-                    </Space>
-                  </Space>
-                </List.Item>
-              );
-            }}
-          />
-        </div>
 
         {/* ── Tételek ──────────────────────────────────────────────────── */}
         <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
+          <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
+            <Col xs={24} md={10}>
+              <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
+                <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
+                  {(projects || []).map((p: any) => (
+                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
           <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
             <Form.Item name="partial_order_allowed" valuePropName="checked" style={{ marginBottom: 0 }}>
               <Checkbox>Részlegesen megrendelhető</Checkbox>

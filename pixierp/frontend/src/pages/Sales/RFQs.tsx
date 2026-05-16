@@ -2801,214 +2801,22 @@ const RFQs: React.FC = () => {
             </Modal>
           )}
           </div>
-          {/* ── Tartalom ─────────────────────────────────────────────────── */}
-          <div style={{ background: '#fffbe6', border: '1px solid #ffe58f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#d48806', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tartalom</div>
-          <Row gutter={[8, 4]}>
-            <Col xs={24} md={14}>
-              <Form.Item label="Megnevezés" name="title" style={{ marginBottom: 6 }}>
-                <Input placeholder="Ha üres, az ajánlatszám lesz" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={10}>
-              <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 6 }}>
-                <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                  {(projects || []).map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </Col>
-          </Row>
-          <Row gutter={[8, 4]}>
-            <Col xs={24} md={12}>
-              <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Külső ajánlati leírás" />
-              </Form.Item>
-            </Col>
-            <Col xs={24} md={12}>
-              <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }} getValueFromEvent={(v) => v}>
-                <ReactQuill theme="snow" className="pixi-quill-resizable" placeholder="Belső ajánlati leírás" />
-              </Form.Item>
-            </Col>
-          </Row>
-          </div>
-          {/* ── Csatolmányok ──────────────────────────────────────────────── */}
-          <div style={{ background: '#f9f0ff', border: '1px solid #d3adf7', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-            <div style={{ fontSize: 11, fontWeight: 600, color: '#722ed1', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Csatolmányok</div>
-          <Row gutter={[8, 4]}>
-            <Col xs={24}>
-              <Form.Item label="Ajánlat csatolmányok" style={{ marginBottom: 6 }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {/* Upload gombok */}
-                  {isMobile ? (
-                    <div style={{ display: 'flex', gap: 6 }}>
-                      {/* Galéria */}
-                      <label style={{ flex: 1 }}>
-                        <input
-                          type="file"
-                          multiple
-                          accept="image/*,application/pdf,.doc,.docx,.xls,.xlsx"
-                          style={{ display: 'none' }}
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files || []);
-                            files.forEach((file: any) => {
-                              file.uid = file.uid || `${Date.now()}-${file.name}`;
-                              setRfqFiles((prev) => [...prev, file]);
-                              setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
-                            });
-                            e.target.value = '';
-                          }}
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
-                          <PictureOutlined style={{ fontSize: 22 }} />
-                          <span style={{ fontSize: 10 }}>Galéria</span>
-                        </div>
-                      </label>
-                      {/* Kamera */}
-                      <label style={{ flex: 1 }}>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          style={{ display: 'none' }}
-                          onChange={(e) => {
-                            const file: any = e.target.files?.[0];
-                            if (!file) return;
-                            file.uid = file.uid || `${Date.now()}-${file.name}`;
-                            setRfqFiles((prev) => [...prev, file]);
-                            setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
-                            e.target.value = '';
-                          }}
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
-                          <CameraOutlined style={{ fontSize: 22 }} />
-                          <span style={{ fontSize: 10 }}>Kamera</span>
-                        </div>
-                      </label>
-                      {/* Fájl */}
-                      <label style={{ flex: 1 }}>
-                        <input
-                          type="file"
-                          multiple
-                          style={{ display: 'none' }}
-                          onChange={(e) => {
-                            const files = Array.from(e.target.files || []);
-                            files.forEach((file: any) => {
-                              file.uid = file.uid || `${Date.now()}-${file.name}`;
-                              setRfqFiles((prev) => [...prev, file]);
-                              setRfqFileRemarks((prev) => ({ ...prev, [file.uid || file.name]: prev[file.uid || file.name] ?? '' }));
-                            });
-                            e.target.value = '';
-                          }}
-                        />
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 4px', border: '1px solid #d9d9d9', borderRadius: 6, background: '#fafafa', cursor: 'pointer' }}>
-                          <UploadOutlined style={{ fontSize: 22 }} />
-                          <span style={{ fontSize: 10 }}>Fájl</span>
-                        </div>
-                      </label>
-                    </div>
-                  ) : (
-                  <Upload.Dragger
-                    multiple
-                    showUploadList={false}
-                    fileList={rfqFiles}
-                    beforeUpload={(file) => {
-                      const f = file as any;
-                      const key = f.uid || f.name;
-                      setRfqFiles((prev) => [...prev, f]);
-                      setRfqFileRemarks((prev) => ({ ...prev, [key]: prev[key] ?? '' }));
-                      return Upload.LIST_IGNORE;
-                    }}
-                    style={{ width: 120, minWidth: 120, height: 120, padding: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: 4 }}>
-                      <span style={{ fontSize: 24 }}>📎</span>
-                      <span style={{ fontSize: 11, color: '#888', textAlign: 'center', lineHeight: 1.2 }}>Húzd ide, kattints</span>
-                      <span style={{ fontSize: 10, color: '#bbb', textAlign: 'center', lineHeight: 1.2 }}>vagy Ctrl+V</span>
-                    </div>
-                  </Upload.Dragger>
-                  )}
-                  {/* Fájllista */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                    {rfqFiles.length === 0 && (
-                      <span style={{ fontSize: 12, color: '#aaa' }}>Még nincs feltöltött fájl</span>
-                    )}
-                    {rfqFiles.map((f) => {
-                      const key = (f as any).uid || (f as any).name;
-                      const remark = rfqFileRemarks[key] || '';
-                      const displayName = rfqFileDisplayNames[key] || f.name;
-                      return (
-                        <div key={f.uid} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          {editingRfqNameKey === key ? (
-                            <Space size={4} style={{ flex: 1 }}>
-                              <Input
-                                size="small"
-                                autoFocus
-                                value={editingRfqNameVal}
-                                style={{ width: 160 }}
-                                onChange={e => setEditingRfqNameVal(e.target.value)}
-                                onPressEnter={() => {
-                                  if (editingRfqNameVal.trim()) setRfqFileDisplayNames(prev => ({ ...prev, [key]: editingRfqNameVal.trim() }));
-                                  setEditingRfqNameKey(null);
-                                }}
-                              />
-                              <Button size="small" type="primary" onClick={() => {
-                                if (editingRfqNameVal.trim()) setRfqFileDisplayNames(prev => ({ ...prev, [key]: editingRfqNameVal.trim() }));
-                                setEditingRfqNameKey(null);
-                              }}>✓</Button>
-                              <Button size="small" onClick={() => setEditingRfqNameKey(null)}>✗</Button>
-                            </Space>
-                          ) : (
-                            <Space size={2} style={{ flex: 1, overflow: 'hidden' }}>
-                              <Button type="link" size="small" style={{ padding: 0, maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} onClick={() => {
-                                const fileObj = (f as any).originFileObj || f;
-                                const savedUrl = (f as any).url;
-                                if (savedUrl && isPdf(savedUrl)) { openPdfPreview(savedUrl); return; }
-                                const url = savedUrl || (fileObj ? URL.createObjectURL(fileObj) : undefined);
-                                if (url) { setPreviewUrl(url); setPreviewTitle(displayName); setPreviewOpen(true); }
-                              }} title={displayName}>{displayName}</Button>
-                              <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 11 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
-                                onClick={() => { setEditingRfqNameKey(key); setEditingRfqNameVal(displayName); }}
-                              />
-                            </Space>
-                          )}
-                          {isMobile ? (
-                            <Button
-                              size="small"
-                              type={remark ? 'primary' : 'default'}
-                              ghost={!!remark}
-                              onClick={() => { setRemarkModalKey(key); setRemarkModalValue(remark); setRemarkModalOpen(true); }}
-                              style={{ flexShrink: 0 }}
-                            >
-                              {remark ? '📝' : 'Megjegyzés'}
-                            </Button>
-                          ) : (
-                            <Input
-                              size="small"
-                              placeholder="Megjegyzés"
-                              value={remark}
-                              onChange={(e) => setRfqFileRemarks((prev) => ({ ...prev, [key]: e.target.value }))}
-                              style={{ flex: 1 }}
-                            />
-                          )}
-                          <Button danger size="small" onClick={() => {
-                            setRfqFiles((prev) => prev.filter((x) => x.uid !== f.uid));
-                            setRfqFileRemarks((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
-                            setRfqFileDisplayNames((prev) => { const copy = { ...prev } as any; delete copy[key]; return copy; });
-                          }}>✕</Button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              </Form.Item>
-            </Col>
-          </Row>
-          </div>
+
+
           {/* ── Tételek ──────────────────────────────────────────────────── */}
           <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
+            <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
+              <Col xs={24} md={10}>
+                <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
+                  <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
+                    {(projects || []).map((p: any) => (
+                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                    ))}
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
           <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
             <span>Tétel hozzáadása:</span>
             <Checkbox 
