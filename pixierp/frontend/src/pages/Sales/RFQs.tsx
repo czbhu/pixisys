@@ -1411,25 +1411,38 @@ const RFQs: React.FC = () => {
 
       if (isMulti) {
         // Create one separate RFQ per item
+        let successCount = 0;
         for (const it of newItems) {
           const title = itemDisplayName(it) || (nextNumber || '');
-          const rfq = await salesService.createQuoteRequest({
-            title,
-            description: title || 'Új árajánlat',
-            issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
-            deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
-            partial_order_allowed: partialOrderAllowed,
-          });
+          let rfq: any;
+          try {
+            rfq = await salesService.createQuoteRequest({
+              title,
+              description: title || 'Új árajánlat',
+              issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
+              deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+              partial_order_allowed: partialOrderAllowed,
+            });
+          } catch (err) {
+            message.error(`Árajánlat létrehozása sikertelen: ${title}`);
+            continue;
+          }
           try {
             await salesService.updateQuoteRequestBasic(rfq.id, baseUpdateData);
           } catch (err) {
             message.error('Nem sikerült menteni a cég/kapcsolattartó adatokat');
-            throw err;
           }
           if (rfqFiles.length) await uploadRfqFiles(rfq.id);
-          await addItemToRfq(rfq.id, it);
+          try {
+            await addItemToRfq(rfq.id, it);
+            successCount++;
+          } catch (err) {
+            message.error(`Tétel hozzáadása sikertelen: ${title}`);
+          }
         }
-        message.success(`${newItems.length} árajánlat létrehozva`);
+        if (successCount > 0) {
+          message.success(`${successCount} árajánlat létrehozva`);
+        }
       } else {
         // Single RFQ (0 or 1 items) — original behaviour
         const computedTitle = (values.title && values.title.trim()) ? values.title.trim() : (nextNumber || '');
@@ -3060,7 +3073,7 @@ const RFQs: React.FC = () => {
             </Checkbox>
           </div>
           <Space wrap>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>Tétel hozzáadása</Button>
+            <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditIdx(null); setSelectorType('manufacturing'); setSelectorOpen(true); }}>Tétel hozzáadása</Button>
             <Button
               onClick={() => {
                 const companyId = form.getFieldValue('company_id');
