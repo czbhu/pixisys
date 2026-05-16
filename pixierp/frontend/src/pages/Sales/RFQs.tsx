@@ -141,7 +141,10 @@ const RFQs: React.FC = () => {
   const watchedCompanyId = Form.useWatch('company_id', form);
   const watchedContactIds = Form.useWatch('contact_ids', form);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
-  const [isItemsView, setIsItemsView] = useState(() => searchParams.get('view') === 'items');
+  const [isItemsView, setIsItemsView] = useState(() => { const v = searchParams.get('view'); return v === null || v === '' || v === 'items'; });
+  const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
+  const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
+  const [sendQueue, setSendQueue] = useState<number[]>([]);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -956,49 +959,7 @@ const RFQs: React.FC = () => {
               }
             }} />
           </Tooltip>
-          {(() => {
-            const items: any[] = record.items || [];
-            const allOrdered = items.length > 0 && items.every((it: any) => it.is_ordered);
-            const someOrdered = items.some((it: any) => it.is_ordered);
-            const unorderedItems = items.filter((it: any) => !it.is_ordered);
-            return (
-              <>
-                <Tooltip title={allOrdered ? 'Minden tétel meg van rendelve' : someOrdered ? 'Van részlegesen megrendelt tétel' : 'Összes tétel megrendelése'}>
-                  <Button
-                    size="small"
-                    type="primary"
-                    disabled={allOrdered || someOrdered}
-                    style={{ height: 'auto', padding: '3px 10px', lineHeight: 1 }}
-                    onClick={() => {
-                      setOrderAllOpenId(record.id);
-                      setOrderAllDeadline(null);
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                      <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
-                      <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Összes</span>
-                    </div>
-                  </Button>
-                </Tooltip>
-                <Tooltip title={allOrdered ? 'Minden tétel meg van rendelve' : 'Részleges megrendelés'}>
-                  <Button
-                    size="small"
-                    disabled={allOrdered}
-                    style={{ height: 'auto', padding: '3px 10px', lineHeight: 1, background: allOrdered ? undefined : '#e6f4ff', borderColor: allOrdered ? undefined : '#91caff', color: allOrdered ? undefined : '#1677ff' }}
-                    onClick={() => {
-                      setPartialOrderOpenId(record.id);
-                      setPartialSelection(unorderedItems.map((it: any) => it.id));
-                    }}
-                  >
-                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0 }}>
-                      <span style={{ fontSize: 9, lineHeight: '12px', opacity: 0.85 }}>Rendel</span>
-                      <span style={{ fontSize: 13, lineHeight: '15px', fontWeight: 600 }}>Részleges</span>
-                    </div>
-                  </Button>
-                </Tooltip>
-              </>
-            );
-          })()}
+
         </Space>
       )
     }
@@ -1578,6 +1539,47 @@ const RFQs: React.FC = () => {
     return d;
   }
 
+  const handleBulkOrder = () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+    if (!rfqIds.length) return;
+    Modal.confirm({
+      title: 'Gyártásba küldés',
+      content: `Biztosan gyártásba küldi a kijelölt ${selectedItems.length} tételt (${rfqIds.length} ajánlat)?`,
+      okText: 'Igen, gyártásba küld',
+      cancelText: 'Mégse',
+      onOk: async () => {
+        setBulkOrderLoading(true);
+        let successCount = 0;
+        for (const rfqId of rfqIds) {
+          try {
+            await salesService.orderAllFromRfq(rfqId, undefined);
+            successCount++;
+          } catch (e: any) {
+            message.error(`Hiba a megrendelésnél (QR #${rfqId}): ${e?.response?.data?.error || e.message}`);
+          }
+        }
+        setBulkOrderLoading(false);
+        setBulkSelectedKeys([]);
+        if (successCount > 0) {
+          message.success(`${successCount} megrendelés létrehozva`);
+          loadData();
+          setTimeout(() => navigate('/sales/customer-orders'), 1200);
+        }
+      },
+    });
+  };
+
+  const handleBulkSendEmail = () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+    if (!rfqIds.length) return;
+    const [first, ...rest] = rfqIds;
+    setSendQueue(rest);
+    setSendOpenId(first);
+    sendForm.resetFields();
+  };
+
   if (loading) {
     return (
       <div style={{ padding: 24, textAlign: 'center' }}>
@@ -1592,7 +1594,7 @@ const RFQs: React.FC = () => {
         <div style={{ marginBottom: 12, paddingLeft: 4 }}>
           <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
             <div
-              onClick={() => { setIsItemsView(false); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
+              onClick={() => { setIsItemsView(false); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'quotes'); return p; }, { replace: true }); }}
               style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
             >Árajánlatok</div>
             <div
@@ -1617,11 +1619,11 @@ const RFQs: React.FC = () => {
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
               <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
                 <div
-                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
+                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'quotes'); return p; }, { replace: true }); }}
                   style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: !isItemsView ? '#ffffff' : 'transparent', color: !isItemsView ? '#1677ff' : '#666', boxShadow: !isItemsView ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', userSelect: 'none' }}
                 >Árajánlatok</div>
                 <div
-                  onClick={() => { setIsItemsView(true); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'items'); return p; }, { replace: true }); }}
+                  onClick={() => { setIsItemsView(true); setCsvSelectedKeys([]); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
                   style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: isItemsView ? '#1677ff' : 'transparent', color: isItemsView ? '#ffffff' : '#666', boxShadow: isItemsView ? '0 1px 4px rgba(22,119,255,0.25)' : 'none', userSelect: 'none' }}
                 >Tételek</div>
                 <div
@@ -1770,7 +1772,16 @@ const RFQs: React.FC = () => {
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined} expandable={!isItemsView ? {
+        {isItemsView && bulkSelectedKeys.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0 10px', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+            <Button type="primary" size="small" loading={bulkOrderLoading} onClick={handleBulkOrder}>Gyártásba küld</Button>
+            <Button size="small" onClick={handleBulkSendEmail}>Árajánlat küldés</Button>
+            <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
+          </div>
+        )}
+
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={!isItemsView ? {
           expandedRowKeys: expandedRfqKeys,
           onExpand: (expanded: boolean, record: any) => {
             if (expanded) {
@@ -1796,7 +1807,7 @@ const RFQs: React.FC = () => {
         })()}`}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => setSendOpenId(null)}
+        onCancel={() => { setSendOpenId(null); setSendQueue([]); setBulkSelectedKeys([]); }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -1820,12 +1831,22 @@ const RFQs: React.FC = () => {
                 if (!sendOpenId) return;
                 try {
                   await salesService.sendQuoteRequestEmail(sendOpenId, v);
-                  message.success('E-mail elküldve');
-                  setSendOpenId(null);
+                  if (sendQueue.length > 0) {
+                    const [next, ...rest] = sendQueue;
+                    setSendQueue(rest);
+                    setSendOpenId(next);
+                    sendForm.resetFields();
+                    message.success(`E-mail elküldve. Következő: ${rest.length + 1} db maradt.`);
+                  } else {
+                    message.success('E-mail elküldve');
+                    setSendOpenId(null);
+                    setSendQueue([]);
+                    setBulkSelectedKeys([]);
+                  }
                 } catch {
                   message.error('Nem sikerült elküldeni az e-mailt');
                 }
-             }}>Küldés</Button>
+             }}>Küldés{sendQueue.length > 0 ? ` (${sendQueue.length + 1} db)` : ''}</Button>
         ]}
       >
         <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }} onValuesChange={async (changedValues, allValues) => {

@@ -1400,27 +1400,6 @@ interface CustomerOrder {
       ),
     },
     {
-      title: 'Árajánlat',
-      dataIndex: 'quote_request_title',
-      key: 'quote_request_title',
-      responsive: ['lg'] as any,
-      sorter: (a: any, b: any) => (a.quote_request_title || '').localeCompare(b.quote_request_title || '', 'hu'),
-      render: (text: string, record: CustomerOrder) => (
-        <Tooltip title={text}>
-          {record.quote_request_id ? (
-            <a
-              style={{ color: '#1677ff', cursor: 'pointer' }}
-              onClick={() => navigate(`/sales/rfqs/${record.quote_request_id}`)}
-            >
-              {text}
-            </a>
-          ) : (
-            <span>{text || '-'}</span>
-          )}
-        </Tooltip>
-      ),
-    },
-    {
       title: 'Ügyfél',
       dataIndex: 'customer_name',
       key: 'customer_name',

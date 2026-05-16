@@ -241,8 +241,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def perform_create(self, serializer):
         # Új ajánlat száma: yyyymmdd + növekvő sorszám
         today_str = timezone.now().strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=timezone.now().date()).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        _count = QuoteRequest.objects.filter(number__startswith=today_str).count() + 1
+        number = f"{today_str}{_count:02d}"
+        while QuoteRequest.objects.filter(number=number).exists():
+            _count += 1
+            number = f"{today_str}{_count:02d}"
 
         # Kapcsolódó CRM cég és kapcsolattartók
         company_id = self.request.data.get('company_id')
@@ -321,11 +324,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         except Exception:
             dt = timezone.now().date()
         today_str = dt.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=dt).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        count = QuoteRequest.objects.filter(number__startswith=today_str).count() + 1
+        number = f"{today_str}{count:02d}"
+        while QuoteRequest.objects.filter(number=number).exists():
+            count += 1
+            number = f"{today_str}{count:02d}"
         return Response({
             'date': dt.isoformat(),
-            'count': daily_count,
+            'count': count,
             'number': number,
         })
 
@@ -1331,8 +1337,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         src = self.get_object()
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        new_number = f"{today_str}{daily_count:02d}"
+        _count = QuoteRequest.objects.filter(number__startswith=today_str).count() + 1
+        new_number = f"{today_str}{_count:02d}"
+        while QuoteRequest.objects.filter(number=new_number).exists():
+            _count += 1
+            new_number = f"{today_str}{_count:02d}"
 
         # Use the source deadline only if it's still in the future; otherwise
         # leave it unset so the auto-archive logic in list() doesn't immediately
@@ -1440,8 +1449,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """Create an empty demand (RFQ without items), optionally with company/contacts."""
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        _count = QuoteRequest.objects.filter(number__startswith=today_str).count() + 1
+        number = f"{today_str}{_count:02d}"
+        while QuoteRequest.objects.filter(number=number).exists():
+            _count += 1
+            number = f"{today_str}{_count:02d}"
         title = request.data.get('title') or f"Ajánlat {number}"
         description = request.data.get('description') or ''
         deadline = request.data.get('deadline')
@@ -1494,6 +1506,137 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         except Exception:
             pass
         return Response(QuoteRequestSerializer(instance, context={'request': request}).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'])
+    def create_item_rfq(self, request):
+        """Create a QuoteRequest + one root QuoteRequestItem in a single call.
+
+        Body fields:
+          item_type      – 'product'|'manufacturing'|'service' (required)
+          product_id / material_id / manufacturing_product_id / service_id – FK (optional)
+          quantity, unit, net_unit_price, vat_rate, description – item fields
+          company_id, contact_ids  – CRM references stored on the QR
+          deadline       – YYYY-MM-DD (optional, default today+14d)
+          currency_code  – e.g. 'HUF' (optional)
+        """
+        today = timezone.now().date()
+        today_str = today.strftime('%Y%m%d')
+
+        # Unique number
+        count = QuoteRequest.objects.filter(number__startswith=today_str).count() + 1
+        number = f"{today_str}{count:02d}"
+        while QuoteRequest.objects.filter(number=number).exists():
+            count += 1
+            number = f"{today_str}{count:02d}"
+
+        # Deadline
+        deadline_raw = request.data.get('deadline')
+        if deadline_raw:
+            try:
+                deadline = timezone.datetime.strptime(deadline_raw, '%Y-%m-%d').date()
+            except Exception:
+                deadline = today + timezone.timedelta(days=14)
+        else:
+            deadline = today + timezone.timedelta(days=14)
+
+        # Currency
+        curr_code = request.data.get('currency_code')
+        currency = None
+        if curr_code:
+            try:
+                currency = Currency.objects.get(code=str(curr_code).upper())
+            except Exception:
+                pass
+
+        # QuoteRequest wrapper
+        qr = QuoteRequest.objects.create(
+            number=number,
+            request_number=number,
+            issue_date=today,
+            created_by=request.user if request.user.is_authenticated else None,
+            title=f"Ajánlat {number}",
+            description='',
+            internal_description='',
+            status='new',
+            requested_by=request.user if request.user.is_authenticated else None,
+            deadline=deadline,
+            currency=currency,
+            public_token=secrets.token_hex(20),
+        )
+
+        company_id = request.data.get('company_id')
+        contact_ids = request.data.get('contact_ids') or []
+        if company_id:
+            try:
+                qr.company = CrmCompany.objects.get(id=company_id)
+                qr.save(update_fields=['company'])
+            except CrmCompany.DoesNotExist:
+                pass
+        if contact_ids:
+            try:
+                qr.contacts.set(Contact.objects.filter(id__in=contact_ids))
+            except Exception:
+                pass
+
+        # Root QuoteRequestItem
+        item_type = request.data.get('item_type', 'manufacturing')
+        try:
+            qty = float(request.data.get('quantity', 1) or 1)
+        except Exception:
+            qty = 1.0
+
+        item_kwargs = dict(
+            quote_request=qr,
+            item_type=item_type,
+            quantity=qty,
+            unit=request.data.get('unit', 'db'),
+            net_unit_price=float(request.data.get('net_unit_price', 0) or 0),
+            vat_rate=float(request.data.get('vat_rate', 27) or 27),
+            description=request.data.get('description', ''),
+            sort_order=0,
+        )
+        if request.data.get('product_id'):
+            from apps.warehouse.models import Product
+            try:
+                item_kwargs['product'] = Product.objects.get(id=request.data['product_id'])
+            except Exception:
+                pass
+        if request.data.get('material_id'):
+            from apps.warehouse.models import Material
+            try:
+                item_kwargs['material'] = Material.objects.get(id=request.data['material_id'])
+            except Exception:
+                pass
+        if request.data.get('manufacturing_product_id'):
+            from apps.manufacturing.models import ManufacturingProduct
+            try:
+                item_kwargs['manufacturing_product'] = ManufacturingProduct.objects.get(
+                    id=request.data['manufacturing_product_id']
+                )
+            except Exception:
+                pass
+        if request.data.get('service_id'):
+            from apps.manufacturing.models import Service
+            try:
+                item_kwargs['service'] = Service.objects.get(id=request.data['service_id'])
+            except Exception:
+                pass
+
+        QuoteRequestItem.objects.create(**item_kwargs)
+
+        try:
+            QuoteLog.objects.create(
+                quote=qr,
+                user=request.user if request.user.is_authenticated else None,
+                action=f'Ajánlat létrehozva tételszintű létrehozással: {number}'
+            )
+        except Exception:
+            pass
+
+        return Response(
+            QuoteRequestSerializer(qr, context={'request': request}).data,
+            status=status.HTTP_201_CREATED,
+        )
 
     @action(detail=False, methods=['get'])
     def open_demands(self, request):
@@ -1788,49 +1931,37 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def _create_order_from_items(self, request, qr, items, set_status: str):
         from .models import CustomerOrder, CustomerOrderItem
         
-        # Generate unique order number in Oyyyymmddxx format
-        today = timezone.now()
-        date_prefix = today.strftime('%Y%m%d')
-        prefix = f"O{date_prefix}"
-        # Find the highest existing suffix for today to avoid race conditions
-        existing = (
-            CustomerOrder.objects
-            .filter(order_number__startswith=prefix)
-            .order_by('-order_number')
-            .values_list('order_number', flat=True)
-            .first()
-        )
-        if existing:
-            try:
-                last_seq = int(existing[len(prefix):])
-            except ValueError:
-                last_seq = 0
-        else:
-            last_seq = 0
-        order_number = f"{prefix}{last_seq + 1:02d}"
-        # Extra safety: keep incrementing if still collides
-        while CustomerOrder.objects.filter(order_number=order_number).exists():
-            last_seq += 1
-            order_number = f"{prefix}{last_seq + 1:02d}"
-        
-        # Optional deadline from request
-        deadline_raw = request.data.get('deadline') or None
-        deadline_val = None
-        if deadline_raw:
-            try:
-                from datetime import date
-                deadline_val = date.fromisoformat(str(deadline_raw))
-            except Exception:
-                pass
+        # order_number = quote_request.number (1:1 relationship)
+        order_number = qr.number or qr.request_number
+        if not order_number:
+            # Fallback: generate if somehow missing
+            today = timezone.now()
+            order_number = today.strftime('%Y%m%d') + '01'
+            while CustomerOrder.objects.filter(order_number=order_number).exists():
+                order_number = str(int(order_number) + 1)
 
-        # Create CustomerOrder
-        order = CustomerOrder.objects.create(
-            quote_request=qr,
-            order_number=order_number,
-            status='new',
-            deadline=deadline_val,
-            created_by=request.user if request.user.is_authenticated else None
-        )
+        # Guard: if an order already exists for this QR, reuse it
+        existing_order = CustomerOrder.objects.filter(quote_request=qr).first()
+        if existing_order:
+            order = existing_order
+        else:
+            # Optional deadline from request
+            deadline_raw = request.data.get('deadline') or None
+            deadline_val = None
+            if deadline_raw:
+                try:
+                    from datetime import date
+                    deadline_val = date.fromisoformat(str(deadline_raw))
+                except Exception:
+                    pass
+
+            order = CustomerOrder.objects.create(
+                quote_request=qr,
+                order_number=order_number,
+                status='new',
+                deadline=deadline_val,
+                created_by=request.user if request.user.is_authenticated else None
+            )
         
         # Create CustomerOrderItems
         created_items = []
