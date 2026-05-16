@@ -969,30 +969,57 @@ const RFQs: React.FC = () => {
     if (!isItemsView) return [];
     const res: any[] = [];
     filtered.forEach((rfq: any) => {
-      (rfq.items || []).forEach((item: any, idx: number) => {
+      const allItems: any[] = rfq.items || [];
+      const rfqCompanyName = (() => {
+        if (rfq.company?.name) return rfq.company.name;
+        if (rfq.company_name) return rfq.company_name;
+        const contactCo = (rfq.contacts || []).find((c: any) => c.company?.name || c.company_name);
+        return contactCo?.company?.name || contactCo?.company_name || '';
+      })();
+      const rfqContactNames = rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
+      const rfqIsPrivate = !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name);
+
+      const enrich = (item: any, idx: number) => {
         const itemStatus = rfq.status === 'ordered'
           ? (item.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
           : rfq.status;
-        res.push({
+        return {
           ...item,
           uniqueId: `${rfq.id}_${item.id ?? idx}`,
           rfq_number: rfq.number || rfq.request_number,
           rfq_id: rfq.id,
           rfq_title: rfq.title,
-          company_name: (() => {
-            if (rfq.company?.name) return rfq.company.name;
-            if (rfq.company_name) return rfq.company_name;
-            const contactCo = (rfq.contacts || []).find((c: any) => c.company?.name || c.company_name);
-            return contactCo?.company?.name || contactCo?.company_name || '';
-          })(),
-          contact_names: rfq.contact_names || (rfq.contacts || []).map((c: any) => c.name).filter(Boolean).join(', '),
-          is_private: !rfq.company?.name && !rfq.company_name && !(rfq.contacts || []).some((c: any) => c.company?.name || c.company_name),
+          company_name: rfqCompanyName,
+          contact_names: rfqContactNames,
+          is_private: rfqIsPrivate,
           issue_date: rfq.issue_date,
           deadline: rfq.deadline,
+          project_name: rfq.project?.name || rfq.project_name || '',
           status: itemStatus,
+          effective_status: rfq.effective_status,
+          effective_status_label: rfq.effective_status_label,
           currency_symbol: rfq.currency_symbol || 'Ft',
           created_by_name: rfq.created_by_name,
-        });
+        };
+      };
+
+      // Build tree: only root items at top level, children nested
+      const itemById = new Map<number, any>();
+      allItems.forEach((item: any, idx: number) => {
+        itemById.set(item.id, { enriched: enrich(item, idx), childrenList: [] as any[] });
+      });
+      allItems.forEach((item: any) => {
+        if (item.parent && itemById.has(item.parent)) {
+          const childEnriched = itemById.get(item.id)!.enriched;
+          itemById.get(item.parent)!.childrenList.push(childEnriched);
+        }
+      });
+      allItems.filter((item: any) => !item.parent).forEach((item: any) => {
+        const entry = itemById.get(item.id);
+        if (!entry) return;
+        const node = { ...entry.enriched };
+        if (entry.childrenList.length > 0) node.children = entry.childrenList;
+        res.push(node);
       });
     });
     return res;
@@ -1064,14 +1091,39 @@ const RFQs: React.FC = () => {
       },
     },
     {
+      title: 'Projekt', key: 'project_name', width: 120,
+      sorter: (a: any, b: any) => (a.project_name || '').localeCompare(b.project_name || '', 'hu'),
+      render: (_: any, r: any) => r.project_name || null,
+    },
+    {
+      title: 'Határidő', key: 'deadline', width: 100,
+      sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || ''),
+      render: (_: any, r: any) => {
+        if (!r.deadline) return null;
+        const d = dayjs(r.deadline);
+        const isOverdue = d.isBefore(dayjs(), 'day');
+        return <span style={{ color: isOverdue ? '#cf1322' : undefined }}>{d.format('YYYY-MM-DD')}</span>;
+      },
+    },
+    {
       title: 'Nettó összeg', key: 'net_total', width: 130, align: 'right' as const,
       sorter: (a: any, b: any) => (Number(a.quantity || 0) * Number(a.net_unit_price || 0)) - (Number(b.quantity || 0) * Number(b.net_unit_price || 0)),
       render: (_: any, r: any) => `${(Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`,
     },
     {
-      title: 'Státusz', dataIndex: 'status', key: 'status', width: 110,
-      sorter: (a: any, b: any) => (a.status || '').localeCompare(b.status || ''),
-      render: statusTag,
+      title: 'Státusz', key: 'status', width: 140,
+      sorter: (a: any, b: any) => ((a.effective_status || a.status) || '').localeCompare((b.effective_status || b.status) || ''),
+      render: (_: any, r: any) => {
+        if (r.status === 'ordered' && r.effective_status && r.effective_status !== 'ordered') {
+          const orderColors: Record<string, string> = {
+            new: 'default', confirmed: 'purple', in_production: 'orange',
+            ready: 'green', in_delivery: 'cyan', delivered: 'geekblue',
+            invoiced: 'gold', cancelled: 'red',
+          };
+          return <Tag color={orderColors[r.effective_status] || 'purple'}>{r.effective_status_label || r.effective_status}</Tag>;
+        }
+        return statusTag(r.status);
+      },
     },
     {
       title: 'Műveletek', key: 'actions', width: 90,
