@@ -1025,9 +1025,13 @@ const RFQs: React.FC = () => {
     return res;
   }, [filtered, isItemsView]);
 
-  const renderExpandedItemRow = useCallback((r: any) => {
+  const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
     const isMfg = r.item_type === 'manufacturing' && r.manufacturing_product;
+    const itemId: number = r.id;
+    const atts: any[] = rfqItemAtts[itemId] !== undefined ? rfqItemAtts[itemId] : (r.attachments || []);
+    const uploading = (rfqItemUploading[itemId] || 0) > 0;
+    const itemRemark = rfqItemRemark[itemId] || '';
     return (
       <div style={{ padding: '8px 0 8px 28px' }}>
         {subItems.length > 0 && (
@@ -1060,7 +1064,7 @@ const RFQs: React.FC = () => {
         )}
         {isMfg && (
           <>
-            <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments defaultExpandAllRows />
             <MaterialNeedsTree
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}
@@ -1071,9 +1075,102 @@ const RFQs: React.FC = () => {
             />
           </>
         )}
+        <div style={{ marginTop: 12, borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
+          <div style={{ fontSize: 12, color: '#888', marginBottom: 6, fontWeight: 500 }}>Csatolmányok</div>
+          {atts.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: 6 }}>
+              {atts.map((att: any) => (
+                <Space key={att.id} size={2} align="center" style={{ flexWrap: 'wrap' }}>
+                  {rfqItemAttRenameId === att.id ? (
+                    <>
+                      <Input
+                        size="small"
+                        autoFocus
+                        value={rfqItemAttRenameVal}
+                        style={{ width: 180 }}
+                        onChange={e => setRfqItemAttRenameVal(e.target.value)}
+                        onPressEnter={async () => {
+                          try {
+                            const finalName = ensureExtension(rfqItemAttRenameVal, nameWithExt(att));
+                            const res = await salesService.renameQuoteRequestItemAttachment(itemId, att.id, finalName);
+                            setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
+                            setRfqItemAttRenameId(null);
+                          } catch { message.error('Átnevezés sikertelen'); }
+                        }}
+                      />
+                      <Button size="small" type="primary" onClick={async () => {
+                        try {
+                          const finalName = ensureExtension(rfqItemAttRenameVal, nameWithExt(att));
+                          const res = await salesService.renameQuoteRequestItemAttachment(itemId, att.id, finalName);
+                          setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).map((a: any) => a.id === att.id ? { ...a, original_filename: res.original_filename, file: res.file ?? a.file, file_url: res.file_url ?? a.file_url } : a) }));
+                          setRfqItemAttRenameId(null);
+                        } catch { message.error('Átnevezés sikertelen'); }
+                      }}>✓</Button>
+                      <Button size="small" onClick={() => setRfqItemAttRenameId(null)}>✗</Button>
+                    </>
+                  ) : (
+                    <>
+                      <a
+                        href={att.file_url || att.file}
+                        onClick={(e) => { e.preventDefault(); setRfqAttPreviewUrl(att.file_url || att.file); setRfqAttPreviewTitle(att.original_filename || att.file?.split('/').pop() || ''); setRfqAttPreviewOpen(true); }}
+                        style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3 }}
+                      >
+                        <PaperClipOutlined />{att.original_filename || att.file?.split('/').pop() || `#${att.id}`}
+                      </a>
+                      <Button type="text" size="small" icon={<EditOutlined style={{ fontSize: 10 }} />} title="Átnevezés" style={{ padding: '0 2px' }}
+                        onClick={() => { setRfqItemAttRenameId(att.id); setRfqItemAttRenameVal(nameWithExt(att)); }}
+                      />
+                      <Button type="text" size="small" danger icon={<DeleteOutlined style={{ fontSize: 10 }} />}
+                        onClick={async () => {
+                          try {
+                            await salesService.deleteQuoteRequestItemAttachment(itemId, att.id);
+                            setRfqItemAtts(prev => ({ ...prev, [itemId]: (prev[itemId] !== undefined ? prev[itemId] : r.attachments || []).filter((a: any) => a.id !== att.id) }));
+                            message.success('Törölve');
+                          } catch { message.error('Törlés sikertelen'); }
+                        }}
+                      />
+                    </>
+                  )}
+                </Space>
+              ))}
+            </div>
+          )}
+          <Input
+            size="small"
+            placeholder="Megjegyzés (opcionális)"
+            value={itemRemark}
+            style={{ width: 200, marginBottom: 4 }}
+            onChange={e => setRfqItemRemark(prev => ({ ...prev, [itemId]: e.target.value }))}
+          />
+          <div onMouseEnter={() => { lastPasteTargetRef.current = { type: 'item', id: itemId }; }}>
+            <Upload.Dragger
+              multiple
+              showUploadList={false}
+              style={{ padding: '4px 0' }}
+              customRequest={({ file, onSuccess, onError }) => {
+                const f = file as File;
+                setRfqItemUploading(prev => ({ ...prev, [itemId]: (prev[itemId] || 0) + 1 }));
+                salesService.uploadQuoteRequestItemAttachment(itemId, f, itemRemark || undefined)
+                  .then(res => {
+                    setRfqItemAtts(prev => ({ ...prev, [itemId]: [res, ...(prev[itemId] !== undefined ? prev[itemId] : r.attachments || [])] }));
+                    setRfqItemRemark(prev => ({ ...prev, [itemId]: '' }));
+                    message.success('Feltöltve');
+                    onSuccess?.(res);
+                  })
+                  .catch(e => { message.error('Feltöltés sikertelen'); onError?.(e); })
+                  .finally(() => setRfqItemUploading(prev => ({ ...prev, [itemId]: Math.max(0, (prev[itemId] || 0) - 1) })));
+              }}
+            >
+              {uploading
+                ? <><Spin size="small" /> <span style={{ fontSize: 11, color: '#888' }}>Feltöltés…</span></>
+                : <span style={{ fontSize: 11, color: '#888' }}>Húzd ide · Ctrl+V</span>
+              }
+            </Upload.Dragger>
+          </div>
+        </div>
       </div>
     );
-  }, []);
+  };
 
   const itemsColumns = useMemo((): ColumnsType<any> => ([
     {

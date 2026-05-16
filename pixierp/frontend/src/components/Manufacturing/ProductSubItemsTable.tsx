@@ -81,6 +81,8 @@ interface Props {
   showNotesAndAttachments?: boolean;
   /** Ha false, beker./eladási ár oszlopok rejtve (jogosultság alapján). Default: true */
   showPrices?: boolean;
+  /** Auto-expand all cost item rows on mount (requires showNotesAndAttachments). Default: false */
+  defaultExpandAllRows?: boolean;
 }
 
 export const ProductSubItemsTable: React.FC<Props> = ({
@@ -91,6 +93,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   size = 'small',
   showNotesAndAttachments = false,
   showPrices = true,
+  defaultExpandAllRows = false,
 }) => {
   const [loading, setLoading] = useState(!initialProduct);
   const [saving, setSaving] = useState(false);
@@ -205,7 +208,11 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         }
         if (cancelled) return;
         setProductInfo(prod);
-        setItems(mapCostItems(prod.cost_items || []));
+        const mapped = mapCostItems(prod.cost_items || []);
+        setItems(mapped);
+        if (defaultExpandAllRows && showNotesAndAttachments) {
+          setExpandedSubItems(mapped.map(i => i.id));
+        }
       } catch (e) {
         console.error(e);
         message.error('Altételek betöltése sikertelen');
