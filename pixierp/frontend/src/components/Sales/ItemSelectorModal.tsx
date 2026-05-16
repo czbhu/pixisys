@@ -1379,6 +1379,14 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
           setManuPendingFiles([]);
           setManuPendingFileRemarks({});
+          if (keepOpen) {
+            // Reset so the next submission creates a brand-new item (not an update of this one)
+            setManuCreatedId(null);
+            manuForm.resetFields();
+            setManuCostItems([]);
+            setSyncQtyRows(new Set());
+            setSelected(null);
+          }
         } catch (addErr) {
           message.warning('Egyedi gyártás hozzáadása nem sikerült');
         }
@@ -1969,7 +1977,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               <Button onClick={handleModalCancel}>Mégse</Button>
               <Button
                 loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
-                disabled={savingClose}
+                disabled={savingClose || savingKeepOpen || manuSubmitting}
                 onClick={() => doSave(true)}
               >
                 {secondaryLabel}
@@ -1977,7 +1985,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
               <Button
                 type="primary"
                 loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
-                disabled={savingKeepOpen}
+                disabled={savingKeepOpen || savingClose || manuSubmitting}
                 onClick={() => doSave(false)}
               >
                 {primaryLabel}

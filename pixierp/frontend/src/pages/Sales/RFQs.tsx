@@ -3282,19 +3282,21 @@ const RFQs: React.FC = () => {
         rfqCurrency={currency}
         onCancel={() => { setSelectorOpen(false); setEditIdx(null); }}
         onAdd={(p: SelectedItemPayload) => {
-          if (editIdx !== null && editIdx >= 0 && editIdx < newItems.length) {
-            setNewItems((prev) => prev.map((it, i) => i === editIdx ? { ...it, ...p } : it));
-          } else {
+          // Use functional updater so findIndex always sees the latest committed state,
+          // preventing stale-closure duplicates when two calls fire before a re-render.
+          setNewItems((prev) => {
+            if (editIdx !== null && editIdx >= 0 && editIdx < prev.length) {
+              return prev.map((it, i) => i === editIdx ? { ...it, ...p } : it);
+            }
             // For pending manufacturing items (negative ref_id), update the existing entry instead of appending a duplicate
             const pendingIdx = (p.ref_id !== undefined && p.ref_id < 0)
-              ? newItems.findIndex(it => it.ref_id === p.ref_id && it.item_type === p.item_type)
+              ? prev.findIndex(it => it.ref_id === p.ref_id && it.item_type === p.item_type)
               : -1;
             if (pendingIdx >= 0) {
-              setNewItems((prev) => prev.map((it, i) => i === pendingIdx ? { ...it, ...p } : it));
-            } else {
-              setNewItems((prev) => [...prev, p]);
+              return prev.map((it, i) => i === pendingIdx ? { ...it, ...p } : it);
             }
-          }
+            return [...prev, p];
+          });
           // If the manufacturing inline form added cost items, append them to draft costs
           if ((p as any).manuCostItems && (p as any).manuCostItems.length > 0) {
             setNewCosts((prev) => {
