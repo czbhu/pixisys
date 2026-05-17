@@ -136,6 +136,8 @@ const RFQs: React.FC = () => {
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [sendQueue, setSendQueue] = useState<number[]>([]);
   const [sendQueueTotal, setSendQueueTotal] = useState(0);
+  const [sendAddressQueue, setSendAddressQueue] = useState<string[]>([]);
+  const [sendAddressTotal, setSendAddressTotal] = useState(0);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -1765,7 +1767,11 @@ const RFQs: React.FC = () => {
       return;
     }
 
-    const contactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
+    const allContactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean);
+    const [firstEmail, ...restEmails] = allContactEmails;
+    const contactEmailTo = firstEmail || '';
+    setSendAddressQueue(restEmails);
+    setSendAddressTotal(allContactEmails.length);
 
     let signatureKey = '';
     let userPrefs: any = null;
@@ -1819,7 +1825,7 @@ const RFQs: React.FC = () => {
       body = body.replace(/{user_phonenumber}/g, userPrefs.phone_number || '');
     }
 
-    sendForm.setFieldsValue({ template_key: 'rfq_send', to: contactEmails || '', cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
+    sendForm.setFieldsValue({ template_key: 'rfq_send', to: contactEmailTo, cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
   };
 
   const handleBulkSendEmail = () => {
@@ -2023,12 +2029,13 @@ const RFQs: React.FC = () => {
             const rec = (rfqs || []).find((r: any) => r.id === sendOpenId);
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
             const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
-            const progress = sendQueueTotal > 1 ? ` [${sendQueueTotal - sendQueue.length}/${sendQueueTotal}]` : '';
-            return `Ajánlat kérő kiküldése${progress}: ${recLabel}`;
+            const rfqProgress = sendQueueTotal > 1 ? ` [${sendQueueTotal - sendQueue.length}/${sendQueueTotal} ajánlat]` : '';
+            const addrProgress = sendAddressTotal > 1 ? ` [${sendAddressTotal - sendAddressQueue.length}/${sendAddressTotal} cím]` : '';
+            return `Ajánlat kérő kiküldése${rfqProgress}${addrProgress}: ${recLabel}`;
         })()}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setBulkSelectedKeys([]); }}
+        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddressQueue([]); setSendAddressTotal(0); setBulkSelectedKeys([]); }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -2046,28 +2053,43 @@ const RFQs: React.FC = () => {
                   message.error('Előnézet nem elérhető');
                 }
              }}>Előnézet</Button>,
-             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); }}>Mégse</Button>,
+             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddressQueue([]); setSendAddressTotal(0); }}>Mégse</Button>,
              <Button key="send" type="primary" icon={<SendOutlined />} onClick={async () => {
                 const v = await sendForm.validateFields();
                 if (!sendOpenId) return;
                 try {
                   await salesService.sendQuoteRequestEmail(sendOpenId, v);
-                  if (sendQueue.length > 0) {
+                  if (sendAddressQueue.length > 0) {
+                    // More addresses for this same RFQ
+                    const [nextAddr, ...restAddrs] = sendAddressQueue;
+                    setSendAddressQueue(restAddrs);
+                    sendForm.setFieldValue('to', nextAddr);
+                    setSendPreview(null);
+                    message.success(`E-mail elküldve. Következő cím: ${nextAddr}`);
+                  } else if (sendQueue.length > 0) {
+                    // Move to next RFQ
                     const [next, ...rest] = sendQueue;
                     setSendQueue(rest);
-                    message.success(`E-mail elküldve. Következő: ${sendQueue.length} db maradt.`);
+                    message.success(`E-mail elküldve. Következő ajánlat: ${sendQueue.length} db maradt.`);
                     openSendModal(next);
                   } else {
                     message.success('E-mail elküldve');
                     setSendOpenId(null);
                     setSendQueue([]);
                     setSendQueueTotal(0);
+                    setSendAddressQueue([]);
+                    setSendAddressTotal(0);
                     setBulkSelectedKeys([]);
                   }
                 } catch {
                   message.error('Nem sikerült elküldeni az e-mailt');
                 }
-             }}>Küldés{sendQueue.length > 0 ? ` (${sendQueue.length + 1} db)` : ''}</Button>
+             }}>{sendAddressQueue.length > 0
+               ? `Küldés (még ${sendAddressQueue.length} cím)`
+               : sendQueue.length > 0
+                 ? `Küldés (${sendQueue.length + 1} ajánlat)`
+                 : 'Küldés'
+             }</Button>
         ]}
       >
         <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }} onValuesChange={async (changedValues, allValues) => {
@@ -2085,7 +2107,14 @@ const RFQs: React.FC = () => {
              } catch {}
         }
       }}>
-          <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}>
+          <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}
+            extra={sendAddressTotal > 1 ? (
+              <span style={{ fontSize: 12, color: '#1677ff' }}>
+                {sendAddressTotal - sendAddressQueue.length}/{sendAddressTotal}. e-mail cím
+                {sendAddressQueue.length > 0 && <> · következő: {sendAddressQueue[0]}</>}
+              </span>
+            ) : undefined}
+          >
             <Input placeholder="email1@example.com, email2@example.com" />
           </Form.Item>
           <Form.Item label="Másolat (CC)" name="cc">
