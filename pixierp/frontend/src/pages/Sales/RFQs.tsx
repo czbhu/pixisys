@@ -135,6 +135,7 @@ const RFQs: React.FC = () => {
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [sendQueue, setSendQueue] = useState<number[]>([]);
+  const [sendQueueTotal, setSendQueueTotal] = useState(0);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -836,99 +837,7 @@ const RFQs: React.FC = () => {
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
           <Tooltip title="Kiküldés e-mailben">
-            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={async () => {
-              setSendOpenId(record.id);
-              setSendPreview(null);
-              
-              // Load email templates and signatures
-              let templates: any[] = [];
-              let sigs: any[] = [];
-              try {
-                const [templatesRes, sigsRes] = await Promise.all([
-                  settingsService.getEmailTemplates(),
-                  settingsService.getSignatures()
-                ]);
-                templates = Array.isArray(templatesRes) ? templatesRes : (templatesRes?.results ?? []);
-                sigs = Array.isArray(sigsRes) ? sigsRes : (sigsRes?.results ?? []);
-                setEmailTemplates(templates);
-                setSignatures(sigs);
-              } catch {}
-              
-              // Auto-fill contact emails
-              const contactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
-              
-              // Load user preferences for default signature
-              let signatureKey = '';
-              let userPrefs: any = null;
-              try {
-                const prefs = await settingsService.getUserPreferences();
-                userPrefs = prefs;
-                if (prefs && prefs.default_signature_key) {
-                  signatureKey = prefs.default_signature_key;
-                }
-              } catch (err) {
-                // Ignore errors - user may not have preferences set
-              }
-              
-              // If no default signature set, use the first available one
-              if (!signatureKey && sigs.length > 0) {
-                signatureKey = sigs[0].key;
-              }
-              
-              // Load default template and populate subject, body, cc, reply_to
-              const defaultTemplate = templates.find((t: any) => t.key === 'rfq_send');
-              let subject = '';
-              let body = '';
-              let cc = '';
-              let replyTo = '';
-              
-              if (defaultTemplate) {
-                // Build context for template variables
-                subject = defaultTemplate.subject_template || '';
-                body = defaultTemplate.body_template || '';
-                cc = defaultTemplate.default_cc || '';
-                replyTo = defaultTemplate.default_reply_to || '';
-                
-                // Replace variables
-                const contactNames = (record.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
-                subject = subject.replace('{rfq_number}', record.number || record.request_number || '');
-                subject = subject.replace('{rfq_title}', record.title || '');
-                subject = subject.replace('{company_name}', record.company?.name || '');
-                subject = subject.replace('{contact_names}', contactNames);
-                
-                body = body.replace('{rfq_number}', record.number || record.request_number || '');
-                body = body.replace('{rfq_title}', record.title || '');
-                body = body.replace('{company_name}', record.company?.name || '');
-                body = body.replace('{contact_names}', contactNames);
-                body = body.replace('{public_order_url}', record.public_order_url || '');
-              }
-              
-              // Append signature to body if signature is selected
-              if (signatureKey) {
-                const signature = sigs.find((s: any) => s.key === signatureKey);
-                if (signature && signature.body_html) {
-                  body = body + '\n\n' + signature.body_html;
-                }
-              }
-
-              // Replace user variables in body (including signature)
-              if (userPrefs) {
-                  const userName = userPrefs.name || [(userPrefs.first_name || ''), (userPrefs.last_name || '')].join(' ').trim();
-                  body = body.replace(/{user_name}/g, userName);
-                  body = body.replace(/{user_email}/g, userPrefs.email || '');
-                  body = body.replace(/{user_phonenumber}/g, userPrefs.phone_number || '');
-              }
-              
-              sendForm.setFieldsValue({ 
-                template_key: 'rfq_send',
-                to: contactEmails || '',
-                cc: cc,
-                reply_to: replyTo,
-                signature_key: signatureKey,
-                subject: subject,
-                body: body
-              });
-            }} />
+            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={() => { setSendQueueTotal(0); setSendQueue([]); openSendModal(record.id); }} />
           </Tooltip>
           {record.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
@@ -1316,7 +1225,7 @@ const RFQs: React.FC = () => {
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
           </Tooltip>
           <Tooltip title="Küldés">
-            <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendOpenId(r.rfq_id); }} />
+            <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendQueueTotal(0); setSendQueue([]); openSendModal(r.rfq_id); }} />
           </Tooltip>
           <Tooltip title="Másolás">
             <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async (e) => {
@@ -1833,14 +1742,94 @@ const RFQs: React.FC = () => {
     });
   };
 
+  const openSendModal = async (rfqId: number) => {
+    setSendOpenId(rfqId);
+    setSendPreview(null);
+
+    let templates: any[] = emailTemplates.length ? emailTemplates : [];
+    let sigs: any[] = signatures.length ? signatures : [];
+    try {
+      const [templatesRes, sigsRes] = await Promise.all([
+        settingsService.getEmailTemplates(),
+        settingsService.getSignatures(),
+      ]);
+      templates = Array.isArray(templatesRes) ? templatesRes : (templatesRes?.results ?? []);
+      sigs = Array.isArray(sigsRes) ? sigsRes : (sigsRes?.results ?? []);
+      setEmailTemplates(templates);
+      setSignatures(sigs);
+    } catch {}
+
+    const record = (rfqs || []).find((r: any) => r.id === rfqId);
+    if (!record) {
+      sendForm.setFieldsValue({ template_key: 'rfq_send', to: '', cc: '', reply_to: '', subject: '', body: '' });
+      return;
+    }
+
+    const contactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
+
+    let signatureKey = '';
+    let userPrefs: any = null;
+    try {
+      const prefs = await settingsService.getUserPreferences();
+      userPrefs = prefs;
+      if (prefs?.default_signature_key) signatureKey = prefs.default_signature_key;
+    } catch {}
+    if (!signatureKey && sigs.length > 0) signatureKey = sigs[0].key;
+
+    const defaultTemplate = templates.find((t: any) => t.key === 'rfq_send');
+    let subject = '';
+    let body = '';
+    let cc = '';
+    let replyTo = '';
+
+    if (defaultTemplate) {
+      subject = defaultTemplate.subject_template || '';
+      body = defaultTemplate.body_template || '';
+      cc = defaultTemplate.default_cc || '';
+      replyTo = defaultTemplate.default_reply_to || '';
+      const contactNames = (record.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+      subject = subject.replace(/{rfq_number}/g, record.number || record.request_number || '');
+      subject = subject.replace(/{rfq_title}/g, record.title || '');
+      subject = subject.replace(/{company_name}/g, record.company?.name || '');
+      subject = subject.replace(/{contact_names}/g, contactNames);
+      body = body.replace(/{rfq_number}/g, record.number || record.request_number || '');
+      body = body.replace(/{rfq_title}/g, record.title || '');
+      body = body.replace(/{company_name}/g, record.company?.name || '');
+      body = body.replace(/{contact_names}/g, contactNames);
+      body = body.replace(/{public_order_url}/g, record.public_order_url || '');
+    }
+
+    if (signatureKey) {
+      const signature = sigs.find((s: any) => s.key === signatureKey);
+      if (signature?.body_html) {
+        let sigBody = signature.body_html;
+        const uName = userPrefs ? (userPrefs.name || [userPrefs.first_name || '', userPrefs.last_name || ''].join(' ').trim()) : '';
+        sigBody = sigBody.replace(/{user_name}/g, uName);
+        sigBody = sigBody.replace(/{user_email}/g, userPrefs?.email || '');
+        sigBody = sigBody.replace(/{user_phonenumber}/g, userPrefs?.phone_number || '');
+        sigBody = sigBody.replace(/{user_position}/g, userPrefs?.employee_profile?.position?.title || userPrefs?.position || '');
+        body = body + (defaultTemplate?.is_html ? '' : '\n\n') + sigBody;
+      }
+    }
+
+    if (userPrefs) {
+      const userName = userPrefs.name || [userPrefs.first_name || '', userPrefs.last_name || ''].join(' ').trim();
+      body = body.replace(/{user_name}/g, userName);
+      body = body.replace(/{user_email}/g, userPrefs.email || '');
+      body = body.replace(/{user_phonenumber}/g, userPrefs.phone_number || '');
+    }
+
+    sendForm.setFieldsValue({ template_key: 'rfq_send', to: contactEmails || '', cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
+  };
+
   const handleBulkSendEmail = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
     const [first, ...rest] = rfqIds;
     setSendQueue(rest);
-    setSendOpenId(first);
-    sendForm.resetFields();
+    setSendQueueTotal(rfqIds.length);
+    openSendModal(first);
   };
 
   if (loading) {
@@ -2030,14 +2019,16 @@ const RFQs: React.FC = () => {
         }} />
       </Card>
       <Modal 
-        title={`Ajánlat kérő kiküldése: ${(() => {
-            const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
+        title={(() => {
+            const rec = (rfqs || []).find((r: any) => r.id === sendOpenId);
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
-            return rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
-        })()}`}
+            const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
+            const progress = sendQueueTotal > 1 ? ` [${sendQueueTotal - sendQueue.length}/${sendQueueTotal}]` : '';
+            return `Ajánlat kérő kiküldése${progress}: ${recLabel}`;
+        })()}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => { setSendOpenId(null); setSendQueue([]); setBulkSelectedKeys([]); }}
+        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setBulkSelectedKeys([]); }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -2055,7 +2046,7 @@ const RFQs: React.FC = () => {
                   message.error('Előnézet nem elérhető');
                 }
              }}>Előnézet</Button>,
-             <Button key="cancel" onClick={() => setSendOpenId(null)}>Mégse</Button>,
+             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); }}>Mégse</Button>,
              <Button key="send" type="primary" icon={<SendOutlined />} onClick={async () => {
                 const v = await sendForm.validateFields();
                 if (!sendOpenId) return;
@@ -2064,13 +2055,13 @@ const RFQs: React.FC = () => {
                   if (sendQueue.length > 0) {
                     const [next, ...rest] = sendQueue;
                     setSendQueue(rest);
-                    setSendOpenId(next);
-                    sendForm.resetFields();
-                    message.success(`E-mail elküldve. Következő: ${rest.length + 1} db maradt.`);
+                    message.success(`E-mail elküldve. Következő: ${sendQueue.length} db maradt.`);
+                    openSendModal(next);
                   } else {
                     message.success('E-mail elküldve');
                     setSendOpenId(null);
                     setSendQueue([]);
+                    setSendQueueTotal(0);
                     setBulkSelectedKeys([]);
                   }
                 } catch {
