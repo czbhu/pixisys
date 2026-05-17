@@ -99,6 +99,7 @@ interface CustomerOrder {
 
   const DEFAULT_ITEMS_COL_ORDER = [
     'order_date', 'order_number', 'name',
+    'quantity', 'net_unit_price',
     'product_description', 'internal_description', 'description',
     'supplier_name', 'customer_name', 'deadline',
     'net_total', 'status', 'actions',
@@ -108,6 +109,8 @@ interface CustomerOrder {
     order_date: true,
     order_number: true,
     name: true,
+    quantity: true,
+    net_unit_price: true,
     product_description: true,
     internal_description: false,
     description: true,
@@ -123,6 +126,8 @@ interface CustomerOrder {
     order_date: 'Dátum',
     order_number: 'Megr. szám',
     name: 'Tétel neve',
+    quantity: 'Darabszám',
+    net_unit_price: 'Nettó egység ár',
     product_description: 'Leírás',
     internal_description: 'Belső leírás',
     description: 'Megjegyzés',
@@ -290,57 +295,37 @@ interface CustomerOrder {
   const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
   const [itemsDrawerOpen, setItemsDrawerOpen] = useState(false);
   const [drawerOrder, setDrawerOrder] = useState<{id: number, number: string} | null>(null);
-  const [isItemsView, setIsItemsView] = useState(
-    savedSettings?.isItemsView || false
-  );
+  const isItemsView = true;
   const [csvMode, setCsvMode] = useState(false);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
+  const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
 
   const exportCsv = () => {
-    const isOrders = !isItemsView;
-    let rows: any[];
-    if (isOrders) {
-      const data = csvSelectedKeys.length > 0
-        ? filteredOrders.filter(o => csvSelectedKeys.includes(o.id))
-        : filteredOrders;
-      rows = data.map(o => ({
-        'Megr. szám': o.order_number,
-        'Dátum': o.order_date ? dayjs(o.order_date).format('YYYY-MM-DD') : '',
-        'Ügyfél': o.customer_name,
-        'Árajánlat': o.quote_request_title,
-        'Kapcsolattartó': o.contact_names,
-        'Határidő': o.deadline ? dayjs(o.deadline).format('YYYY-MM-DD') : '',
-        'Nettó összeg': o.total_amount ?? '',
-        'Státusz': o.status,
-        'Számlaszám': o.invoice_number ?? '',
-        'Szállítólevél': o.delivery_note_number ?? '',
-        'Rögzítő': o.created_by_name ?? '',
-      }));
-    } else {
-      const data = csvSelectedKeys.length > 0
-        ? flattenedItems.filter((it: any) => csvSelectedKeys.includes(it.uniqueId))
-        : flattenedItems;
-      rows = data.map((it: any) => ({
-        'Megr. szám': it.order_number,
-        'Dátum': it.order_date ? dayjs(it.order_date).format('YYYY-MM-DD') : '',
-        'Ügyfél': it.customer_name,
-        'Tétel neve': it.name,
-        'Leírás': stripHtml(it.product_description),
-        'Belső leírás': stripHtml(it.internal_description),
-        'Megjegyzés': stripHtml(it.description),
-        'Beszállító': it.supplier_name ?? '',
-        'Határidő': it.deadline ? dayjs(it.deadline).format('YYYY-MM-DD') : '',
-        'Nettó összeg': it.net_total ?? '',
-        'Státusz': it.status,
-      }));
-    }
+    const data = csvSelectedKeys.length > 0
+      ? flattenedItems.filter((it: any) => csvSelectedKeys.includes(it.uniqueId))
+      : flattenedItems;
+    const rows = data.map((it: any) => ({
+      'Megr. szám': it.order_number,
+      'Dátum': it.order_date ? dayjs(it.order_date).format('YYYY-MM-DD') : '',
+      'Ügyfél': it.customer_name,
+      'Tétel neve': it.product_name || it.manufacturing_product_name || it.material_name || it.service_name || it.name || '',
+      'Darabszám': it.quantity ?? '',
+      'Nettó egység ár': it.net_unit_price ?? '',
+      'Leírás': stripHtml(it.product_description),
+      'Belső leírás': stripHtml(it.internal_description),
+      'Megjegyzés': stripHtml(it.description),
+      'Beszállító': it.supplier_name ?? '',
+      'Határidő': it.deadline ? dayjs(it.deadline).format('YYYY-MM-DD') : '',
+      'Nettó összeg': it.net_total ?? '',
+      'Státusz': it.status,
+    }));
     if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
     const headers = Object.keys(rows[0]);
     const escape = (v: any) => {
       const s = String(v ?? '');
       return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape(r[h])).join(','))].join('\n');
+    const csv = [headers.join(','), ...rows.map((r: any) => headers.map(h => escape(r[h])).join(','))].join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -354,13 +339,9 @@ interface CustomerOrder {
 
   // Save settings to localStorage whenever they change
   useEffect(() => {
-    const settings = {
-        statusFilter,
-        creatorFilter,
-        isItemsView
-    };
+    const settings = { statusFilter, creatorFilter };
     localStorage.setItem('customerOrdersSettings', JSON.stringify(settings));
-  }, [statusFilter, creatorFilter, isItemsView]);
+  }, [statusFilter, creatorFilter]);
 
   
   // Column visibility for Items View — synced to server per user
@@ -1513,14 +1494,29 @@ interface CustomerOrder {
       },
       render: (_: any, record: any) => {
         const name = record.product_name || record.manufacturing_product_name || record.material_name || record.service_name || '-';
-        const code = record.product_code || record.material_code || record.service_code;
+        const code = record.product_code || record.manufacturing_product_code || record.material_code || record.service_code;
         return (
-          <div>
-            <div style={{ fontWeight: 500 }}>{name}</div>
-            {code && <div style={{ fontSize: '11px', color: '#666' }}>{code}</div>}
-          </div>
+          <Tooltip title={name} getPopupContainer={() => document.body}>
+            <div>
+              <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
+              {code && <div style={{ fontSize: '11px', color: '#666' }}>{code}</div>}
+            </div>
+          </Tooltip>
         );
       },
+    },
+    {
+      title: 'Darabszám', key: 'quantity', width: 100, align: 'right' as const,
+      sorter: (a: any, b: any) => Number(a.quantity || 0) - Number(b.quantity || 0),
+      render: (_: any, r: any) =>
+        `${Number(r.quantity || 0).toLocaleString('hu-HU', { maximumFractionDigits: 4 })} ${r.unit || 'db'}`,
+    },
+    {
+      title: 'Nettó egység ár', key: 'net_unit_price', width: 130, align: 'right' as const,
+      sorter: (a: any, b: any) => Number(a.net_unit_price || 0) - Number(b.net_unit_price || 0),
+      render: (_: any, r: any) => r.net_unit_price
+        ? `${Number(r.net_unit_price).toLocaleString('hu-HU', { maximumFractionDigits: 2 })} Ft`
+        : '—',
     },
     {
       title: 'Leírás', dataIndex: 'product_description', key: 'product_description', width: 200,
@@ -1837,6 +1833,8 @@ interface CustomerOrder {
     order_date: 85,
     order_number: 115,
     name: 110,
+    quantity: 80,
+    net_unit_price: 105,
     product_description: 130,
     internal_description: 130,
     description: 130,
@@ -2165,52 +2163,7 @@ interface CustomerOrder {
       />}
       extra={
         <Space className="pixi-unified-card-actions">
-           <div
-              style={{
-                display: 'inline-flex',
-                background: '#e6e8ec',
-                borderRadius: 999,
-                padding: 3,
-                gap: 0,
-              }}
-            >
-              <div
-                onClick={() => setIsItemsView(false)}
-                style={{
-                  padding: '4px 16px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  transition: 'all 0.18s',
-                  background: !isItemsView ? '#ffffff' : 'transparent',
-                  color: !isItemsView ? '#1677ff' : '#666',
-                  boxShadow: !isItemsView ? '0 1px 4px rgba(0,0,0,0.12)' : 'none',
-                  userSelect: 'none',
-                }}
-              >
-                Megrendelések
-              </div>
-              <div
-                onClick={() => setIsItemsView(true)}
-                style={{
-                  padding: '4px 16px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 500,
-                  cursor: 'pointer',
-                  transition: 'all 0.18s',
-                  background: isItemsView ? '#1677ff' : 'transparent',
-                  color: isItemsView ? '#ffffff' : '#666',
-                  boxShadow: isItemsView ? '0 1px 4px rgba(22,119,255,0.25)' : 'none',
-                  userSelect: 'none',
-                }}
-              >
-                Tételek
-              </div>
-            </div>
-           {isItemsView && (
-            <Dropdown
+           <Dropdown
               menu={{
                 items: [
                    ...DEFAULT_ITEMS_COL_ORDER.map(key => ({
@@ -2228,27 +2181,6 @@ interface CustomerOrder {
             >
                 <Button icon={<AppstoreOutlined />} />
             </Dropdown>
-          )}
-          {!isItemsView && (
-            <Dropdown
-              menu={{
-                items: [
-                   ...DEFAULT_ORDERS_COL_ORDER.map(key => ({
-                     key,
-                     label: ORDERS_COL_LABELS[key] || key,
-                     icon: mergedOrdersColVis[key] !== false ? <CheckOutlined /> : <CloseOutlined />,
-                     onClick: () => toggleOrdersCol(key),
-                   })),
-                   { type: 'divider' as const },
-                   { key: 'reset_vis', label: 'Láthatóság alaphelyzete', icon: <ReloadOutlined />, onClick: () => setOrdersColVis(DEFAULT_ORDERS_COL_VIS) },
-                   { key: 'reset_order', label: 'Sorrend alaphelyzete', icon: <ReloadOutlined />, onClick: () => setOrdersColOrder(DEFAULT_ORDERS_COL_ORDER) },
-                   { key: 'reset_sort', label: 'Rendezés törlése', icon: <ReloadOutlined />, onClick: () => setTableResetKey(k => k + 1) },
-                ]
-              }}
-            >
-                <Button icon={<AppstoreOutlined />} />
-            </Dropdown>
-          )}
           <Select
             placeholder="Szűrés rögzítőre"
             allowClear
@@ -2367,6 +2299,12 @@ interface CustomerOrder {
       }
     >
       <div ref={containerRef}>
+      {bulkSelectedKeys.length > 0 && !csvMode && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0 10px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+          <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
+        </div>
+      )}
       {useCardLayout ? renderMobileCards() : (
       <DndContext
         sensors={dndSensors}
@@ -2412,7 +2350,11 @@ interface CustomerOrder {
             selectedRowKeys: csvSelectedKeys,
             onChange: (keys) => setCsvSelectedKeys(keys),
             columnWidth: 40,
-          } : undefined}
+          } : {
+            selectedRowKeys: bulkSelectedKeys,
+            onChange: (keys) => setBulkSelectedKeys(keys),
+            columnWidth: 32,
+          }}
           className="co-responsive-table"
           tableLayout="auto"
           pagination={{
