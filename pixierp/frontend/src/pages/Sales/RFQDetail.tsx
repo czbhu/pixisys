@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { Card, Tag, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
@@ -41,6 +41,8 @@ const { TextArea } = Input;
 
 const RFQDetail: React.FC = () => {
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const itemsSectionRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -210,6 +212,12 @@ const RFQDetail: React.FC = () => {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (rfq && searchParams.get('section') === 'items') {
+      setTimeout(() => itemsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
+    }
+  }, [rfq, searchParams]);
 
   useEffect(() => {
     (async () => {
@@ -893,7 +901,7 @@ const RFQDetail: React.FC = () => {
 
 
         {/* ── Tételek ──────────────────────────────────────────────────── */}
-        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+        <div ref={itemsSectionRef} style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
             <Col xs={24} md={10}>
