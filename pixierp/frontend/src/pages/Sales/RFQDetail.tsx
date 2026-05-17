@@ -810,8 +810,10 @@ const RFQDetail: React.FC = () => {
             </Row>
           </div>
 
-        {/* Assignment controls under the save button */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
+        {/* ── Management ─────────────────────────────────────────────── */}
+        <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 10px', marginBottom: 10, marginTop: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 8, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Management</div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           <div style={{ color: '#555' }}>
             {rfq?.owner_name ? (<span><strong>Felelős:</strong> {rfq.owner_name} </span>) : (<span><strong>Felelős:</strong> - </span>)}
             
@@ -912,6 +914,7 @@ const RFQDetail: React.FC = () => {
               catch { message.error('Nem sikerült meghívni'); }
             }}>Meghívás</Button>
           </Space>
+        </div>
         </div>
 
 
