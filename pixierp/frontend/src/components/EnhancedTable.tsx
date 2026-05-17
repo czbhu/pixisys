@@ -308,10 +308,23 @@ function EnhancedTable<T extends object = any>({
   );
   const colOrder = useMemo(() => {
     const saved = colOrderRaw || allKeys;
-    return [
-      ...saved.filter((k: string) => allKeys.includes(k)),
-      ...allKeys.filter((k) => !saved.includes(k)),
-    ];
+    // Start with saved keys that still exist in allKeys
+    const merged: string[] = saved.filter((k: string) => allKeys.includes(k));
+    const mergedSet = new Set(merged);
+    // Insert new/renamed keys at their natural position (based on allKeys order),
+    // not blindly at the end (which would push them after 'actions').
+    allKeys.forEach((k, idx) => {
+      if (!mergedSet.has(k)) {
+        let insertAt = merged.length; // default: append
+        for (let i = idx - 1; i >= 0; i--) {
+          const pos = merged.indexOf(allKeys[i]);
+          if (pos !== -1) { insertAt = pos + 1; break; }
+        }
+        merged.splice(insertAt, 0, k);
+        mergedSet.add(k);
+      }
+    });
+    return merged;
   }, [colOrderRaw, allKeys]);
 
   // Sort reset ──────────────────────────────────────────────────────────────
