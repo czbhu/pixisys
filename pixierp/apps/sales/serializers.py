@@ -98,6 +98,7 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
     manufacturing_product_code = serializers.CharField(source='manufacturing_product.code', read_only=True)
     manufacturing_product_description = serializers.CharField(source='manufacturing_product.description', read_only=True)
+    manufacturing_product_internal_description = serializers.CharField(source='manufacturing_product.internal_description', read_only=True)
     manufacturing_product_printshop_params = serializers.SerializerMethodField()
     service_name = serializers.CharField(source='service.name', read_only=True)
     service_code = serializers.CharField(source='service.code', read_only=True)
