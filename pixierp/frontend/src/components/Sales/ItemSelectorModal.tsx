@@ -1964,21 +1964,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         {/* Inline manufacturing form — shown on manufacturing tab in add mode, or when editing a manufacturing item */}
         {activeKey === 'manufacturing' && (mode === 'add' || (mode === 'edit' && initialSelection?.item_type === 'manufacturing')) && (
           <div>
-            {/* If a previously created manu product is selected, show it */}
-            {selected && (selected.__type === 'manufacturing' || activeKey === 'manufacturing') && (
-              <Alert
-                message={`Kiválasztva: ${selected.name} (${selected.code || 'nincs kód'})`}
-                type="success"
-                showIcon
-                style={{ marginBottom: 8 }}
-                action={
-                  <Button size="small" onClick={() => { setSelected(null); manuForm.resetFields(); }}>
-                    Töröl
-                  </Button>
-                }
-              />
-            )}
-
             <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <strong>{manuCreatedId ? 'Tétel szerkesztése' : 'Új tétel'}</strong>
@@ -2502,22 +2487,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             </Space>
             {renderTable(activeKey)}
             {selected && (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 0 }}>
-                <Tooltip
-                  title={
-                    <div>
-                      <div style={{ marginBottom: 4 }}><strong>Külső leírás:</strong> {selected.description || '-'}</div>
-                      <div><strong>Belső leírás:</strong> {selected.internal_description || '-'}</div>
-                    </div>
-                  }
-                  placement="topLeft"
-                >
-                  <div style={{ flex: 1 }}>
-                    <Alert message={`Kiválasztva: ${selected.name} (${selected.code || 'nincs kód'})`} type="info" showIcon style={{ marginBottom: 0 }} />
-                  </div>
-                </Tooltip>
-                <Button icon={<EditOutlined />} onClick={() => openEdit(selected)} title="Tétel szerkesztése új lapon" />
-              </div>
+              <Button icon={<EditOutlined />} onClick={() => openEdit(selected)} title="Tétel szerkesztése új lapon" size="small" style={{ marginTop: 4 }} />
             )}
           </>
         )}
