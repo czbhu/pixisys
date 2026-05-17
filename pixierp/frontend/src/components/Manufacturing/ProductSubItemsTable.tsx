@@ -212,6 +212,13 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         setItems(mapped);
         if (defaultExpandAllRows && showNotesAndAttachments) {
           setExpandedSubItems(mapped.map(i => i.id));
+          // Pre-fetch attachments for all expanded items so the spinner resolves immediately
+          mapped.forEach(item => {
+            api.get(`/manufacturing/cost-items/${item.id}/attachments/`)
+              .then(res => setSubItemAtts(prev => ({ ...prev, [item.id]: res.data || [] })))
+              .catch(() => setSubItemAtts(prev => ({ ...prev, [item.id]: [] })))
+              .finally(() => setSubItemAttsLoaded(prev => ({ ...prev, [item.id]: true })));
+          });
         }
       } catch (e) {
         console.error(e);
