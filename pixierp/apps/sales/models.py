@@ -377,6 +377,21 @@ class QuoteRequestItem(models.Model):
     sort_order = models.PositiveIntegerField(default=0, verbose_name="Sorrend")
     parent = models.ForeignKey('self', on_delete=models.SET_NULL, null=True, blank=True, related_name='children', verbose_name="Szülő tétel")
     
+    item_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('new', 'Új'),
+            ('in_progress', 'Feldolgozás alatt'),
+            ('quoted', 'Ajánlat kész'),
+            ('accepted', 'Elfogadva'),
+            ('rejected', 'Elutasítva'),
+            ('ordered', 'Megrendelve'),
+            ('archived', 'Archív'),
+        ],
+        default='new',
+        blank=True,
+        verbose_name="Tétel státusz"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

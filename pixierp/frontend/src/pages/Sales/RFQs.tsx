@@ -163,6 +163,7 @@ const RFQs: React.FC = () => {
   const [rfqItemAtts, setRfqItemAtts] = useState<Record<number, any[]>>({});
   const [rfqItemUploading, setRfqItemUploading] = useState<Record<number, number>>({});
   const [rfqItemRemark, setRfqItemRemark] = useState<Record<number, string>>({});
+  const [rfqItemStatusOverrides, setRfqItemStatusOverrides] = useState<Record<string, string>>({});
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
   const rfqItemRemarkRef = useRef<Record<number, string>>({});
@@ -1265,9 +1266,12 @@ const RFQs: React.FC = () => {
       },
     },
     {
-      title: 'Nettó összeg', key: 'net_total', width: 130, align: 'right' as const,
-      sorter: (a: any, b: any) => (Number(a.quantity || 0) * Number(a.net_unit_price || 0)) - (Number(b.quantity || 0) * Number(b.net_unit_price || 0)),
-      render: (_: any, r: any) => `${(Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`,
+      title: 'Nettó összesen', key: 'item_total', width: 130, align: 'right' as const,
+      sorter: (a: any, b: any) => Number(a.discounted_net_total || a.net_total || 0) - Number(b.discounted_net_total || b.net_total || 0),
+      render: (_: any, r: any) => {
+        const total = Number(r.discounted_net_total || r.net_total || (Number(r.quantity || 0) * Number(r.net_unit_price || 0)));
+        return `${total.toLocaleString('hu-HU')} ${r.currency_symbol || 'Ft'}`;
+      },
     },
     {
       title: 'Státusz', key: 'status', width: 140,
@@ -1285,24 +1289,79 @@ const RFQs: React.FC = () => {
       },
     },
     {
-      title: 'Műveletek', key: 'actions', width: 160,
+      title: 'Tétel státusz', key: 'item_status', width: 160,
+      sorter: (a: any, b: any) => (rfqItemStatusOverrides[a.uniqueId] || a.item_status || 'new').localeCompare(rfqItemStatusOverrides[b.uniqueId] || b.item_status || 'new'),
+      render: (_: any, r: any) => {
+        const cur = rfqItemStatusOverrides[r.uniqueId] ?? r.item_status ?? 'new';
+        const itemStatusColors: Record<string, string> = {
+          new: 'default', in_progress: 'processing', quoted: 'orange',
+          accepted: 'success', rejected: 'error', ordered: 'purple', archived: 'default',
+        };
+        const itemStatusLabels: Record<string, string> = {
+          new: 'Új', in_progress: 'Feldolgozás', quoted: 'Ajánlat kész',
+          accepted: 'Elfogadva', rejected: 'Elutasítva', ordered: 'Megrendelve', archived: 'Archív',
+        };
+        return (
+          <Select
+            size="small"
+            value={cur}
+            style={{ width: 148 }}
+            popupMatchSelectWidth={false}
+            onClick={e => e.stopPropagation()}
+            onChange={async (val) => {
+              setRfqItemStatusOverrides(prev => ({ ...prev, [r.uniqueId]: val }));
+              try {
+                await salesService.updateQuoteRequestItem(r.id, { item_status: val } as any);
+              } catch {
+                message.error('Státusz frissítése sikertelen');
+                setRfqItemStatusOverrides(prev => ({ ...prev, [r.uniqueId]: cur }));
+              }
+            }}
+          >
+            {Object.entries(itemStatusLabels).map(([val, label]) => (
+              <Select.Option key={val} value={val}>
+                <Tag color={itemStatusColors[val]} style={{ margin: 0 }}>{label}</Tag>
+              </Select.Option>
+            ))}
+          </Select>
+        );
+      },
+    },
+    {
+      title: 'Műveletek', key: 'actions', width: 200,
       render: (_: any, r: any) => (
         <Space size="small" wrap>
           <Tooltip title="Megnyitás">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}`)} />
           </Tooltip>
+          <Tooltip title="Küldés">
+            <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendOpenId(r.rfq_id); }} />
+          </Tooltip>
+          <Tooltip title="Másolás">
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async (e) => {
+              e.stopPropagation();
+              try {
+                const res = await salesService.copyQuoteRequest(r.rfq_id);
+                message.success(`Árajánlat másolva: ${res.number}`);
+                navigate(`/sales/rfqs/${res.id}`);
+              } catch (ex: any) {
+                message.error(ex?.response?.data?.error || 'Nem sikerült másolni');
+              }
+            }} />
+          </Tooltip>
           {r.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
-              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async () => { await salesService.setQuoteRequestStatus(r.rfq_id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
+              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async (e) => { e.stopPropagation(); await salesService.setQuoteRequestStatus(r.rfq_id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
             </Tooltip>
           )}
           {r.status !== 'quoted' && (
             <Tooltip title="Zárás (Árazva)">
-              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async () => { await salesService.setQuoteRequestStatus(r.rfq_id, 'quoted'); message.success('Lezárva'); loadData(); }} />
+              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async (e) => { e.stopPropagation(); await salesService.setQuoteRequestStatus(r.rfq_id, 'quoted'); message.success('Lezárva'); loadData(); }} />
             </Tooltip>
           )}
           <Tooltip title="Tétel törlése">
-            <Button danger icon={<DeleteOutlined />} size="small" onClick={() => {
+            <Button danger icon={<DeleteOutlined />} size="small" onClick={(e) => {
+              e.stopPropagation();
               Modal.confirm({
                 title: 'Tétel törlése',
                 content: 'Biztosan törlöd ezt a tételt?',
@@ -1324,7 +1383,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, statusTag, loadData]);
+  ]), [navigate, statusTag, loadData, setSendOpenId, rfqItemStatusOverrides]);
 
   const handleCreate = async () => {
     try {
@@ -2024,7 +2083,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => navigate(`/sales/rfqs/${r.rfq_id}`), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
         } : {
