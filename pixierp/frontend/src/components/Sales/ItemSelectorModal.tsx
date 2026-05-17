@@ -2350,6 +2350,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           )}
                         </SortableContext>
                       </DndContext>
+                    </Collapse.Panel>
+                  </Collapse>
+
                       {manuCostItems.length > 0 && (() => {
                         const qty = manuWatchQty || 1;
                         const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);
@@ -2403,8 +2406,6 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           </div>
                         );
                       })()}
-                    </Collapse.Panel>
-                  </Collapse>
 
                   <Divider style={{ margin: '12px 0' }} />
 

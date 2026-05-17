@@ -28,24 +28,12 @@ import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils
 import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItemsTable';
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
+import stripHtml from '../../utils/stripHtml';
 
 const { useBreakpoint } = Grid;
 
 // Ékezet-független + kis/nagybetű-független filter a Select komponensekhez
 // (a default `optionFilterProp="label"` csak case-insensitive substring match-et csinál).
-const stripHtml = (s: any): string => {
-  if (s == null) return '';
-  const str = String(s);
-  if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
-  if (typeof document !== 'undefined') {
-    try {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = str;
-      return tmp.textContent || tmp.innerText || '';
-    } catch { /* fall through */ }
-  }
-  return str.replace(/<[^>]*>/g, '');
-};
 
 const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
   if (!input) return true;
@@ -1217,13 +1205,13 @@ const RFQs: React.FC = () => {
     },
     {
       title: 'Leírás', dataIndex: 'description', key: 'description', width: 200,
-      sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
-      render: (_: any, r: any) => { const t = r.description || r.manufacturing_product_description || r.product_description || ''; return t ? (<Tooltip title={t} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{t}</div></Tooltip>) : null; },
+      sorter: (a: any, b: any) => (stripHtml(a.description || a.manufacturing_product_description || '') ).localeCompare(stripHtml(b.description || b.manufacturing_product_description || ''), 'hu'),
+      render: (_: any, r: any) => { const t = stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''); return t ? (<Tooltip title={t} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{t}</div></Tooltip>) : null; },
     },
     {
       title: 'Belső leírás', dataIndex: 'manufacturing_product_internal_description', key: 'manufacturing_product_internal_description', width: 180,
-      sorter: (a: any, b: any) => (a.manufacturing_product_internal_description || '').localeCompare(b.manufacturing_product_internal_description || '', 'hu'),
-      render: (t: string) => t ? (<Tooltip title={t} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{t}</div></Tooltip>) : null,
+      sorter: (a: any, b: any) => (stripHtml(a.manufacturing_product_internal_description || '')).localeCompare(stripHtml(b.manufacturing_product_internal_description || ''), 'hu'),
+      render: (t: string) => { const clean = stripHtml(t); return clean ? (<Tooltip title={clean} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{clean}</div></Tooltip>) : null; },
     },
 
     {

@@ -19,6 +19,7 @@ import NumInput from '../../components/NumInput';
 import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
+import stripHtml from '../../utils/stripHtml';
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -92,21 +93,6 @@ const COST_ITEM_STATUS_OPTIONS: { value: string; label: string; color: string }[
   { value: 'cancelled', label: 'Törölve', color: 'red' },
 ];
 
-const stripHtmlToText = (s: any): string => {
-  if (s == null) return '';
-  const str = String(s);
-  if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
-  if (typeof document !== 'undefined') {
-    try {
-      const tmp = document.createElement('div');
-      tmp.innerHTML = str;
-      return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
-    } catch {
-      // Fall back to regex when DOM parsing is unavailable.
-    }
-  }
-  return str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
-};
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
@@ -192,8 +178,8 @@ const ManufacturingProductDetail: React.FC = () => {
 
       form.setFieldsValue({
         ...p,
-        description: stripHtmlToText(p.description),
-        internal_description: stripHtmlToText(p.internal_description),
+        description: stripHtml(p.description),
+        internal_description: stripHtml(p.internal_description),
         company_id: companyId,
         contact_ids: contactIds,
       });
@@ -583,8 +569,8 @@ const ManufacturingProductDetail: React.FC = () => {
       });
       const payload = {
         ...v,
-        description: stripHtmlToText(v.description),
-        internal_description: stripHtmlToText(v.internal_description),
+        description: stripHtml(v.description),
+        internal_description: stripHtml(v.internal_description),
         net_total_price: Number(totalSelling.toFixed(2)),
         net_unit_price: Number((productQty > 0 ? totalSelling / productQty : 0).toFixed(2)),
         is_fixed_quantity: false,
@@ -905,12 +891,12 @@ const ManufacturingProductDetail: React.FC = () => {
             <Row gutter={[8, 4]}>
               <Col span={12}>
                 <Form.Item label="Leírás" name="description" style={{ marginBottom: 6 }}>
-                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('description', stripHtmlToText(e.target.value))} />
+                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('description', stripHtml(e.target.value))} />
                 </Form.Item>
               </Col>
               <Col span={12}>
                 <Form.Item label="Belső leírás" name="internal_description" style={{ marginBottom: 6 }}>
-                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('internal_description', stripHtmlToText(e.target.value))} />
+                  <Input.TextArea rows={3} onBlur={e => form.setFieldValue('internal_description', stripHtml(e.target.value))} />
                 </Form.Item>
               </Col>
             </Row>
