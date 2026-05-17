@@ -2014,12 +2014,26 @@ def public_order_view(request, token: str):
     # Megrendelő adatok
     customer_data = None
     if qr.company:
+        # full_address only works when postal_code+city+street_name are all set;
+        # if any is missing it falls back to address field (which may also be empty).
+        # Build a robust address from whatever components are available.
+        address = qr.company.full_address
+        if not address:
+            loc = ' '.join(filter(None, [qr.company.postal_code or '', qr.company.city or ''])).strip()
+            street = ''
+            if getattr(qr.company, 'street_name', ''):
+                house = getattr(qr.company, 'house_number', '') or getattr(qr.company, 'street_number', '') or ''
+                plc = getattr(qr.company, 'public_place_category', '') or getattr(qr.company, 'street_type', '')
+                street = f"{qr.company.street_name} {plc} {house}".strip()
+            elif qr.company.address:
+                street = qr.company.address
+            address = ', '.join(filter(None, [loc, street]))
         customer_data = {
             'name': qr.company.name,
             'tax_number': qr.company.tax_number or '',
-            'address': qr.company.full_address,
-            'city': '',
-            'postal_code': '',
+            'address': address,
+            'postal_code': qr.company.postal_code or '',
+            'city': qr.company.city or '',
             'country': qr.company.country or 'Magyarország',
         }
     elif qr.customer:
