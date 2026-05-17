@@ -232,17 +232,6 @@ const RFQDetail: React.FC = () => {
     }
   }, [rfq, searchParams]);
 
-  // Auto-open first item editor on page load (if no specific editItemId)
-  useEffect(() => {
-    if (!rfq || autoFirstItemRef.current || searchParams.get('editItemId')) return;
-    const items = rfq.items || [];
-    if (items.length > 0) {
-      autoFirstItemRef.current = true;
-      setEditContext({ item: items[0] });
-      setSelectorType(items[0].item_type || 'manufacturing');
-    }
-  }, [rfq, searchParams]);
-
   // ESC → vissza az előző lapra
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
