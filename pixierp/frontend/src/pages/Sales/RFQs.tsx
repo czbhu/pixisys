@@ -10,6 +10,7 @@ import type { UploadFile } from 'antd/es/upload/interface';
 import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
+import './RFQs.css';
 import { salesService } from '../../services/salesService';
 import { crmService } from '../../services/crmService';
 import { manufacturingService, Currency as MCurrency } from '../../services/manufacturingService';
@@ -2050,7 +2051,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => navigate(`/sales/rfqs/${r.rfq_id}`), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => navigate(`/sales/rfqs/${r.rfq_id}`), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
         } : {

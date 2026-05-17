@@ -1,0 +1,4 @@
+/* RFQs items view – compact cell padding */
+.rfq-items-table .ant-table-cell {
+  padding: 4px 6px !important;
+}
