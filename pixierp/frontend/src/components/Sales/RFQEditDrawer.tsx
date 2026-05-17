@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Drawer, Form, Row, Col, Input, Button, Select, DatePicker, Space, Tag, Spin, message, Checkbox,
+  Modal, Form, Row, Col, Input, Button, Select, DatePicker, Space, Tag, Spin, message, Checkbox,
 } from 'antd';
 import { PlusOutlined } from '@ant-design/icons';
 import dayjs from 'dayjs';
@@ -206,18 +206,29 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
 
   return (
     <>
-      <Drawer
+      <Modal
         open={open}
-        onClose={onClose}
-        width={960}
-        title={rfq ? `${rfq.number || rfq.request_number} — szerkesztés` : 'Ajánlat szerkesztése'}
-        styles={{ body: { padding: '12px 16px' } }}
-        extra={
-          <Space>
-            <Tag color={statusColors[rfq?.status] || 'default'}>{statusLabels[rfq?.status] || rfq?.status}</Tag>
-            <Button loading={saving} onClick={() => handleSave(false)}>Mentés</Button>
-            <Button type="primary" loading={saving} onClick={() => handleSave(true)}>Mentés &amp; bezárás</Button>
+        onCancel={onClose}
+        width="min(1100px, 96vw)"
+        title={
+          <Space size={8}>
+            <span>{rfq ? `${rfq.number || rfq.request_number} — szerkesztés` : 'Ajánlat szerkesztése'}</span>
+            {rfq && <Tag color={statusColors[rfq.status] || 'default'}>{statusLabels[rfq.status] || rfq.status}</Tag>}
           </Space>
+        }
+        styles={{ body: { padding: '12px 16px', maxHeight: 'calc(90vh - 120px)', overflowY: 'auto' } }}
+        style={{ top: 20 }}
+        footer={
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <span style={{ fontSize: 11, color: '#888' }}>
+              {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
+            </span>
+            <Space>
+              <Button onClick={onClose}>Bezárás</Button>
+              <Button loading={saving} onClick={() => handleSave(false)}>Mentés</Button>
+              <Button type="primary" loading={saving} onClick={() => handleSave(true)}>Mentés &amp; bezárás</Button>
+            </Space>
+          </div>
         }
         destroyOnClose
       >
@@ -394,14 +405,9 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
                 </>
             </div>
 
-            {lastSavedAt && (
-              <div style={{ fontSize: 11, color: '#888', textAlign: 'right' }}>
-                Utoljára mentve: {lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}
-              </div>
-            )}
           </Form>
         ) : null}
-      </Drawer>
+      </Modal>
 
       <ItemSelectorModal
         open={selectorOpen && !editContext}
