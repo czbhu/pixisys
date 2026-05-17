@@ -70,6 +70,8 @@ interface ItemSelectorModalProps {
   orderItems?: Array<{ id: number; name: string }>;
   /** When true, the "Beszállítók és árkalkuláció" collapse panel is pre-opened */
   expandCosts?: boolean;
+  /** When true, renders content without a Modal wrapper — for inline panel use inside a Drawer */
+  renderInline?: boolean;
 }
 
 interface CostItem {
@@ -104,7 +106,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -1944,14 +1946,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     />
   );
 
-  return (
-    <Modal
-      open={open}
-      onCancel={handleModalCancel}
-      title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
-      width="min(1400px, 96vw)"
-      styles={{ body: { padding: 10 } }}
-      footer={(() => {
+  const footerContent = (() => {
         const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
         const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
         const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés & bezárás'
@@ -1995,9 +1990,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             </Space>
           </div>
         );
-      })()}
-    >
-      <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
+  })();
+  const bodyContent = (
+    <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
         <div style={{ display: 'none' }}>
           <Tabs
             activeKey={activeKey}
@@ -2896,6 +2891,28 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           );
         })()}
       </Modal>
+    </Space>
+  );
+  if (renderInline) {
+    return (
+      <div style={{ width: '100%' }}>
+        {bodyContent}
+        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 8 }}>
+          {footerContent}
+        </div>
+      </div>
+    );
+  }
+  return (
+    <Modal
+      open={open}
+      onCancel={handleModalCancel}
+      title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
+      width="min(1400px, 96vw)"
+      styles={{ body: { padding: 10 } }}
+      footer={footerContent}
+    >
+      {bodyContent}
     </Modal>
   );
 };

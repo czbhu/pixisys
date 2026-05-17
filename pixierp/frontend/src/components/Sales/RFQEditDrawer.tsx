@@ -344,53 +344,83 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
 
             {/* Tételek */}
             <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
-              <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
-                <Col xs={24} md={10}>
-                  <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
-                    <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                      {(projects || []).map((p: any) => (
-                        <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
-                      ))}
-                    </Select>
-                  </Form.Item>
-                </Col>
-              </Row>
-              <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
-                <Form.Item name="partial_order_allowed" valuePropName="checked" style={{ marginBottom: 0 }}>
-                  <Checkbox>Részlegesen megrendelhető</Checkbox>
-                </Form.Item>
-              </div>
-              <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>
-                Tétel hozzáadása
-              </Button>
-              <div style={{ marginTop: 6 }}>
-                <ItemsTable
-                  items={rfq.items || []}
-                  onRefresh={refreshItems}
-                  quoteRequestId={rfqId!}
-                  currency={activeCurrency}
-                  onEditItem={(item) => {
-                    setEditContext({ item });
-                    setSelectorType(item.item_type);
-                    setSelectorOpen(true);
+              {editContext ? (
+                <ItemSelectorModal
+                  renderInline
+                  open={true}
+                  mode="edit"
+                  defaultType={selectorType}
+                  onCancel={() => setEditContext(null)}
+                  onAdd={async (p) => onEditSelected(p)}
+                  rfqId={rfqId ?? undefined}
+                  rfqCurrency={activeCurrency}
+                  initialSelection={{
+                    item_type: editContext.item.item_type,
+                    ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
+                    name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name,
                   }}
-                  currencySelector={
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
-                      <Form.Item name="currency_code" noStyle>
-                        <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
-                          {(currencyList || []).map((c: any) => (
-                            <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
-                              {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
-                            </Select.Option>
+                  initialValues={{
+                    quantity: Number(editContext.item.quantity),
+                    unit: editContext.item.unit,
+                    net_unit_price: Number(editContext.item.net_unit_price),
+                    vat_rate: Number(editContext.item.vat_rate),
+                    description: editContext.item.description,
+                    discount_percent: Number(editContext.item.discount_percent || 0),
+                    discount_amount: Number(editContext.item.discount_amount || 0),
+                  }}
+                  initialFormulas={editContext.item.formulas || {}}
+                  quoteItemId={editContext.item.id}
+                />
+              ) : (
+                <>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
+                  <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
+                    <Col xs={24} md={10}>
+                      <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
+                        <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
+                          {(projects || []).map((p: any) => (
+                            <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
                           ))}
                         </Select>
                       </Form.Item>
-                    </div>
-                  }
-                />
-              </div>
+                    </Col>
+                  </Row>
+                  <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
+                    <Form.Item name="partial_order_allowed" valuePropName="checked" style={{ marginBottom: 0 }}>
+                      <Checkbox>Részlegesen megrendelhető</Checkbox>
+                    </Form.Item>
+                  </div>
+                  <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>
+                    Tétel hozzáadása
+                  </Button>
+                  <div style={{ marginTop: 6 }}>
+                    <ItemsTable
+                      items={rfq.items || []}
+                      onRefresh={refreshItems}
+                      quoteRequestId={rfqId!}
+                      currency={activeCurrency}
+                      onEditItem={(item) => {
+                        setEditContext({ item });
+                        setSelectorType(item.item_type);
+                      }}
+                      currencySelector={
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <span style={{ fontWeight: 500, whiteSpace: 'nowrap', fontSize: 13 }}>Pénznem:</span>
+                          <Form.Item name="currency_code" noStyle>
+                            <Select showSearch optionFilterProp="label" placeholder="Válassz pénznemet" style={{ width: 200 }} size="small">
+                              {(currencyList || []).map((c: any) => (
+                                <Select.Option key={c.id} value={c.code} label={`${c.code} – ${c.name}`}>
+                                  {c.code} – {c.name} {c.symbol ? `(${c.symbol})` : ''}
+                                </Select.Option>
+                              ))}
+                            </Select>
+                          </Form.Item>
+                        </div>
+                      }
+                    />
+                  </div>
+                </>
+              )}
             </div>
 
             {lastSavedAt && (
@@ -403,29 +433,13 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
       </Drawer>
 
       <ItemSelectorModal
-        open={selectorOpen}
+        open={selectorOpen && !editContext}
         defaultType={selectorType}
-        onCancel={() => { setSelectorOpen(false); setEditContext(null); }}
-        onAdd={editContext ? async (p) => onEditSelected(p) : onAddSelected}
-        mode={editContext ? 'edit' : 'add'}
+        onCancel={() => { setSelectorOpen(false); }}
+        onAdd={onAddSelected}
+        mode="add"
         rfqId={rfqId ?? undefined}
         rfqCurrency={activeCurrency}
-        initialSelection={editContext ? {
-          item_type: editContext.item.item_type,
-          ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number,
-          name: editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name,
-        } : undefined}
-        initialValues={editContext ? {
-          quantity: Number(editContext.item.quantity),
-          unit: editContext.item.unit,
-          net_unit_price: Number(editContext.item.net_unit_price),
-          vat_rate: Number(editContext.item.vat_rate),
-          description: editContext.item.description,
-          discount_percent: Number(editContext.item.discount_percent || 0),
-          discount_amount: Number(editContext.item.discount_amount || 0),
-        } : undefined}
-        initialFormulas={editContext?.item?.formulas || {}}
-        quoteItemId={editContext?.item?.id}
       />
     </>
   );
