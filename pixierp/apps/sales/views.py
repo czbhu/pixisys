@@ -3118,7 +3118,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         
         context = {
             'order_number': order.order_number,
-            'order_date': str(order.order_date),
+            'order_date': order.order_date.strftime('%Y-%m-%d %H:%M') if order.order_date else '',
             'company_name': from_name,
             'customer_name': customer_name,
             'contact_name': contact_name,
@@ -3141,7 +3141,13 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 try: body_core = tpl.body_template.format(**context)
                 except: body_core = tpl.body_template
             
-            body = f"{body_core}{sig.body_html if sig else ''}" if is_html else f"{body_core}\n\n{sig.body_html if sig else ''}"
+            if is_html:
+                body = f"{body_core}{sig.body_html if sig else ''}"
+            else:
+                # Plain text template: convert \n to HTML <br> so ReactQuill renders with line breaks
+                plain = f"{body_core}\n\n{sig.body_html if sig else ''}".strip()
+                body = '<br>'.join(line if line else '<br>' for line in plain.split('\n'))
+                is_html = True
         else:
             # Fallback
             is_html = True
