@@ -246,7 +246,10 @@ const RFQDetail: React.FC = () => {
   // ESC → vissza az előző lapra
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') navigate(-1);
+      if (e.key === 'Escape') {
+        if (window.history.length <= 1) window.close();
+        else navigate(-1);
+      }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
