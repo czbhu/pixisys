@@ -3,7 +3,6 @@ import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
 import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer, Popover } from 'antd';
-import './RFQs.css';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -1274,51 +1273,49 @@ const RFQs: React.FC = () => {
       title: 'Státusz', key: 'item_status', width: 150,
       sorter: (a: any, b: any) => (rfqItemStatusOverrides[a.uniqueId] ?? a.item_status ?? 'new').localeCompare(rfqItemStatusOverrides[b.uniqueId] ?? b.item_status ?? 'new'),
       render: (_: any, r: any) => {
-        const ITEM_STATUS_OPTS = [
-          { value: 'new', label: 'Új', color: 'default' },
-          { value: 'in_progress', label: 'Feldolgozás', color: 'processing' },
-          { value: 'quoted', label: 'Ajánlat kész', color: 'orange' },
-          { value: 'accepted', label: 'Elfogadva', color: 'success' },
-          { value: 'rejected', label: 'Elutasítva', color: 'error' },
-          { value: 'ordered', label: 'Megrendelve', color: 'purple' },
-          { value: 'archived', label: 'Archív', color: 'default' },
-        ];
         const cur = rfqItemStatusOverrides[r.uniqueId] ?? r.item_status ?? 'new';
-        const opt = ITEM_STATUS_OPTS.find(o => o.value === cur) || ITEM_STATUS_OPTS[0];
+        const itemStatusColors: Record<string, string> = {
+          new: 'default', in_progress: 'processing', quoted: 'orange',
+          accepted: 'success', rejected: 'error', ordered: 'purple', archived: 'default',
+        };
+        const itemStatusLabels: Record<string, string> = {
+          new: 'Új', in_progress: 'Feldolgozás', quoted: 'Ajánlat kész',
+          accepted: 'Elfogadva', rejected: 'Elutasítva', ordered: 'Megrendelve', archived: 'Archív',
+        };
+        const popoverContent = (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {Object.keys(itemStatusLabels).map(s => (
+              <Button
+                key={s}
+                size="small"
+                type={s === cur ? 'primary' : 'text'}
+                disabled={s === cur}
+                style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+                onClick={async () => {
+                  const prev = cur;
+                  setRfqItemStatusOverrides(o => ({ ...o, [r.uniqueId]: s }));
+                  try {
+                    await salesService.updateQuoteRequestItem(r.id, { item_status: s } as any);
+                  } catch {
+                    message.error('Státusz frissítése sikertelen');
+                    setRfqItemStatusOverrides(o => ({ ...o, [r.uniqueId]: prev }));
+                  }
+                }}
+              >
+                {itemStatusLabels[s]}
+              </Button>
+            ))}
+          </div>
+        );
         return (
-          <Popover
-            trigger="click"
-            title="Tétel státusza"
-            getPopupContainer={() => document.body}
-            zIndex={9999}
-            content={
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                {ITEM_STATUS_OPTS.map(o => (
-                  <Button key={o.value} size="small" type={o.value === cur ? 'primary' : 'text'}
-                    disabled={o.value === cur}
-                    onClick={async () => {
-                      const prev = cur;
-                      setRfqItemStatusOverrides(ps => ({ ...ps, [r.uniqueId]: o.value }));
-                      try {
-                        await salesService.updateQuoteRequestItem(r.id, { item_status: o.value } as any);
-                      } catch {
-                        message.error('Státusz frissítése sikertelen');
-                        setRfqItemStatusOverrides(ps => ({ ...ps, [r.uniqueId]: prev }));
-                      }
-                    }}
-                  >{o.label}</Button>
-                ))}
-              </div>
-            }
-            overlayInnerStyle={{ padding: '6px 8px' }}
-          >
-            <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()}>{opt.label}</Tag>
+          <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+            <Tag color={itemStatusColors[cur]} style={{ cursor: 'pointer' }}>{itemStatusLabels[cur] || cur}</Tag>
           </Popover>
         );
       },
     },
     {
-      title: 'Műveletek', key: 'actions', width: 160,
+      title: 'Műveletek', key: 'actions', width: 200,
       render: (_: any, r: any) => (
         <Space size="small" wrap>
           <Tooltip title="Megnyitás">
@@ -2053,7 +2050,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} className={isItemsView ? 'rfqs-items-table' : undefined} scroll={isItemsView ? { x: 'max-content' } : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => navigate(`/sales/rfqs/${r.rfq_id}`), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => navigate(`/sales/rfqs/${r.rfq_id}`), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 42 } : undefined)} expandable={isItemsView ? {
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
         } : {
