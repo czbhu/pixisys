@@ -2014,29 +2014,12 @@ def public_order_view(request, token: str):
     # Megrendelő adatok
     customer_data = None
     if qr.company:
-        # Magyar cégnél a `address` mező sokszor üres — a részletes cím a
-        # postal_code/city/street_name/house_number/... mezőkben tárolódik.
-        # A frontend külön sorban jeleníti meg az irányítószámot+várost és az
-        # utca-házszám sort, ezért itt csak az utca-részt rakjuk össze.
-        street_line = qr.company.address or ''
-        if not street_line and getattr(qr.company, 'street_name', ''):
-            house = getattr(qr.company, 'house_number', '') or getattr(qr.company, 'street_number', '') or ''
-            plc = getattr(qr.company, 'public_place_category', '') or getattr(qr.company, 'street_type', '')
-            extras = ' '.join(filter(None, [
-                getattr(qr.company, 'building', ''),
-                getattr(qr.company, 'staircase', ''),
-                getattr(qr.company, 'floor', ''),
-                getattr(qr.company, 'door', ''),
-            ])).strip()
-            street_line = f"{qr.company.street_name} {plc}{(' ' + house) if house else ''}".strip()
-            if extras:
-                street_line = f"{street_line} {extras}".strip()
         customer_data = {
             'name': qr.company.name,
             'tax_number': qr.company.tax_number or '',
-            'address': street_line,
-            'city': qr.company.city or '',
-            'postal_code': qr.company.postal_code or '',
+            'address': qr.company.full_address,
+            'city': '',
+            'postal_code': '',
             'country': qr.company.country or 'Magyarország',
         }
     elif qr.customer:

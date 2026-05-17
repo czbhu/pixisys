@@ -426,9 +426,13 @@ const PublicQuoteOrder: React.FC = () => {
             {data.customer ? (
               <div>
                 <strong>{data.customer.name}</strong><br />
-                {data.customer.tax_number && `Adószám: ${data.customer.tax_number}`}<br />
-                {data.customer.postal_code} {data.customer.city}<br />
-                {data.customer.address}<br />
+                {data.customer.tax_number && <span>Adószám: {data.customer.tax_number}<br /></span>}
+                {data.customer.address
+                  ? <span>{data.customer.address}<br /></span>
+                  : (data.customer.postal_code || data.customer.city)
+                    ? <span>{data.customer.postal_code} {data.customer.city}<br /></span>
+                    : null
+                }
                 {data.customer.country}
               </div>
             ) : (
