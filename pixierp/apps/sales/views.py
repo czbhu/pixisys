@@ -2018,8 +2018,11 @@ def public_order_view(request, token: str):
         # if any is missing it falls back to address field (which may also be empty).
         # Build a robust address from whatever components are available.
         address = qr.company.full_address
+        postal_code = qr.company.postal_code or ''
+        city = qr.company.city or ''
+        country = qr.company.country or 'Magyarország'
         if not address:
-            loc = ' '.join(filter(None, [qr.company.postal_code or '', qr.company.city or ''])).strip()
+            loc = ' '.join(filter(None, [postal_code, city])).strip()
             street = ''
             if getattr(qr.company, 'street_name', ''):
                 house = getattr(qr.company, 'house_number', '') or getattr(qr.company, 'street_number', '') or ''
@@ -2028,13 +2031,50 @@ def public_order_view(request, token: str):
             elif qr.company.address:
                 street = qr.company.address
             address = ', '.join(filter(None, [loc, street]))
+
+        # Ha helyi DB-ben nincs cím, kérjük le Pixinvoice-ból (az address mezők nem kerülnek szinkronizálásra)
+        if not address and qr.company.external_id:
+            try:
+                from apps.finance.views import PixinvoiceClient
+                client = PixinvoiceClient()
+                tenant_id = getattr(client, 'company_id', None)
+                if not tenant_id:
+                    try:
+                        comps = client.list_companies()
+                        if comps:
+                            active = next((c for c in comps if c.get('is_active') is True), None)
+                            tenant_id = (active or comps[0]).get('id') or (active or comps[0]).get('company_id')
+                    except Exception:
+                        pass
+                if tenant_id:
+                    remote = client.get_customer(qr.company.external_id, company_id=tenant_id)
+                    if remote:
+                        address = remote.get('address') or ''
+                        if not address:
+                            r_postal = remote.get('postal_code') or ''
+                            r_city = remote.get('city') or ''
+                            r_street = remote.get('street_name') or ''
+                            r_plc = remote.get('public_place_category') or remote.get('street_type') or ''
+                            r_house = remote.get('house_number') or remote.get('street_number') or ''
+                            r_loc = f"{r_postal} {r_city}".strip()
+                            r_line = f"{r_street} {r_plc} {r_house}".strip()
+                            address = ', '.join(filter(None, [r_loc, r_line]))
+                        if not postal_code:
+                            postal_code = remote.get('postal_code') or ''
+                        if not city:
+                            city = remote.get('city') or ''
+                        if not country or country == 'Magyarország':
+                            country = remote.get('country') or country
+            except Exception as e:
+                print(f"Error fetching company address from Pixinvoice: {e}")
+
         customer_data = {
             'name': qr.company.name,
             'tax_number': qr.company.tax_number or '',
             'address': address,
-            'postal_code': qr.company.postal_code or '',
-            'city': qr.company.city or '',
-            'country': qr.company.country or 'Magyarország',
+            'postal_code': postal_code,
+            'city': city,
+            'country': country,
         }
     elif qr.customer:
         customer_data = {
