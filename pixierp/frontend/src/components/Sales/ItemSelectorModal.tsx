@@ -366,6 +366,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDefaultMarkup(30);
     setManuDefaultMarkupActive(false);
     setManuCreatedId(null);
+    setSelected(null);
+    form.resetFields();
     setManuSellCurrencyCode('HUF');
     setManuSellCurrencyId(null);
     setManuCostCurrencyCode('HUF');
