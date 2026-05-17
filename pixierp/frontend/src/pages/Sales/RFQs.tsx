@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -29,6 +29,7 @@ import ProductSubItemsTable from '../../components/Manufacturing/ProductSubItems
 import MaterialNeedsTree from '../../components/Manufacturing/MaterialNeedsTree';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
 import stripHtml from '../../utils/stripHtml';
+import api from '../../services/api';
 
 const { useBreakpoint } = Grid;
 
@@ -92,6 +93,7 @@ const RFQs: React.FC = () => {
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [sendOpenId, setSendOpenId] = useState<number | null>(null);
   const [sendForm] = Form.useForm();
+  const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
   const [query, setQuery] = useState('');
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
@@ -134,6 +136,14 @@ const RFQs: React.FC = () => {
   const isItemsView = true;
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
+  const [createOrderLoading, setCreateOrderLoading] = useState(false);
+  // Confirmation email flow after order creation
+  const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
+  const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ orderId: number; rfqId: number }[]>([]);
+  const [confirmEmailIndex, setConfirmEmailIndex] = useState(0);
+  const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
+  const [confirmEmailSending, setConfirmEmailSending] = useState(false);
+  const [confirmEmailSentSet, setConfirmEmailSentSet] = useState<number[]>([]);
   const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; sent: boolean }[]>([]);
   const [sendRfqIndex, setSendRfqIndex] = useState(0);
   const isDemandView = searchParams.get('view') === 'demands';
@@ -836,6 +846,9 @@ const RFQs: React.FC = () => {
           <Tooltip title="Szerkesztés">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
+          <Tooltip title="Megrendelés">
+            <Button icon={<ShoppingCartOutlined style={{ color: '#096dd9' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} loading={createOrderLoading} onClick={() => handleCreateOrder([record.id], false)} />
+          </Tooltip>
           <Tooltip title="Kiküldés e-mailben">
             <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={() => { setSendRfqList([{ rfqId: record.id, sent: false }]); setSendRfqIndex(0); openSendModal(record.id); }} />
           </Tooltip>
@@ -1224,6 +1237,9 @@ const RFQs: React.FC = () => {
           <Tooltip title="Megnyitás">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
           </Tooltip>
+          <Tooltip title="Megrendelés">
+            <Button icon={<ShoppingCartOutlined style={{ color: '#096dd9' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} loading={createOrderLoading} onClick={(e) => { e.stopPropagation(); handleCreateOrder([r.rfq_id], false); }} />
+          </Tooltip>
           <Tooltip title="Küldés">
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
@@ -1253,7 +1269,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, statusTag, loadData, setSendOpenId, rfqItemStatusOverrides]);
+  ]), [navigate, statusTag, loadData, setSendOpenId, rfqItemStatusOverrides, createOrderLoading]);
 
   const handleCreate = async () => {
     try {
@@ -1720,26 +1736,49 @@ const RFQs: React.FC = () => {
       content: `Biztosan gyártásba küldi a kijelölt ${selectedItems.length} tételt (${rfqIds.length} ajánlat)?`,
       okText: 'Igen, gyártásba küld',
       cancelText: 'Mégse',
-      onOk: async () => {
-        setBulkOrderLoading(true);
-        let successCount = 0;
-        for (const rfqId of rfqIds) {
-          try {
-            await salesService.orderAllFromRfq(rfqId, undefined);
-            successCount++;
-          } catch (e: any) {
-            message.error(`Hiba a megrendelésnél (QR #${rfqId}): ${e?.response?.data?.error || e.message}`);
-          }
-        }
-        setBulkOrderLoading(false);
-        setBulkSelectedKeys([]);
-        if (successCount > 0) {
-          message.success(`${successCount} megrendelés létrehozva`);
-          loadData();
-          setTimeout(() => navigate('/sales/customer-orders'), 1200);
-        }
-      },
+      onOk: () => handleCreateOrder(rfqIds, true),
     });
+  };
+
+  const handleCreateOrder = async (rfqIds: number[], sendToProduction = false) => {
+    setCreateOrderLoading(true);
+    const createdOrders: { orderId: number; rfqId: number }[] = [];
+    for (const rfqId of rfqIds) {
+      try {
+        const res = await salesService.orderAllFromRfq(rfqId, undefined);
+        if (sendToProduction) {
+          try {
+            await api.post(`/sales/customer-orders/${res.order_id}/update_status/`, { status: 'in_production', send_email: false });
+          } catch {}
+        }
+        createdOrders.push({ orderId: res.order_id, rfqId });
+      } catch (e: any) {
+        message.error(`Hiba a megrendelésnél (QR #${rfqId}): ${e?.response?.data?.error || e.message}`);
+      }
+    }
+    setCreateOrderLoading(false);
+    setBulkSelectedKeys([]);
+    setBulkOrderLoading(false);
+    if (createdOrders.length > 0) {
+      message.success(`${createdOrders.length} megrendelés létrehozva`);
+      loadData();
+      setConfirmEmailOrders(createdOrders);
+      setConfirmEmailIndex(0);
+      setConfirmEmailSentSet([]);
+      setConfirmEmailAskOpen(true);
+    }
+  };
+
+  const openConfirmEmailModal = async (orderEntry: { orderId: number; rfqId: number }) => {
+    try {
+      const res = await api.post(`/sales/customer-orders/${orderEntry.orderId}/render_confirmation_email/`, { template_key: 'order_confirmation' });
+      confirmEmailForm.setFieldsValue({ to: res.data.to || '', subject: res.data.subject || '', body: res.data.body || '' });
+    } catch {
+      const rfq = (rfqs || []).find((r: any) => r.id === orderEntry.rfqId);
+      const to = (rfq?.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
+      confirmEmailForm.setFieldsValue({ to, subject: 'Megrendelés visszaigazolás', body: '' });
+    }
+    setConfirmEmailOpen(true);
   };
 
   const openSendModal = async (rfqId: number) => {
@@ -1990,6 +2029,11 @@ const RFQs: React.FC = () => {
         {isItemsView && bulkSelectedKeys.length > 0 && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0 10px', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+            <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
+              const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+              const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+              if (rfqIds.length) handleCreateOrder(rfqIds, false);
+            }}>Megrendelés</Button>
             <Button type="primary" size="small" loading={bulkOrderLoading} onClick={handleBulkOrder}>Gyártásba küld</Button>
             <Button size="small" onClick={handleBulkSendEmail}>Árajánlat küldés</Button>
             <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
@@ -3347,6 +3391,109 @@ const RFQs: React.FC = () => {
         url={rfqAttPreviewUrl}
         onClose={() => { setRfqAttPreviewOpen(false); setRfqAttPreviewUrl(null); setRfqAttPreviewTitle(''); }}
       />
+
+      {/* Ask if user wants to send confirmation email after order creation */}
+      <Modal
+        title="Visszaigazoló e-mail küldése?"
+        open={confirmEmailAskOpen}
+        onCancel={() => { setConfirmEmailAskOpen(false); navigate('/sales/customer-orders'); }}
+        footer={[
+          <Button key="no" onClick={() => { setConfirmEmailAskOpen(false); navigate('/sales/customer-orders'); }}>Nem, köszönöm</Button>,
+          <Button key="yes" type="primary" icon={<MailOutlined />} onClick={() => {
+            setConfirmEmailAskOpen(false);
+            setConfirmEmailIndex(0);
+            openConfirmEmailModal(confirmEmailOrders[0]);
+          }}>Igen, e-mail küldés</Button>,
+        ]}
+      >
+        <p>Szeretne megrendelés visszaigazoló e-mailt küldeni {confirmEmailOrders.length > 1 ? `a ${confirmEmailOrders.length} ügyfélnek` : 'az ügyfélnek'}?</p>
+      </Modal>
+
+      {/* Confirmation email modal with carousel for multiple orders */}
+      <Modal
+        title={(() => {
+          const entry = confirmEmailOrders[confirmEmailIndex];
+          const rfq = entry ? (rfqs || []).find((r: any) => r.id === entry.rfqId) : null;
+          const label = rfq ? `${rfq.request_number || rfq.number || ''} (${rfq.company?.name || ''})` : '';
+          const progress = confirmEmailOrders.length > 1 ? ` [${confirmEmailIndex + 1}/${confirmEmailOrders.length}]` : '';
+          return `Megrendelés visszaigazolás${progress}: ${label}`;
+        })()}
+        open={confirmEmailOpen}
+        width={800}
+        onCancel={() => { setConfirmEmailOpen(false); }}
+        footer={[
+          <Button key="cancel" onClick={() => setConfirmEmailOpen(false)}>Bezárás</Button>,
+          <Button key="send" type="primary" loading={confirmEmailSending}
+            onClick={async () => {
+              const entry = confirmEmailOrders[confirmEmailIndex];
+              if (!entry) return;
+              try {
+                const values = await confirmEmailForm.validateFields();
+                setConfirmEmailSending(true);
+                await api.post(`/sales/customer-orders/${entry.orderId}/send_confirmation_email_manual/`, values);
+                message.success('E-mail elküldve');
+                setConfirmEmailSentSet(prev => prev.includes(confirmEmailIndex) ? prev : [...prev, confirmEmailIndex]);
+                // Auto-advance to next unsent
+                const nextUnsent = confirmEmailOrders.findIndex((_, i) => i > confirmEmailIndex && !confirmEmailSentSet.includes(i));
+                if (nextUnsent !== -1) {
+                  setConfirmEmailIndex(nextUnsent);
+                  openConfirmEmailModal(confirmEmailOrders[nextUnsent]);
+                } else {
+                  const anyUnsent = confirmEmailOrders.findIndex((_, i) => !confirmEmailSentSet.includes(i) && i !== confirmEmailIndex);
+                  if (anyUnsent !== -1) {
+                    setConfirmEmailIndex(anyUnsent);
+                    openConfirmEmailModal(confirmEmailOrders[anyUnsent]);
+                  } else {
+                    setConfirmEmailOpen(false);
+                  }
+                }
+              } catch (e: any) {
+                message.error(e?.response?.data?.error || 'Nem sikerült elküldeni az e-mailt');
+              } finally {
+                setConfirmEmailSending(false);
+              }
+            }}
+          >{confirmEmailSentSet.includes(confirmEmailIndex) ? 'Kiküldve ✓' : 'Küldés'}</Button>,
+        ]}
+      >
+        {/* Carousel navigation for multiple orders */}
+        {confirmEmailOrders.length > 1 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px' }}>
+            <Button size="small" icon={<LeftOutlined />} disabled={confirmEmailIndex === 0}
+              onClick={() => { const ni = confirmEmailIndex - 1; setConfirmEmailIndex(ni); openConfirmEmailModal(confirmEmailOrders[ni]); }}
+            />
+            <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{confirmEmailIndex + 1} / {confirmEmailOrders.length}</span>
+            <Button size="small" icon={<RightOutlined />} disabled={confirmEmailIndex === confirmEmailOrders.length - 1}
+              onClick={() => { const ni = confirmEmailIndex + 1; setConfirmEmailIndex(ni); openConfirmEmailModal(confirmEmailOrders[ni]); }}
+            />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+              {confirmEmailOrders.map((entry, i) => {
+                const rfq = (rfqs || []).find((r: any) => r.id === entry.rfqId);
+                return (
+                  <Tag key={entry.orderId}
+                    color={confirmEmailSentSet.includes(i) ? 'success' : i === confirmEmailIndex ? 'processing' : 'default'}
+                    style={{ cursor: 'pointer', margin: 0 }}
+                    onClick={() => { setConfirmEmailIndex(i); openConfirmEmailModal(entry); }}
+                  >
+                    {rfq?.company?.name || rfq?.number || entry.orderId}{confirmEmailSentSet.includes(i) ? ' ✓' : ''}
+                  </Tag>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <Form form={confirmEmailForm} layout="vertical">
+          <Form.Item name="to" label="Címzett" rules={[{ required: true, message: 'Kötelező mező' }]}>
+            <Input placeholder="email@example.com" />
+          </Form.Item>
+          <Form.Item name="subject" label="Tárgy" rules={[{ required: true, message: 'Kötelező mező' }]}>
+            <Input />
+          </Form.Item>
+          <Form.Item name="body" label="Üzenet" rules={[{ required: true, message: 'Kötelező mező' }]}>
+            <ReactQuill theme="snow" style={{ height: 280, marginBottom: 50 }} />
+          </Form.Item>
+        </Form>
+      </Modal>
 
     </div>
   );
