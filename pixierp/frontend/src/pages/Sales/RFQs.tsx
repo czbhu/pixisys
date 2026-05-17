@@ -143,7 +143,7 @@ const RFQs: React.FC = () => {
   const watchedCompanyId = Form.useWatch('company_id', form);
   const watchedContactIds = Form.useWatch('contact_ids', form);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
-  const [isItemsView, setIsItemsView] = useState(() => { const v = searchParams.get('view'); return v === null || v === '' || v === 'items'; });
+  const isItemsView = true;
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [sendQueue, setSendQueue] = useState<number[]>([]);
@@ -1863,49 +1863,12 @@ const RFQs: React.FC = () => {
     );
   }
 
-  if (isDemandView) {
-    return (
-      <div>
-        <div style={{ marginBottom: 12, paddingLeft: 4 }}>
-          <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
-            <div
-              onClick={() => { setIsItemsView(false); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'quotes'); return p; }, { replace: true }); }}
-              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
-            >Árajánlatok</div>
-            <div
-              onClick={() => { setIsItemsView(true); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'items'); return p; }, { replace: true }); }}
-              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
-            >Tételek</div>
-            <div
-              style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: '#1677ff', color: '#fff', boxShadow: '0 1px 4px rgba(22,119,255,0.25)', userSelect: 'none' }}
-            >Igények</div>
-          </div>
-        </div>
-        <Demands />
-      </div>
-    );
-  }
-
   return (
     <div>
       <Card
         title="Árajánlatok"
         extra={
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
-              <div style={{ display: 'inline-flex', background: '#e6e8ec', borderRadius: 999, padding: 3, gap: 0 }}>
-                <div
-                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'quotes'); return p; }, { replace: true }); }}
-                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: !isItemsView ? '#ffffff' : 'transparent', color: !isItemsView ? '#1677ff' : '#666', boxShadow: !isItemsView ? '0 1px 4px rgba(0,0,0,0.12)' : 'none', userSelect: 'none' }}
-                >Árajánlatok</div>
-                <div
-                  onClick={() => { setIsItemsView(true); setCsvSelectedKeys([]); setBulkSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.delete('view'); return p; }, { replace: true }); }}
-                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: isItemsView ? '#1677ff' : 'transparent', color: isItemsView ? '#ffffff' : '#666', boxShadow: isItemsView ? '0 1px 4px rgba(22,119,255,0.25)' : 'none', userSelect: 'none' }}
-                >Tételek</div>
-                <div
-                  onClick={() => { setIsItemsView(false); setCsvSelectedKeys([]); setSearchParams(prev => { const p = new URLSearchParams(prev); p.set('view', 'demands'); return p; }, { replace: true }); }}
-                  style={{ padding: '4px 16px', borderRadius: 999, fontSize: 13, fontWeight: 500, cursor: 'pointer', transition: 'all 0.18s', background: 'transparent', color: '#666', userSelect: 'none' }}
-                >Igények</div>
-              </div>
               {csvMode ? (
                 <Space size="small">
                   <span style={{ fontSize: 13, color: '#666' }}>{csvSelectedKeys.length > 0 ? `${csvSelectedKeys.length} kijelölve` : 'Minden látható'}</span>
