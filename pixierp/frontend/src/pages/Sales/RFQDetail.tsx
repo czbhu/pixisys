@@ -9,7 +9,6 @@ import api from '../../services/api';
 import { manufacturingService } from '../../services/manufacturingService';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
-import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
 import { Upload, Popconfirm } from 'antd';
 import type { UploadFile } from 'antd/es/upload/interface';
 import { crmService } from '../../services/crmService';
@@ -22,7 +21,6 @@ import { ChatDrawer } from '../../components/Chat/ChatDrawer';
 import ActivityLogModal from '../../components/ActivityLogModal';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import AttachmentPreviewModal from '../../components/AttachmentPreviewModal';
-import RFQMaterialNeedsPanel from './components/RFQMaterialNeedsPanel';
 
 const normAccents = (s: string) =>
   (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
@@ -44,6 +42,7 @@ const RFQDetail: React.FC = () => {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const editItemIdHandledRef = useRef(false);
+  const autoFirstItemRef = useRef(false);
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [rfq, setRfq] = useState<any>();
@@ -110,13 +109,11 @@ const RFQDetail: React.FC = () => {
 
   /** Refresh only the items list without showing the full-page spinner.
    *  Used after item add/edit/delete/reorder so the cost table updates in place. */
-  const [costsVersion, setCostsVersion] = useState(0);
   const refreshItems = useCallback(async () => {
     if (!id) return;
     try {
       const rfqRes = await salesService.getQuoteRequest(Number(id));
       setRfq((prev: any) => prev ? { ...prev, items: rfqRes.items } : rfqRes);
-      setCostsVersion(v => v + 1);
     } catch {}
   }, [id]);
 
@@ -232,6 +229,17 @@ const RFQDetail: React.FC = () => {
     if (item) {
       setEditContext({ item });
       setSelectorType(item.item_type || 'manufacturing');
+    }
+  }, [rfq, searchParams]);
+
+  // Auto-open first item editor on page load (if no specific editItemId)
+  useEffect(() => {
+    if (!rfq || autoFirstItemRef.current || searchParams.get('editItemId')) return;
+    const items = rfq.items || [];
+    if (items.length > 0) {
+      autoFirstItemRef.current = true;
+      setEditContext({ item: items[0] });
+      setSelectorType(items[0].item_type || 'manufacturing');
     }
   }, [rfq, searchParams]);
 
@@ -982,19 +990,6 @@ const RFQDetail: React.FC = () => {
           </div>
             </>
           )}
-        </div>
-
-        {/* ── Költség kalkuláció ───────────────────────────────────────── */}
-        <div style={{ background: '#fff0f6', border: '1px solid #ffadd2', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: '#c41d7f', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Költség kalkuláció</div>
-          <RFQCostsTable
-            rfqId={Number(id)}
-            totalRevenue={(rfq?.items || []).reduce((sum: number, item: any) => sum + (Number(item.discounted_net_total || item.net_total) || 0), 0)}
-            currency={activeCurrency}
-            rfqItems={rfq?.items || []}
-            refreshKey={costsVersion}
-          />
-          <RFQMaterialNeedsPanel rfqItems={rfq?.items || []} />
         </div>
         </Form>
 
