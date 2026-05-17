@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -136,8 +136,8 @@ const RFQs: React.FC = () => {
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [sendQueue, setSendQueue] = useState<number[]>([]);
   const [sendQueueTotal, setSendQueueTotal] = useState(0);
-  const [sendAddressQueue, setSendAddressQueue] = useState<string[]>([]);
-  const [sendAddressTotal, setSendAddressTotal] = useState(0);
+  const [sendAddresses, setSendAddresses] = useState<{ email: string; sent: boolean }[]>([]);
+  const [sendAddressIndex, setSendAddressIndex] = useState(0);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -1768,10 +1768,10 @@ const RFQs: React.FC = () => {
     }
 
     const allContactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean);
-    const [firstEmail, ...restEmails] = allContactEmails;
+    const [firstEmail] = allContactEmails;
     const contactEmailTo = firstEmail || '';
-    setSendAddressQueue(restEmails);
-    setSendAddressTotal(allContactEmails.length);
+    setSendAddresses(allContactEmails.map((e: string) => ({ email: e, sent: false })));
+    setSendAddressIndex(0);
 
     let signatureKey = '';
     let userPrefs: any = null;
@@ -2030,12 +2030,11 @@ const RFQs: React.FC = () => {
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
             const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
             const rfqProgress = sendQueueTotal > 1 ? ` [${sendQueueTotal - sendQueue.length}/${sendQueueTotal} ajánlat]` : '';
-            const addrProgress = sendAddressTotal > 1 ? ` [${sendAddressTotal - sendAddressQueue.length}/${sendAddressTotal} cím]` : '';
-            return `Ajánlat kérő kiküldése${rfqProgress}${addrProgress}: ${recLabel}`;
+            return `Ajánlat kérő kiküldése${rfqProgress}: ${recLabel}`;
         })()}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddressQueue([]); setSendAddressTotal(0); setBulkSelectedKeys([]); }}
+        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddresses([]); setSendAddressIndex(0); setBulkSelectedKeys([]); }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -2053,43 +2052,44 @@ const RFQs: React.FC = () => {
                   message.error('Előnézet nem elérhető');
                 }
              }}>Előnézet</Button>,
-             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddressQueue([]); setSendAddressTotal(0); }}>Mégse</Button>,
-             <Button key="send" type="primary" icon={<SendOutlined />} onClick={async () => {
+             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddresses([]); setSendAddressIndex(0); }}>Mégse</Button>,
+             <Button key="send" type="primary" icon={<SendOutlined />}
+               disabled={!!sendAddresses[sendAddressIndex]?.sent}
+               onClick={async () => {
                 const v = await sendForm.validateFields();
                 if (!sendOpenId) return;
                 try {
                   await salesService.sendQuoteRequestEmail(sendOpenId, v);
-                  if (sendAddressQueue.length > 0) {
-                    // More addresses for this same RFQ
-                    const [nextAddr, ...restAddrs] = sendAddressQueue;
-                    setSendAddressQueue(restAddrs);
-                    sendForm.setFieldValue('to', nextAddr);
+                  const updated = sendAddresses.map((a, i) => i === sendAddressIndex ? { ...a, sent: true } : a);
+                  setSendAddresses(updated);
+                  message.success('E-mail elküldve');
+                  // Navigate to next unsent (prefer after current, else first)
+                  const nextAfter = updated.findIndex((a, i) => i > sendAddressIndex && !a.sent);
+                  const anyUnsent = updated.findIndex(a => !a.sent);
+                  if (nextAfter !== -1) {
+                    setSendAddressIndex(nextAfter);
+                    sendForm.setFieldValue('to', updated[nextAfter].email);
                     setSendPreview(null);
-                    message.success(`E-mail elküldve. Következő cím: ${nextAddr}`);
+                  } else if (anyUnsent !== -1) {
+                    setSendAddressIndex(anyUnsent);
+                    sendForm.setFieldValue('to', updated[anyUnsent].email);
+                    setSendPreview(null);
                   } else if (sendQueue.length > 0) {
-                    // Move to next RFQ
                     const [next, ...rest] = sendQueue;
                     setSendQueue(rest);
-                    message.success(`E-mail elküldve. Következő ajánlat: ${sendQueue.length} db maradt.`);
                     openSendModal(next);
                   } else {
-                    message.success('E-mail elküldve');
                     setSendOpenId(null);
                     setSendQueue([]);
                     setSendQueueTotal(0);
-                    setSendAddressQueue([]);
-                    setSendAddressTotal(0);
+                    setSendAddresses([]);
+                    setSendAddressIndex(0);
                     setBulkSelectedKeys([]);
                   }
                 } catch {
                   message.error('Nem sikerült elküldeni az e-mailt');
                 }
-             }}>{sendAddressQueue.length > 0
-               ? `Küldés (még ${sendAddressQueue.length} cím)`
-               : sendQueue.length > 0
-                 ? `Küldés (${sendQueue.length + 1} ajánlat)`
-                 : 'Küldés'
-             }</Button>
+             }}>{sendAddresses[sendAddressIndex]?.sent ? 'Kiküldve ✓' : sendQueue.length > 0 ? `Küldés (${sendQueue.length + 1} ajánlat)` : 'Küldés'}</Button>
         ]}
       >
         <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }} onValuesChange={async (changedValues, allValues) => {
@@ -2107,14 +2107,29 @@ const RFQs: React.FC = () => {
              } catch {}
         }
       }}>
-          <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}
-            extra={sendAddressTotal > 1 ? (
-              <span style={{ fontSize: 12, color: '#1677ff' }}>
-                {sendAddressTotal - sendAddressQueue.length}/{sendAddressTotal}. e-mail cím
-                {sendAddressQueue.length > 0 && <> · következő: {sendAddressQueue[0]}</>}
-              </span>
-            ) : undefined}
-          >
+          {sendAddresses.length > 1 && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px' }}>
+              <Button size="small" icon={<LeftOutlined />} disabled={sendAddressIndex === 0}
+                onClick={() => { const ni = sendAddressIndex - 1; setSendAddressIndex(ni); sendForm.setFieldValue('to', sendAddresses[ni].email); setSendPreview(null); }}
+              />
+              <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{sendAddressIndex + 1} / {sendAddresses.length}</span>
+              <Button size="small" icon={<RightOutlined />} disabled={sendAddressIndex === sendAddresses.length - 1}
+                onClick={() => { const ni = sendAddressIndex + 1; setSendAddressIndex(ni); sendForm.setFieldValue('to', sendAddresses[ni].email); setSendPreview(null); }}
+              />
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                {sendAddresses.map((a, i) => (
+                  <Tag key={a.email}
+                    color={a.sent ? 'success' : i === sendAddressIndex ? 'processing' : 'default'}
+                    style={{ cursor: 'pointer', margin: 0 }}
+                    onClick={() => { setSendAddressIndex(i); sendForm.setFieldValue('to', a.email); setSendPreview(null); }}
+                  >
+                    {a.email}{a.sent ? ' ✓' : ''}
+                  </Tag>
+                ))}
+              </div>
+            </div>
+          )}
+          <Form.Item label="Címzettek" name="to" rules={[{ required: true, message: 'Add meg a címzetteket' }]}>
             <Input placeholder="email1@example.com, email2@example.com" />
           </Form.Item>
           <Form.Item label="Másolat (CC)" name="cc">
