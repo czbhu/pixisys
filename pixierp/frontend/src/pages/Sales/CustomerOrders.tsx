@@ -513,6 +513,125 @@ interface CustomerOrder {
     return dotIdx !== -1 ? name + base.slice(dotIdx) : name;
   };
 
+  const loadItemAtts = (coiId: number) => {
+    if (orderItemAttsLoaded[coiId]) return;
+    api.get(`/sales/customer-order-items/${coiId}/attachments/`)
+      .then(res => setOrderItemAtts(prev => ({ ...prev, [coiId]: res.data || [] })))
+      .catch(() => setOrderItemAtts(prev => ({ ...prev, [coiId]: [] })))
+      .finally(() => setOrderItemAttsLoaded(prev => ({ ...prev, [coiId]: true })));
+  };
+
+  // Renders cost-items (altételek) + attachments for a single item-view row
+  const renderItemExpand = (record: any) => {
+    const coiId = Number(record.id);
+    const productId = Number(record.manufacturing_product_id || 0);
+    const orderId = Number(record.originalOrder?.id || 0);
+    const atts: any[] = orderItemAtts[coiId] || [];
+    const loaded = !!orderItemAttsLoaded[coiId];
+    const uploading = (orderItemAttUploading[coiId] || 0) > 0;
+    const attRemark = orderItemAttRemark[coiId] || '';
+    return (
+      <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+        <Space direction="vertical" style={{ width: '100%' }} size={10}>
+          {productId > 0 && (
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                <span style={{ fontWeight: 500, fontSize: 12, color: '#555' }}>Altételek</span>
+                <Button
+                  size="small"
+                  icon={<EyeOutlined />}
+                  onClick={() => navigate(`/sales/customer-orders/${orderId}?edit_item=${coiId}`)}
+                >
+                  Tétel megnyitása
+                </Button>
+              </div>
+              <div style={{ paddingLeft: 8 }}>
+                <ProductSubItemsTable productId={productId} showNotesAndAttachments />
+              </div>
+              <MaterialNeedsTree
+                manufacturingProductId={productId}
+                quantity={Number(record.quantity || 1)}
+                sourceType="customer_order"
+                sourceId={orderId}
+                sourceNumber={record.originalOrder?.order_number || String(orderId)}
+                sourceItemName={record.product_name || record.manufacturing_product_name || record.material_name || record.service_name || ''}
+              />
+            </div>
+          )}
+          <div>
+            <div style={{ fontWeight: 500, fontSize: 12, color: '#555', marginBottom: 6 }}>Csatolmányok</div>
+            <Space direction="vertical" style={{ width: '100%' }} size={6}>
+              <Input
+                placeholder="Megjegyzés a feltöltéshez (opcionális)"
+                size="small" value={attRemark} style={{ width: 340 }}
+                onChange={e => setOrderItemAttRemark(prev => ({ ...prev, [coiId]: e.target.value }))}
+              />
+              <div onMouseEnter={() => { lastPasteCoiIdRef.current = coiId; }}>
+                <Upload.Dragger
+                  multiple
+                  showUploadList={false}
+                  style={{ padding: '8px 0' }}
+                  customRequest={({ file, onSuccess, onError }) => {
+                    const f = file as File;
+                    setOrderItemAttUploading(prev => ({ ...prev, [coiId]: (prev[coiId] || 0) + 1 }));
+                    const fd = new FormData();
+                    fd.append('file', f);
+                    if (attRemark) fd.append('remark', attRemark);
+                    api.post(`/sales/customer-order-items/${coiId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+                      .then(res => {
+                        setOrderItemAtts(prev => ({ ...prev, [coiId]: [res.data, ...(prev[coiId] || [])] }));
+                        setOrderItemAttRemark(prev => ({ ...prev, [coiId]: '' }));
+                        message.success('Feltöltve');
+                        onSuccess?.(res.data);
+                      })
+                      .catch(e => { message.error('Feltöltés sikertelen'); onError?.(e); })
+                      .finally(() => setOrderItemAttUploading(prev => ({ ...prev, [coiId]: Math.max(0, (prev[coiId] || 0) - 1) })));
+                  }}
+                >
+                  {uploading
+                    ? <><AntSpin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
+                    : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, kattints &middot; vagy Ctrl+V</span>
+                  }
+                </Upload.Dragger>
+              </div>
+              {!loaded ? <AntSpin size="small" /> : atts.length === 0 ? (
+                <div style={{ color: '#bbb', fontSize: 12 }}>Nincs csatolmány</div>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {atts.map((att: any) => (
+                    <Space key={att.id} size={4} align="center">
+                      <Space size={2}>
+                        <a
+                          href={att.file_url}
+                          style={{ fontSize: 12 }}
+                          onClick={(e) => { e.preventDefault(); setCoAttPreviewUrl(att.file_url); setCoAttPreviewTitle(att.original_filename || att.file_url?.split('/').pop() || ''); setCoAttPreviewOpen(true); }}
+                        >{att.original_filename}</a>
+                      </Space>
+                      <span
+                        style={{ color: att.remark ? '#595959' : '#bbb', fontSize: 11, fontStyle: att.remark ? 'italic' : 'normal', cursor: 'pointer' }}
+                        onClick={() => { setEditingAttRemarkId(att.id); setEditingAttRemarkVal(att.remark || ''); }}
+                      >
+                        {att.remark || '+ megjegyzés'}
+                      </span>
+                      <Button type="text" danger size="small" icon={<DeleteOutlined />}
+                        onClick={async () => {
+                          try {
+                            await api.delete(`/sales/customer-order-items/${coiId}/attachments/${att.id}/`);
+                            setOrderItemAtts(prev => ({ ...prev, [coiId]: (prev[coiId] || []).filter((a: any) => a.id !== att.id) }));
+                          } catch { message.error('Törlés sikertelen'); }
+                        }}
+                      />
+                    </Space>
+                  ))}
+                </div>
+              )}
+            </Space>
+          </div>
+        </Space>
+      </div>
+    );
+  };
+
   const renderExpandedOrderRow = (record: any) => {
     const orderId = Number(record?.id || 0);
     const loadingItems = !!orderExpandedLoading[orderId];
@@ -529,14 +648,6 @@ interface CustomerOrder {
     if (!flatItems || flatItems.length === 0) {
       return <div style={{ padding: '12px 8px 12px 28px', color: '#888' }}>Nincsenek tételek.</div>;
     }
-
-    const loadItemAtts = (coiId: number) => {
-      if (orderItemAttsLoaded[coiId]) return;
-      api.get(`/sales/customer-order-items/${coiId}/attachments/`)
-        .then(res => setOrderItemAtts(prev => ({ ...prev, [coiId]: res.data || [] })))
-        .catch(() => setOrderItemAtts(prev => ({ ...prev, [coiId]: [] })))
-        .finally(() => setOrderItemAttsLoaded(prev => ({ ...prev, [coiId]: true })));
-    };
 
     const toggleItemAtt = (coiId: number) => {
       if (orderItemAttExpanded.includes(coiId)) {
@@ -2319,17 +2430,17 @@ interface CustomerOrder {
           loading={loading}
           size="small"
           expandable={isItemsView ? {
-            rowExpandable: () => true,
+            rowExpandable: (record: any) => !!(record.manufacturing_product_id),
             expandedRowKeys: itemsViewExpandedKeys,
             onExpand: (expanded: boolean, record: any) => {
               if (expanded) {
                 setItemsViewExpandedKeys(prev => Array.from(new Set([...prev, record.uniqueId])));
-                loadOrderExpandedItems(record.originalOrder);
+                loadItemAtts(Number(record.id));
               } else {
                 setItemsViewExpandedKeys(prev => prev.filter(k => k !== record.uniqueId));
               }
             },
-            expandedRowRender: (record: any) => renderExpandedOrderRow(record.originalOrder),
+            expandedRowRender: (record: any) => renderItemExpand(record),
           } : {
             expandedRowKeys: expandedOrderKeys,
             onExpand: (expanded: boolean, record: any) => {
