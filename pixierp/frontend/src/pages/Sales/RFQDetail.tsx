@@ -41,9 +41,9 @@ const { TextArea } = Input;
 
 const RFQDetail: React.FC = () => {
   const { id } = useParams();
-  const [searchParams] = useSearchParams();
-  const itemsSectionRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const editItemIdHandledRef = useRef(false);
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [rfq, setRfq] = useState<any>();
@@ -214,12 +214,6 @@ const RFQDetail: React.FC = () => {
   }, [load]);
 
   useEffect(() => {
-    if (rfq && searchParams.get('section') === 'items') {
-      setTimeout(() => itemsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 300);
-    }
-  }, [rfq, searchParams]);
-
-  useEffect(() => {
     (async () => {
       try {
         const us = await salesService.listUsers();
@@ -227,6 +221,20 @@ const RFQDetail: React.FC = () => {
       } catch {}
     })();
   }, []);
+
+  // Auto-open item editor when navigated with ?editItemId=
+  useEffect(() => {
+    if (!rfq || editItemIdHandledRef.current) return;
+    const editItemId = searchParams.get('editItemId');
+    if (!editItemId) return;
+    editItemIdHandledRef.current = true;
+    const item = (rfq.items || []).find((it: any) => it.id === Number(editItemId));
+    if (item) {
+      setEditContext({ item });
+      setSelectorType(item.item_type || 'manufacturing');
+      setSelectorOpen(true);
+    }
+  }, [rfq, searchParams]);
 
   // Frissítsd a kapcsolattartó listát, amikor cég választás változik - REMOVED to avoid overwriting on load
   // useEffect logic moved to Select onChange and initial load
@@ -901,7 +909,7 @@ const RFQDetail: React.FC = () => {
 
 
         {/* ── Tételek ──────────────────────────────────────────────────── */}
-        <div ref={itemsSectionRef} style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
             <Col xs={24} md={10}>
