@@ -21,7 +21,7 @@ import dayjs from 'dayjs';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { RFQCostsTable } from '../../components/Sales/RFQCostsTable';
-import RFQEditDrawer from '../../components/Sales/RFQEditDrawer';
+
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 import Demands from './Demands';
 import { deepSearchMatch, normalizeTextForSearch } from '../../utils/searchUtils';
@@ -166,9 +166,6 @@ const RFQs: React.FC = () => {
   const [rfqItemUploading, setRfqItemUploading] = useState<Record<number, number>>({});
   const [rfqItemRemark, setRfqItemRemark] = useState<Record<number, string>>({});
   const [rfqItemStatusOverrides, setRfqItemStatusOverrides] = useState<Record<string, string>>({});
-  const [editDrawerOpen, setEditDrawerOpen] = useState(false);
-  const [editDrawerRfqId, setEditDrawerRfqId] = useState<number | null>(null);
-  const [editDrawerItemId, setEditDrawerItemId] = useState<number | null>(null);
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -1328,7 +1325,7 @@ const RFQs: React.FC = () => {
       render: (_: any, r: any) => (
         <Space size="small" wrap>
           <Tooltip title="Megnyitás">
-            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => { setEditDrawerRfqId(r.rfq_id); setEditDrawerItemId(r.id); setEditDrawerOpen(true); }} />
+            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
           </Tooltip>
           <Tooltip title="Küldés">
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendOpenId(r.rfq_id); }} />
@@ -2059,7 +2056,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => { setEditDrawerRfqId(r.rfq_id); setEditDrawerItemId(null); setEditDrawerOpen(true); }, style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 } : undefined)} expandable={isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 } : undefined)} expandable={isItemsView ? {
           columnWidth: 24,
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
@@ -3375,13 +3372,6 @@ const RFQs: React.FC = () => {
         title={rfqAttPreviewTitle}
         url={rfqAttPreviewUrl}
         onClose={() => { setRfqAttPreviewOpen(false); setRfqAttPreviewUrl(null); setRfqAttPreviewTitle(''); }}
-      />
-      <RFQEditDrawer
-        open={editDrawerOpen}
-        rfqId={editDrawerRfqId}
-        itemId={editDrawerItemId}
-        onClose={() => { setEditDrawerOpen(false); setEditDrawerRfqId(null); setEditDrawerItemId(null); }}
-        onDataChanged={loadData}
       />
 
     </div>
