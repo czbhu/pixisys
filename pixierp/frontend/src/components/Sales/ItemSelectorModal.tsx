@@ -1920,7 +1920,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     { key: 'all', label: 'Mind', children: null },
   ];
 
-  const renderTable = (type: ItemType) => (
+  const renderTable = (type: ItemType) => {
+    return (
     <Table
       loading={loading}
       size="small"
@@ -1944,54 +1945,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       })}
       rowClassName={(record) => (selected && record.id === selected.id ? 'ant-table-row-selected' : '')}
     />
-  );
+    );
+  }; // end renderTable
 
-  const footerContent = (() => {
-        const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
-        const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
-        const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés & bezárás'
-          : activeKey === 'manufacturing' && !selected ? 'Hozzáadás & bezárás'
-          : mode === 'edit' ? 'Mentés & bezárás' : 'Hozzáadás & bezárás';
-        const secondaryLabel = mode === 'edit' || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
-        const doSave = async (keepOpen: boolean) => {
-          if (keepOpen) setSavingKeepOpen(true); else setSavingClose(true);
-          try {
-            if (useManuFlow) {
-              await handleManuInlineSubmit(keepOpen);
-            } else {
-              await confirmAdd(keepOpen);
-            }
-          } finally {
-            if (keepOpen) setSavingKeepOpen(false); else setSavingClose(false);
-          }
-        };
-        return (
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-            <span style={{ fontSize: 11, color: '#888' }}>
-              {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
-            </span>
-            <Space>
-              <Button onClick={handleModalCancel}>Mégse</Button>
-              <Button
-                loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
-                disabled={savingClose || savingKeepOpen || manuSubmitting}
-                onClick={() => doSave(true)}
-              >
-                {secondaryLabel}
-              </Button>
-              <Button
-                type="primary"
-                loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
-                disabled={savingKeepOpen || savingClose || manuSubmitting}
-                onClick={() => doSave(false)}
-              >
-                {primaryLabel}
-              </Button>
-            </Space>
-          </div>
-        );
-  })();
   const bodyContent = (
+    <>
     <Space direction="vertical" style={{ width: '100%', gap: 8 }}>
         <div style={{ display: 'none' }}>
           <Tabs
@@ -2891,14 +2849,48 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           );
         })()}
       </Modal>
-    </Space>
+    </>
   );
   if (renderInline) {
+    const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
+    const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
+    const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || isManuEdit ? 'Mentés & bezárás'
+      : activeKey === 'manufacturing' && !selected ? 'Hozzáadás & bezárás'
+      : mode === 'edit' ? 'Mentés & bezárás' : 'Hozzáadás & bezárás';
+    const secondaryLabel = mode === 'edit' || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
+    const doSave = async (keepOpen: boolean) => {
+      if (keepOpen) setSavingKeepOpen(true); else setSavingClose(true);
+      try {
+        if (useManuFlow) { await handleManuInlineSubmit(keepOpen); } else { await confirmAdd(keepOpen); }
+      } finally {
+        if (keepOpen) setSavingKeepOpen(false); else setSavingClose(false);
+      }
+    };
     return (
       <div style={{ width: '100%' }}>
         {bodyContent}
-        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 8 }}>
-          {footerContent}
+        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+          <span style={{ fontSize: 11, color: '#888' }}>
+            {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
+          </span>
+          <Space>
+            <Button onClick={handleModalCancel}>Mégse</Button>
+            <Button
+              loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
+              disabled={savingClose || savingKeepOpen || manuSubmitting}
+              onClick={() => doSave(true)}
+            >
+              {secondaryLabel}
+            </Button>
+            <Button
+              type="primary"
+              loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
+              disabled={savingKeepOpen || savingClose || manuSubmitting}
+              onClick={() => doSave(false)}
+            >
+              {primaryLabel}
+            </Button>
+          </Space>
         </div>
       </div>
     );
@@ -2910,7 +2902,51 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       title={mode === 'edit' ? 'Tétel szerkesztése' : 'Tétel kiválasztása'}
       width="min(1400px, 96vw)"
       styles={{ body: { padding: 10 } }}
-      footer={footerContent}
+      footer={(() => {
+        const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
+        const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
+        const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || (mode === 'edit' && initialSelection?.item_type === 'manufacturing') ? 'Mentés & bezárás'
+          : activeKey === 'manufacturing' && !selected ? 'Hozzáadás & bezárás'
+          : mode === 'edit' ? 'Mentés & bezárás' : 'Hozzáadás & bezárás';
+        const secondaryLabel = mode === 'edit' || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
+        const doSave = async (keepOpen: boolean) => {
+          if (keepOpen) setSavingKeepOpen(true); else setSavingClose(true);
+          try {
+            if (useManuFlow) {
+              await handleManuInlineSubmit(keepOpen);
+            } else {
+              await confirmAdd(keepOpen);
+            }
+          } finally {
+            if (keepOpen) setSavingKeepOpen(false); else setSavingClose(false);
+          }
+        };
+        return (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 11, color: '#888' }}>
+              {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
+            </span>
+            <Space>
+              <Button onClick={handleModalCancel}>Mégse</Button>
+              <Button
+                loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
+                disabled={savingClose || savingKeepOpen || manuSubmitting}
+                onClick={() => doSave(true)}
+              >
+                {secondaryLabel}
+              </Button>
+              <Button
+                type="primary"
+                loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
+                disabled={savingKeepOpen || savingClose || manuSubmitting}
+                onClick={() => doSave(false)}
+              >
+                {primaryLabel}
+              </Button>
+            </Space>
+          </div>
+        );
+      })()}
     >
       {bodyContent}
     </Modal>
