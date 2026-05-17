@@ -1,4 +1,12 @@
-/* RFQs items view – compact cell padding */
-.rfq-items-table .ant-table-cell {
+/* RFQs items view – header stays compact, body/expanded cells have 0 padding */
+.rfq-items-table .ant-table-thead .ant-table-cell {
   padding: 4px 6px !important;
+}
+
+.rfq-items-table .ant-table-tbody .ant-table-cell {
+  padding: 0 !important;
+}
+
+.rfq-items-table .ant-table-expanded-row > td {
+  padding: 0 !important;
 }
