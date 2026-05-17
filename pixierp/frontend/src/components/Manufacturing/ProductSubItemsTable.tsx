@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Table, Space, Button, Tooltip, Tag, message, Spin, Popover, Input, Upload, Select, Checkbox, Modal, Form } from 'antd';
 import { ArrowLeftOutlined, ArrowRightOutlined, PaperClipOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import {
@@ -25,6 +25,7 @@ import {
 } from './CostDnd';
 import { manufacturingService } from '../../services/manufacturingService';
 import { hrService } from '../../services/hrService';
+import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import api from '../../services/api';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { formatBytes } from '../../utils/fileUtils';
@@ -110,6 +111,28 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   const [expandedSubItems, setExpandedSubItems] = useState<number[]>([]);
   const [editingSubAttRemarkId, setEditingSubAttRemarkId] = useState<number | null>(null);
   const [editingSubAttRemarkVal, setEditingSubAttRemarkVal] = useState<string>('');
+
+  // --- Ctrl+V paste support for cost item attachments ---
+  const lastPasteCiIdRef = useRef<number | null>(null);
+  const subItemAttRemarkRef = useRef<Record<number, string>>({});
+  useEffect(() => { subItemAttRemarkRef.current = subItemAttRemark; }, [subItemAttRemark]);
+  const handlePasteFile = useCallback((file: File) => {
+    const ciId = lastPasteCiIdRef.current;
+    if (!ciId) return;
+    setSubItemAttUploading(prev => ({ ...prev, [ciId]: (prev[ciId] || 0) + 1 }));
+    const fd = new FormData();
+    fd.append('file', file);
+    const remark = subItemAttRemarkRef.current[ciId] || '';
+    if (remark) fd.append('remark', remark);
+    api.post(`/manufacturing/cost-items/${ciId}/attachments/`, fd, { headers: { 'Content-Type': 'multipart/form-data' } })
+      .then(res => {
+        setSubItemAtts(prev => ({ ...prev, [ciId]: [res.data, ...(prev[ciId] || [])] }));
+        message.success('Kép feltöltve');
+      })
+      .catch(() => message.error('Feltöltés sikertelen'))
+      .finally(() => setSubItemAttUploading(prev => ({ ...prev, [ciId]: Math.max(0, (prev[ciId] || 0) - 1) })));
+  }, []);
+  useClipboardImagePaste(handlePasteFile, expandedSubItems.length > 0);
   // suppliers
   const [suppliers, setSuppliers] = useState<any[]>([]);
   const [departments, setDepartments] = useState<any[]>([]);
@@ -555,7 +578,10 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     const notes = (r as any).notes || '';
 
     return (
-      <div style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}>
+      <div
+        style={{ padding: '8px 16px 12px', background: '#fafafa', borderTop: '1px solid #f0f0f0' }}
+        onMouseEnter={() => { lastPasteCiIdRef.current = ciId; }}
+      >
         <Space direction="vertical" style={{ width: '100%' }} size={12}>
           {/* Megjegyzés */}
           <div>
@@ -620,7 +646,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
               >
                 {uploading
                   ? <><Spin size="small" /> <span style={{ fontSize: 12, color: '#888' }}>Feltöltés…</span></>
-                  : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, vagy kattints a böngészéshez</span>
+                  : <span style={{ fontSize: 12, color: '#888' }}>Húzd ide a fájlokat, kattints &middot; vagy Ctrl+V</span>
                 }
               </Upload.Dragger>
 
