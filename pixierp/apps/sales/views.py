@@ -2036,35 +2036,35 @@ def public_order_view(request, token: str):
         if not address and qr.company.external_id:
             try:
                 from apps.finance.views import PixinvoiceClient
+                import requests as _req
                 client = PixinvoiceClient()
-                tenant_id = getattr(client, 'company_id', None)
-                if not tenant_id:
-                    try:
-                        comps = client.list_companies()
-                        if comps:
-                            active = next((c for c in comps if c.get('is_active') is True), None)
-                            tenant_id = (active or comps[0]).get('id') or (active or comps[0]).get('company_id')
-                    except Exception:
-                        pass
-                if tenant_id:
-                    remote = client.get_customer(qr.company.external_id, company_id=tenant_id)
-                    if remote:
-                        address = remote.get('address') or ''
-                        if not address:
-                            r_postal = remote.get('postal_code') or ''
-                            r_city = remote.get('city') or ''
-                            r_street = remote.get('street_name') or ''
-                            r_plc = remote.get('public_place_category') or remote.get('street_type') or ''
-                            r_house = remote.get('house_number') or remote.get('street_number') or ''
-                            r_loc = f"{r_postal} {r_city}".strip()
-                            r_line = f"{r_street} {r_plc} {r_house}".strip()
-                            address = ', '.join(filter(None, [r_loc, r_line]))
-                        if not postal_code:
-                            postal_code = remote.get('postal_code') or ''
-                        if not city:
-                            city = remote.get('city') or ''
-                        if not country or country == 'Magyarország':
-                            country = remote.get('country') or country
+                # company_id paraméter nélkül hívjuk – egyes cégeknél a company_id szűrő 404-et ad
+                url = f"{client.base}/customers/{qr.company.external_id}/"
+                resp = _req.get(url, headers=client.headers, timeout=15)
+                if resp.status_code == 200:
+                    remote = resp.json()
+                    address = remote.get('address') or ''
+                    if not address:
+                        r_postal = remote.get('postal_code') or ''
+                        r_city = remote.get('city') or ''
+                        r_street = remote.get('street_name') or ''
+                        r_plc = remote.get('public_place_category') or remote.get('street_type') or ''
+                        r_house = remote.get('house_number') or remote.get('street_number') or ''
+                        r_loc = f"{r_postal} {r_city}".strip()
+                        r_line = f"{r_street} {r_plc} {r_house}".strip()
+                        address = ', '.join(filter(None, [r_loc, r_line]))
+                    elif remote.get('postal_code') or remote.get('city'):
+                        # address mezőben nincs irányítószám/város – fűzzük hozzá
+                        r_postal = remote.get('postal_code') or ''
+                        r_city = remote.get('city') or ''
+                        r_loc = f"{r_postal} {r_city}".strip()
+                        address = f"{r_loc} {address}".strip() if r_loc else address
+                    if not postal_code:
+                        postal_code = remote.get('postal_code') or ''
+                    if not city:
+                        city = remote.get('city') or ''
+                    if not country or country == 'Magyarország':
+                        country = remote.get('country') or country
             except Exception as e:
                 print(f"Error fetching company address from Pixinvoice: {e}")
 
