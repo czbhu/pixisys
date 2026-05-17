@@ -243,6 +243,15 @@ const RFQDetail: React.FC = () => {
     }
   }, [rfq, searchParams]);
 
+  // ESC → vissza az előző lapra
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') navigate(-1);
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [navigate]);
+
   // Frissítsd a kapcsolattartó listát, amikor cég választás változik - REMOVED to avoid overwriting on load
   // useEffect logic moved to Select onChange and initial load
 
