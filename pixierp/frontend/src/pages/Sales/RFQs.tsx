@@ -134,10 +134,8 @@ const RFQs: React.FC = () => {
   const isItemsView = true;
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
-  const [sendQueue, setSendQueue] = useState<number[]>([]);
-  const [sendQueueTotal, setSendQueueTotal] = useState(0);
-  const [sendAddresses, setSendAddresses] = useState<{ email: string; sent: boolean }[]>([]);
-  const [sendAddressIndex, setSendAddressIndex] = useState(0);
+  const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; sent: boolean }[]>([]);
+  const [sendRfqIndex, setSendRfqIndex] = useState(0);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -839,7 +837,7 @@ const RFQs: React.FC = () => {
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
           </Tooltip>
           <Tooltip title="Kiküldés e-mailben">
-            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={() => { setSendQueueTotal(0); setSendQueue([]); openSendModal(record.id); }} />
+            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={() => { setSendRfqList([{ rfqId: record.id, sent: false }]); setSendRfqIndex(0); openSendModal(record.id); }} />
           </Tooltip>
           {record.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
@@ -1227,7 +1225,7 @@ const RFQs: React.FC = () => {
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
           </Tooltip>
           <Tooltip title="Küldés">
-            <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendQueueTotal(0); setSendQueue([]); openSendModal(r.rfq_id); }} />
+            <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
           <Tooltip title="Másolás">
             <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async (e) => {
@@ -1768,10 +1766,7 @@ const RFQs: React.FC = () => {
     }
 
     const allContactEmails = (record.contacts || []).map((c: any) => c.email).filter(Boolean);
-    const [firstEmail] = allContactEmails;
-    const contactEmailTo = firstEmail || '';
-    setSendAddresses(allContactEmails.map((e: string) => ({ email: e, sent: false })));
-    setSendAddressIndex(0);
+    const contactEmailTo = allContactEmails.join(', ');
 
     let signatureKey = '';
     let userPrefs: any = null;
@@ -1832,10 +1827,9 @@ const RFQs: React.FC = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
-    const [first, ...rest] = rfqIds;
-    setSendQueue(rest);
-    setSendQueueTotal(rfqIds.length);
-    openSendModal(first);
+    setSendRfqList(rfqIds.map((id: number) => ({ rfqId: id, sent: false })));
+    setSendRfqIndex(0);
+    openSendModal(rfqIds[0]);
   };
 
   if (loading) {
@@ -2029,12 +2023,12 @@ const RFQs: React.FC = () => {
             const rec = (rfqs || []).find((r: any) => r.id === sendOpenId);
             const contactNames = (rec?.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ');
             const recLabel = rec ? `${rec.request_number || rec.number || ''} (${rec.company?.name || ''}${contactNames ? ' - ' + contactNames : ''})` : '';
-            const rfqProgress = sendQueueTotal > 1 ? ` [${sendQueueTotal - sendQueue.length}/${sendQueueTotal} ajánlat]` : '';
+            const rfqProgress = sendRfqList.length > 1 ? ` [${sendRfqIndex + 1}/${sendRfqList.length}]` : '';
             return `Ajánlat kérő kiküldése${rfqProgress}: ${recLabel}`;
         })()}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddresses([]); setSendAddressIndex(0); setBulkSelectedKeys([]); }}
+        onCancel={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); setBulkSelectedKeys([]); }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -2052,44 +2046,35 @@ const RFQs: React.FC = () => {
                   message.error('Előnézet nem elérhető');
                 }
              }}>Előnézet</Button>,
-             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendQueue([]); setSendQueueTotal(0); setSendAddresses([]); setSendAddressIndex(0); }}>Mégse</Button>,
+             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); }}>Mégse</Button>,
              <Button key="send" type="primary" icon={<SendOutlined />}
-               disabled={!!sendAddresses[sendAddressIndex]?.sent}
+               disabled={!!sendRfqList[sendRfqIndex]?.sent}
                onClick={async () => {
                 const v = await sendForm.validateFields();
                 if (!sendOpenId) return;
                 try {
                   await salesService.sendQuoteRequestEmail(sendOpenId, v);
-                  const updated = sendAddresses.map((a, i) => i === sendAddressIndex ? { ...a, sent: true } : a);
-                  setSendAddresses(updated);
+                  const updated = sendRfqList.map((item, i) => i === sendRfqIndex ? { ...item, sent: true } : item);
+                  setSendRfqList(updated);
                   message.success('E-mail elküldve');
-                  // Navigate to next unsent (prefer after current, else first)
-                  const nextAfter = updated.findIndex((a, i) => i > sendAddressIndex && !a.sent);
-                  const anyUnsent = updated.findIndex(a => !a.sent);
+                  const nextAfter = updated.findIndex((item, i) => i > sendRfqIndex && !item.sent);
+                  const anyUnsent = updated.findIndex(item => !item.sent);
                   if (nextAfter !== -1) {
-                    setSendAddressIndex(nextAfter);
-                    sendForm.setFieldValue('to', updated[nextAfter].email);
-                    setSendPreview(null);
+                    setSendRfqIndex(nextAfter);
+                    openSendModal(updated[nextAfter].rfqId);
                   } else if (anyUnsent !== -1) {
-                    setSendAddressIndex(anyUnsent);
-                    sendForm.setFieldValue('to', updated[anyUnsent].email);
-                    setSendPreview(null);
-                  } else if (sendQueue.length > 0) {
-                    const [next, ...rest] = sendQueue;
-                    setSendQueue(rest);
-                    openSendModal(next);
+                    setSendRfqIndex(anyUnsent);
+                    openSendModal(updated[anyUnsent].rfqId);
                   } else {
                     setSendOpenId(null);
-                    setSendQueue([]);
-                    setSendQueueTotal(0);
-                    setSendAddresses([]);
-                    setSendAddressIndex(0);
+                    setSendRfqList([]);
+                    setSendRfqIndex(0);
                     setBulkSelectedKeys([]);
                   }
                 } catch {
                   message.error('Nem sikerült elküldeni az e-mailt');
                 }
-             }}>{sendAddresses[sendAddressIndex]?.sent ? 'Kiküldve ✓' : sendQueue.length > 0 ? `Küldés (${sendQueue.length + 1} ajánlat)` : 'Küldés'}</Button>
+             }}>{sendRfqList[sendRfqIndex]?.sent ? 'Kiküldve ✓' : sendRfqList.length > 1 ? `Küldés (${sendRfqList.length} ügyfél)` : 'Küldés'}</Button>
         ]}
       >
         <Form layout="vertical" form={sendForm} initialValues={{ template_key: 'rfq_send' }} onValuesChange={async (changedValues, allValues) => {
@@ -2107,25 +2092,28 @@ const RFQs: React.FC = () => {
              } catch {}
         }
       }}>
-          {sendAddresses.length > 1 && (
+          {sendRfqList.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px' }}>
-              <Button size="small" icon={<LeftOutlined />} disabled={sendAddressIndex === 0}
-                onClick={() => { const ni = sendAddressIndex - 1; setSendAddressIndex(ni); sendForm.setFieldValue('to', sendAddresses[ni].email); setSendPreview(null); }}
+              <Button size="small" icon={<LeftOutlined />} disabled={sendRfqIndex === 0}
+                onClick={() => { const ni = sendRfqIndex - 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId); }}
               />
-              <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{sendAddressIndex + 1} / {sendAddresses.length}</span>
-              <Button size="small" icon={<RightOutlined />} disabled={sendAddressIndex === sendAddresses.length - 1}
-                onClick={() => { const ni = sendAddressIndex + 1; setSendAddressIndex(ni); sendForm.setFieldValue('to', sendAddresses[ni].email); setSendPreview(null); }}
+              <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{sendRfqIndex + 1} / {sendRfqList.length}</span>
+              <Button size="small" icon={<RightOutlined />} disabled={sendRfqIndex === sendRfqList.length - 1}
+                onClick={() => { const ni = sendRfqIndex + 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId); }}
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
-                {sendAddresses.map((a, i) => (
-                  <Tag key={a.email}
-                    color={a.sent ? 'success' : i === sendAddressIndex ? 'processing' : 'default'}
-                    style={{ cursor: 'pointer', margin: 0 }}
-                    onClick={() => { setSendAddressIndex(i); sendForm.setFieldValue('to', a.email); setSendPreview(null); }}
-                  >
-                    {a.email}{a.sent ? ' ✓' : ''}
-                  </Tag>
-                ))}
+                {sendRfqList.map((item, i) => {
+                  const rec = (rfqs || []).find((r: any) => r.id === item.rfqId);
+                  return (
+                    <Tag key={item.rfqId}
+                      color={item.sent ? 'success' : i === sendRfqIndex ? 'processing' : 'default'}
+                      style={{ cursor: 'pointer', margin: 0 }}
+                      onClick={() => { setSendRfqIndex(i); openSendModal(item.rfqId); }}
+                    >
+                      {rec?.company?.name || rec?.number || item.rfqId}{item.sent ? ' ✓' : ''}
+                    </Tag>
+                  );
+                })}
               </div>
             </div>
           )}
