@@ -751,7 +751,7 @@ const DeliveryNotes: React.FC = () => {
     if (filterStatus === 'all') return data;
     return data.filter(r => {
       if (filterStatus === 'invoiced') return !!r.invoice_number;
-      if (filterStatus === 'delivered') return !r.invoice_number && r.is_confirmed;
+      if (filterStatus === 'delivered') return r.is_confirmed;
       // to_deliver
       return !r.invoice_number && !r.is_confirmed;
     });
