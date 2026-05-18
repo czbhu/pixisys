@@ -1199,7 +1199,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             if fld in data:
                 setattr(qr, fld, data.get(fld) or '')
         # Dates
-        for date_fld in ['issue_date', 'deadline']:
+        for date_fld in ['issue_date', 'deadline', 'valid_until']:
             if date_fld not in data:
                 continue
             raw_value = data.get(date_fld)
@@ -1209,6 +1209,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             try:
                 setattr(qr, date_fld, timezone.datetime.strptime(raw_value, '%Y-%m-%d').date())
             except Exception:
+                pass
+        # Validity days (positive integer)
+        if 'validity_days' in data:
+            try:
+                vd = int(data['validity_days'])
+                if vd > 0:
+                    qr.validity_days = vd
+            except (ValueError, TypeError):
                 pass
         # Foreign keys
         company_id = data.get('company_id') or data.get('company')
@@ -2242,6 +2250,8 @@ def public_order_view(request, token: str):
         'status': qr.status,
         'issue_date': qr.issue_date,
         'partial_order_allowed': qr.partial_order_allowed,
+        'valid_until': qr.valid_until,
+        'is_expired': (qr.valid_until is not None and qr.valid_until < timezone.now().date()),
         'customer': customer_data,
         'supplier': supplier_data,
         'items': QuoteRequestItemSerializer(
@@ -2260,6 +2270,9 @@ def public_submit_order(request, token: str):
     qr = get_object_or_404(QuoteRequest, public_token=token)
     if qr.public_expires_at and timezone.now() > qr.public_expires_at:
         return Response({'error': 'Link lejárt'}, status=410)
+    # Érvényesség lejárt ellenőrzés
+    if qr.valid_until and qr.valid_until < timezone.now().date():
+        return Response({'error': 'Az ajánlat érvényessége lejárt, megrendelés nem lehetséges.'}, status=410)
     
     items_data = request.data.get('items', [])
     if not items_data:

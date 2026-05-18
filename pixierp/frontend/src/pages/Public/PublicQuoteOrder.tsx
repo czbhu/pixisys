@@ -42,6 +42,8 @@ interface QuoteData {
   status: string;
   issue_date: string;
   partial_order_allowed: boolean;
+  valid_until?: string | null;
+  is_expired?: boolean;
   customer: {
     name: string;
     tax_number: string;
@@ -246,6 +248,14 @@ const PublicQuoteOrder: React.FC = () => {
       width: 100,
       className: 'no-print',
       render: (_: any, record: QuoteItem) => {
+        if (data?.is_expired) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Checkbox checked={false} disabled />
+              <Text type="danger" style={{ fontSize: 11, lineHeight: 1.1 }}>Lejárt</Text>
+            </div>
+          );
+        }
         if (record.is_ordered) {
           const dt = record.ordered_at ? new Date(record.ordered_at).toLocaleDateString('hu-HU') : '';
           return (
@@ -474,6 +484,16 @@ const PublicQuoteOrder: React.FC = () => {
             : 'Az ajánlat csak egészben rendelhető meg. Az összes tételt egyszerre kell megrendelni.'}
         </Paragraph>
 
+        {data.is_expired && (
+          <Alert
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            message="Az ajánlat érvényessége lejárt"
+            description={`Ez az ajánlat ${data.valid_until ? dayjs(data.valid_until).format('YYYY. MM. DD.') + '-én' : ''} lejárt, ezért megrendelés nem lehetséges.`}
+          />
+        )}
+
         <Table
           columns={columns}
           dataSource={data.items || []}
@@ -546,7 +566,7 @@ const PublicQuoteOrder: React.FC = () => {
               icon={<ShoppingCartOutlined />}
               onClick={handleOrder}
               loading={submitting}
-              disabled={selectedItems.size === 0}
+              disabled={selectedItems.size === 0 || !!data?.is_expired}
             >
               Megrendelés ({selectedItems.size} tétel)
             </Button>

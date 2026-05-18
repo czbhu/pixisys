@@ -376,14 +376,32 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         except Exception:
             return None, None
 
+    _NON_EXPIRABLE_STATUSES = frozenset({
+        'ordered', 'delivered', 'invoiced', 'archived', 'rejected', 'cancelled',
+    })
+
+    def _is_validity_expired(self, obj):
+        """True if valid_until is set, is in the past, and status is not a terminal state."""
+        if obj.status in self._NON_EXPIRABLE_STATUSES:
+            return False
+        if not obj.valid_until:
+            return False
+        from django.utils import timezone
+        return obj.valid_until < timezone.now().date()
+
     def get_effective_status(self, obj):
         if obj.status in ('sent', 'invoiced'):
+            # Even sent/invoiced can expire
+            if self._is_validity_expired(obj):
+                return 'expired'
             return obj.status
         min_status, _ = self._aggregate_order_status(obj)
         if min_status:
             return min_status
         if obj.status in self._ORDER_STATUS_LABELS:
             return obj.status
+        if self._is_validity_expired(obj):
+            return 'expired'
         if obj.status in ('quoted', 'accepted') and self._has_email_log(obj):
             return 'sent'
         return obj.status

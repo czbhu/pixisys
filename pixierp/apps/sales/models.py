@@ -90,6 +90,9 @@ class QuoteRequest(models.Model):
     assignees = models.ManyToManyField(User, blank=True, related_name='assigned_quote_requests', verbose_name="Felelősök")
     # Owner after exclusive takeover (Átveszem)
     owner = models.ForeignKey(User, null=True, blank=True, on_delete=models.SET_NULL, related_name='owned_quote_requests', verbose_name="Tulaj (átvevő)")
+    # Érvényességi idő (napokban) és lejárati dátum
+    validity_days = models.PositiveIntegerField(default=30, verbose_name="Érvényesség (nap)")
+    valid_until = models.DateField(null=True, blank=True, verbose_name="Érvényes")
 
     class Meta:
         verbose_name = "Árajánlat"

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
-import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer, Popover } from 'antd';
+import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, InputNumber, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer, Popover } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -55,6 +55,12 @@ const cloneDraftRfqItem = <T,>(value: T): T => {
 };
 
 const { TextArea } = Input;
+
+const STATUS_COMBOS: Record<string, string[]> = {
+  mind: ['new', 'sent', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired'],
+  aktiv: ['new', 'sent', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'],
+  szamlazható: ['ready', 'in_delivery', 'delivered'],
+};
 
 const RFQs: React.FC = () => {
   const navigate = useNavigate();
@@ -113,6 +119,7 @@ const RFQs: React.FC = () => {
   const [partialLoading, setPartialLoading] = useState(false);
   const [partialDeadline, setPartialDeadline] = useState<any>(null);
   const [creating, setCreating] = useState(false);
+  const [validityDays, setValidityDays] = useState<number>(30);
   const [orderAllOpenId, setOrderAllOpenId] = useState<number | null>(null);
   const [orderAllDeadline, setOrderAllDeadline] = useState<any>(null);
   const [orderAllLoading, setOrderAllLoading] = useState(false);
@@ -121,9 +128,9 @@ const RFQs: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('rfqs_status_filter');
-      return saved ? JSON.parse(saved) : ['all_except_archived'];
+      return saved ? JSON.parse(saved) : ['mind'];
     } catch {
-      return ['all_except_archived'];
+      return ['mind'];
     }
   });
   const [orderStatusFilter, setOrderStatusFilter] = useState<string[]>(() => {
@@ -144,6 +151,7 @@ const RFQs: React.FC = () => {
   const isMobile = !screens.md;
   const watchedCompanyId = Form.useWatch('company_id', form);
   const watchedContactIds = Form.useWatch('contact_ids', form);
+  const watchedIssueDate = Form.useWatch('issue_date', form);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const isItemsView = true;
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
@@ -706,36 +714,16 @@ const RFQs: React.FC = () => {
   useEffect(() => {
     let filtered = rfqs || [];
     const displayStatusOf = (record: any) => record.effective_status || record.status;
-    
-    // Status filter (multi-select support)
-    const hasAllExceptArchived = statusFilter.includes('all_except_archived');
-    const hasAll = statusFilter.includes('all');
-    
-    if (!hasAll && !hasAllExceptArchived && statusFilter.length === 0) {
-      // If no filter selected, default to all_except_archived
-      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived');
-    } else if (hasAll) {
-      // If 'all' is selected, show all
-      filtered = filtered;
-    } else if (hasAllExceptArchived && statusFilter.length === 1) {
-      // Only all_except_archived selected
-      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived');
-    } else if (statusFilter.length > 0 && !hasAll && !hasAllExceptArchived) {
-      // Specific statuses selected
-      filtered = filtered.filter(r => statusFilter.includes(displayStatusOf(r)));
-    } else if (statusFilter.length > 0 && hasAllExceptArchived) {
-      // all_except_archived + other specific statuses: show all non-archived that match the specific ones
-      const otherStatuses = statusFilter.filter(s => s !== 'all_except_archived');
-      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived' && (otherStatuses.length === 0 || otherStatuses.includes(displayStatusOf(r))));
-    }
 
-    // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
-    // Non-ordered RFQs are not affected by this filter — they stay visible.
-    if (orderStatusFilter && orderStatusFilter.length > 0) {
-      filtered = filtered.filter(r =>
-        orderStatusFilter.includes(displayStatusOf(r))
-      );
+    // Expand combo + individual status filter values
+    const activeFilter = statusFilter.length > 0 ? statusFilter : ['mind'];
+    const effectiveStatuses = new Set<string>();
+    for (const s of activeFilter) {
+      const expanded = STATUS_COMBOS[s];
+      if (expanded) expanded.forEach(st => effectiveStatuses.add(st));
+      else effectiveStatuses.add(s);
     }
+    filtered = filtered.filter(r => effectiveStatuses.has(displayStatusOf(r)));
 
     // Creator filter
     if (creatorFilter) {
@@ -777,6 +765,7 @@ const RFQs: React.FC = () => {
     { value: 'in_delivery', label: 'Szállítás alatt' },
     { value: 'delivered', label: 'Leszállítva' },
     { value: 'invoiced', label: 'Kiszámlázva' },
+    { value: 'expired', label: 'Lejárt' },
   ];
 
   const getDisplayStatus = (record: any) => record?.effective_status || record?.status || 'new';
@@ -1303,6 +1292,10 @@ const RFQs: React.FC = () => {
     try {
       const values = await form.validateFields();
 
+      // Compute valid_until from issue_date + validityDays
+      const issueBase = values.issue_date || dayjs();
+      const computedValidUntil = issueBase.add(validityDays, 'day').format('YYYY-MM-DD');
+
       if (!values.deadline) {
         const suggestedDate = dayjs(values.issue_date || dayjs()).add(14, 'day');
         const confirmed = await new Promise<boolean>((resolve) => {
@@ -1416,6 +1409,8 @@ const RFQs: React.FC = () => {
               description: title || 'Új árajánlat',
               issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
               deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+              validity_days: validityDays,
+              valid_until: computedValidUntil,
               partial_order_allowed: partialOrderAllowed,
             });
           } catch (err) {
@@ -1447,6 +1442,8 @@ const RFQs: React.FC = () => {
           description: computedDescription,
           issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
           deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : undefined,
+          validity_days: validityDays,
+          valid_until: computedValidUntil,
           partial_order_allowed: partialOrderAllowed,
         });
         try {
@@ -1503,6 +1500,7 @@ const RFQs: React.FC = () => {
     // Automatikus kitöltés az aktuális felhasználóval
     const userName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
     setCurrentUserName(userName);
+    setValidityDays(30);
     const today = dayjs();
     const nn = await salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD'));
     setNextNumber(nn.number);
@@ -2012,38 +2010,27 @@ const RFQs: React.FC = () => {
                     placeholder="Státusz szűrő"
                     value={statusFilter}
                     onChange={(value) => setStatusFilter(value)}
-                    style={{ width: 200 }}
+                    style={{ width: 220 }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
                   >
-                    <Select.Option value="all">Mind</Select.Option>
-                    <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
-                    <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="sent">Kiküldve</Select.Option>
-                    <Select.Option value="confirmed">Megerősítve</Select.Option>
-                    <Select.Option value="in_production">Gyártásban</Select.Option>
-                    <Select.Option value="ready">Kész</Select.Option>
-                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                    <Select.Option value="delivered">Leszállítva</Select.Option>
-                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
-                    <Select.Option value="archived">Archív</Select.Option>
-                  </Select>
-                  <Select
-                    mode="multiple"
-                    placeholder="Megrendelési státusz szűrő"
-                    style={{ width: 200 }}
-                    value={orderStatusFilter}
-                    onChange={(v) => setOrderStatusFilter(v)}
-                    popupMatchSelectWidth={false}
-                    maxTagCount="responsive"
-                  >
-                    <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="confirmed">Megerősítve</Select.Option>
-                    <Select.Option value="in_production">Gyártásban</Select.Option>
-                    <Select.Option value="ready">Kész</Select.Option>
-                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                    <Select.Option value="delivered">Kiszállítva</Select.Option>
-                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                    <Select.OptGroup label="Kombinációk">
+                      <Select.Option value="mind">Mind</Select.Option>
+                      <Select.Option value="aktiv">Aktív</Select.Option>
+                      <Select.Option value="szamlazható">Számlázható</Select.Option>
+                    </Select.OptGroup>
+                    <Select.OptGroup label="Egyéni">
+                      <Select.Option value="new">Új</Select.Option>
+                      <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="confirmed">Megerősítve</Select.Option>
+                      <Select.Option value="in_production">Gyártásban</Select.Option>
+                      <Select.Option value="ready">Kész</Select.Option>
+                      <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                      <Select.Option value="delivered">Leszállítva</Select.Option>
+                      <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                      <Select.Option value="expired">Lejárt</Select.Option>
+                      <Select.Option value="archived">Archív</Select.Option>
+                    </Select.OptGroup>
                   </Select>
                   <Select
                     className="rfqs-creator-select"
@@ -2064,10 +2051,10 @@ const RFQs: React.FC = () => {
                 <Button
                   icon={<FilterOutlined />}
                   onClick={() => setFilterDrawerOpen(true)}
-                  type={statusFilter.length > 0 || orderStatusFilter.length > 0 || creatorFilter ? 'primary' : 'default'}
+                  type={statusFilter.filter(s => s !== 'mind').length > 0 || creatorFilter ? 'primary' : 'default'}
                 >
-                  Szűrők{(statusFilter.length + orderStatusFilter.length + (creatorFilter ? 1 : 0)) > 0
-                    ? ` (${statusFilter.length + orderStatusFilter.length + (creatorFilter ? 1 : 0)})`
+                  Szűrők{(statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0)) > 0
+                    ? ` (${statusFilter.filter(s => s !== 'mind').length + (creatorFilter ? 1 : 0)})`
                     : ''}
                 </Button>
               )}
@@ -2092,34 +2079,23 @@ const RFQs: React.FC = () => {
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
                   >
-                    <Select.Option value="all">Mind</Select.Option>
-                    <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
-                    <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="sent">Kiküldve</Select.Option>
-                    <Select.Option value="confirmed">Megerősítve</Select.Option>
-                    <Select.Option value="in_production">Gyártásban</Select.Option>
-                    <Select.Option value="ready">Kész</Select.Option>
-                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                    <Select.Option value="delivered">Leszállítva</Select.Option>
-                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
-                    <Select.Option value="archived">Archív</Select.Option>
-                  </Select>
-                  <Select
-                    mode="multiple"
-                    placeholder="Megrendelési státusz szűrő"
-                    style={{ width: '100%' }}
-                    value={orderStatusFilter}
-                    onChange={(v) => setOrderStatusFilter(v)}
-                    popupMatchSelectWidth={false}
-                    maxTagCount="responsive"
-                  >
-                    <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="confirmed">Megerősítve</Select.Option>
-                    <Select.Option value="in_production">Gyártásban</Select.Option>
-                    <Select.Option value="ready">Kész</Select.Option>
-                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
-                    <Select.Option value="delivered">Kiszállítva</Select.Option>
-                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                    <Select.OptGroup label="Kombinációk">
+                      <Select.Option value="mind">Mind</Select.Option>
+                      <Select.Option value="aktiv">Aktív</Select.Option>
+                      <Select.Option value="szamlazható">Számlázható</Select.Option>
+                    </Select.OptGroup>
+                    <Select.OptGroup label="Egyéni">
+                      <Select.Option value="new">Új</Select.Option>
+                      <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="confirmed">Megerősítve</Select.Option>
+                      <Select.Option value="in_production">Gyártásban</Select.Option>
+                      <Select.Option value="ready">Kész</Select.Option>
+                      <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                      <Select.Option value="delivered">Leszállítva</Select.Option>
+                      <Select.Option value="invoiced">Kiszámlázva</Select.Option>
+                      <Select.Option value="expired">Lejárt</Select.Option>
+                      <Select.Option value="archived">Archív</Select.Option>
+                    </Select.OptGroup>
                   </Select>
                   <Select
                     className="rfqs-creator-select"
@@ -2133,7 +2109,7 @@ const RFQs: React.FC = () => {
                       <Select.Option key={name} value={name}>{name}</Select.Option>
                     ))}
                   </Select>
-                  <Button block onClick={() => { setStatusFilter(['all_except_archived']); setOrderStatusFilter([]); setCreatorFilter(null); }}>Szűrők törlése</Button>
+                  <Button block onClick={() => { setStatusFilter(['mind']); setCreatorFilter(null); }}>Szűrők törlése</Button>
                 </Space>
               </Drawer>
             </Space>
@@ -2572,24 +2548,42 @@ const RFQs: React.FC = () => {
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
             <Row gutter={[8, 4]}>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={3}>
                 <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
-                  <Input value={nextNumber || ''} readOnly />
+                  <Input value={nextNumber || ''} readOnly style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={6}>
                 <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
-                  <Input value={currentUserName || ''} readOnly />
+                  <Input value={currentUserName || ''} readOnly style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={4}>
                 <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
                   <DatePicker style={{ width: '100%' }} onChange={onIssueDateChange} />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={4}>
                 <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
                   <DatePicker style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={4}>
+                <Form.Item
+                  label="Érvény. (nap)"
+                  style={{ marginBottom: 6 }}
+                  help={
+                    <span style={{ fontSize: 11, color: '#888' }}>
+                      Lejár: {dayjs(watchedIssueDate || dayjs()).add(validityDays, 'day').format('YYYY.MM.DD.')}
+                    </span>
+                  }
+                >
+                  <InputNumber
+                    min={1}
+                    value={validityDays}
+                    onChange={(v) => setValidityDays(v ?? 30)}
+                    style={{ width: '100%' }}
+                  />
                 </Form.Item>
               </Col>
             </Row>

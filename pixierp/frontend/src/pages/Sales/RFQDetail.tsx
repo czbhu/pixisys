@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { Card, Tag, Table, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
+import { Card, Tag, Table, Row, Col, Form, Select, Input, InputNumber, Button, message, Modal, Spin, Space, List, DatePicker, Checkbox, Alert, Popover } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -192,6 +192,8 @@ const RFQDetail: React.FC = () => {
           created_by_name: createdByName,
           issue_date: rfqRes.issue_date ? dayjs(rfqRes.issue_date) : null,
           deadline: rfqRes.deadline ? dayjs(rfqRes.deadline) : null,
+          valid_until: rfqRes.valid_until ? dayjs(rfqRes.valid_until) : null,
+          validity_days: rfqRes.validity_days ?? 30,
           company_id: rfqRes.company?.id || rfqRes.contacts?.[0]?.company || (rfqRes.contacts && rfqRes.contacts.length > 0 ? 'private' : undefined),
           contact_ids: (rfqRes.contacts || []).map((c: any) => String(c.id)),
           title: computedDemandTitle,
@@ -409,6 +411,8 @@ const RFQDetail: React.FC = () => {
       internal_description: values.internal_description,
       issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
       deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : null,
+      valid_until: values.valid_until ? values.valid_until.format('YYYY-MM-DD') : null,
+      validity_days: values.validity_days ?? 30,
       contact_ids: values.contact_ids || [],
       project_id: values.project_id ?? null,
       currency_code: values.currency_code,
@@ -629,6 +633,8 @@ const RFQDetail: React.FC = () => {
               internal_description: v.internal_description,
               issue_date: v.issue_date ? v.issue_date.format('YYYY-MM-DD') : undefined,
               deadline: v.deadline ? v.deadline.format('YYYY-MM-DD') : null,
+              valid_until: v.valid_until ? v.valid_until.format('YYYY-MM-DD') : null,
+              validity_days: v.validity_days ?? 30,
               contact_ids: v.contact_ids || [],
               project_id: v.project_id ?? null,
               currency_code: v.currency_code,
@@ -713,6 +719,48 @@ const RFQDetail: React.FC = () => {
                 <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
                   <DatePicker style={{ width: '100%' }} />
                 </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Érvényesség lejárta" name="valid_until" style={{ marginBottom: 6 }}>
+                  <DatePicker
+                    style={{ width: '100%' }}
+                    onChange={(val) => {
+                      if (val) {
+                        const issueDate = formBasic.getFieldValue('issue_date') || dayjs();
+                        const diff = val.diff(dayjs(issueDate), 'day');
+                        if (diff > 0) {
+                          formBasic.setFieldValue('validity_days', diff);
+                        }
+                      }
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={4}>
+                <Form.Item label="Érvényesség (nap)" name="validity_days" style={{ marginBottom: 6 }}>
+                  <InputNumber
+                    min={1}
+                    style={{ width: '100%' }}
+                    onChange={(v) => {
+                      if (v) {
+                        const issueDate = formBasic.getFieldValue('issue_date') || dayjs();
+                        formBasic.setFieldValue('valid_until', dayjs(issueDate).add(v, 'day'));
+                      }
+                    }}
+                  />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={2} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
+                <Button
+                  size="small"
+                  onClick={() => {
+                    const newDate = dayjs().add(30, 'day');
+                    formBasic.setFieldsValue({ valid_until: newDate, validity_days: 30 });
+                  }}
+                  title="Frissíti az érvényességet +30 nappal a maitól"
+                >
+                  +30 nap
+                </Button>
               </Col>
             </Row>
           </div>
