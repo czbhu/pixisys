@@ -57,6 +57,7 @@ const RFQDetail: React.FC = () => {
   const [selectorOpen, setSelectorOpen] = useState(false);
   const [selectorType, setSelectorType] = useState<'product' | 'manufacturing' | 'service'>('product');
   const [editContext, setEditContext] = useState<null | { item: any }>(null);
+  const itemSaveRef = useRef<{ save: (keepOpen: boolean) => Promise<void> } | null>(null);
   const [rfqFiles, setRfqFiles] = useState<UploadFile<any>[]>([]);
   const [rfqPendingRemark, setRfqPendingRemark] = useState<string>('');
   const [sendOpen, setSendOpen] = useState(false);
@@ -652,7 +653,11 @@ const RFQDetail: React.FC = () => {
             message.success('Mentve');
             setLastSavedAt(dayjs());
             if (closeAfter) {
-              navigate('/sales/rfqs');
+              if (window.opener) {
+                window.close();
+              } else {
+                navigate('/sales/rfqs');
+              }
               return;
             }
             load();
@@ -671,8 +676,12 @@ const RFQDetail: React.FC = () => {
                    <Button
                      loading={saving && !closeAfterSaveRef.current}
                      onClick={() => {
-                       closeAfterSaveRef.current = false;
-                       formBasic.submit();
+                       if (editContext && itemSaveRef.current) {
+                         itemSaveRef.current.save(true);
+                       } else {
+                         closeAfterSaveRef.current = false;
+                         formBasic.submit();
+                       }
                      }}
                    >
                      Mentés
@@ -681,8 +690,12 @@ const RFQDetail: React.FC = () => {
                      type="primary"
                      loading={saving && closeAfterSaveRef.current}
                      onClick={() => {
-                       closeAfterSaveRef.current = true;
-                       formBasic.submit();
+                       if (editContext && itemSaveRef.current) {
+                         itemSaveRef.current.save(false);
+                       } else {
+                         closeAfterSaveRef.current = true;
+                         formBasic.submit();
+                       }
                      }}
                    >
                      Mentés &amp; bezárás
@@ -700,28 +713,28 @@ const RFQDetail: React.FC = () => {
           <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
             <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
             <Row gutter={[8, 4]}>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={3}>
                 <Form.Item label="Ajánlatszám" name="number" style={{ marginBottom: 6 }}>
                   <Input disabled />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={5}>
                 <Form.Item label="Rögzítette" name="created_by_name" style={{ marginBottom: 6 }}>
                   <Input readOnly />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={4}>
                 <Form.Item label="Keltezés" name="issue_date" style={{ marginBottom: 6 }}>
                   <DatePicker style={{ width: '100%' }} disabled />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
+              <Col xs={24} md={4}>
                 <Form.Item label="Határidő" name="deadline" style={{ marginBottom: 6 }}>
                   <DatePicker style={{ width: '100%' }} />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={6}>
-                <Form.Item label="Érvényesség lejárta" name="valid_until" style={{ marginBottom: 6 }}>
+              <Col xs={24} md={4}>
+                <Form.Item label="Lejár" name="valid_until" style={{ marginBottom: 6 }}>
                   <DatePicker
                     style={{ width: '100%' }}
                     onChange={(val) => {
@@ -736,8 +749,8 @@ const RFQDetail: React.FC = () => {
                   />
                 </Form.Item>
               </Col>
-              <Col xs={24} md={4}>
-                <Form.Item label="Érvényesség (nap)" name="validity_days" style={{ marginBottom: 6 }}>
+              <Col xs={24} md={2}>
+                <Form.Item label="Nap" name="validity_days" style={{ marginBottom: 6 }}>
                   <InputNumber
                     min={1}
                     style={{ width: '100%' }}
@@ -753,6 +766,7 @@ const RFQDetail: React.FC = () => {
               <Col xs={24} md={2} style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 6 }}>
                 <Button
                   size="small"
+                  block
                   onClick={() => {
                     const newDate = dayjs().add(30, 'day');
                     formBasic.setFieldsValue({ valid_until: newDate, validity_days: 30 });
@@ -1038,6 +1052,7 @@ const RFQDetail: React.FC = () => {
           {editContext ? (
             <ItemSelectorModal
               renderInline
+              saveRef={itemSaveRef}
               open={true}
               mode="edit"
               defaultType={selectorType}

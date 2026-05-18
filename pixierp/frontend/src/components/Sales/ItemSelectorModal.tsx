@@ -84,6 +84,8 @@ interface ItemSelectorModalProps {
   expandCosts?: boolean;
   /** When true, renders content without a Modal wrapper — for inline panel use inside a Drawer */
   renderInline?: boolean;
+  /** When provided, hides the inline footer buttons and exposes doSave via this ref */
+  saveRef?: React.MutableRefObject<{ save: (keepOpen: boolean) => Promise<void> } | null>;
 }
 
 interface CostItem {
@@ -118,7 +120,7 @@ const { Search } = Input;
 
 const defaultVat = 27;
 
-export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false }) => {
+export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defaultType = 'product', onCancel, onAdd, allowCreate = true, mode = 'add', initialSelection, initialValues, initialFormulas, customer, rfqId, rfqCurrency, initialManuPayload, quoteItemId, showCostTypeField, orderItems, expandCosts, renderInline = false, saveRef }) => {
   const navigate = useNavigate();
   const screens = Grid.useBreakpoint();
   const isMobile = !screens.md;
@@ -2878,32 +2880,35 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         if (keepOpen) setSavingKeepOpen(false); else setSavingClose(false);
       }
     };
+    if (saveRef) saveRef.current = { save: doSave };
     return (
       <div style={{ width: '100%' }}>
         {bodyContent}
-        <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
-          <span style={{ fontSize: 11, color: '#888' }}>
-            {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
-          </span>
-          <Space>
-            <Button onClick={handleModalCancel}>Mégse</Button>
-            <Button
-              loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
-              disabled={savingClose || savingKeepOpen || manuSubmitting}
-              onClick={() => doSave(true)}
-            >
-              {secondaryLabel}
-            </Button>
-            <Button
-              type="primary"
-              loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
-              disabled={savingKeepOpen || savingClose || manuSubmitting}
-              onClick={() => doSave(false)}
-            >
-              {primaryLabel}
-            </Button>
-          </Space>
-        </div>
+        {!saveRef && (
+          <div style={{ borderTop: '1px solid #f0f0f0', paddingTop: 12, marginTop: 8, display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+            <span style={{ fontSize: 11, color: '#888' }}>
+              {lastSavedAt ? `Utoljára mentve: ${lastSavedAt.format('YYYY. MM. DD. HH:mm:ss')}` : ''}
+            </span>
+            <Space>
+              <Button onClick={handleModalCancel}>Mégse</Button>
+              <Button
+                loading={savingKeepOpen || (manuSubmitting && manuKeepOpenRef.current)}
+                disabled={savingClose || savingKeepOpen || manuSubmitting}
+                onClick={() => doSave(true)}
+              >
+                {secondaryLabel}
+              </Button>
+              <Button
+                type="primary"
+                loading={savingClose || (manuSubmitting && !manuKeepOpenRef.current)}
+                disabled={savingKeepOpen || savingClose || manuSubmitting}
+                onClick={() => doSave(false)}
+              >
+                {primaryLabel}
+              </Button>
+            </Space>
+          </div>
+        )}
       </div>
     );
   }
