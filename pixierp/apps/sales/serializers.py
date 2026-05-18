@@ -88,19 +88,19 @@ class QuoteRequestAttachmentSerializer(serializers.ModelSerializer):
         return None
 
 class QuoteRequestItemSerializer(serializers.ModelSerializer):
-    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_name = serializers.SerializerMethodField()
     product_code = serializers.CharField(source='product.code', read_only=True)
     product_description = serializers.CharField(source='product.description', read_only=True)
-    material_name = serializers.CharField(source='material.name', read_only=True)
+    material_name = serializers.SerializerMethodField()
     material_code = serializers.CharField(source='material.code', read_only=True)
     material_unit_cost_price = serializers.DecimalField(source='material.unit_cost_price', max_digits=12, decimal_places=2, read_only=True, allow_null=True, default=None)
     material_currency = serializers.CharField(source='material.currency', read_only=True, allow_null=True, default=None)
-    manufacturing_product_name = serializers.CharField(source='manufacturing_product.name', read_only=True)
+    manufacturing_product_name = serializers.SerializerMethodField()
     manufacturing_product_code = serializers.CharField(source='manufacturing_product.code', read_only=True)
     manufacturing_product_description = serializers.CharField(source='manufacturing_product.description', read_only=True)
     manufacturing_product_internal_description = serializers.CharField(source='manufacturing_product.internal_description', read_only=True)
     manufacturing_product_printshop_params = serializers.SerializerMethodField()
-    service_name = serializers.CharField(source='service.name', read_only=True)
+    service_name = serializers.SerializerMethodField()
     service_code = serializers.CharField(source='service.code', read_only=True)
     service_unit_cost_price = serializers.DecimalField(source='service.unit_cost_price', max_digits=12, decimal_places=2, read_only=True, allow_null=True, default=None)
     service_currency = serializers.CharField(source='service.currency', read_only=True, allow_null=True, default=None)
@@ -137,6 +137,24 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         if mp:
             return mp.printshop_params
         return None
+
+    def _display_item_name(self, obj, related_attr):
+        if obj.item_name:
+            return obj.item_name
+        related = getattr(obj, related_attr, None)
+        return getattr(related, 'name', None) if related else None
+
+    def get_product_name(self, obj):
+        return self._display_item_name(obj, 'product')
+
+    def get_material_name(self, obj):
+        return self._display_item_name(obj, 'material')
+
+    def get_manufacturing_product_name(self, obj):
+        return self._display_item_name(obj, 'manufacturing_product')
+
+    def get_service_name(self, obj):
+        return self._display_item_name(obj, 'service')
 
     def get_is_ordered(self, obj):
         return obj.customerorderitem_set.exclude(
@@ -295,14 +313,38 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
         'invoiced': 'Kiszámlázva',
         'cancelled': 'Törölve',
     }
+    _RFQ_STATUS_LABELS = {
+        'sent': 'Kiküldve',
+        'quoted': 'Árazva',
+        'accepted': 'Elfogadva',
+        'rejected': 'Elutasítva',
+        'expired': 'Lejárt',
+        'archived': 'Archív',
+        'ordered': 'Megrendelve',
+        'in_progress': 'Folyamatban',
+    }
+
+    def _has_email_log(self, obj):
+        try:
+            prefetched = getattr(obj, '_prefetched_objects_cache', {}).get('email_logs')
+            if prefetched is not None:
+                return bool(prefetched)
+            return obj.email_logs.exists()
+        except Exception:
+            return False
 
     def _aggregate_order_status(self, obj):
         """Returns (min_status, is_partial) where min_status is the lowest-ranked
         non-cancelled CustomerOrderItem status across all order items linked to
         this RFQ's items, and is_partial is True when not every RFQ item has at
         least one (non-cancelled) order item.
-        Returns (None, None) if RFQ status is not 'ordered'."""
-        if obj.status != 'ordered':
+        Returns (None, None) if the RFQ has no linked customer-order state."""
+        has_order_like_status = obj.status in set(self._ORDER_STATUS_LABELS.keys()) | {'ordered'}
+        try:
+            has_linked_orders = obj.customer_orders.exclude(status='cancelled').exists()
+        except Exception:
+            has_linked_orders = False
+        if not has_order_like_status and not has_linked_orders:
             return None, None
         try:
             rfq_items = list(obj.items.all())
@@ -335,14 +377,27 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return None, None
 
     def get_effective_status(self, obj):
+        if obj.status in ('sent', 'invoiced'):
+            return obj.status
         min_status, _ = self._aggregate_order_status(obj)
-        return min_status or obj.status
+        if min_status:
+            return min_status
+        if obj.status in self._ORDER_STATUS_LABELS:
+            return obj.status
+        if obj.status in ('quoted', 'accepted') and self._has_email_log(obj):
+            return 'sent'
+        return obj.status
 
     def get_effective_status_label(self, obj):
         min_status, is_partial = self._aggregate_order_status(obj)
         if min_status is None:
-            # Fall back to RFQ's own label
-            return obj.get_status_display() if hasattr(obj, 'get_status_display') else obj.status
+            effective_status = self.get_effective_status(obj)
+            if effective_status in self._ORDER_STATUS_LABELS:
+                return self._ORDER_STATUS_LABELS[effective_status]
+            return self._RFQ_STATUS_LABELS.get(
+                effective_status,
+                obj.get_status_display() if hasattr(obj, 'get_status_display') else obj.status,
+            )
         label = self._ORDER_STATUS_LABELS.get(min_status, min_status)
         # Suffix "(részben)" only when status is still 'confirmed' (= just ordered)
         # AND not every RFQ item has been ordered yet.

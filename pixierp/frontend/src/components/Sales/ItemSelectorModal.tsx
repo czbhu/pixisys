@@ -21,6 +21,18 @@ import dayjs from 'dayjs';
 type ConcreteItemType = 'product' | 'manufacturing' | 'service';
 type ItemType = ConcreteItemType | 'all';
 
+const cloneModalValue = <T,>(value: T): T => {
+  if (value === null || value === undefined) return value;
+  if (typeof File !== 'undefined' && value instanceof File) return value;
+  if (Array.isArray(value)) return value.map((item) => cloneModalValue(item)) as T;
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneModalValue(item)])
+    ) as T;
+  }
+  return value;
+};
+
 export interface SelectedItemPayload {
   item_type: ConcreteItemType;
   ref_id: number;
@@ -135,6 +147,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [savingKeepOpen, setSavingKeepOpen] = useState(false);
   const [savingClose, setSavingClose] = useState(false);
   const manuKeepOpenRef = useRef(false);
+  const userEditedManuFieldsRef = useRef<Set<string>>(new Set());
   const [impositionOpen, setImpositionOpen] = useState(false);
   const [impositionInitialPresetId, setImpositionInitialPresetId] = useState<string | null>(null);
   const [impositionPresets, setImpositionPresets] = useState<Array<{ id: string; name: string; updatedAt?: string }>>([]);
@@ -240,6 +253,22 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       'day': 'nap',
     };
     return map[unit] || unit;
+  };
+
+  const setManuFormInitialValues = (nextValues: Record<string, any>) => {
+    const mergedValues = { ...nextValues };
+    Object.keys(nextValues).forEach((field) => {
+      if (userEditedManuFieldsRef.current.has(field) || manuForm.isFieldTouched(field)) {
+        mergedValues[field] = manuForm.getFieldValue(field);
+      }
+    });
+    manuForm.setFieldsValue(mergedValues);
+  };
+
+  const handleManuFormValuesChange = (changed: Record<string, any>) => {
+    Object.keys(changed || {}).forEach((field) => {
+      userEditedManuFieldsRef.current.add(field);
+    });
   };
 
   // Extract per-unit cost price from a product/service master record (for displaying
@@ -351,6 +380,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setPendingFiles([]);
     setPendingFileRemarks({});
     manuForm.resetFields();
+    userEditedManuFieldsRef.current = new Set();
     setManuCostItems([]);
     setSyncQtyRows(new Set());
     setManuDimensionsPerUnit(true);
@@ -436,8 +466,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         // Pending (not yet API-created) manufacturing item — restore from stored payload
         if (initialSelection.ref_id < 0) {
           if (!initialManuPayload) return;
-          const p = initialManuPayload;
-          manuForm.setFieldsValue({
+          const p = cloneModalValue(initialManuPayload);
+          setManuFormInitialValues({
             name: p.name,
             code: p.code,
             description: p.description || '',
@@ -456,7 +486,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             specific_weight: p.specific_weight ?? null,
             specific_weight_unit: p.specific_weight_unit || 'kg/m3',
           });
-          const items: CostItem[] = p._costItemsState || [];
+          const items: CostItem[] = cloneModalValue(p._costItemsState || []);
           setManuCostItems(items);
           // Restore syncQtyRows from persisted syncQty flags
           const syncSet = new Set(items.filter(i => i.syncQty).map(i => i.id));
@@ -473,7 +503,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           setManuCostCurrencyCode((p._costCurrency?.code || 'HUF').toUpperCase());
           setManuCostCurrencyId(p._costCurrency?.id ?? null);
           setManuCreatedId(initialSelection.ref_id); // Keep negative temp ID
-          setSelected({ ...p, id: initialSelection.ref_id, __type: 'manufacturing' });
+          setSelected(cloneModalValue({ ...p, id: initialSelection.ref_id, __type: 'manufacturing' }));
           setActiveKey('manufacturing');
           return;
         }
@@ -486,8 +516,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         const savedPrice = (mode === 'edit' && initialValues?.net_unit_price != null && Number(initialValues.net_unit_price) > 0)
           ? Number(initialValues.net_unit_price)
           : null;
-        manuForm.setFieldsValue({
-          name: p.name,
+        setManuFormInitialValues({
+          // When editing an RFQ item, use the item's saved display name (item_name if set,
+          // otherwise manufacturing product name) — NOT the manufacturing master's name.
+          // This prevents the master name from silently overwriting a custom item_name.
+          name: (quoteItemId && initialSelection?.name) ? initialSelection.name : p.name,
           code: p.code,
           description: p.description || '',
           internal_description: p.internal_description || '',
@@ -1187,6 +1220,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       if (isEdit && effectiveManuId! > 0) {
         // ── Real product: PATCH (status unchanged) ───────────────────────
         const { status: _s, ...patchPayload } = payload as any;
+        if (quoteItemId) {
+          delete patchPayload.name;
+        }
         const updated = await manufacturingService.patchProduct(effectiveManuId!, patchPayload);
         message.success('Egyedi gyártás mentve');
         setManuProducts(prev => prev.map((p: any) => p.id === effectiveManuId ? updated : p));
@@ -1204,7 +1240,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         const rfqUpdatePayload: SelectedItemPayload = {
           item_type: 'manufacturing',
           ref_id: effectiveManuId!,
-          name: updated.name,
+          name: v.name,
           code: updated.code,
           unit,
           base_price: updatedUnitPriceForRfq,
@@ -1216,6 +1252,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
         };
         await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
+        setLastSavedAt(dayjs());
         setManuPendingFiles([]);
         setManuPendingFileRemarks({});
 
@@ -1398,13 +1435,17 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         // Form stays open for editing — do NOT reset
       }
     } catch (e: any) {
-      if (e.response?.data) {
+      if (e?.errorFields) {
+        // Ant Design form validation error — errors are shown inline
+      } else if (e?.response?.data) {
         message.error(`Mentési hiba: ${JSON.stringify(e.response.data)}`);
+      } else if (e instanceof Error && e.message) {
+        message.error(`Mentési hiba: ${e.message}`);
+      } else if (e) {
+        message.error('Nem sikerült menteni a tételt');
       }
-      // else form validation errors are shown inline
     } finally {
       setManuSubmitting(false);
-      setLastSavedAt(dayjs());
     }
   };
 
@@ -1967,7 +2008,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             <div style={{ border: '1px solid #d9d9d9', borderRadius: 6, padding: 16, background: '#fafafa' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                   <strong>{manuCreatedId ? 'Tétel szerkesztése' : 'Új tétel'}</strong>
-                </div>                <Form layout="vertical" form={manuForm}>
+                </div>                <Form layout="vertical" form={manuForm} onValuesChange={handleManuFormValuesChange}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'flex-end' }}>
                     <div style={{ flex: '1 1 100%', marginBottom: 0 }}>
                       {linkedItem && (

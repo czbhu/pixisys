@@ -3,6 +3,7 @@ from django.db import models
 from django.db.models import Q, Prefetch, Count
 from django.template import Template, Context
 import datetime
+import re
 from rest_framework.decorators import action, api_view, permission_classes, authentication_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -44,6 +45,7 @@ from decimal import Decimal, InvalidOperation
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.conf import settings
+from apps.manufacturing.models import ManufacturingCostItem, ManufacturingProductAttachment
 
 
 def _bump_search_stat(item_type: str, ref_id: int):
@@ -117,6 +119,19 @@ def _apply_customer_order_status(order, new_status, changed_at=None):
 
     order.save()
 
+    if new_status in RFQ_ORDER_SYNC_STATUSES:
+        active_items = list(order.items.exclude(status='cancelled').select_related('quote_item__manufacturing_product'))
+        if active_items:
+            CustomerOrderItem.objects.filter(id__in=[item.id for item in active_items]).update(status=new_status)
+            mp_ids = sorted({
+                item.quote_item.manufacturing_product_id
+                for item in active_items
+                if getattr(item, 'quote_item', None) and item.quote_item.manufacturing_product_id
+            })
+            if mp_ids:
+                from apps.manufacturing.models import ManufacturingCostItem
+                ManufacturingCostItem.objects.filter(product_id__in=mp_ids).exclude(status='cancelled').update(status=new_status)
+
     # When order is marked delivered, confirm all associated unconfirmed DeliveryNotes
     if new_status == 'delivered':
         try:
@@ -162,6 +177,42 @@ def _request_customer_order_status_approval(order, requester, requested_status):
         }
     )
 
+
+RFQ_ORDER_SYNC_STATUSES = ('new', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered')
+RFQ_EXTRA_STATUSES = ('sent', 'invoiced')
+RFQ_ALLOWED_STATUSES = {
+    *(choice[0] for choice in QuoteRequest.STATUS_CHOICES),
+    *RFQ_ORDER_SYNC_STATUSES,
+    *RFQ_EXTRA_STATUSES,
+}
+
+
+def _apply_customer_order_status_tree(order, new_status, changed_at=None):
+    """Force-sync an order and its active items to the same status.
+
+    RFQ-side status changes should be reflected on the linked customer order,
+    including the child items used by RFQ effective-status aggregation.
+    """
+    return _apply_customer_order_status(order, new_status, changed_at=changed_at)
+
+
+def _apply_quote_request_status(qr, new_status, changed_at=None):
+    """Apply an RFQ status and mirror order-like statuses to linked orders."""
+    active_orders = list(qr.customer_orders.exclude(status='cancelled').prefetch_related('items'))
+
+    if new_status in RFQ_ORDER_SYNC_STATUSES and active_orders:
+        for order in active_orders:
+            _apply_customer_order_status_tree(order, new_status, changed_at=changed_at)
+        stored_status = 'ordered'
+    else:
+        stored_status = new_status
+
+    if qr.status != stored_status:
+        qr.status = stored_status
+        qr.save(update_fields=['status'])
+
+    return stored_status
+
 class CustomerViewSet(viewsets.ModelViewSet):
     queryset = Customer.objects.all()
     serializer_class = CustomerSerializer
@@ -197,6 +248,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         ).prefetch_related(
             'contacts',
             'assignees',
+            Prefetch('email_logs', queryset=QuoteRequestEmailLog.objects.only('id', 'quote_request_id', 'sent_at')),
             Prefetch(
                 'items',
                 queryset=QuoteRequestItem.objects.select_related(
@@ -488,6 +540,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         qr = self.get_object()
         product_id = request.data.get('product_id')
         material_id = request.data.get('material_id')
+        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -528,6 +581,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             item_type='product',
             product=product,
             material=material,
+            item_name=item_name or product_name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -548,6 +602,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def add_manufacturing_item(self, request, pk=None):
         qr = self.get_object()
         mp_id = request.data.get('manufacturing_product_id')
+        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -576,6 +631,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             item_type='manufacturing',
             manufacturing_product=mp,
+            item_name=item_name or mp.name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -665,6 +721,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def add_service_item(self, request, pk=None):
         qr = self.get_object()
         service_id = request.data.get('service_id')
+        item_name = request.data.get('item_name', '')
         quantity = request.data.get('quantity', 1)
         description = request.data.get('description', '')
         net_unit_price_raw = request.data.get('net_unit_price')
@@ -690,6 +747,7 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             quote_request=qr,
             item_type='service',
             service=service,
+            item_name=item_name or service.name,
             quantity=quantity_val,
             unit=unit,
             net_unit_price=net_unit_price,
@@ -796,11 +854,21 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 pass
 
         # Ensure there is a public token for link rendering
+        additional_rfq_ids = request.data.get('additional_rfq_ids', []) or []
+        item_ids = request.data.get('item_ids', []) or []
+        additional_qrs = []
+        if additional_rfq_ids:
+            additional_qrs = list(QuoteRequest.objects.filter(id__in=additional_rfq_ids))
+            for aqr in additional_qrs:
+                if not aqr.public_token:
+                    aqr.public_token = secrets.token_urlsafe(24)
+                    aqr.save(update_fields=['public_token'])
+
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
         # Render simple templates using format
-        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+        public_url = _build_combined_public_url(qr, additional_qrs, item_ids or None)
         
         # Build contact names for personalized greeting
         contact_names = ', '.join([c.name for c in qr.contacts.all()]) if qr.contacts.exists() else 'Ügyfelünk'
@@ -817,6 +885,10 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if override_body is not None:
             body = override_body
             body_core = override_body
+            # Replace any bare/stale public URL in the override body with the correct combined URL
+            base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+            body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
+            body_core = body
         else:
             body_core = (tpl.body_template or '').format(**ctx)
             if tpl.is_html:
@@ -1012,6 +1084,8 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             body_preview=(body_core[:500] if body_core else ''),
             sent_by=request.user if request.user.is_authenticated else None,
         )
+        if qr.status not in ('ordered', 'invoiced'):
+            _apply_quote_request_status(qr, 'sent')
         QuoteLog.objects.create(quote=qr, user=request.user, action='Ajánlat kiküldve e-mailben')
         return Response({'status': 'sent'})
 
@@ -1067,10 +1141,20 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             except Exception as e:
                 pass
 
+        additional_rfq_ids = request.data.get('additional_rfq_ids', []) or []
+        item_ids = request.data.get('item_ids', []) or []
+        additional_qrs = []
+        if additional_rfq_ids:
+            additional_qrs = list(QuoteRequest.objects.filter(id__in=additional_rfq_ids))
+            for aqr in additional_qrs:
+                if not aqr.public_token:
+                    aqr.public_token = secrets.token_urlsafe(24)
+                    aqr.save(update_fields=['public_token'])
+
         if not qr.public_token:
             qr.public_token = secrets.token_urlsafe(24)
             qr.save(update_fields=['public_token'])
-        public_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+        public_url = _build_combined_public_url(qr, additional_qrs, item_ids or None)
         ctx = {
             'rfq_number': qr.number or qr.request_number,
             'rfq_title': qr.title,
@@ -1081,6 +1165,9 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         subject = override_subject if override_subject is not None else (tpl.subject_template or '').format(**ctx)
         if override_body is not None:
             body = override_body
+            # Replace any bare/stale public URL in the override body with the correct combined URL
+            base_url = f"{settings.FRONTEND_BASE_URL}/public/quote/{qr.public_token}/order"
+            body = re.sub(re.escape(base_url) + r'(?:\?[^"\' <>\s]*)?', public_url, body)
         else:
             body_core = (tpl.body_template or '').format(**ctx)
             body = f"{body_core}{sig.body_html if sig else ''}" if tpl.is_html else f"{body_core}\n\n{sig.body_html if sig else ''}"
@@ -1090,19 +1177,18 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
     def set_status(self, request, pk=None):
         qr = self.get_object()
         new_status = request.data.get('status')
-        valid = [c[0] for c in QuoteRequest.STATUS_CHOICES]
+        valid = RFQ_ALLOWED_STATUSES
         if new_status not in valid:
             return Response({'error': 'Érvénytelen státusz'}, status=status.HTTP_400_BAD_REQUEST)
         old_status = qr.status
         if old_status == new_status:
             return Response({'status': qr.status})
-        qr.status = new_status
-        qr.save(update_fields=['status'])
+        stored_status = _apply_quote_request_status(qr, new_status, changed_at=timezone.now())
         try:
             QuoteLog.objects.create(quote=qr, user=request.user, action=f'Státusz módosítva: {old_status} → {new_status}')
         except Exception:
             pass
-        return Response({'status': qr.status})
+        return Response({'status': stored_status, 'requested_status': new_status})
 
     @action(detail=True, methods=['post'])
     def update_basic(self, request, pk=None):
@@ -1114,11 +1200,16 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 setattr(qr, fld, data.get(fld) or '')
         # Dates
         for date_fld in ['issue_date', 'deadline']:
-            if data.get(date_fld):
-                try:
-                    setattr(qr, date_fld, timezone.datetime.strptime(data.get(date_fld), '%Y-%m-%d').date())
-                except Exception:
-                    pass
+            if date_fld not in data:
+                continue
+            raw_value = data.get(date_fld)
+            if raw_value in (None, '', '0000-00-00'):
+                setattr(qr, date_fld, None)
+                continue
+            try:
+                setattr(qr, date_fld, timezone.datetime.strptime(raw_value, '%Y-%m-%d').date())
+            except Exception:
+                pass
         # Foreign keys
         company_id = data.get('company_id') or data.get('company')
         if company_id:
@@ -1328,6 +1419,91 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def copy(self, request, pk=None):
+        def duplicate_manufacturing_product(original):
+            if not original:
+                return None
+
+            base_code = original.code or f'GY-{original.id}'
+            base = re.sub(r'-COPY(-\d+)?$', '', base_code)
+            n_copies = ManufacturingProduct.objects.filter(code__startswith=f'{base}-COPY').count()
+            new_code = f'{base}-COPY-{n_copies + 1}' if n_copies > 0 else f'{base}-COPY'
+
+            new_product = ManufacturingProduct.objects.create(
+                date=original.date,
+                name=original.name,
+                code=new_code,
+                description=original.description,
+                internal_description=original.internal_description,
+                quantity=original.quantity,
+                quantity_unit=original.quantity_unit,
+                is_fixed_quantity=original.is_fixed_quantity,
+                product_class=original.product_class,
+                project=original.project,
+                net_unit_price=original.net_unit_price,
+                net_total_price=original.net_total_price,
+                price_from_cost_calc=original.price_from_cost_calc,
+                currency=original.currency,
+                status='quote_request_priced',
+                contact=original.contact,
+                contact_external_id=original.contact_external_id,
+                deadline=original.deadline,
+                printshop_params=original.printshop_params,
+            )
+            if hasattr(original, 'created_by_id'):
+                new_product.created_by = request.user if request.user.is_authenticated else getattr(original, 'created_by', None)
+                new_product.save(update_fields=['created_by'])
+
+            new_product.allowed_companies.set(original.allowed_companies.all())
+            new_product.allowed_contacts.set(original.allowed_contacts.all())
+
+            cost_item_map = {}
+            for cost in original.cost_items.all().order_by('sort_order', 'id'):
+                duplicated_cost = ManufacturingCostItem.objects.create(
+                    product=new_product,
+                    type=cost.type,
+                    ref_id=cost.ref_id,
+                    name=cost.name,
+                    quantity=cost.quantity,
+                    unit=cost.unit,
+                    unit_price=cost.unit_price,
+                    cost_price=cost.cost_price,
+                    markup_percent=cost.markup_percent,
+                    selling_unit_price=cost.selling_unit_price,
+                    selling_price=cost.selling_price,
+                    supplier=cost.supplier,
+                    is_internal=cost.is_internal,
+                    department=cost.department,
+                    currency=cost.currency,
+                    is_per_unit=cost.is_per_unit,
+                    status=cost.status,
+                    notes=cost.notes,
+                    queue_position=cost.queue_position,
+                    is_paused=cost.is_paused,
+                    formulas=cost.formulas or {},
+                    sort_order=cost.sort_order,
+                )
+                cost_item_map[cost.id] = duplicated_cost
+
+            for cost in original.cost_items.exclude(parent=None):
+                duplicated_cost = cost_item_map.get(cost.id)
+                duplicated_parent = cost_item_map.get(cost.parent_id)
+                if duplicated_cost and duplicated_parent:
+                    duplicated_cost.parent = duplicated_parent
+                    duplicated_cost.save(update_fields=['parent'])
+
+            for att in original.attachments.all():
+                try:
+                    ManufacturingProductAttachment.objects.create(
+                        product=new_product,
+                        file=att.file,
+                        remark=att.remark,
+                        uploaded_by=request.user if request.user.is_authenticated else att.uploaded_by,
+                    )
+                except Exception:
+                    pass
+
+            return new_product
+
         src = self.get_object()
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
@@ -1379,15 +1555,26 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             except Exception:
                 pass
         
+        duplicated_manufacturing_products = {}
+        item_map = {}
+
         # copy items
-        for it in src.items.all():
+        for it in src.items.all().order_by('sort_order', 'id'):
+            duplicated_manufacturing_product = None
+            if it.manufacturing_product_id:
+                duplicated_manufacturing_product = duplicated_manufacturing_products.get(it.manufacturing_product_id)
+                if duplicated_manufacturing_product is None:
+                    duplicated_manufacturing_product = duplicate_manufacturing_product(it.manufacturing_product)
+                    duplicated_manufacturing_products[it.manufacturing_product_id] = duplicated_manufacturing_product
+
             new_item = QuoteRequestItem.objects.create(
                 quote_request=dst,
                 item_type=it.item_type,
                 product=it.product,
                 material=it.material,
-                manufacturing_product=it.manufacturing_product,
+                manufacturing_product=duplicated_manufacturing_product,
                 service=it.service,
+                item_name=it.item_name or getattr(it.product, 'name', '') or getattr(it.material, 'name', '') or getattr(it.manufacturing_product, 'name', '') or getattr(it.service, 'name', ''),
                 quantity=it.quantity,
                 unit=it.unit,
                 net_unit_price=it.net_unit_price,
@@ -1395,7 +1582,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 discount_percent=it.discount_percent,
                 discount_amount=it.discount_amount,
                 description=it.description,
+                imposition_data=it.imposition_data or {},
+                formulas=it.formulas or {},
+                sort_order=it.sort_order,
             )
+            item_map[it.id] = new_item
             # copy item-level attachments
             from apps.sales.models import QuoteRequestItemAttachment
             for item_att in it.attachments.all():
@@ -1408,6 +1599,13 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                     )
                 except Exception:
                     pass
+
+        for it in src.items.exclude(parent=None):
+            new_item = item_map.get(it.id)
+            new_parent = item_map.get(it.parent_id)
+            if new_item and new_parent:
+                new_item.parent = new_parent
+                new_item.save(update_fields=['parent'])
         try:
             QuoteLog.objects.create(quote=dst, user=request.user if request.user.is_authenticated else None, action=f'Árajánlat másolva forrásból: {src.number or src.request_number}')
         except Exception:
@@ -1873,6 +2071,44 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             'items': created_items
         }, status=status.HTTP_201_CREATED)
 
+
+def _combined_items_for_public(qr, request):
+    """Return items for a public quote page, optionally merging extra RFQs via ?extra_tokens
+    and filtering to specific item IDs via ?item_ids."""
+    extra_tokens = request.query_params.get('extra_tokens', '')
+    item_ids_raw = request.query_params.get('item_ids', '')
+    all_items = list(qr.items.all())
+    if extra_tokens:
+        for t in extra_tokens.split(','):
+            t = t.strip()
+            if t:
+                try:
+                    extra_qr = QuoteRequest.objects.get(public_token=t)
+                    all_items.extend(list(extra_qr.items.all()))
+                except QuoteRequest.DoesNotExist:
+                    pass
+    if item_ids_raw:
+        try:
+            allowed_ids = set(int(i) for i in item_ids_raw.split(',') if i.strip())
+            all_items = [item for item in all_items if item.id in allowed_ids]
+        except (ValueError, TypeError):
+            pass
+    return all_items
+
+
+def _build_combined_public_url(primary_qr, additional_qrs, item_ids=None):
+    """Build the public order URL, appending extra_tokens and item_ids when provided."""
+    base = f"{settings.FRONTEND_BASE_URL}/public/quote/{primary_qr.public_token}/order"
+    params = []
+    if additional_qrs:
+        extra = ','.join(aqr.public_token for aqr in additional_qrs if aqr.public_token)
+        if extra:
+            params.append(f"extra_tokens={extra}")
+    if item_ids:
+        params.append(f"item_ids={','.join(str(i) for i in item_ids)}")
+    return f"{base}?{'&'.join(params)}" if params else base
+
+
 @api_view(['GET'])
 @permission_classes([AllowAny])
 def public_order_view(request, token: str):
@@ -2008,7 +2244,11 @@ def public_order_view(request, token: str):
         'partial_order_allowed': qr.partial_order_allowed,
         'customer': customer_data,
         'supplier': supplier_data,
-        'items': QuoteRequestItemSerializer(qr.items.all(), many=True, context={'request': request}).data,
+        'items': QuoteRequestItemSerializer(
+            _combined_items_for_public(qr, request),
+            many=True,
+            context={'request': request}
+        ).data,
     })
 
 

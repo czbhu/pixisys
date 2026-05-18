@@ -603,6 +603,34 @@ function EnhancedTable<T extends object = any>({
 
   const pagSizeOptions = [{ value: 10, label: '10 / oldal' }, { value: 20, label: '20 / oldal' }, { value: 50, label: '50 / oldal' }, { value: 100, label: '100 / oldal' }, { value: 200, label: '200 / oldal' }, { value: 500, label: '500 / oldal' }, { value: 1000, label: '1000 / oldal' }];
 
+  // Cross-page selection: when the table does client-side pagination, only the
+  // current page's rows are in dataSource. Ant Design's rowSelection.onChange
+  // reports only keys for those visible rows, so navigating pages would wipe
+  // out selections from other pages. We wrap onChange to merge the new keys
+  // with existing keys from pages not currently shown.
+  const enhancedRowSelection = useMemo(() => {
+    const rs = (tableProps as any).rowSelection;
+    if (!rs || !rs.onChange) return rs;
+    // Nothing to merge when all data is shown (pagination disabled or external current)
+    if (pag === false || origCurrent !== undefined) return rs;
+    const rk = (tableProps as any).rowKey;
+    const getKey = (row: any): React.Key => {
+      if (typeof rk === 'function') return rk(row);
+      if (typeof rk === 'string') return row[rk];
+      return row.key;
+    };
+    const currentPageKeySet = new Set<React.Key>(pagedDataSource.map(getKey));
+    return {
+      ...rs,
+      onChange: (newKeys: React.Key[], newRows: any[], info: any) => {
+        const otherPageKeys = ((rs.selectedRowKeys ?? []) as React.Key[]).filter(
+          (k) => !currentPageKeySet.has(k)
+        );
+        rs.onChange([...otherPageKeys, ...newKeys], newRows, info);
+      },
+    };
+  }, [(tableProps as any).rowSelection, (tableProps as any).rowKey, pagedDataSource, pag, origCurrent]);
+
   const pagRow = pag !== false ? (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 4 }}>
       <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
@@ -700,6 +728,7 @@ function EnhancedTable<T extends object = any>({
                 <Table<T>
                   key={tableResetKey}
                   {...tableProps}
+                  rowSelection={enhancedRowSelection}
                   dataSource={pagedDataSource as T[]}
                   tableLayout="fixed"
                   scroll={{ x: processedColumns.reduce((s, c) => s + (typeof (c as any).width === 'number' ? (c as any).width : 150), 0), ...((tableProps as any).scroll || {}) }}

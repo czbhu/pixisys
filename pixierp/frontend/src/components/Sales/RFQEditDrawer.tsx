@@ -123,11 +123,11 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
     if (!rfqId) return;
     let createdItem: any = null;
     if (payload.item_type === 'product') {
-      createdItem = await salesService.addRfqProductItem(rfqId, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, payload.ref_id, (payload as any).formulas || {});
+      createdItem = await salesService.addRfqProductItem(rfqId, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, payload.ref_id, (payload as any).formulas || {});
     } else if (payload.item_type === 'manufacturing') {
-      createdItem = await salesService.addRfqManufacturingItem(rfqId, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      createdItem = await salesService.addRfqManufacturingItem(rfqId, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     } else {
-      createdItem = await salesService.addRfqServiceItem(rfqId, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      createdItem = await salesService.addRfqServiceItem(rfqId, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     }
     if (createdItem?.id && (payload as any).files?.length) {
       for (const f of (payload as any).files) {
@@ -148,6 +148,7 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
     if (!editContext?.item) return;
     try {
       const patch: any = {
+        item_name: payload.name,
         quantity: payload.quantity, unit: payload.unit,
         net_unit_price: payload.net_unit_price, vat_rate: payload.vat_rate,
         description: payload.description,

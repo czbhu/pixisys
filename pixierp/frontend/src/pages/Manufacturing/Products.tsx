@@ -107,12 +107,13 @@ const Products: React.FC = () => {
     };
 
     useEffect(() => {
-        loadProducts();
+        const projectParam = searchParams.get('project');
+        loadProducts(projectParam ? Number(projectParam) : undefined);
         loadProductClasses();
         loadProjects();
         loadContacts();
         loadCurrencies();
-    }, []);
+    }, [searchParams.get('project')]);
 
     useEffect(() => {
         const create = searchParams.get('create') === 'true';
@@ -183,10 +184,12 @@ const Products: React.FC = () => {
         }
     }, [searchParams]);
 
-    const loadProducts = async () => {
+    const loadProducts = async (projectId?: number) => {
         try {
             setLoading(true);
-            const response = await manufacturingService.getProducts();
+            const response = projectId
+                ? await manufacturingService.getProductsByProject(projectId)
+                : await manufacturingService.getProducts();
             setProducts(response);
         } catch (err) {
             console.error('Error loading products:', err);
@@ -308,7 +311,7 @@ const Products: React.FC = () => {
 
             setIsModalVisible(false);
             form.resetFields();
-            loadProducts();
+            loadProducts(searchParams.get('project') ? Number(searchParams.get('project')) : undefined);
 
             if (searchParams.get('from_rfq') === 'true' && savedProduct) {
                 Modal.confirm({
@@ -333,7 +336,7 @@ const Products: React.FC = () => {
         try {
             await manufacturingService.deleteProduct(id);
             message.success('Termék sikeresen törölve!');
-            loadProducts();
+            loadProducts(searchParams.get('project') ? Number(searchParams.get('project')) : undefined);
         } catch (err) {
             console.error('Error deleting product:', err);
             message.error('Hiba történt a termék törlése során');
@@ -655,7 +658,7 @@ const Products: React.FC = () => {
                     setCreateModalOpen(false);
                     setIsModalVisible(false);
                     setEditingProduct(null);
-                    loadProducts();
+                    loadProducts(searchParams.get('project') ? Number(searchParams.get('project')) : undefined);
                     // Handle "return to quote" logic if needed
                     const params = new URLSearchParams(window.location.search);
                      if (params.get('from_rfq') === 'true' && p) {

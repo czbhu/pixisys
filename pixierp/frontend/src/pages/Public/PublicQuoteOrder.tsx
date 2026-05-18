@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { Card, Table, Spin, Alert, Typography, Descriptions, Button, message, Row, Col, Checkbox, DatePicker } from 'antd';
 import { ShoppingCartOutlined, PrinterOutlined } from '@ant-design/icons';
 import axios from 'axios';
@@ -64,6 +64,9 @@ interface QuoteData {
 
 const PublicQuoteOrder: React.FC = () => {
   const { token } = useParams<{ token: string }>();
+  const [searchParams] = useSearchParams();
+  const extraTokens = searchParams.get('extra_tokens') || '';
+  const itemIdsParam = searchParams.get('item_ids') || '';
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<QuoteData | null>(null);
@@ -73,13 +76,17 @@ const PublicQuoteOrder: React.FC = () => {
 
   useEffect(() => {
     loadData();
-  }, [token]);
+  }, [token, extraTokens, itemIdsParam]);
 
   const loadData = async () => {
     try {
       setLoading(true);
       setError(null);
-      const response = await axios.get(`${API_BASE_URL}/sales/quote-requests/public/${token}/order/`);
+      const params: string[] = [];
+      if (extraTokens) params.push(`extra_tokens=${encodeURIComponent(extraTokens)}`);
+      if (itemIdsParam) params.push(`item_ids=${encodeURIComponent(itemIdsParam)}`);
+      const qs = params.length ? `?${params.join('&')}` : '';
+      const response = await axios.get(`${API_BASE_URL}/sales/quote-requests/public/${token}/order/${qs}`);
       setData(response.data);
       
       // Select all NOT-yet-ordered items by default

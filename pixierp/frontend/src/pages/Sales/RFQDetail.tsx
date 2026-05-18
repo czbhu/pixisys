@@ -41,6 +41,7 @@ const RFQDetail: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  const isDirectItemEditMode = Boolean(searchParams.get('editItemId'));
   const editItemIdHandledRef = useRef(false);
   const autoFirstItemRef = useRef(false);
   const { user } = useAuth();
@@ -86,6 +87,14 @@ const RFQDetail: React.FC = () => {
   
   const [emailTemplates, setEmailTemplates] = useState<any[]>([]);
   const [signatureTemplates, setSignatureTemplates] = useState<any[]>([]);
+
+  const notifyRfqListUpdated = useCallback(() => {
+    try {
+      const channel = new BroadcastChannel('pixi_rfq_updates');
+      channel.postMessage({ type: 'rfq-item-updated', rfqId: Number(id || 0), itemId: editContext?.item?.id || null, at: Date.now() });
+      channel.close();
+    } catch {}
+  }, [id, editContext?.item?.id]);
 
   const contactOptionLabel = (p: any, showCompany?: boolean) => {
     const nameParts = [p.first_name, p.last_name].filter(Boolean).join(' ').trim();
@@ -346,7 +355,8 @@ const RFQDetail: React.FC = () => {
       // Send material_id instead of product_id for warehouse materials
       createdItem = await salesService.addRfqProductItem(
         qid, 
-        payload.ref_id,  // This is used as product_id in the old system
+        payload.ref_id,
+        payload.name || '',
         payload.quantity, 
         payload.description || '', 
         payload.unit, 
@@ -358,9 +368,9 @@ const RFQDetail: React.FC = () => {
         (payload as any).formulas || {},
       );
     } else if (payload.item_type === 'manufacturing') {
-      createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      createdItem = await salesService.addRfqManufacturingItem(qid, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     } else {
-      createdItem = await salesService.addRfqServiceItem(qid, payload.ref_id, payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
+      createdItem = await salesService.addRfqServiceItem(qid, payload.ref_id, payload.name || '', payload.quantity, payload.description || '', payload.unit, payload.net_unit_price, payload.vat_rate, (payload as any).discount_percent, (payload as any).discount_amount, (payload as any).formulas || {});
     }
     // Upload any queued files
     if (createdItem?.id && payload.files?.length) {
@@ -381,10 +391,45 @@ const RFQDetail: React.FC = () => {
     refreshItems();
   };
 
+  const saveBasicFromCurrentForm = async () => {
+    if (!id || !rfq) return;
+    const values = formBasic.getFieldsValue();
+    const companyId = values.company_id ?? rfq.company?.id;
+    if (!companyId && companyId !== 'private') {
+      throw new Error('A Cég mező kötelező.');
+    }
+
+    const autoTitle = (!values.title || !String(values.title).trim())
+      ? (isDemand(rfq) ? `Ajánlat ${rfq.number || rfq.request_number}` : (rfq.number || rfq.request_number))
+      : String(values.title).trim();
+
+    const updateData: any = {
+      title: autoTitle,
+      description: values.description,
+      internal_description: values.internal_description,
+      issue_date: values.issue_date ? values.issue_date.format('YYYY-MM-DD') : undefined,
+      deadline: values.deadline ? values.deadline.format('YYYY-MM-DD') : null,
+      contact_ids: values.contact_ids || [],
+      project_id: values.project_id ?? null,
+      currency_code: values.currency_code,
+      partial_order_allowed: values.partial_order_allowed,
+    };
+
+    if (companyId === 'private') {
+      updateData.company_id = null;
+    } else if (companyId) {
+      updateData.company_id = companyId;
+    }
+
+    await salesService.updateQuoteRequestBasic(Number(id), updateData);
+    setLastSavedAt(dayjs());
+  };
+
   const onEditSelected = async (payload: SelectedItemPayload) => {
     if (!editContext?.item) return;
     try {
       const patch: any = {
+        item_name: payload.name,
         quantity: payload.quantity,
         unit: payload.unit,
         net_unit_price: payload.net_unit_price,
@@ -412,6 +457,10 @@ const RFQDetail: React.FC = () => {
       }
       await salesService.updateQuoteRequestItem(editContext.item.id, patch);
 
+      if (isDirectItemEditMode) {
+        await saveBasicFromCurrentForm();
+      }
+
       // Upload newly added files (if any)
       if (payload.files && payload.files.length) {
         for (const f of payload.files) {
@@ -426,12 +475,29 @@ const RFQDetail: React.FC = () => {
       }
       message.success('Tétel frissítve');
       if (!(payload as any).keepOpen) {
+        if (isDirectItemEditMode) {
+          notifyRfqListUpdated();
+        }
         setSelectorOpen(false);
         setEditContext(null);
       }
-      refreshItems();
+      if (isDirectItemEditMode && !(payload as any).keepOpen) {
+        // Try to close if this tab was opened by script; otherwise navigate back to the list
+        if (window.opener) {
+          window.opener.postMessage({ type: 'pixi_rfq_item_updated' }, window.location.origin);
+          window.close();
+        } else {
+          window.location.href = '/sales/rfqs';
+        }
+        return;
+      }
+      if (isDirectItemEditMode) {
+        await load();
+      } else {
+        refreshItems();
+      }
     } catch (e) {
-      message.error('Nem sikerült frissíteni a tételt');
+      message.error(e instanceof Error && e.message ? e.message : 'Nem sikerült frissíteni a tételt');
     }
   };
 
@@ -531,7 +597,7 @@ const RFQDetail: React.FC = () => {
             }
             
             // Ellenőrizzük a határidőt
-            if (!v.deadline) {
+            if (!v.deadline && !isDirectItemEditMode) {
               const suggestedDate = dayjs(v.issue_date || rfq.issue_date || dayjs()).add(14, 'day');
               const confirmed = await new Promise<boolean>((resolve) => {
                 Modal.confirm({
@@ -562,9 +628,9 @@ const RFQDetail: React.FC = () => {
               description: v.description,
               internal_description: v.internal_description,
               issue_date: v.issue_date ? v.issue_date.format('YYYY-MM-DD') : undefined,
-              deadline: v.deadline ? v.deadline.format('YYYY-MM-DD') : undefined,
+              deadline: v.deadline ? v.deadline.format('YYYY-MM-DD') : null,
               contact_ids: v.contact_ids || [],
-              project_id: v.project_id,
+              project_id: v.project_id ?? null,
               currency_code: v.currency_code,
               partial_order_allowed: v.partial_order_allowed,
             };

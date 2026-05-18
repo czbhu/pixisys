@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import EnhancedTable from '../../components/EnhancedTable';
 import {
     Card,
@@ -30,7 +31,7 @@ import { manufacturingService, Project } from '../../services/manufacturingServi
 import { crmService } from '../../services/crmService';
 import { hrService } from '../../services/hrService';
 import HungarianDatePicker from '../../components/HungarianDatePicker';
-import { createIntelligentFilter } from '../../utils/searchUtils';
+import { createIntelligentFilter, searchInMultipleFields } from '../../utils/searchUtils';
 
 const { Option } = Select;
 const { TextArea } = Input;
@@ -48,6 +49,7 @@ const Projects: React.FC = () => {
     const [editingProject, setEditingProject] = useState<Project | null>(null);
     const [viewingProject, setViewingProject] = useState<Project | null>(null);
     const [form] = Form.useForm();
+    const [searchParams] = useSearchParams();
 
     useEffect(() => {
         loadProjects();
@@ -55,6 +57,35 @@ const Projects: React.FC = () => {
         loadContacts();
         loadEmployees();
     }, []);
+
+    useEffect(() => {
+        if (!query) {
+            setFiltered(projects);
+        } else {
+            setFiltered(projects.filter(p =>
+                searchInMultipleFields(query, [
+                    p.name,
+                    p.description,
+                    ...(p.contact_names || []),
+                    p.project_manager_name,
+                ])
+            ));
+        }
+    }, [projects, query]);
+
+    // Ha ?action=create van az URL-ben, auto-nyissuk meg az új projekt modalt
+    useEffect(() => {
+        if (searchParams.get('action') === 'create') {
+            const companyParam = searchParams.get('company');
+            setEditingProject(null);
+            form.resetFields();
+            const defaults: any = { deadline: dayjs().add(14, 'day'), status: 'open' };
+            if (companyParam) defaults.company_id = isNaN(Number(companyParam)) ? companyParam : Number(companyParam);
+            form.setFieldsValue(defaults);
+            setIsModalVisible(true);
+        }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [searchParams]);
 
     const loadProjects = async () => {
         try {
@@ -162,8 +193,14 @@ const Projects: React.FC = () => {
                 await manufacturingService.updateProject(editingProject.id, data);
                 message.success('Projekt sikeresen frissítve!');
             } else {
-                await manufacturingService.createProject(data);
+                const created = await manufacturingService.createProject(data);
                 message.success('Projekt sikeresen létrehozva!');
+                // Értesítjük a többi lapot (pl. RFQ form) az új projektről
+                try {
+                    const bc = new BroadcastChannel('project_created');
+                    bc.postMessage(created);
+                    bc.close();
+                } catch {}
             }
 
             setIsModalVisible(false);

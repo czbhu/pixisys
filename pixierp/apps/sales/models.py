@@ -365,6 +365,7 @@ class QuoteRequestItem(models.Model):
     discount_amount = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezmény (fix)")
     discounted_net_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes nettó összesen")
     discounted_gross_total = models.DecimalField(max_digits=12, decimal_places=2, default=0, verbose_name="Kedvezményes bruttó összesen")
+    item_name = models.CharField(max_length=200, blank=True, default='', verbose_name="Tétel név")
     description = models.TextField(blank=True, verbose_name="Leírás")
 
     # Per-item impozíció pillanatkép (független minden más tételtől és a globális presetektől)
@@ -400,7 +401,7 @@ class QuoteRequestItem(models.Model):
         ordering = ['sort_order', 'id']
 
     def __str__(self):
-        ref = (
+        ref = self.item_name or (
             self.product.name if self.product else (
                 self.material.name if self.material else (
                     self.manufacturing_product.name if self.manufacturing_product else (

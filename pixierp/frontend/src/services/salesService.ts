@@ -282,6 +282,7 @@ export const salesService = {
     async addRfqProductItem(
         id: number,
         productId: number,
+        item_name: string,
         quantity: number,
         description: string,
         unit?: string,
@@ -294,6 +295,7 @@ export const salesService = {
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_product_item/`, {
             product_id: productId,
+            item_name,
             material_id: material_id,
             quantity,
             description,
@@ -310,6 +312,7 @@ export const salesService = {
     async addRfqManufacturingItem(
         id: number,
         manufacturingProductId: number,
+        item_name: string,
         quantity: number,
         description: string,
         unit?: string,
@@ -321,6 +324,7 @@ export const salesService = {
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_manufacturing_item/`, {
             manufacturing_product_id: manufacturingProductId,
+            item_name,
             quantity,
             description,
             unit,
@@ -341,6 +345,7 @@ export const salesService = {
     async addRfqServiceItem(
         id: number,
         serviceId: number,
+        item_name: string,
         quantity: number,
         description: string,
         unit?: string,
@@ -352,6 +357,7 @@ export const salesService = {
     ) {
         const response = await api.post(`/sales/quote-requests/${id}/add_service_item/`, {
             service_id: serviceId,
+            item_name,
             quantity,
             description,
             unit,
@@ -369,11 +375,11 @@ export const salesService = {
         return response.data;
     },
 
-    async sendQuoteRequestEmail(id: number, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string }) {
+    async sendQuoteRequestEmail(id: number, data: { to: string; cc?: string; template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: number[]; item_ids?: number[] }) {
         const response = await api.post(`/sales/quote-requests/${id}/send_email/`, data);
         return response.data;
     },
-    async renderQuoteRequestEmail(id: number, data: { template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string }) {
+    async renderQuoteRequestEmail(id: number, data: { template_key?: string; signature_key?: string; context?: any; body?: string; subject?: string; additional_rfq_ids?: number[]; item_ids?: number[] }) {
         const response = await api.post(`/sales/quote-requests/${id}/render_email/`, data);
         return response.data;
     },
@@ -443,7 +449,7 @@ export const salesService = {
         return response.data;
     },
     // Quote request items CRUD
-    async updateQuoteRequestItem(itemId: number, data: Partial<{ quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any; formulas: Record<string, string | null> }>) {
+    async updateQuoteRequestItem(itemId: number, data: Partial<{ item_name: string; quantity: number; unit: string; net_unit_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; imposition_data: any; formulas: Record<string, string | null> }>) {
         const response = await api.patch(`/sales/quote-request-items/${itemId}/`, data);
         return response.data;
     },

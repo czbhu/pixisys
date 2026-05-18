@@ -42,6 +42,18 @@ const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
   return normalizeTextForSearch(label).includes(normalizeTextForSearch(input));
 };
 
+const cloneDraftRfqItem = <T,>(value: T): T => {
+  if (value === null || value === undefined) return value;
+  if (typeof File !== 'undefined' && value instanceof File) return value;
+  if (Array.isArray(value)) return value.map((item) => cloneDraftRfqItem(item)) as T;
+  if (typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, item]) => [key, cloneDraftRfqItem(item)])
+    ) as T;
+  }
+  return value;
+};
+
 const { TextArea } = Input;
 
 const RFQs: React.FC = () => {
@@ -144,8 +156,13 @@ const RFQs: React.FC = () => {
   const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
   const [confirmEmailSending, setConfirmEmailSending] = useState(false);
   const [confirmEmailSentSet, setConfirmEmailSentSet] = useState<number[]>([]);
-  const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; sent: boolean }[]>([]);
+  const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; additionalRfqIds?: number[]; itemIds?: number[]; sent: boolean }[]>([]);
   const [sendRfqIndex, setSendRfqIndex] = useState(0);
+  // Cache per-RFQ form edits so navigating back restores user's changes
+  const sendFormCacheRef = React.useRef<Record<number, any>>({});
+  // Track additionalRfqIds and itemIds for the currently open send modal (used in render/preview)
+  const currentSendAdditionalRfqIdsRef = React.useRef<number[]>([]);
+  const currentSendItemIdsRef = React.useRef<number[]>([]);
   const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
@@ -164,7 +181,6 @@ const RFQs: React.FC = () => {
   const [rfqItemAtts, setRfqItemAtts] = useState<Record<number, any[]>>({});
   const [rfqItemUploading, setRfqItemUploading] = useState<Record<number, number>>({});
   const [rfqItemRemark, setRfqItemRemark] = useState<Record<number, string>>({});
-  const [rfqItemStatusOverrides, setRfqItemStatusOverrides] = useState<Record<string, string>>({});
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -540,17 +556,25 @@ const RFQs: React.FC = () => {
   };
 
   const exportCsv = () => {
+    const stripHtml = (html: string) => {
+      if (!html) return '';
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+    };
     if (isItemsView) {
-      const source = csvSelectedKeys.length > 0
-        ? flattenedItems.filter((r: any) => csvSelectedKeys.includes(r.uniqueId))
-        : flattenedItems;
+      if (bulkSelectedKeys.length === 0) {
+        message.warning('Jelölj ki legalább egy tételt a CSV exporthoz!');
+        return;
+      }
+      const source = flattenedItems.filter((r: any) => bulkSelectedKeys.includes(r.uniqueId));
       const rows = source.map((r: any) => ({
         'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
         'Ajánlat szám': r.rfq_number ?? '',
         'Tétel neve': r.product_name || r.manufacturing_product_name || r.service_name || r.name || '',
-        'Leírás': r.description || r.manufacturing_product_description || r.product_description || '',
-        'Belső leírás': r.manufacturing_product_internal_description ?? '',
-        'Megjegyzés': r.description ?? '',
+        'Leírás': stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''),
+        'Belső leírás': stripHtml(r.manufacturing_product_internal_description ?? ''),
+        'Megjegyzés': stripHtml(r.description ?? ''),
         'Ügyfél': r.company_name ?? '',
         'Nettó összeg': (Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toFixed(2),
         'Státusz': r.status ?? '',
@@ -563,7 +587,6 @@ const RFQs: React.FC = () => {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_tetelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
       URL.revokeObjectURL(url);
-      setCsvMode(false); setCsvSelectedKeys([]);
       return;
     }
     const rows = (csvSelectedKeys.length > 0 ? filtered.filter((r: any) => csvSelectedKeys.includes(r.id)) : filtered)
@@ -647,6 +670,24 @@ const RFQs: React.FC = () => {
     }
   };
 
+  const reloadProjects = async () => {
+    try {
+      const projRes = await manufacturingService.getProjects();
+      setProjects(projRes as any);
+    } catch {}
+  };
+
+  // BroadcastChannel: ha egy új projektlapfülön projekt lett létrehozva, frissítsük a listát
+  useEffect(() => {
+    let bc: BroadcastChannel | null = null;
+    try {
+      bc = new BroadcastChannel('project_created');
+      bc.onmessage = () => reloadProjects();
+    } catch {}
+    return () => { try { bc?.close(); } catch {} };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const creators = useMemo(() => {
     const names = rfqs.map(r => r.created_by_name).filter(Boolean);
     return Array.from(new Set(names)).sort();
@@ -664,6 +705,7 @@ const RFQs: React.FC = () => {
 
   useEffect(() => {
     let filtered = rfqs || [];
+    const displayStatusOf = (record: any) => record.effective_status || record.status;
     
     // Status filter (multi-select support)
     const hasAllExceptArchived = statusFilter.includes('all_except_archived');
@@ -671,27 +713,27 @@ const RFQs: React.FC = () => {
     
     if (!hasAll && !hasAllExceptArchived && statusFilter.length === 0) {
       // If no filter selected, default to all_except_archived
-      filtered = filtered.filter(r => r.status !== 'archived');
+      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived');
     } else if (hasAll) {
       // If 'all' is selected, show all
       filtered = filtered;
     } else if (hasAllExceptArchived && statusFilter.length === 1) {
       // Only all_except_archived selected
-      filtered = filtered.filter(r => r.status !== 'archived');
+      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived');
     } else if (statusFilter.length > 0 && !hasAll && !hasAllExceptArchived) {
       // Specific statuses selected
-      filtered = filtered.filter(r => statusFilter.includes(r.status));
+      filtered = filtered.filter(r => statusFilter.includes(displayStatusOf(r)));
     } else if (statusFilter.length > 0 && hasAllExceptArchived) {
       // all_except_archived + other specific statuses: show all non-archived that match the specific ones
       const otherStatuses = statusFilter.filter(s => s !== 'all_except_archived');
-      filtered = filtered.filter(r => r.status !== 'archived' && (otherStatuses.length === 0 || otherStatuses.includes(r.status)));
+      filtered = filtered.filter(r => displayStatusOf(r) !== 'archived' && (otherStatuses.length === 0 || otherStatuses.includes(displayStatusOf(r))));
     }
 
     // Order-status filter (only meaningful for ordered RFQs that expose effective_status)
     // Non-ordered RFQs are not affected by this filter — they stay visible.
     if (orderStatusFilter && orderStatusFilter.length > 0) {
       filtered = filtered.filter(r =>
-        r.status !== 'ordered' || orderStatusFilter.includes(r.effective_status)
+        orderStatusFilter.includes(displayStatusOf(r))
       );
     }
 
@@ -708,28 +750,70 @@ const RFQs: React.FC = () => {
     setFiltered(filtered);
   }, [query, rfqs, statusFilter, creatorFilter, orderStatusFilter]);
 
-  const statusTag = (status: string) => {
-    const color = {
-      new: 'blue',
-      in_progress: 'orange',
-      quoted: 'cyan',
-      accepted: 'green',
-      rejected: 'red',
-      expired: 'default',
-      archived: 'default',
-      ordered: 'purple',
-    } as Record<string, any>;
-    const text = {
-      new: 'Új',
-      in_progress: 'Folyamatban',
-      quoted: 'Árazva',
-      accepted: 'Elfogadva',
-      rejected: 'Elutasítva',
-      expired: 'Lejárt',
-      archived: 'Archív',
-      ordered: 'Megrendelve',
-    } as Record<string, string>;
-    return <Tag color={color[status] || 'default'}>{text[status] || status}</Tag>;
+  const RFQ_STATUS_META: Record<string, { color: string; text: string }> = {
+    new: { color: 'blue', text: 'Új' },
+    sent: { color: 'gold', text: 'Kiküldve' },
+    confirmed: { color: 'cyan', text: 'Megerősítve' },
+    in_production: { color: 'orange', text: 'Gyártásban' },
+    ready: { color: 'green', text: 'Kész' },
+    in_delivery: { color: 'purple', text: 'Szállítás alatt' },
+    delivered: { color: 'geekblue', text: 'Leszállítva' },
+    invoiced: { color: 'gold', text: 'Kiszámlázva' },
+    in_progress: { color: 'orange', text: 'Folyamatban' },
+    quoted: { color: 'cyan', text: 'Árazva' },
+    accepted: { color: 'green', text: 'Elfogadva' },
+    rejected: { color: 'red', text: 'Elutasítva' },
+    expired: { color: 'default', text: 'Lejárt' },
+    archived: { color: 'default', text: 'Archív' },
+    ordered: { color: 'purple', text: 'Megrendelve' },
+  };
+
+  const rfqStatusOptions = [
+    { value: 'new', label: 'Új' },
+    { value: 'sent', label: 'Kiküldve' },
+    { value: 'confirmed', label: 'Megerősítve' },
+    { value: 'in_production', label: 'Gyártásban' },
+    { value: 'ready', label: 'Kész' },
+    { value: 'in_delivery', label: 'Szállítás alatt' },
+    { value: 'delivered', label: 'Leszállítva' },
+    { value: 'invoiced', label: 'Kiszámlázva' },
+  ];
+
+  const getDisplayStatus = (record: any) => record?.effective_status || record?.status || 'new';
+
+  const statusTag = (status: string, label?: string) => {
+    const meta = RFQ_STATUS_META[status] || { color: 'default', text: status };
+    return <Tag color={meta.color}>{label || meta.text}</Tag>;
+  };
+
+  const renderRfqStatusControl = (record: any, rfqId: number) => {
+    const currentStatus = getDisplayStatus(record);
+    const currentLabel = record?.effective_status_label || RFQ_STATUS_META[currentStatus]?.text || currentStatus;
+    const popoverContent = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {rfqStatusOptions.map((option) => (
+          <Button
+            key={option.value}
+            size="small"
+            type={option.value === currentStatus ? 'primary' : 'text'}
+            disabled={option.value === currentStatus}
+            style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+            onClick={async () => {
+              await salesService.setQuoteRequestStatus(rfqId, option.value);
+              message.success(`Státusz: ${option.label}`);
+              loadData();
+            }}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+    );
+    return (
+      <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+        <span style={{ cursor: 'pointer' }}>{statusTag(currentStatus, currentLabel)}</span>
+      </Popover>
+    );
   };
 
   const columns = useMemo(() => ([
@@ -822,23 +906,7 @@ const RFQs: React.FC = () => {
       sorter: (a: any, b: any) => (a.total_net_amount || 0) - (b.total_net_amount || 0),
       align: 'right' as const
     },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 140, render: (_: any, r: any) => {
-        // When the RFQ is 'ordered', show the aggregated order-item status with optional '(részben)'.
-        if (r.status === 'ordered' && r.effective_status && r.effective_status !== 'ordered') {
-          const orderColors: Record<string, string> = {
-            new: 'default',
-            confirmed: 'purple',
-            in_production: 'orange',
-            ready: 'green',
-            in_delivery: 'cyan',
-            delivered: 'geekblue',
-            invoiced: 'gold',
-            cancelled: 'red',
-          };
-          return <Tag color={orderColors[r.effective_status] || 'purple'}>{r.effective_status_label || r.effective_status}</Tag>;
-        }
-        return statusTag(r.status);
-      }, sorter: (a: any, b: any) => ((a.effective_status || a.status) || '').localeCompare(b.effective_status || b.status || '') },
+    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 140, render: (_: any, r: any) => renderRfqStatusControl(r, r.id), sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)) },
     { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', width: 100, responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
     {
       title: 'Műveletek', key: 'actions', width: 270, render: (record: any): React.ReactNode => (
@@ -1187,48 +1255,8 @@ const RFQs: React.FC = () => {
     },
     {
       title: 'Státusz', key: 'item_status', width: 150,
-      sorter: (a: any, b: any) => (rfqItemStatusOverrides[a.uniqueId] ?? a.item_status ?? 'new').localeCompare(rfqItemStatusOverrides[b.uniqueId] ?? b.item_status ?? 'new'),
-      render: (_: any, r: any) => {
-        const cur = rfqItemStatusOverrides[r.uniqueId] ?? r.item_status ?? 'new';
-        const itemStatusColors: Record<string, string> = {
-          new: 'default', in_progress: 'processing', quoted: 'orange',
-          accepted: 'success', rejected: 'error', ordered: 'purple', archived: 'default',
-        };
-        const itemStatusLabels: Record<string, string> = {
-          new: 'Új', in_progress: 'Feldolgozás', quoted: 'Ajánlat kész',
-          accepted: 'Elfogadva', rejected: 'Elutasítva', ordered: 'Megrendelve', archived: 'Archív',
-        };
-        const popoverContent = (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-            {Object.keys(itemStatusLabels).map(s => (
-              <Button
-                key={s}
-                size="small"
-                type={s === cur ? 'primary' : 'text'}
-                disabled={s === cur}
-                style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
-                onClick={async () => {
-                  const prev = cur;
-                  setRfqItemStatusOverrides(o => ({ ...o, [r.uniqueId]: s }));
-                  try {
-                    await salesService.updateQuoteRequestItem(r.id, { item_status: s } as any);
-                  } catch {
-                    message.error('Státusz frissítése sikertelen');
-                    setRfqItemStatusOverrides(o => ({ ...o, [r.uniqueId]: prev }));
-                  }
-                }}
-              >
-                {itemStatusLabels[s]}
-              </Button>
-            ))}
-          </div>
-        );
-        return (
-          <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
-            <Tag color={itemStatusColors[cur]} style={{ cursor: 'pointer' }}>{itemStatusLabels[cur] || cur}</Tag>
-          </Popover>
-        );
-      },
+      sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)),
+      render: (_: any, r: any) => renderRfqStatusControl(r, r.rfq_id),
     },
     {
       title: 'Műveletek', key: 'actions', width: 200,
@@ -1269,11 +1297,33 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, statusTag, loadData, setSendOpenId, rfqItemStatusOverrides, createOrderLoading]);
+  ]), [navigate, loadData, setSendOpenId, createOrderLoading]);
 
   const handleCreate = async () => {
     try {
       const values = await form.validateFields();
+
+      if (!values.deadline) {
+        const suggestedDate = dayjs(values.issue_date || dayjs()).add(14, 'day');
+        const confirmed = await new Promise<boolean>((resolve) => {
+          Modal.confirm({
+            title: 'Nincs határidő megadva',
+            content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
+            okText: 'Igen',
+            cancelText: 'Mégsem',
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+          });
+        });
+
+        if (confirmed) {
+          values.deadline = suggestedDate;
+          form.setFieldValue('deadline', suggestedDate);
+        } else {
+          return;
+        }
+      }
+
       setCreating(true);
 
       // Helper: resolve item display name
@@ -1284,7 +1334,7 @@ const RFQs: React.FC = () => {
       const baseUpdateData: any = {
         contact_ids: values.contact_ids || [],
         currency_code: currency,
-        project_id: values.project_id,
+        project_id: values.project_id ?? null,
         internal_description: values.internal_description || '',
       };
       if (values.company_id === 'private') {
@@ -1296,7 +1346,7 @@ const RFQs: React.FC = () => {
       // Helper: add one item to a given RFQ id
       const addItemToRfq = async (rfqId: number, it: any) => {
         if (it.item_type === 'product') {
-          const createdItem = await salesService.addRfqProductItem(rfqId, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
+          const createdItem = await salesService.addRfqProductItem(rfqId, it.ref_id, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount, it.ref_id);
           if (createdItem?.id && it.files?.length) {
             for (const f of it.files) {
               const key = (f as any)?.uid || (f as any)?.name;
@@ -1316,7 +1366,7 @@ const RFQs: React.FC = () => {
               return;
             }
           }
-          const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+          const createdItem = await salesService.addRfqManufacturingItem(rfqId, manuRefId, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
           if (createdItem?.id && it.files?.length) {
             for (const f of it.files) {
               const key = (f as any)?.uid || (f as any)?.name;
@@ -1325,7 +1375,7 @@ const RFQs: React.FC = () => {
             }
           }
         } else {
-          const createdItem = await salesService.addRfqServiceItem(rfqId, it.ref_id, it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
+          const createdItem = await salesService.addRfqServiceItem(rfqId, it.ref_id, it.name || '', it.quantity, it.description || '', it.unit, it.net_unit_price, it.vat_rate, (it as any).discount_percent, (it as any).discount_amount);
           if (createdItem?.id && it.files?.length) {
             for (const f of it.files) {
               const key = (f as any)?.uid || (f as any)?.name;
@@ -1661,6 +1711,30 @@ const RFQs: React.FC = () => {
   }, [searchParams, loading]); // eslint-disable-line
 
   useEffect(() => {
+    let channel: BroadcastChannel | null = null;
+    try {
+      channel = new BroadcastChannel('pixi_rfq_updates');
+      channel.onmessage = (event) => {
+        if (event?.data?.type === 'rfq-item-updated') {
+          loadData();
+        }
+      };
+    } catch {}
+
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'pixi_rfq_item_updated') {
+        loadData();
+      }
+    };
+    window.addEventListener('message', handleMessage);
+
+    return () => {
+      try { channel?.close(); } catch {}
+      window.removeEventListener('message', handleMessage);
+    };
+  }, [loadData]);
+
+  useEffect(() => {
     if (!createOpen) return;
     const timer = setTimeout(() => {
       setInitialFormSnapshot(getFormSnapshot());
@@ -1781,9 +1855,28 @@ const RFQs: React.FC = () => {
     setConfirmEmailOpen(true);
   };
 
-  const openSendModal = async (rfqId: number) => {
+  const buildCombinedPublicUrl = (rec: any) => {
+    const additionalTokens = currentSendAdditionalRfqIdsRef.current
+      .map(id => (rfqs || []).find((r: any) => r.id === id)?.public_token)
+      .filter(Boolean);
+    const baseUrl = rec?.public_order_url || '';
+    const urlParams: string[] = [];
+    if (additionalTokens.length) urlParams.push(`extra_tokens=${additionalTokens.join(',')}`);
+    if (currentSendItemIdsRef.current.length) urlParams.push(`item_ids=${currentSendItemIdsRef.current.join(',')}`);
+    return urlParams.length ? `${baseUrl}?${urlParams.join('&')}` : baseUrl;
+  };
+
+  const openSendModal = async (rfqId: number, additionalRfqIds?: number[], itemIds?: number[]) => {
     setSendOpenId(rfqId);
     setSendPreview(null);
+    currentSendAdditionalRfqIdsRef.current = additionalRfqIds || [];
+    currentSendItemIdsRef.current = itemIds || [];
+
+    // Restore cached edits if the user previously edited this RFQ's email
+    if (sendFormCacheRef.current[rfqId]) {
+      sendForm.setFieldsValue(sendFormCacheRef.current[rfqId]);
+      return;
+    }
 
     let templates: any[] = emailTemplates.length ? emailTemplates : [];
     let sigs: any[] = signatures.length ? signatures : [];
@@ -1836,7 +1929,7 @@ const RFQs: React.FC = () => {
       body = body.replace(/{rfq_title}/g, record.title || '');
       body = body.replace(/{company_name}/g, record.company?.name || '');
       body = body.replace(/{contact_names}/g, contactNames);
-      body = body.replace(/{public_order_url}/g, record.public_order_url || '');
+      body = body.replace(/{public_order_url}/g, buildCombinedPublicUrl(record));
     }
 
     if (signatureKey) {
@@ -1866,9 +1959,31 @@ const RFQs: React.FC = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
-    setSendRfqList(rfqIds.map((id: number) => ({ rfqId: id, sent: false })));
+    // Group RFQs by company so same-company RFQs are combined into one email
+    const byCompany = new Map<string, number[]>();
+    const itemIdsByCompany = new Map<string, number[]>();
+    rfqIds.forEach(rfqId => {
+      const rfq = (rfqs || []).find((r: any) => r.id === rfqId);
+      const companyKey = String(rfq?.company?.id || rfq?.company_id || `_${rfqId}`);
+      if (!byCompany.has(companyKey)) byCompany.set(companyKey, []);
+      byCompany.get(companyKey)!.push(rfqId);
+    });
+    // Collect real item IDs (database IDs) per company group
+    selectedItems.forEach((item: any) => {
+      const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
+      const companyKey = String(rfq?.company?.id || rfq?.company_id || `_${item.rfq_id}`);
+      if (!itemIdsByCompany.has(companyKey)) itemIdsByCompany.set(companyKey, []);
+      if (item.id) itemIdsByCompany.get(companyKey)!.push(item.id);
+    });
+    const list = Array.from(byCompany.entries()).map(([companyKey, ids]) => ({
+      rfqId: ids[0],
+      additionalRfqIds: ids.slice(1),
+      itemIds: itemIdsByCompany.get(companyKey) || [],
+      sent: false,
+    }));
+    setSendRfqList(list);
     setSendRfqIndex(0);
-    openSendModal(rfqIds[0]);
+    openSendModal(list[0].rfqId, list[0].additionalRfqIds, list[0].itemIds);
   };
 
   if (loading) {
@@ -1885,15 +2000,9 @@ const RFQs: React.FC = () => {
         title="Árajánlatok"
         extra={
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
-              {csvMode ? (
-                <Space size="small">
-                  <span style={{ fontSize: 13, color: '#666' }}>{csvSelectedKeys.length > 0 ? `${csvSelectedKeys.length} kijelölve` : 'Minden látható'}</span>
-                  <Button type="primary" icon={<FileTextOutlined />} size="small" onClick={exportCsv}>CSV letöltés</Button>
-                  <Button size="small" onClick={() => { setCsvMode(false); setCsvSelectedKeys([]); }}>Mégse</Button>
-                </Space>
-              ) : (
-                <Tooltip title="CSV export"><Button icon={<FileTextOutlined />} onClick={() => { setCsvMode(true); setCsvSelectedKeys([]); }} /></Tooltip>
-              )}
+              <Tooltip title={bulkSelectedKeys.length > 0 ? `CSV export (${bulkSelectedKeys.length} kijelölve)` : 'CSV export (jelölj ki tételeket)'}>
+                <Button icon={<FileTextOutlined />} onClick={exportCsv} type={bulkSelectedKeys.length > 0 ? 'primary' : 'default'} />
+              </Tooltip>
               {/* Desktop: inline filters */}
               {!isMobile && (
                 <>
@@ -1910,10 +2019,13 @@ const RFQs: React.FC = () => {
                     <Select.Option value="all">Mind</Select.Option>
                     <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
                     <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="quoted">Árazva</Select.Option>
-                    <Select.Option value="rejected">Elutasítva</Select.Option>
-                    <Select.Option value="accepted">Elfogadva</Select.Option>
-                    <Select.Option value="ordered">Megrendelve</Select.Option>
+                    <Select.Option value="sent">Kiküldve</Select.Option>
+                    <Select.Option value="confirmed">Megerősítve</Select.Option>
+                    <Select.Option value="in_production">Gyártásban</Select.Option>
+                    <Select.Option value="ready">Kész</Select.Option>
+                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                    <Select.Option value="delivered">Leszállítva</Select.Option>
+                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                     <Select.Option value="archived">Archív</Select.Option>
                   </Select>
                   <Select
@@ -1983,10 +2095,13 @@ const RFQs: React.FC = () => {
                     <Select.Option value="all">Mind</Select.Option>
                     <Select.Option value="all_except_archived">Mind (aktív)</Select.Option>
                     <Select.Option value="new">Új</Select.Option>
-                    <Select.Option value="quoted">Árazva</Select.Option>
-                    <Select.Option value="rejected">Elutasítva</Select.Option>
-                    <Select.Option value="accepted">Elfogadva</Select.Option>
-                    <Select.Option value="ordered">Megrendelve</Select.Option>
+                    <Select.Option value="sent">Kiküldve</Select.Option>
+                    <Select.Option value="confirmed">Megerősítve</Select.Option>
+                    <Select.Option value="in_production">Gyártásban</Select.Option>
+                    <Select.Option value="ready">Kész</Select.Option>
+                    <Select.Option value="in_delivery">Szállítás alatt</Select.Option>
+                    <Select.Option value="delivered">Leszállítva</Select.Option>
+                    <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                     <Select.Option value="archived">Archív</Select.Option>
                   </Select>
                   <Select
@@ -2040,7 +2155,7 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } }) : undefined} rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : (isItemsView && !csvMode ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 } : undefined)} expandable={isItemsView ? {
+        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } }) : undefined} rowSelection={isItemsView ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 } : undefined} expandable={isItemsView ? {
           columnWidth: 24,
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
@@ -2072,7 +2187,7 @@ const RFQs: React.FC = () => {
         })()}
         open={!!sendOpenId} 
         width={800}
-        onCancel={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); setBulkSelectedKeys([]); }}
+        onCancel={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); setBulkSelectedKeys([]); sendFormCacheRef.current = {}; }}
         footer={[
              <Button key="preview" onClick={async () => {
                 const v = await sendForm.getFieldsValue();
@@ -2083,21 +2198,27 @@ const RFQs: React.FC = () => {
                       signature_key: v.signature_key, 
                       context: v.context, 
                       ...(v.subject ? { subject: v.subject } : {}), 
-                      ...(v.body ? { body: v.body } : {}) 
+                      ...(v.body ? { body: v.body } : {}),
+                      additional_rfq_ids: currentSendAdditionalRfqIdsRef.current,
+                      item_ids: currentSendItemIdsRef.current,
                   });
                   setSendPreview(p);
                 } catch {
                   message.error('Előnézet nem elérhető');
                 }
              }}>Előnézet</Button>,
-             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); }}>Mégse</Button>,
+             <Button key="cancel" onClick={() => { setSendOpenId(null); setSendRfqList([]); setSendRfqIndex(0); sendFormCacheRef.current = {}; }}>Mégse</Button>,
              <Button key="send" type="primary" icon={<SendOutlined />}
                disabled={!!sendRfqList[sendRfqIndex]?.sent}
                onClick={async () => {
                 const v = await sendForm.validateFields();
                 if (!sendOpenId) return;
                 try {
-                  await salesService.sendQuoteRequestEmail(sendOpenId, v);
+                  await salesService.sendQuoteRequestEmail(sendOpenId, {
+                    ...v,
+                    additional_rfq_ids: sendRfqList[sendRfqIndex]?.additionalRfqIds || [],
+                    item_ids: sendRfqList[sendRfqIndex]?.itemIds || [],
+                  });
                   const updated = sendRfqList.map((item, i) => i === sendRfqIndex ? { ...item, sent: true } : item);
                   setSendRfqList(updated);
                   message.success('E-mail elküldve');
@@ -2105,10 +2226,10 @@ const RFQs: React.FC = () => {
                   const anyUnsent = updated.findIndex(item => !item.sent);
                   if (nextAfter !== -1) {
                     setSendRfqIndex(nextAfter);
-                    openSendModal(updated[nextAfter].rfqId);
+                    openSendModal(updated[nextAfter].rfqId, updated[nextAfter].additionalRfqIds, updated[nextAfter].itemIds);
                   } else if (anyUnsent !== -1) {
                     setSendRfqIndex(anyUnsent);
-                    openSendModal(updated[anyUnsent].rfqId);
+                    openSendModal(updated[anyUnsent].rfqId, updated[anyUnsent].additionalRfqIds, updated[anyUnsent].itemIds);
                   } else {
                     setSendOpenId(null);
                     setSendRfqList([]);
@@ -2130,7 +2251,9 @@ const RFQs: React.FC = () => {
                  signature_key: allValues.signature_key, 
                  context: allValues.context, 
                  ...(allValues.subject ? { subject: allValues.subject } : {}), 
-                 ...(allValues.body ? { body: allValues.body } : {}) 
+                 ...(allValues.body ? { body: allValues.body } : {}),
+                 additional_rfq_ids: currentSendAdditionalRfqIdsRef.current,
+                 item_ids: currentSendItemIdsRef.current,
                }); 
                setSendPreview(p); 
              } catch {}
@@ -2139,11 +2262,11 @@ const RFQs: React.FC = () => {
           {sendRfqList.length > 1 && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 14, flexWrap: 'wrap', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 6, padding: '8px 12px' }}>
               <Button size="small" icon={<LeftOutlined />} disabled={sendRfqIndex === 0}
-                onClick={() => { const ni = sendRfqIndex - 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId); }}
+                onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); const ni = sendRfqIndex - 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
               />
               <span style={{ fontSize: 12, fontWeight: 500, minWidth: 36, textAlign: 'center' }}>{sendRfqIndex + 1} / {sendRfqList.length}</span>
               <Button size="small" icon={<RightOutlined />} disabled={sendRfqIndex === sendRfqList.length - 1}
-                onClick={() => { const ni = sendRfqIndex + 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId); }}
+                onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); const ni = sendRfqIndex + 1; setSendRfqIndex(ni); openSendModal(sendRfqList[ni].rfqId, sendRfqList[ni].additionalRfqIds, sendRfqList[ni].itemIds); }}
               />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
                 {sendRfqList.map((item, i) => {
@@ -2152,7 +2275,7 @@ const RFQs: React.FC = () => {
                     <Tag key={item.rfqId}
                       color={item.sent ? 'success' : i === sendRfqIndex ? 'processing' : 'default'}
                       style={{ cursor: 'pointer', margin: 0 }}
-                      onClick={() => { setSendRfqIndex(i); openSendModal(item.rfqId); }}
+                      onClick={() => { sendFormCacheRef.current[sendRfqList[sendRfqIndex].rfqId] = sendForm.getFieldsValue(); setSendRfqIndex(i); openSendModal(item.rfqId, item.additionalRfqIds, item.itemIds); }}
                     >
                       {rec?.company?.name || rec?.number || item.rfqId}{item.sent ? ' ✓' : ''}
                     </Tag>
@@ -2203,7 +2326,7 @@ const RFQs: React.FC = () => {
                         body = body.replace(/{rfq_title}/g, rec.title || '');
                         body = body.replace(/{company_name}/g, rec.company?.name || '');
                         body = body.replace(/{contact_names}/g, contactNames);
-                        body = body.replace(/{public_order_url}/g, rec.public_order_url || '');
+                        body = body.replace(/{public_order_url}/g, buildCombinedPublicUrl(rec));
                         
                         // Append current signature if exists
                         const sigKey = sendForm.getFieldValue('signature_key');
@@ -2257,7 +2380,7 @@ const RFQs: React.FC = () => {
                       templateBody = templateBody.replace('{rfq_title}', rec.title || '');
                       templateBody = templateBody.replace('{company_name}', rec.company?.name || '');
                       templateBody = templateBody.replace('{contact_names}', contactNames);
-                      templateBody = templateBody.replace('{public_order_url}', rec.public_order_url || '');
+                      templateBody = templateBody.replace('{public_order_url}', buildCombinedPublicUrl(rec));
                       bodyWithoutSig = templateBody;
                     }
                     
@@ -2298,7 +2421,7 @@ const RFQs: React.FC = () => {
           </Form.Item>
           {(() => {
             const rec = (filtered || rfqs || []).find(r => r.id === sendOpenId);
-            const url = rec?.public_order_url;
+            const url = rec ? buildCombinedPublicUrl(rec) : null;
             return url ? (
               <div style={{ marginTop: 8, padding: 8, background: '#fafafa', border: '1px solid #eee', borderRadius: 4 }}>
                 Megrendelő link: <a href={url} target="_blank" rel="noreferrer">{url}</a>
@@ -3106,9 +3229,38 @@ const RFQs: React.FC = () => {
             <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
               <Col xs={24} md={10}>
                 <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
-                  <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                    {(projects || []).map((p: any) => (
-                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                  <Select
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="Válassz projektet"
+                    dropdownRender={(menu) => (
+                      <>
+                        {menu}
+                        <Divider style={{ margin: '4px 0' }} />
+                        <Button
+                          type="link"
+                          icon={<PlusOutlined />}
+                          style={{ width: '100%', textAlign: 'left' }}
+                          onClick={() => {
+                            const companyId = form.getFieldValue('company_id');
+                            let url = '/sales/projects?action=create';
+                            if (companyId && companyId !== 'private') url += `&company=${companyId}`;
+                            window.open(url, '_blank');
+                          }}
+                        >
+                          Új projekt létrehozása
+                        </Button>
+                      </>
+                    )}
+                  >
+                    {(projects || []).filter((p: any) => {
+                      if (!p.company) return true;
+                      const cid = form.getFieldValue('company_id');
+                      if (!cid || cid === 'private') return false;
+                      return String(p.company) === String(cid);
+                    }).map((p: any) => (
+                      <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}{(p as any).company_name ? <span style={{color:'#999',marginLeft:6,fontSize:11}}>{(p as any).company_name}</span> : null}</Select.Option>
                     ))}
                   </Select>
                 </Form.Item>
@@ -3189,7 +3341,7 @@ const RFQs: React.FC = () => {
                 const idx = (rec.id as number) - 1;
                 const it = newItems[idx];
                 if (!it) return;
-                setNewItems((prev) => [...prev, { ...it }]);
+                setNewItems((prev) => [...prev, cloneDraftRfqItem(it)]);
               }}
               onEditItem={(rec) => {
                 const idx = (rec.id as number) - 1;
@@ -3374,7 +3526,7 @@ const RFQs: React.FC = () => {
             name: newItems[editIdx].name,
             code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined)
         } : undefined) : undefined}
-        initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? (newItems[editIdx] as any).pendingManuPayload : undefined}
+        initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? cloneDraftRfqItem((newItems[editIdx] as any).pendingManuPayload) : undefined}
         initialValues={editIdx !== null ? (newItems[editIdx] ? {
           quantity: Number(newItems[editIdx].quantity || 1),
           unit: newItems[editIdx].unit,
