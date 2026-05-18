@@ -432,7 +432,9 @@ function EnhancedTable<T extends object = any>({
         // overhead — no portals, no extra components) so users see the full
         // value on hover. Skipped for: actions column, drag handle column.
         let processed: any = c;
-        const skipAutoTooltip = isActions || key === 'drag';
+        // ellipsis: false on a column opts it out of the auto-nowrap wrapper
+        // (used for multiline description columns that manage their own layout)
+        const skipAutoTooltip = isActions || key === 'drag' || (c as any).ellipsis === false;
         if (!skipAutoTooltip) {
           const origRender = (c as any).render;
           const wrappedRender = (value: any, record: any, index: number) => {

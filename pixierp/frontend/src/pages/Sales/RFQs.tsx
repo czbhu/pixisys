@@ -1126,14 +1126,14 @@ const RFQs: React.FC = () => {
         : '—',
     },
     {
-      title: 'Leírás', dataIndex: 'description', key: 'description', width: 200,
+      title: 'Leírás', dataIndex: 'description', key: 'description', width: 200, ellipsis: false,
       sorter: (a: any, b: any) => (stripHtml(a.description || a.manufacturing_product_description || '') ).localeCompare(stripHtml(b.description || b.manufacturing_product_description || ''), 'hu'),
-      render: (_: any, r: any) => { const t = stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''); return t ? (<Tooltip title={t} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{t}</div></Tooltip>) : null; },
+      render: (_: any, r: any) => { const t = stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''); return t ? (<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{t}</span>} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{t}</div></Tooltip>) : null; },
     },
     {
-      title: 'Belső leírás', dataIndex: 'manufacturing_product_internal_description', key: 'manufacturing_product_internal_description', width: 180,
+      title: 'Belső leírás', dataIndex: 'manufacturing_product_internal_description', key: 'manufacturing_product_internal_description', width: 180, ellipsis: false,
       sorter: (a: any, b: any) => (stripHtml(a.manufacturing_product_internal_description || '')).localeCompare(stripHtml(b.manufacturing_product_internal_description || ''), 'hu'),
-      render: (t: string) => { const clean = stripHtml(t); return clean ? (<Tooltip title={clean} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{clean}</div></Tooltip>) : null; },
+      render: (t: string) => { const clean = stripHtml(t); return clean ? (<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{clean}</span>} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{clean}</div></Tooltip>) : null; },
     },
 
     {

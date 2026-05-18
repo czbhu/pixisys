@@ -31,6 +31,7 @@ interface DeliveryNoteItemRow {
   confirmed_at?: string;
   delivery_note_public_url?: string;
   invoice_number?: string | null;
+  created_by_name?: string;
 }
 
 interface OrderItemForDelivery {
@@ -555,6 +556,14 @@ const DeliveryNotes: React.FC = () => {
       key: 'quantity',
       sorter: (a: any, b: any) => (a.quantity || 0) - (b.quantity || 0),
       render: (_, record) => <span>{record.quantity} {record.unit}</span>
+    },
+    {
+      title: 'Rögzítette',
+      dataIndex: 'created_by_name',
+      key: 'created_by_name',
+      width: 130,
+      sorter: (a: any, b: any) => (a.created_by_name || '').localeCompare(b.created_by_name || '', 'hu'),
+      responsive: ['lg'],
     },
     {
       title: 'Megjegyzés',

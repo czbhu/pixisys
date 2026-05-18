@@ -1224,6 +1224,7 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     item_code = serializers.SerializerMethodField()
     invoice_number = serializers.CharField(source='customer_order_item.customer_order.invoice_number', read_only=True)
     documentation = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='delivery_note.created_by.get_full_name', read_only=True)
 
     class Meta:
         model = DeliveryNoteItem

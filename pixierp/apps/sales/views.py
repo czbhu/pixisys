@@ -5624,6 +5624,11 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
+        user = self.request.user
+        # Teljes jogosultságú user mindent lát (is_superuser vagy sales.orders view jog)
+        from apps.core.permissions import check_permission
+        if not (user.is_superuser or check_permission(user, 'sales', 'sales.orders', 'view')):
+            qs = qs.filter(created_by=user)
         # Filter logic
         q = self.request.query_params.get('q')
         if q:
@@ -6588,7 +6593,12 @@ class DeliveryNoteItemViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        
+        user = self.request.user
+        # Teljes jogosultságú user mindent lát (is_superuser vagy sales.orders view jog)
+        from apps.core.permissions import check_permission
+        if not (user.is_superuser or check_permission(user, 'sales', 'sales.orders', 'view')):
+            qs = qs.filter(delivery_note__created_by=user)
+
         # Filtering
         note_number = self.request.query_params.get('note_number')
         order_number = self.request.query_params.get('order_number')

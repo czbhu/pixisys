@@ -87,14 +87,29 @@ interface CustomerOrder {
     if (s == null) return '';
     const str = String(s);
     if (str.indexOf('<') === -1 && str.indexOf('&') === -1) return str;
+    const withBreaks = str
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/li>/gi, '\n');
     if (typeof document !== 'undefined') {
       try {
         const tmp = document.createElement('div');
-        tmp.innerHTML = str;
-        return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+        tmp.innerHTML = withBreaks;
+        const text = tmp.textContent || tmp.innerText || '';
+        return text
+          .split('\n')
+          .map(line => line.replace(/[ \t]+/g, ' ').trim())
+          .join('\n')
+          .replace(/\n{3,}/g, '\n\n')
+          .trim();
       } catch { /* fallthrough */ }
     }
-    return str.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+    return withBreaks
+      .replace(/<[^>]*>/g, '')
+      .replace(/&nbsp;/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
   };
 
   const DEFAULT_ITEMS_COL_ORDER = [
@@ -170,22 +185,53 @@ interface CustomerOrder {
     actions: 'Műveletek',
   };
 
-  const DraggableHeaderCell: React.FC<any> = ({ id, children, ...props }) => {
+  const DraggableHeaderCell: React.FC<any> = ({ id, colWidth, onResizeMove, onResizeEnd, children, ...props }) => {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: id || 'noop' });
+    const { style: attrStyle, ...otherAttributes } = (attributes as any);
     const style: React.CSSProperties = {
       ...props.style,
+      ...(attrStyle || {}),
       transform: CSS.Transform.toString(transform),
       transition,
       opacity: isDragging ? 0.5 : 1,
-      zIndex: isDragging ? 1 : undefined,
-      position: isDragging ? 'relative' : undefined,
       cursor: isDragging ? 'grabbing' : 'default',
       userSelect: 'none',
+      position: 'relative',
+      overflow: 'visible',
+      ...(colWidth ? { width: colWidth, minWidth: colWidth } : {}),
+    };
+    const handleResizePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+      e.stopPropagation();
+      e.nativeEvent.stopImmediatePropagation();
+      const startX = e.clientX;
+      const th = (e.currentTarget as HTMLElement).closest('th') as HTMLElement;
+      const startWidth = th ? th.offsetWidth : (colWidth || 100);
+      const onMove = (ev: PointerEvent) => {
+        const newWidth = Math.max(40, startWidth + ev.clientX - startX);
+        onResizeMove?.(id, newWidth);
+      };
+      const onUp = (ev: PointerEvent) => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        const newWidth = Math.max(40, startWidth + ev.clientX - startX);
+        onResizeEnd?.(id, newWidth);
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
     };
     if (!id) return <th {...props}>{children}</th>;
     return (
-      <th {...props} ref={setNodeRef} style={style} {...attributes} {...listeners}>
+      <th {...props} ref={setNodeRef} style={style} {...otherAttributes} {...listeners}>
         {children}
+        {onResizeMove && (
+          <div
+            onPointerDown={handleResizePointerDown}
+            style={{
+              position: 'absolute', top: 0, right: -4, width: 8, height: '100%',
+              cursor: 'col-resize', zIndex: 10,
+            }}
+          />
+        )}
       </th>
     );
   };
@@ -369,6 +415,14 @@ interface CustomerOrder {
     ...(colOrderRaw || []).filter((k: string) => DEFAULT_ITEMS_COL_ORDER.includes(k)),
     ...DEFAULT_ITEMS_COL_ORDER.filter(k => !(colOrderRaw || []).includes(k)),
   ];
+
+  // Column widths – Items view
+  const [itemsColWidthsPref, setItemsColWidthsPref] = useUserPreference<Record<string, number>>('customerOrders_colWidths', {});
+  const [itemsLiveWidths, setItemsLiveWidths] = useState<Record<string, number>>({});
+  const mergedItemsWidths: Record<string, number> = { ...(itemsColWidthsPref || {}), ...itemsLiveWidths };
+  const handleItemsResizeMove = useCallback((key: string, width: number) => setItemsLiveWidths(prev => ({ ...prev, [key]: width })), []);
+  const handleItemsResizeEnd = useCallback((key: string, width: number) => { setItemsLiveWidths({}); setItemsColWidthsPref(prev => ({ ...(prev || {}), [key]: width })); }, [setItemsColWidthsPref]);
+
   const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } }));
 
   const handleColDragEnd = ({ active, over }: DragEndEvent) => {
@@ -396,6 +450,13 @@ interface CustomerOrder {
   );
   const mergedOrdersColVis = { ...DEFAULT_ORDERS_COL_VIS, ...ordersColVisRaw };
   const toggleOrdersCol = (key: string) => setOrdersColVis(prev => ({ ...prev, [key]: !prev[key] }));
+
+  // Column widths – Orders view
+  const [ordersColWidthsPref, setOrdersColWidthsPref] = useUserPreference<Record<string, number>>('customerOrders_ordersColWidths', {});
+  const [ordersLiveWidths, setOrdersLiveWidths] = useState<Record<string, number>>({});
+  const mergedOrdersWidths: Record<string, number> = { ...(ordersColWidthsPref || {}), ...ordersLiveWidths };
+  const handleOrdersResizeMove = useCallback((key: string, width: number) => setOrdersLiveWidths(prev => ({ ...prev, [key]: width })), []);
+  const handleOrdersResizeEnd = useCallback((key: string, width: number) => { setOrdersLiveWidths({}); setOrdersColWidthsPref(prev => ({ ...(prev || {}), [key]: width })); }, [setOrdersColWidthsPref]);
 
   const handleOrdersColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
@@ -1632,17 +1693,17 @@ interface CustomerOrder {
     {
       title: 'Leírás', dataIndex: 'product_description', key: 'product_description', width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'product_description'),
-      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555' }}>{p}</div>); }
+      render: (t: string) => { const p = stripHtml(t); return p ? (<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{p}</span>} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#555', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{p}</div></Tooltip>) : null; }
     },
     {
       title: 'Belső leírás', dataIndex: 'internal_description', key: 'internal_description', width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'internal_description'),
-      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844' }}>{p}</div>); }
+      render: (t: string) => { const p = stripHtml(t); return p ? (<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{p}</span>} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical', overflow: 'hidden', fontSize: 12, color: '#844', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{p}</div></Tooltip>) : null; }
     },
     {
       title: 'Megjegyzés', dataIndex: 'description', key: 'description', responsive: ['md'] as any, width: 200,
       sorter: (a: any, b: any) => strSort(a, b, 'description'),
-      render: (t: string) => { const p = stripHtml(t); return (<div title={p} style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{p}</div>); }
+      render: (t: string) => { const p = stripHtml(t); return p ? (<Tooltip title={<span style={{ whiteSpace: 'pre-wrap' }}>{p}</span>} getPopupContainer={() => document.body}><div style={{ display: '-webkit-box', WebkitLineClamp: 4, WebkitBoxOrient: 'vertical', overflow: 'hidden', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{p}</div></Tooltip>) : null; }
     },
     {
       title: 'Beszállítók', dataIndex: 'supplier_name', key: 'supplier_name', ellipsis: true, responsive: ['lg'] as any,
@@ -1755,19 +1816,47 @@ interface CustomerOrder {
 
   const allVisibleItemCols = allItemColDefs.filter((c: any) => mergedColVis[c.key] !== false);
 
-  // Reorder columns by colOrder and attach DnD onHeaderCell
+  // Reorder columns by colOrder and attach DnD + resize onHeaderCell
   const itemsColumns: ColumnsType<any> = colOrder
     .map(key => allVisibleItemCols.find((c: any) => c.key === key))
     .filter(Boolean)
-    .map((col: any) => ({ ...col, onHeaderCell: () => ({ id: col.key }) })) as ColumnsType<any>;
+    .map((col: any) => {
+      const key = col.key;
+      const isActions = key === 'actions';
+      const w = mergedItemsWidths[key] || col.width;
+      return {
+        ...col,
+        ...(w ? { width: w } : {}),
+        onHeaderCell: () => ({
+          id: key,
+          colWidth: isActions ? undefined : w,
+          onResizeMove: isActions ? undefined : handleItemsResizeMove,
+          onResizeEnd: isActions ? undefined : handleItemsResizeEnd,
+        }),
+      };
+    }) as ColumnsType<any>;
 
-  // Build ordersColumns with DnD + visibility from the `columns` array
+  // Build ordersColumns with DnD + resize + visibility from the `columns` array
   const ordersColMap: Record<string, any> = Object.fromEntries(
     (columns as any[]).map((c: any) => [c.key, c])
   );
   const ordersColumns: ColumnsType<CustomerOrder> = ordersColOrder
     .filter(key => mergedOrdersColVis[key] !== false && ordersColMap[key])
-    .map(key => ({ ...ordersColMap[key], onHeaderCell: () => ({ id: key }) })) as ColumnsType<CustomerOrder>;
+    .map(key => {
+      const col = ordersColMap[key];
+      const isActions = key === 'actions';
+      const w = mergedOrdersWidths[key] || col.width;
+      return {
+        ...col,
+        ...(w ? { width: w } : {}),
+        onHeaderCell: () => ({
+          id: key,
+          colWidth: isActions ? undefined : w,
+          onResizeMove: isActions ? undefined : handleOrdersResizeMove,
+          onResizeEnd: isActions ? undefined : handleOrdersResizeEnd,
+        }),
+      };
+    }) as ColumnsType<CustomerOrder>;
 
 
 

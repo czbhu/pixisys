@@ -1712,6 +1712,20 @@ class AttendanceViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             message_str = f"Sikeres belépés: {local_now.strftime('%H:%M:%S')}"
             action_type = "check_in"
 
+        # Ha kilépés történt, állítsuk le a futó munkafolyamatokat is
+        if action_type == "check_out":
+            try:
+                from apps.sales.models import WorkLog
+                running_logs = WorkLog.objects.filter(user=user, ended_at__isnull=True)
+                for wlog in running_logs:
+                    wlog.ended_at = now
+                    delta = wlog.ended_at - wlog.started_at
+                    wlog.duration_seconds = int(delta.total_seconds())
+                    wlog.save(update_fields=['ended_at', 'duration_seconds'])
+                    logger.info(f"WorkLog #{wlog.id} leállítva kilépéskor: user={user}")
+            except Exception as e:
+                logger.error(f"Hiba a WorkLog leállításakor kilépéskor: {e}")
+
         from channels.layers import get_channel_layer
         from asgiref.sync import async_to_sync
         
