@@ -418,6 +418,104 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         serializer = CompanySerializer(companies, many=True)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def items_history(self, request):
+        """Korábbi RFQ tételek egy céghez (betöltéshez másolásra)"""
+        company_id = request.query_params.get('company_id')
+        if not company_id:
+            return Response([])
+
+        from django.db.models import Prefetch
+        rfqs = QuoteRequest.objects.filter(
+            company_id=company_id,
+            is_deleted=False,
+        ).prefetch_related(
+            Prefetch('items', queryset=QuoteRequestItem.objects.select_related(
+                'product', 'material', 'manufacturing_product', 'service'
+            )),
+            Prefetch('costs', queryset=QuoteRequestCost.objects.select_related('supplier', 'material'))
+        ).order_by('-created_at')[:50]
+
+        result = []
+        for rfq in rfqs:
+            costs_data = []
+            for c in rfq.costs.all():
+                current_price = None
+                try:
+                    if c.material and c.material.unit_cost_price:
+                        current_price = float(c.material.unit_cost_price)
+                except Exception:
+                    pass
+                price_changed = (
+                    current_price is not None
+                    and abs(current_price - float(c.net_unit_price)) > 0.001
+                )
+                costs_data.append({
+                    'id': c.id,
+                    'code': c.code,
+                    'name': c.name,
+                    'quantity': float(c.quantity),
+                    'unit': c.unit,
+                    'net_unit_price': float(c.net_unit_price),
+                    'net_total': float(c.net_total),
+                    'supplier': c.supplier_id,
+                    'supplier_name': c.supplier.name if c.supplier else '',
+                    'is_stock': c.is_stock,
+                    'currency_code': c.currency_code,
+                    'material': c.material_id,
+                    'current_price': current_price,
+                    'price_changed': price_changed,
+                })
+
+            for item in rfq.items.all():
+                name = item.item_name or ''
+                if not name:
+                    if item.product:
+                        name = item.product.name or ''
+                    elif item.material:
+                        name = item.material.name or ''
+                    elif item.manufacturing_product:
+                        name = item.manufacturing_product.name or ''
+                    elif item.service:
+                        name = item.service.name or ''
+
+                code = ''
+                if item.item_type == 'product' and item.product:
+                    code = item.product.code or ''
+                elif item.item_type == 'manufacturing' and item.manufacturing_product:
+                    code = item.manufacturing_product.code or ''
+                elif item.item_type == 'service' and item.service:
+                    code = item.service.code or ''
+
+                ref_id = None
+                if item.item_type == 'product':
+                    ref_id = item.product_id
+                elif item.item_type == 'manufacturing':
+                    ref_id = item.manufacturing_product_id
+                elif item.item_type == 'service':
+                    ref_id = item.service_id
+
+                result.append({
+                    'rfq_id': rfq.id,
+                    'rfq_number': rfq.number or rfq.request_number or f'#{rfq.id}',
+                    'rfq_date': (rfq.issue_date.isoformat() if rfq.issue_date
+                                 else rfq.created_at.date().isoformat()),
+                    'item_id': item.id,
+                    'item_type': item.item_type,
+                    'ref_id': ref_id,
+                    'name': name,
+                    'code': code,
+                    'description': item.description or '',
+                    'quantity': float(item.quantity),
+                    'unit': item.unit or 'db',
+                    'net_unit_price': float(item.net_unit_price),
+                    'net_total': float(item.net_total),
+                    'vat_rate': float(item.vat_rate),
+                    'costs': costs_data,
+                })
+
+        return Response(result)
+
     @action(detail=True, methods=['get'])
     def attachments(self, request, pk=None):
         qr = self.get_object()
