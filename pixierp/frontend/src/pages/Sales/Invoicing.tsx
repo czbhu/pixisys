@@ -495,7 +495,7 @@ const Invoicing: React.FC = () => {
         }
       >
         <EnhancedTable
-          tableKey="invoicing"
+          tableKey="invoicing_v2"
           searchValue={searchText}
           onSearchChange={setSearchText}
           searchPlaceholder="Gyorskereső..."

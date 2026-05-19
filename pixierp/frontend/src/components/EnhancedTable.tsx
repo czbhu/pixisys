@@ -358,11 +358,10 @@ function EnhancedTable<T extends object = any>({
   }, [tableProps.dataSource, cardSortKey, cardSortDir, rawColumns]);
 
   // DnD sensors ─────────────────────────────────────────────────────────────
-  // Use long-press activation (400ms / 8px tolerance) for both row and column
-  // drag, so taps and short clicks on cell content never start a drag — only
-  // an intentional press-and-hold does.
+  // Use distance:5 activation for column drag (5px movement to start)
+  // so the correct column is always grabbed without needing a long-press.
   const rowSensor = useSensor(PointerSensor, { activationConstraint: { distance: 4 } });
-  const colSensor = useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } });
+  const colSensor = useSensor(PointerSensor, { activationConstraint: { distance: 5 } });
   const sensors = useSensors(rowDnd ? rowSensor : colSensor);
 
   const handleDragEnd = ({ active, over }: DragEndEvent) => {
