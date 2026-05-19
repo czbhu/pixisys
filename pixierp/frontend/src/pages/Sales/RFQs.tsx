@@ -1983,7 +1983,7 @@ const RFQs: React.FC = () => {
       cc = defaultTemplate.default_cc || '';
       replyTo = defaultTemplate.default_reply_to || '';
       const contactNames = (record.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
-      const rawProjectName = record.project?.name || '';
+      const rawProjectName = record.project_name || '';
       const projectName = rawProjectName ? `${rawProjectName}: ` : '';
 
       // Compute item_names for rfqs_send: comma-separated, max 50 chars
