@@ -1976,6 +1976,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         logger = logging.getLogger(__name__)
         logger.info(f"order_all called for RFQ {pk}")
         qr = self.get_object()
+        # Guard: if a non-cancelled order already exists, return it instead of creating a duplicate
+        existing = qr.customer_orders.exclude(status='cancelled').order_by('-id').first()
+        if existing:
+            return Response({
+                'order_id': existing.id,
+                'order_number': existing.order_number,
+                'already_exists': True,
+            }, status=200)
         items = list(qr.items.all())
         logger.info(f"Creating order with {len(items)} items")
         return self._create_order_from_items(request, qr, items, set_status='ordered')
@@ -3147,7 +3155,7 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         att.save(update_fields=['remark'])
         return Response(CustomerOrderAttachmentSerializer(att, context={'request': request}).data)
 
-    def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None):
+    def _prepare_confirmation_email_content(self, order, template_key='order_confirmation', signature_key=None, extra_context=None, additional_order_ids=None):
         if extra_context is None: extra_context = {}
         cfg = EmailServerConfig.objects.filter(is_active=True).first()
         if not cfg: return None
@@ -3200,18 +3208,105 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
                 contact_name = ", ".join(contact_names)
             else:
                 contact_name = customer_name
-        
+
+        # Group all orders for the same quote_request into one email
+        if order.quote_request_id:
+            related_orders = list(
+                CustomerOrder.objects
+                .filter(quote_request_id=order.quote_request_id)
+                .order_by('order_number')
+                .prefetch_related('items__quote_item', 'quote_request')
+            )
+        else:
+            related_orders = [order]
+
+        # Also include orders from other quote_requests (cross-RFQ grouping by customer)
+        if additional_order_ids:
+            existing_ids = {o.id for o in related_orders}
+            extra_orders = list(
+                CustomerOrder.objects
+                .filter(id__in=additional_order_ids)
+                .exclude(id__in=existing_ids)
+                .order_by('order_number')
+                .prefetch_related('items__quote_item', 'quote_request')
+            )
+            related_orders = related_orders + extra_orders
+
+        order_numbers_str = ", ".join(o.order_number for o in related_orders)
+        currency = (order.quote_request.currency.code if order.quote_request and order.quote_request.currency else 'HUF')
+
+        # Build items HTML table from all related orders
+        items_rows = []
+        for rel_order in related_orders:
+            for item in rel_order.items.all():
+                item_name = ''
+                if item.quote_item:
+                    item_name = item.quote_item.item_name or item.description or ''
+                else:
+                    item_name = item.description or ''
+                net_total = float(item.net_unit_price) * float(item.quantity)
+                items_rows.append(
+                    f"<tr>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee'>{item_name}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{float(item.quantity):g}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee'>{item.unit}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{float(item.net_unit_price):,.0f} {currency}</td>"
+                    f"<td style='padding:4px 8px;border-bottom:1px solid #eee;text-align:right'>{net_total:,.0f} {currency}</td>"
+                    f"</tr>"
+                )
+
+        if items_rows:
+            items_html = (
+                "<table style='width:100%;border-collapse:collapse;font-size:13px;margin:12px 0'>"
+                "<thead><tr style='background:#f5f5f5'>"
+                "<th style='padding:4px 8px;text-align:left'>Megnevezés</th>"
+                "<th style='padding:4px 8px;text-align:right'>Mennyiség</th>"
+                "<th style='padding:4px 8px;text-align:left'>Egység</th>"
+                "<th style='padding:4px 8px;text-align:right'>Nettó egységár</th>"
+                "<th style='padding:4px 8px;text-align:right'>Nettó összeg</th>"
+                "</tr></thead><tbody>"
+                + "".join(items_rows)
+                + "</tbody></table>"
+            )
+        else:
+            items_html = ""
+
+        # Order link(s) — one per unique quote_request/public_token
+        from django.conf import settings as django_settings
+        frontend_url = getattr(django_settings, 'FRONTEND_BASE_URL', '')
+        link_urls = []
+        seen_tokens = set()
+        for rel_order in related_orders:
+            if rel_order.quote_request and rel_order.quote_request.public_token:
+                token = rel_order.quote_request.public_token
+                if token not in seen_tokens:
+                    seen_tokens.add(token)
+                    link_urls.append(f"{frontend_url}/public/quote/{token}/order")
+
+        if len(link_urls) == 1:
+            order_link_html = f'<p><a href="{link_urls[0]}" style="color:#1677ff">Megrendelés megtekintése online</a></p>'
+        elif len(link_urls) > 1:
+            items_li = "".join(f'<li><a href="{url}" style="color:#1677ff">Megrendelés megtekintése</a></li>' for url in link_urls)
+            order_link_html = f'<p>Megrendelések megtekintése:<ul>{items_li}</ul></p>'
+        else:
+            order_link_html = ''
+        order_link = link_urls[0] if link_urls else ''  # kept for backward compat with older templates
+
         context = {
             'order_number': order.order_number,
-            'order_date': str(order.order_date),
+            'order_numbers': order_numbers_str,
+            'order_date': str(order.order_date)[:10],
             'company_name': from_name,
             'customer_name': customer_name,
             'contact_name': contact_name,
+            'items_html': items_html,
+            'order_link': order_link,
+            'order_link_html': order_link_html,
             **extra_context
         }
 
         # Subject & Body
-        subject = f"Megrendelés visszaigazolás - {order.order_number}"
+        subject = f"Megrendelés visszaigazolás - {order_numbers_str}"
         body = ""
         is_html = False
 
@@ -3232,8 +3327,10 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
             is_html = True
             body = f"""<p>Tisztelt {context['contact_name']}!</p>
 <p>Megrendelését köszönettel megkaptuk és ezúton visszaigazoljuk.</p>
-<p><strong>Megrendelés száma:</strong> {order.order_number}<br>
-<strong>Dátum:</strong> {order.order_date}</p>
+<p><strong>Megrendelés száma:</strong> {order_numbers_str}<br>
+<strong>Dátum:</strong> {context['order_date']}</p>
+{items_html}
+{order_link_html}
 <p>Amennyiben kérdése van, forduljon hozzánk bizalommal.</p>
 <p>Üdvözlettel,<br>
 {from_name}</p>
@@ -3342,8 +3439,12 @@ class CustomerOrderViewSet(viewsets.ModelViewSet):
         template_key = request.data.get('template_key', 'order_confirmation')
         signature_key = request.data.get('signature_key')
         extra_context = request.data.get('context', {})
+        additional_order_ids = request.data.get('additional_order_ids', [])
         
-        content = self._prepare_confirmation_email_content(order, template_key, signature_key, extra_context)
+        content = self._prepare_confirmation_email_content(
+            order, template_key, signature_key, extra_context,
+            additional_order_ids=additional_order_ids
+        )
         if not content:
             return Response({'error': 'Nincs email beállítás vagy címzett'}, status=400)
         

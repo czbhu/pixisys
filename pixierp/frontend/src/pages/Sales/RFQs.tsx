@@ -159,11 +159,12 @@ const RFQs: React.FC = () => {
   const [createOrderLoading, setCreateOrderLoading] = useState(false);
   // Confirmation email flow after order creation
   const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
-  const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ orderId: number; rfqId: number }[]>([]);
+  const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }[]>([]);
   const [confirmEmailIndex, setConfirmEmailIndex] = useState(0);
   const [confirmEmailOpen, setConfirmEmailOpen] = useState(false);
   const [confirmEmailSending, setConfirmEmailSending] = useState(false);
   const [confirmEmailSentSet, setConfirmEmailSentSet] = useState<number[]>([]);
+  const [confirmEmailPreview, setConfirmEmailPreview] = useState<any | null>(null);
   const [sendRfqList, setSendRfqList] = useState<{ rfqId: number; additionalRfqIds?: number[]; itemIds?: number[]; sent: boolean }[]>([]);
   const [sendRfqIndex, setSendRfqIndex] = useState(0);
   // Cache per-RFQ form edits so navigating back restores user's changes
@@ -1803,22 +1804,61 @@ const RFQs: React.FC = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
-    Modal.confirm({
-      title: 'Gyártásba küldés',
-      content: `Biztosan gyártásba küldi a kijelölt ${selectedItems.length} tételt (${rfqIds.length} ajánlat)?`,
-      okText: 'Igen, gyártásba küld',
-      cancelText: 'Mégse',
-      onOk: () => handleCreateOrder(rfqIds, true),
+
+    // Split into already-ordered and new
+    const alreadyOrderedIds = rfqIds.filter(id => {
+      const rfq = (rfqs || []).find((r: any) => r.id === id);
+      return rfq && ['ordered', 'partially_ordered'].includes(rfq.status);
     });
+    const toCreateIds = rfqIds.filter(id => !alreadyOrderedIds.includes(id));
+
+    if (alreadyOrderedIds.length > 0 && toCreateIds.length === 0) {
+      // All RFQs already have orders — just offer the confirmation email
+      Modal.confirm({
+        title: 'Tételek már gyártásban vannak',
+        icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
+        content: `A kijelölt ${alreadyOrderedIds.length} ajánlat tételei már gyártásban vannak. Szeretne visszaigazoló e-mailt küldeni?`,
+        okText: 'Igen, e-mail küldés',
+        cancelText: 'Mégse',
+        onOk: () => handleCreateOrder(alreadyOrderedIds, false),
+      });
+    } else if (alreadyOrderedIds.length > 0) {
+      // Mixed: some new, some already ordered
+      Modal.confirm({
+        title: 'Gyártásba küldés',
+        icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
+        content: (
+          <div>
+            <p>Biztosan gyártásba küldi a kijelölt {selectedItems.length} tételt?</p>
+            <p style={{ color: '#d48806' }}>⚠ {alreadyOrderedIds.length} ajánlat tételei már gyártásban vannak — csak visszaigazoló e-mail kerül kiküldésre.</p>
+            <p>Új megrendelés: {toCreateIds.length} ajánlat</p>
+          </div>
+        ),
+        okText: `Igen, küldés`,
+        cancelText: 'Mégse',
+        onOk: () => handleCreateOrder(rfqIds, true),
+      });
+    } else {
+      Modal.confirm({
+        title: 'Gyártásba küldés',
+        content: `Biztosan gyártásba küldi a kijelölt ${selectedItems.length} tételt (${rfqIds.length} ajánlat)?`,
+        okText: 'Igen, gyártásba küld',
+        cancelText: 'Mégse',
+        onOk: () => handleCreateOrder(rfqIds, true),
+      });
+    }
   };
 
   const handleCreateOrder = async (rfqIds: number[], sendToProduction = false) => {
     setCreateOrderLoading(true);
     const createdOrders: { orderId: number; rfqId: number }[] = [];
+    let newCount = 0;
     for (const rfqId of rfqIds) {
       try {
         const res = await salesService.orderAllFromRfq(rfqId, undefined);
-        if (sendToProduction) {
+        const alreadyExisted = !!(res as any).already_exists;
+        if (sendToProduction && !alreadyExisted) {
+          newCount++;
           try {
             await api.post(`/sales/customer-orders/${res.order_id}/update_status/`, { status: 'in_production', send_email: false });
           } catch {}
@@ -1832,19 +1872,41 @@ const RFQs: React.FC = () => {
     setBulkSelectedKeys([]);
     setBulkOrderLoading(false);
     if (createdOrders.length > 0) {
-      message.success(`${createdOrders.length} megrendelés létrehozva`);
+      if (newCount > 0) message.success(`${newCount} megrendelés létrehozva`);
       loadData();
-      setConfirmEmailOrders(createdOrders);
+      // Group orders by customer (company or customer id) so same customer gets one combined email
+      const grouped: { [key: string]: { orderId: number; rfqId: number }[] } = {};
+      for (const co of createdOrders) {
+        const rfq = (rfqs || []).find((r: any) => r.id === co.rfqId);
+        const companyKey = String(rfq?.company?.id || rfq?.customer?.id || `rfq_${co.rfqId}`);
+        if (!grouped[companyKey]) grouped[companyKey] = [];
+        grouped[companyKey].push(co);
+      }
+      const groupedEmailOrders = Object.values(grouped).map(orders => ({
+        primaryOrderId: orders[0].orderId,
+        orderIds: orders.map(o => o.orderId),
+        rfqId: orders[0].rfqId,
+        rfqIds: orders.map(o => o.rfqId),
+      }));
+      setConfirmEmailOrders(groupedEmailOrders);
       setConfirmEmailIndex(0);
       setConfirmEmailSentSet([]);
       setConfirmEmailAskOpen(true);
     }
   };
 
-  const openConfirmEmailModal = async (orderEntry: { orderId: number; rfqId: number }) => {
+  const openConfirmEmailModal = async (orderEntry: { primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }, signatureKey?: string) => {
+    setConfirmEmailPreview(null);
     try {
-      const res = await api.post(`/sales/customer-orders/${orderEntry.orderId}/render_confirmation_email/`, { template_key: 'order_confirmation' });
-      confirmEmailForm.setFieldsValue({ to: res.data.to || '', subject: res.data.subject || '', body: res.data.body || '' });
+      const additionalIds = orderEntry.orderIds.filter(id => id !== orderEntry.primaryOrderId);
+      const sigKey = signatureKey ?? confirmEmailForm.getFieldValue('signature_key') ?? undefined;
+      const res = await api.post(`/sales/customer-orders/${orderEntry.primaryOrderId}/render_confirmation_email/`, {
+        template_key: 'order_confirmation',
+        additional_order_ids: additionalIds,
+        signature_key: sigKey || undefined,
+      });
+      confirmEmailForm.setFieldsValue({ to: res.data.to || '', subject: res.data.subject || '', body: res.data.body || '', signature_key: sigKey });
+      setConfirmEmailPreview(res.data);
     } catch {
       const rfq = (rfqs || []).find((r: any) => r.id === orderEntry.rfqId);
       const to = (rfq?.contacts || []).map((c: any) => c.email).filter(Boolean).join(', ');
@@ -3565,10 +3627,14 @@ const RFQs: React.FC = () => {
           return `Megrendelés visszaigazolás${progress}: ${label}`;
         })()}
         open={confirmEmailOpen}
-        width={800}
-        onCancel={() => { setConfirmEmailOpen(false); }}
+        width={860}
+        onCancel={() => { setConfirmEmailOpen(false); setConfirmEmailPreview(null); }}
         footer={[
-          <Button key="cancel" onClick={() => setConfirmEmailOpen(false)}>Bezárás</Button>,
+          <Button key="preview" onClick={() => {
+            const values = confirmEmailForm.getFieldsValue();
+            setConfirmEmailPreview({ subject: values.subject, body: values.body, is_html: true });
+          }}>Előnézet</Button>,
+          <Button key="cancel" onClick={() => { setConfirmEmailOpen(false); setConfirmEmailPreview(null); }}>Bezárás</Button>,
           <Button key="send" type="primary" loading={confirmEmailSending}
             onClick={async () => {
               const entry = confirmEmailOrders[confirmEmailIndex];
@@ -3576,7 +3642,7 @@ const RFQs: React.FC = () => {
               try {
                 const values = await confirmEmailForm.validateFields();
                 setConfirmEmailSending(true);
-                await api.post(`/sales/customer-orders/${entry.orderId}/send_confirmation_email_manual/`, values);
+                await api.post(`/sales/customer-orders/${entry.primaryOrderId}/send_confirmation_email_manual/`, values);
                 message.success('E-mail elküldve');
                 setConfirmEmailSentSet(prev => prev.includes(confirmEmailIndex) ? prev : [...prev, confirmEmailIndex]);
                 // Auto-advance to next unsent
@@ -3591,6 +3657,7 @@ const RFQs: React.FC = () => {
                     openConfirmEmailModal(confirmEmailOrders[anyUnsent]);
                   } else {
                     setConfirmEmailOpen(false);
+                    setConfirmEmailPreview(null);
                   }
                 }
               } catch (e: any) {
@@ -3616,12 +3683,12 @@ const RFQs: React.FC = () => {
               {confirmEmailOrders.map((entry, i) => {
                 const rfq = (rfqs || []).find((r: any) => r.id === entry.rfqId);
                 return (
-                  <Tag key={entry.orderId}
+                  <Tag key={entry.primaryOrderId}
                     color={confirmEmailSentSet.includes(i) ? 'success' : i === confirmEmailIndex ? 'processing' : 'default'}
                     style={{ cursor: 'pointer', margin: 0 }}
                     onClick={() => { setConfirmEmailIndex(i); openConfirmEmailModal(entry); }}
                   >
-                    {rfq?.company?.name || rfq?.number || entry.orderId}{confirmEmailSentSet.includes(i) ? ' ✓' : ''}
+                    {rfq?.company?.name || rfq?.number || entry.primaryOrderId}{confirmEmailSentSet.includes(i) ? ' ✓' : ''}
                   </Tag>
                 );
               })}
@@ -3632,6 +3699,32 @@ const RFQs: React.FC = () => {
           <Form.Item name="to" label="Címzett" rules={[{ required: true, message: 'Kötelező mező' }]}>
             <Input placeholder="email@example.com" />
           </Form.Item>
+          <Form.Item name="signature_key" label="Aláírás">
+            <Select
+              allowClear
+              placeholder="Válassz aláírást (opcionális)"
+              showSearch
+              optionFilterProp="label"
+              onChange={async (sigKey: string) => {
+                const entry = confirmEmailOrders[confirmEmailIndex];
+                if (!entry) return;
+                try {
+                  const additionalIds = entry.orderIds.filter(id => id !== entry.primaryOrderId);
+                  const res = await api.post(`/sales/customer-orders/${entry.primaryOrderId}/render_confirmation_email/`, {
+                    template_key: 'order_confirmation',
+                    additional_order_ids: additionalIds,
+                    signature_key: sigKey || undefined,
+                  });
+                  confirmEmailForm.setFieldsValue({ body: res.data.body || '' });
+                  setConfirmEmailPreview(res.data);
+                } catch {}
+              }}
+            >
+              {signatures.map((sig: any) => (
+                <Select.Option key={sig.key} value={sig.key} label={sig.name}>{sig.name}</Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
           <Form.Item name="subject" label="Tárgy" rules={[{ required: true, message: 'Kötelező mező' }]}>
             <Input />
           </Form.Item>
@@ -3639,6 +3732,21 @@ const RFQs: React.FC = () => {
             <ReactQuill theme="snow" style={{ height: 280, marginBottom: 50 }} />
           </Form.Item>
         </Form>
+        {confirmEmailPreview && (
+          <div style={{ marginTop: 12, borderTop: '1px solid #eee', paddingTop: 12 }}>
+            <Divider>Előnézet</Divider>
+            <div style={{ border: '1px solid #ddd', padding: 16, borderRadius: 4 }}>
+              <div style={{ marginBottom: 8 }}><b>Tárgy:</b> {confirmEmailPreview.subject}</div>
+              <div className="email-preview-content">
+                {confirmEmailPreview.is_html !== false ? (
+                  <div dangerouslySetInnerHTML={{ __html: (confirmEmailPreview.body || '').replace(/<a /gi, '<a target="_blank" ') }} />
+                ) : (
+                  <pre style={{ whiteSpace: 'pre-wrap' }}>{confirmEmailPreview.body}</pre>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
       </Modal>
 
     </div>
