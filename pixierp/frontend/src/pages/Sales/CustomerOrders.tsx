@@ -2547,7 +2547,7 @@ interface CustomerOrder {
     >
       <div ref={containerRef}>
       {bulkSelectedKeys.length > 0 && !csvMode && (
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0 10px', flexWrap: 'wrap' }}>
+        <div style={{ position: 'sticky', top: 0, zIndex: 20, background: '#fff', display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0', marginBottom: 2 }}>
           <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
           <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
           <Button

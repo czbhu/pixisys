@@ -2267,7 +2267,7 @@ const RFQs: React.FC = () => {
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
         {isItemsView && bulkSelectedKeys.length > 0 && (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0 10px', flexWrap: 'wrap' }}>
+          <div style={{ position: 'sticky', top: 0, zIndex: 20, background: '#fff', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0', marginBottom: 2 }}>
             <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
             <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
               const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
