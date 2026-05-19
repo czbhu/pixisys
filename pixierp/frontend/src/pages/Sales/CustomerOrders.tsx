@@ -221,21 +221,7 @@ interface CustomerOrder {
     };
     if (!id) return <th {...props}>{children}</th>;
     return (
-      <th {...props} ref={setNodeRef} style={style} {...otherAttributes}>
-        <span
-          {...listeners}
-          style={{
-            cursor: isDragging ? 'grabbing' : 'grab',
-            marginRight: 4,
-            color: '#bbb',
-            fontSize: 13,
-            userSelect: 'none',
-            display: 'inline-block',
-            verticalAlign: 'middle',
-            lineHeight: 1,
-          }}
-          title="Húzza az oszlop sorrendjének megváltoztatásához"
-        >⠿</span>
+      <th {...props} ref={setNodeRef} style={style} {...otherAttributes} {...listeners}>
         {children}
         {onResizeMove && (
           <div
