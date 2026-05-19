@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -190,6 +190,11 @@ const RFQs: React.FC = () => {
   const [rfqItemAtts, setRfqItemAtts] = useState<Record<number, any[]>>({});
   const [rfqItemUploading, setRfqItemUploading] = useState<Record<number, number>>({});
   const [rfqItemRemark, setRfqItemRemark] = useState<Record<number, string>>({});
+
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyItems, setHistoryItems] = useState<any[]>([]);
+  const [historySelectedKeys, setHistorySelectedKeys] = useState<React.Key[]>([]);
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -1495,6 +1500,68 @@ const RFQs: React.FC = () => {
     } finally {
       setCreating(false);
     }
+  };
+
+  const openHistoryModal = async () => {
+    const companyId = form.getFieldValue('company_id');
+    if (!companyId || companyId === 'private') {
+      message.warning('Kérlek válassz céget először');
+      return;
+    }
+    setHistoryOpen(true);
+    setHistoryLoading(true);
+    setHistorySelectedKeys([]);
+    try {
+      const res = await api.get('/sales/quote-requests/items_history/', { params: { company_id: companyId } });
+      setHistoryItems(res.data || []);
+    } catch {
+      message.error('Nem sikerült betölteni a korábbi tételeket');
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const confirmHistoryLoad = () => {
+    const selected = historyItems.filter(it => historySelectedKeys.includes(it.item_id));
+    if (!selected.length) { message.warning('Nincs kiválasztva tétel'); return; }
+    const newItemsToAdd = selected.map((it: any) => ({
+      item_type: it.item_type,
+      ref_id: it.ref_id,
+      name: it.name,
+      code: it.code,
+      quantity: it.quantity,
+      unit: it.unit,
+      net_unit_price: it.net_unit_price,
+      vat_rate: it.vat_rate,
+      description: it.description,
+    }));
+    setNewItems(prev => [...prev, ...newItemsToAdd]);
+    const loadedRfqIds = new Set<number>();
+    const newCostsToAdd: any[] = [];
+    let baseId = Date.now();
+    for (const it of selected) {
+      if (!loadedRfqIds.has(it.rfq_id)) {
+        loadedRfqIds.add(it.rfq_id);
+        for (const c of (it.costs || [])) {
+          newCostsToAdd.push({
+            id: baseId++,
+            code: c.code,
+            name: c.name,
+            quantity: c.quantity,
+            unit: c.unit,
+            net_unit_price: c.net_unit_price,
+            net_total: c.net_total,
+            supplier: c.supplier,
+            supplier_name: c.supplier_name,
+            currency: c.currency_code || 'HUF',
+            is_stock: c.is_stock,
+          });
+        }
+      }
+    }
+    if (newCostsToAdd.length) setNewCosts(prev => [...prev, ...newCostsToAdd]);
+    setHistoryOpen(false);
+    message.success(`${selected.length} tétel betöltve${newCostsToAdd.length ? `, ${newCostsToAdd.length} költségtétel` : ''}`);
   };
 
   const openCreate = async () => {
@@ -3353,6 +3420,7 @@ const RFQs: React.FC = () => {
           </div>
           <Space wrap>
             <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditIdx(null); setSelectorType('manufacturing'); setSelectorOpen(true); }}>Tétel hozzáadása</Button>
+            <Button icon={<HistoryOutlined />} onClick={openHistoryModal} title="Korábbi tételek betöltése">Korábbi tételek</Button>
             <Button
               onClick={() => {
                 const companyId = form.getFieldValue('company_id');
@@ -3619,6 +3687,91 @@ const RFQs: React.FC = () => {
         url={rfqAttPreviewUrl}
         onClose={() => { setRfqAttPreviewOpen(false); setRfqAttPreviewUrl(null); setRfqAttPreviewTitle(''); }}
       />
+
+      {/* ── Korábbi tételek betöltése ─────────────────────────────────── */}
+      <Modal
+        title="Korábbi tételek betöltése"
+        open={historyOpen}
+        onCancel={() => setHistoryOpen(false)}
+        onOk={confirmHistoryLoad}
+        okText="Betöltés"
+        cancelText="Mégse"
+        width={1100}
+        okButtonProps={{ disabled: historySelectedKeys.length === 0 }}
+      >
+        {historyLoading ? (
+          <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>
+        ) : historyItems.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: 40, color: '#888' }}>Nincs korábbi tétel ehhez az ügyfélhez.</div>
+        ) : (
+          <Table
+            size="small"
+            rowKey="item_id"
+            dataSource={historyItems}
+            rowSelection={{
+              type: 'checkbox',
+              selectedRowKeys: historySelectedKeys,
+              onChange: (keys) => setHistorySelectedKeys(keys),
+            }}
+            expandable={{
+              expandedRowRender: (record: any) => {
+                const costs: any[] = record.costs || [];
+                if (!costs.length) return <div style={{ padding: '4px 8px', color: '#999', fontSize: 12 }}>Nincs költségtétel</div>;
+                return (
+                  <Table
+                    size="small"
+                    rowKey="id"
+                    dataSource={costs}
+                    pagination={false}
+                    columns={[
+                      { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 100 },
+                      { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
+                      { title: 'Menny.', key: 'qty', width: 80, render: (_: any, r: any) => `${r.quantity} ${r.unit}` },
+                      { title: 'Egységár', dataIndex: 'net_unit_price', key: 'nup', width: 130,
+                        render: (v: number, r: any) => (
+                          <Space size={4}>
+                            <span>{Math.round(v).toLocaleString('hu-HU')} {r.currency_code || 'HUF'}</span>
+                            {r.price_changed && (
+                              <Tooltip title={`Aktuális ár: ${Math.round(r.current_price || 0).toLocaleString('hu-HU')} ${r.currency_code || 'HUF'}`}>
+                                <WarningOutlined style={{ color: '#faad14' }} />
+                              </Tooltip>
+                            )}
+                          </Space>
+                        ),
+                      },
+                      { title: 'Összesen', dataIndex: 'net_total', key: 'ntot', width: 110, render: (v: number, r: any) => `${Math.round(v).toLocaleString('hu-HU')} ${r.currency_code || 'HUF'}` },
+                      { title: 'Beszállító', dataIndex: 'supplier_name', key: 'supp', width: 140 },
+                    ]}
+                  />
+                );
+              },
+              rowExpandable: (record: any) => (record.costs || []).length > 0,
+            }}
+            columns={[
+              { title: 'Dátum', dataIndex: 'rfq_date', key: 'rfq_date', width: 100,
+                sorter: (a: any, b: any) => a.rfq_date.localeCompare(b.rfq_date),
+                defaultSortOrder: 'descend' as const },
+              { title: 'Ajánlat #', dataIndex: 'rfq_number', key: 'rfq_number', width: 120 },
+              { title: 'Tétel neve', dataIndex: 'name', key: 'name',
+                render: (v: string, r: any) => (
+                  <div>
+                    <div style={{ fontWeight: 500 }}>{v || '-'}</div>
+                    {r.code && <div style={{ fontSize: 11, color: '#999' }}>{r.code}</div>}
+                  </div>
+                ),
+              },
+              { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true, render: (v: string) => stripHtml(v) },
+              { title: 'Belső leírás', dataIndex: 'internal_description', key: 'idesc', ellipsis: true, render: (v: string) => stripHtml(v) },
+              { title: 'Darabszám', key: 'qty', width: 90, render: (_: any, r: any) => `${r.quantity} ${r.unit}` },
+              { title: 'Nettó egységár', dataIndex: 'net_unit_price', key: 'nup', width: 125,
+                render: (v: number) => `${Math.round(v).toLocaleString('hu-HU')} Ft` },
+              { title: 'Nettó összesen', dataIndex: 'net_total', key: 'ntot', width: 125,
+                render: (v: number) => `${Math.round(v).toLocaleString('hu-HU')} Ft` },
+            ]}
+            pagination={{ pageSize: 20 }}
+          />
+        )}
+      </Modal>
 
       {/* Ask if user wants to send confirmation email after order creation */}
       <Modal
