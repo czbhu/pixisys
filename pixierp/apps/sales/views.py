@@ -260,6 +260,14 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 'invitations',
                 queryset=QuoteRequestInvitation.objects.filter(status='pending').select_related('invitee')
             ),
+            Prefetch(
+                'customer_orders',
+                queryset=CustomerOrder.objects.exclude(status='cancelled').prefetch_related(
+                    Prefetch('items', queryset=CustomerOrderItem.objects.exclude(status='cancelled'))
+                ),
+                to_attr='prefetched_active_orders',
+            ),
+            Prefetch('email_logs', to_attr='prefetched_email_logs'),
         )
 
     def list(self, request, *args, **kwargs):
@@ -2001,31 +2009,19 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     def _create_order_from_items(self, request, qr, items, set_status: str):
         from .models import CustomerOrder, CustomerOrderItem
-        
-        # Generate unique order number in Oyyyymmddxx format
-        today = timezone.now()
-        date_prefix = today.strftime('%Y%m%d')
-        prefix = f"O{date_prefix}"
-        # Find the highest existing suffix for today to avoid race conditions
-        existing = (
-            CustomerOrder.objects
-            .filter(order_number__startswith=prefix)
-            .order_by('-order_number')
-            .values_list('order_number', flat=True)
-            .first()
-        )
-        if existing:
-            try:
-                last_seq = int(existing[len(prefix):])
-            except ValueError:
-                last_seq = 0
+
+        # Use the RFQ's own number as order_number (megrendelés szám = ajánlat szám)
+        rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
+        # If multiple orders exist for this RFQ (partial ordering), append a suffix
+        existing_count = CustomerOrder.objects.filter(quote_request=qr).count()
+        if existing_count == 0:
+            order_number = rfq_num
         else:
-            last_seq = 0
-        order_number = f"{prefix}{last_seq + 1:02d}"
-        # Extra safety: keep incrementing if still collides
+            order_number = f"{rfq_num}-{existing_count + 1}"
+        # Collision safety
         while CustomerOrder.objects.filter(order_number=order_number).exists():
-            last_seq += 1
-            order_number = f"{prefix}{last_seq + 1:02d}"
+            existing_count += 1
+            order_number = f"{rfq_num}-{existing_count}"
         
         # Optional deadline from request
         deadline_raw = request.data.get('deadline') or None
