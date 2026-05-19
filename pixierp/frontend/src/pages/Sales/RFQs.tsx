@@ -562,7 +562,7 @@ const RFQs: React.FC = () => {
                 />
               </div>
             ),
-            defaultExpandAllRows: true,
+            defaultExpandAllRows: false,
           }}
         />
       </div>
@@ -1041,7 +1041,7 @@ const RFQs: React.FC = () => {
         )}
         {isMfg && (
           <>
-            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments defaultExpandAllRows />
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments />
             <MaterialNeedsTree
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}
