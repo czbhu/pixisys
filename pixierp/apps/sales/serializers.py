@@ -681,6 +681,8 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
         return float(discounted_net * (1 + obj.vat_rate / 100))
     
     def get_product_name(self, obj):
+        if obj.quote_item and obj.quote_item.item_name:
+            return obj.quote_item.item_name
         return obj.quote_item.product.name if obj.quote_item and obj.quote_item.product else None
     
     def get_product_code(self, obj):
@@ -690,18 +692,24 @@ class CustomerOrderItemSerializer(serializers.ModelSerializer):
         return None
     
     def get_material_name(self, obj):
+        if obj.quote_item and obj.quote_item.item_name:
+            return obj.quote_item.item_name
         return obj.quote_item.material.name if obj.quote_item and obj.quote_item.material else None
     
     def get_material_code(self, obj):
         return obj.quote_item.material.code if obj.quote_item and obj.quote_item.material else None
     
     def get_manufacturing_product_name(self, obj):
+        if obj.quote_item and obj.quote_item.item_name:
+            return obj.quote_item.item_name
         return obj.quote_item.manufacturing_product.name if obj.quote_item and obj.quote_item.manufacturing_product else None
     
     def get_manufacturing_product_code(self, obj):
         return obj.quote_item.manufacturing_product.code if obj.quote_item and obj.quote_item.manufacturing_product else None
     
     def get_service_name(self, obj):
+        if obj.quote_item and obj.quote_item.item_name:
+            return obj.quote_item.item_name
         return obj.quote_item.service.name if obj.quote_item and obj.quote_item.service else None
 
     def get_service_code(self, obj):
