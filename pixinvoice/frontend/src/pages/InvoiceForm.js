@@ -3625,7 +3625,7 @@ const InvoiceForm = () => {
         <FormContainer>
           <FormHeader>
         <HeaderLeft>
-          <Title>{isIncomingManual ? (isIncomingManualEdit ? 'Kézi bejövő számla szerkesztése' : 'Új bejövő számla') : (isProforma ? (isEdit ? 'Díjbekérő megnyitása' : 'Új díjbekérő') : (isEdit ? 'Számla megnyitása' : 'Új számla'))}</Title>
+          <Title>{isIncomingManual ? (isIncomingManualEdit ? 'Kézi bejövő számla szerkesztése' : 'Új bejövő számla') : (isProforma ? (isEdit ? 'Díjbekérő megnyitása' : 'Új díjbekérő') : (isEdit ? (invoice?.invoice_number ? `Számla — ${invoice.invoice_number}` : 'Számla megnyitása') : 'Új számla'))}</Title>
           {isEdit && invoice?.status === 'nav_rejected' && !isReadOnly && (() => {
             const getNavErrMsg = (response) => {
               if (!response) return null;

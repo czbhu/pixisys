@@ -489,6 +489,8 @@ const Invoices = () => {
   const [selectedCompanyId, setSelectedCompanyId] = useState(() => {
     try { return localStorage.getItem('selectedCompanyId'); } catch { return null; }
   });
+  const prevCompanyRef = React.useRef(selectedCompanyId);
+  const [companyLoading, setCompanyLoading] = useState(false);
   
   const queryClient = useQueryClient();
   const [navStatusMap, setNavStatusMap] = useState({});
@@ -570,13 +572,24 @@ const Invoices = () => {
   // Reset page when company changes
   React.useEffect(() => { setCurrentPage(1); }, [selectedCompanyId]);
 
+  // Preloader when company changes
+  React.useEffect(() => {
+    if (prevCompanyRef.current !== selectedCompanyId) {
+      prevCompanyRef.current = selectedCompanyId;
+      setCompanyLoading(true);
+    }
+  }, [selectedCompanyId]);
+  React.useEffect(() => {
+    if (!isFetching && companyLoading) setCompanyLoading(false);
+  }, [isFetching, companyLoading]);
+
   const { data: invoiceBlocks } = useQuery(
     ['invoiceBlocks', { company_id: selectedCompanyId }],
     () => invoiceBlockAPI.getInvoiceBlocks({ company_id: selectedCompanyId }).then(res => res.data?.results || res.data),
     { enabled: !!selectedCompanyId }
   );
 
-  const { data: invoices, isLoading, error } = useQuery(
+  const { data: invoices, isLoading, isFetching, error } = useQuery(
     ['invoices', { 
       search: searchTerm, 
       status: statusFilter, 
@@ -1320,7 +1333,12 @@ const Invoices = () => {
         </div>
       )}
 
-      <TableContainer>
+      <TableContainer style={{ position: 'relative' }}>
+        {companyLoading && (
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10 }}>
+            <div style={{ fontSize: 15, color: '#7f8c8d' }}>Betöltés…</div>
+          </div>
+        )}
         <Table>
           <TableHeader>
             <tr>
