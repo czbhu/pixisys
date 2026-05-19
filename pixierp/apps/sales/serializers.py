@@ -1163,7 +1163,8 @@ class InvoiceableOrderItemSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'quantity', 'unit', 'net_unit_price', 'discount_percent', 'vat_rate',
             'product_name', 'product_code', 'material_name', 'material_code',
-            'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code'
+            'manufacturing_product_name', 'manufacturing_product_code', 'service_name', 'service_code',
+            'description',
         ]
 
 

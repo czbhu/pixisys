@@ -53,6 +53,7 @@ interface InvoiceableOrder {
     manufacturing_product_code?: string;
     service_name?: string;
     service_code?: string;
+    description?: string;
   }>;
 }
 
@@ -342,6 +343,60 @@ const Invoicing: React.FC = () => {
       key: 'customer_name',
       sorter: (a, b) => (a.customer_name || '').localeCompare(b.customer_name || ''),
       render: (_, record) => renderCustomerName(record),
+    },
+    {
+      title: 'Tétel neve',
+      key: 'item_names',
+      render: (_, record) => (
+        <div>
+          {record.items?.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: '18px' }}>
+              {item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel'}
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      title: 'Darabszám',
+      key: 'quantities',
+      width: 90,
+      render: (_, record) => (
+        <div>
+          {record.items?.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: '18px', textAlign: 'right' }}>
+              {parseFloat(String(item.quantity))} {item.unit || 'db'}
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      title: 'Nettó egységár',
+      key: 'unit_prices',
+      width: 120,
+      render: (_, record) => (
+        <div>
+          {record.items?.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: '18px', textAlign: 'right' }}>
+              {Math.round(parseFloat(String(item.net_unit_price))).toLocaleString('hu-HU')} Ft
+            </div>
+          ))}
+        </div>
+      ),
+    },
+    {
+      title: 'Leírás',
+      key: 'descriptions',
+      render: (_, record) => (
+        <div>
+          {record.items?.map((item, i) => (
+            <div key={i} style={{ fontSize: 12, lineHeight: '18px', color: '#666' }}>
+              {item.description || '-'}
+            </div>
+          ))}
+        </div>
+      ),
     },
     {
       title: 'Dátum',
