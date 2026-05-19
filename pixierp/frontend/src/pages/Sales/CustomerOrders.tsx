@@ -2653,7 +2653,7 @@ interface CustomerOrder {
             header: {
               row: ({ children, ...rowProps }: any) => (
                 <SortableContext
-                  items={isItemsView ? colOrder : ordersColOrder}
+                  items={isItemsView ? itemsColumns.map((c: any) => c.key) : ordersColumns.map((c: any) => c.key)}
                   strategy={horizontalListSortingStrategy}
                 >
                   <tr {...rowProps}>{children}</tr>
