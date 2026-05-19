@@ -58,7 +58,6 @@ interface InvoiceableOrder {
 }
 
 const Invoicing: React.FC = () => {
-  const navigate = useNavigate();
   const [orders, setOrders] = useState<InvoiceableOrder[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedRowKeys, setSelectedRowKeys] = useState<number[]>([]);
@@ -438,7 +437,7 @@ const Invoicing: React.FC = () => {
           size="small"
           onClick={(e) => {
             e.stopPropagation();
-            navigate(`/sales/customer-orders/${record.id}`);
+            window.open(`/sales/customer-orders/${record.id}?popup=1`, '_blank');
           }}
         >
           Megtekintés
