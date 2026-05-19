@@ -12,6 +12,14 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import UnifiedQuickSearchHeader from '../../components/Layout/UnifiedQuickSearchHeader';
 
+const stripHtml = (s: string | undefined | null): string => {
+  if (!s) return '';
+  if (typeof document !== 'undefined') {
+    try { const d = document.createElement('div'); d.innerHTML = s; return d.textContent || d.innerText || ''; } catch {}
+  }
+  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
 interface DeliveryNoteItemRow {
   id: number;
   delivery_note: number;
@@ -576,6 +584,7 @@ const DeliveryNotes: React.FC = () => {
       ellipsis: true,
       responsive: ['lg'],
       sorter: (a: any, b: any) => (a.notes || '').localeCompare(b.notes || '', 'hu'),
+      render: (v: string) => stripHtml(v),
     },
     {
       title: 'Leírás',
@@ -583,6 +592,7 @@ const DeliveryNotes: React.FC = () => {
       key: 'description',
       ellipsis: true,
       sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
+      render: (v: string) => stripHtml(v),
     },
     {
       title: 'Belső leírás',
@@ -590,6 +600,7 @@ const DeliveryNotes: React.FC = () => {
       key: 'internal_description',
       ellipsis: true,
       sorter: (a: any, b: any) => (a.internal_description || '').localeCompare(b.internal_description || '', 'hu'),
+      render: (v: string) => stripHtml(v),
     },
     {
       title: 'Nettó egységár',

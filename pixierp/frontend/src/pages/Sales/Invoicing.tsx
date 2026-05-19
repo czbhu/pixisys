@@ -10,6 +10,14 @@ import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Option } = Select;
 
+const stripHtml = (s: string | undefined | null): string => {
+  if (!s) return '';
+  if (typeof document !== 'undefined') {
+    try { const d = document.createElement('div'); d.innerHTML = s; return d.textContent || d.innerText || ''; } catch {}
+  }
+  return s.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim();
+};
+
 type InvoiceStatus = 'all' | 'to_invoice' | 'invoiced';
 
 interface InvoiceableOrder {
@@ -378,7 +386,7 @@ const Invoicing: React.FC = () => {
         <div>
           {record.items?.map((item, i) => (
             <div key={i} style={{ fontSize: 12, lineHeight: '18px', color: '#666' }}>
-              {item.description || '-'}
+              {stripHtml(item.description) || '-'}
             </div>
           ))}
         </div>
