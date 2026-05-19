@@ -346,46 +346,65 @@ interface CustomerOrder {
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkPrinting, setBulkPrinting] = useState(false);
+  const [bulkPrintModalOpen, setBulkPrintModalOpen] = useState(false);
+  const [bulkPrintMode, setBulkPrintMode] = useState<'preview' | 'direct'>('direct');
+
+  const executeBulkPrint = async () => {
+    setBulkPrintModalOpen(false);
+    setBulkPrinting(true);
+    // uniqueId format: "${orderId}_${itemId}" — extract unique order IDs
+    const orderIds = Array.from(new Set(
+      bulkSelectedKeys.map((key) => String(key).split('_')[0])
+    ));
+    let printed = 0;
+    let skipped = 0;
+    for (const orderId of orderIds) {
+      try {
+        const response = await api.get(
+          `/manufacturing/cost-items/work_sheet_for_order/?order_id=${orderId}`,
+          { responseType: 'blob' }
+        );
+        const blob = new Blob([response.data], { type: 'application/pdf' });
+        const url = window.URL.createObjectURL(blob);
+        if (bulkPrintMode === 'direct') {
+          const iframe = document.createElement('iframe');
+          iframe.style.display = 'none';
+          iframe.src = url;
+          document.body.appendChild(iframe);
+          await new Promise<void>(resolve => {
+            iframe.onload = () => {
+              try { iframe.contentWindow?.print(); } catch {}
+              setTimeout(() => {
+                document.body.removeChild(iframe);
+                window.URL.revokeObjectURL(url);
+                resolve();
+              }, 1500);
+            };
+          });
+        } else {
+          window.open(url, '_blank');
+          await new Promise(resolve => setTimeout(resolve, 400));
+        }
+        printed++;
+      } catch (e: any) {
+        if (e?.response?.status === 404) {
+          skipped++;
+        } else {
+          message.error('Hiba a munkalap letöltése során');
+        }
+      }
+    }
+    setBulkPrinting(false);
+    if (skipped > 0) {
+      message.info(`${printed} munkalap feldolgozva, ${skipped} megrendeléshez nem volt munkalap.`);
+    } else {
+      message.success(`${printed} munkalap feldolgozva.`);
+    }
+  };
 
   const handleBulkPrintWorksheets = () => {
-    const count = bulkSelectedKeys.length;
-    if (count === 0) return;
-    confirm({
-      title: 'Munkalap nyomtatása',
-      content: `Biztosan kinyomtatod a ${count} kijelölt megrendelés munkalapját?`,
-      okText: 'Igen, nyomtatás',
-      cancelText: 'Mégsem',
-      onOk: async () => {
-        setBulkPrinting(true);
-        let printed = 0;
-        let skipped = 0;
-        for (const key of bulkSelectedKeys) {
-          try {
-            const response = await api.get(
-              `/manufacturing/cost-items/work_sheet_for_order/?order_id=${key}`,
-              { responseType: 'blob' }
-            );
-            const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
-            window.open(url, '_blank');
-            printed++;
-            // small delay to avoid popup blocking
-            await new Promise(resolve => setTimeout(resolve, 400));
-          } catch (e: any) {
-            if (e?.response?.status === 404) {
-              skipped++;
-            } else {
-              message.error('Hiba a munkalap letöltése során');
-            }
-          }
-        }
-        setBulkPrinting(false);
-        if (skipped > 0) {
-          message.info(`${printed} munkalap megnyitva, ${skipped} megrendeléshez nem volt munkalap.`);
-        } else {
-          message.success(`${printed} munkalap megnyitva.`);
-        }
-      },
-    });
+    if (bulkSelectedKeys.length === 0) return;
+    setBulkPrintModalOpen(true);
   };
 
   const exportCsv = () => {
@@ -2842,6 +2861,50 @@ interface CustomerOrder {
       url={coAttPreviewUrl}
       onClose={() => { setCoAttPreviewOpen(false); setCoAttPreviewUrl(null); setCoAttPreviewTitle(''); }}
     />
+    <Modal
+      open={bulkPrintModalOpen}
+      title={<><PrinterOutlined style={{ marginRight: 8 }} />Munkalap nyomtatása</>}
+      okText="Nyomtatás"
+      cancelText="Mégsem"
+      onOk={executeBulkPrint}
+      onCancel={() => setBulkPrintModalOpen(false)}
+      width={440}
+    >
+      <p style={{ marginBottom: 16 }}>
+        <strong>{new Set(bulkSelectedKeys.map((k) => String(k).split('_')[0])).size}</strong> kijelölt megrendelés munkalapját nyomtatod ki.
+      </p>
+      <div style={{ marginBottom: 8, fontWeight: 500 }}>Nyomtató / mód:</div>
+      <Select
+        value={bulkPrintMode}
+        onChange={(v) => setBulkPrintMode(v)}
+        style={{ width: '100%' }}
+        options={[
+          {
+            value: 'direct',
+            label: (
+              <span>
+                <PrinterOutlined style={{ marginRight: 6 }} />
+                Közvetlen nyomtatás — nyomtatóválasztó ablak nyílik meg minden munkalaphoz
+              </span>
+            ),
+          },
+          {
+            value: 'preview',
+            label: (
+              <span>
+                <EyeOutlined style={{ marginRight: 6 }} />
+                Előnézet — PDF megnyitása új tabban (kézzel nyomtatható)
+              </span>
+            ),
+          },
+        ]}
+      />
+      {bulkPrintMode === 'direct' && (
+        <p style={{ marginTop: 12, color: '#6b7280', fontSize: 12 }}>
+          Minden munkalaphoz megnyílik a böngésző nyomtatási párbeszédablaka, ahol kiválaszthatod a nyomtatót és a beállításokat.
+        </p>
+      )}
+    </Modal>
     </>
   );
 };
