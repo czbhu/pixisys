@@ -320,7 +320,7 @@ const Invoicing: React.FC = () => {
       ),
     },
     {
-      title: 'Számlázandó',
+      title: '',
       key: 'select',
       width: 100,
       render: (_, record, index) => (
