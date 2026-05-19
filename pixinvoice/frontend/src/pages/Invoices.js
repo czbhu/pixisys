@@ -579,10 +579,6 @@ const Invoices = () => {
       setCompanyLoading(true);
     }
   }, [selectedCompanyId]);
-  React.useEffect(() => {
-    if (!isFetching && companyLoading) setCompanyLoading(false);
-  }, [isFetching, companyLoading]);
-
   const { data: invoiceBlocks } = useQuery(
     ['invoiceBlocks', { company_id: selectedCompanyId }],
     () => invoiceBlockAPI.getInvoiceBlocks({ company_id: selectedCompanyId }).then(res => res.data?.results || res.data),
@@ -616,6 +612,10 @@ const Invoices = () => {
       select: (response) => response.data,
     }
   );
+
+  React.useEffect(() => {
+    if (!isFetching && companyLoading) setCompanyLoading(false);
+  }, [isFetching, companyLoading]);
 
   const filteredInvoices = React.useMemo(() => {
     const list = invoices?.results || [];
