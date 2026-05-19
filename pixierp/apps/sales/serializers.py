@@ -1370,8 +1370,9 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     invoice_number = serializers.CharField(source='customer_order_item.customer_order.invoice_number', read_only=True)
     documentation = serializers.SerializerMethodField()
     created_by_name = serializers.CharField(source='delivery_note.created_by.get_full_name', read_only=True)
-
-    class Meta:
+    description = serializers.CharField(source='customer_order_item.description', read_only=True, default='')
+    internal_description = serializers.CharField(source='customer_order_item.remark', read_only=True, default='')
+    net_total = serializers.SerializerMethodField()
         model = DeliveryNoteItem
         fields = '__all__'
 
@@ -1442,6 +1443,12 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
         except Exception:
             pass
         return docs
+
+    def get_net_total(self, obj):
+        try:
+            return float(obj.net_total)
+        except Exception:
+            return 0.0
 
 class DeliveryNoteSerializer(serializers.ModelSerializer):
     items = DeliveryNoteItemSerializer(many=True, read_only=True)

@@ -32,6 +32,10 @@ interface DeliveryNoteItemRow {
   delivery_note_public_url?: string;
   invoice_number?: string | null;
   created_by_name?: string;
+  description?: string;
+  internal_description?: string;
+  net_unit_price?: number;
+  net_total?: number;
 }
 
 interface OrderItemForDelivery {
@@ -572,6 +576,36 @@ const DeliveryNotes: React.FC = () => {
       ellipsis: true,
       responsive: ['lg'],
       sorter: (a: any, b: any) => (a.notes || '').localeCompare(b.notes || '', 'hu'),
+    },
+    {
+      title: 'Leírás',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
+      sorter: (a: any, b: any) => (a.description || '').localeCompare(b.description || '', 'hu'),
+    },
+    {
+      title: 'Belső leírás',
+      dataIndex: 'internal_description',
+      key: 'internal_description',
+      ellipsis: true,
+      sorter: (a: any, b: any) => (a.internal_description || '').localeCompare(b.internal_description || '', 'hu'),
+    },
+    {
+      title: 'Nettó egységár',
+      dataIndex: 'net_unit_price',
+      key: 'net_unit_price',
+      width: 130,
+      sorter: (a: any, b: any) => (a.net_unit_price || 0) - (b.net_unit_price || 0),
+      render: (v: number) => v != null ? `${Math.round(v).toLocaleString('hu-HU')} Ft` : '-',
+    },
+    {
+      title: 'Nettó összeg',
+      dataIndex: 'net_total',
+      key: 'net_total',
+      width: 120,
+      sorter: (a: any, b: any) => (a.net_total || 0) - (b.net_total || 0),
+      render: (v: number) => v != null ? `${Math.round(v).toLocaleString('hu-HU')} Ft` : '-',
     },
     {
       title: 'Státusz',
