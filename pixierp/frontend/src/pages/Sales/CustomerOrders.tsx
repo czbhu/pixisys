@@ -345,6 +345,48 @@ interface CustomerOrder {
   const [csvMode, setCsvMode] = useState(false);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
+  const [bulkPrinting, setBulkPrinting] = useState(false);
+
+  const handleBulkPrintWorksheets = () => {
+    const count = bulkSelectedKeys.length;
+    if (count === 0) return;
+    confirm({
+      title: 'Munkalap nyomtatása',
+      content: `Biztosan kinyomtatod a ${count} kijelölt megrendelés munkalapját?`,
+      okText: 'Igen, nyomtatás',
+      cancelText: 'Mégsem',
+      onOk: async () => {
+        setBulkPrinting(true);
+        let printed = 0;
+        let skipped = 0;
+        for (const key of bulkSelectedKeys) {
+          try {
+            const response = await api.get(
+              `/manufacturing/cost-items/work_sheet_for_order/?order_id=${key}`,
+              { responseType: 'blob' }
+            );
+            const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+            window.open(url, '_blank');
+            printed++;
+            // small delay to avoid popup blocking
+            await new Promise(resolve => setTimeout(resolve, 400));
+          } catch (e: any) {
+            if (e?.response?.status === 404) {
+              skipped++;
+            } else {
+              message.error('Hiba a munkalap letöltése során');
+            }
+          }
+        }
+        setBulkPrinting(false);
+        if (skipped > 0) {
+          message.info(`${printed} munkalap megnyitva, ${skipped} megrendeléshez nem volt munkalap.`);
+        } else {
+          message.success(`${printed} munkalap megnyitva.`);
+        }
+      },
+    });
+  };
 
   const exportCsv = () => {
     const data = csvSelectedKeys.length > 0
@@ -2503,6 +2545,14 @@ interface CustomerOrder {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 0 10px', flexWrap: 'wrap' }}>
           <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
           <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
+          <Button
+            size="small"
+            icon={<PrinterOutlined />}
+            loading={bulkPrinting}
+            onClick={handleBulkPrintWorksheets}
+          >
+            Munkalap nyomtatása
+          </Button>
         </div>
       )}
       {useCardLayout ? renderMobileCards() : (
