@@ -356,49 +356,37 @@ interface CustomerOrder {
     const orderIds = Array.from(new Set(
       bulkSelectedKeys.map((key) => String(key).split('_')[0])
     ));
-    let printed = 0;
-    let skipped = 0;
-    for (const orderId of orderIds) {
-      try {
-        const response = await api.get(
-          `/manufacturing/cost-items/work_sheet_for_order/?order_id=${orderId}`,
-          { responseType: 'blob' }
-        );
-        const blob = new Blob([response.data], { type: 'application/pdf' });
-        const url = window.URL.createObjectURL(blob);
-        if (bulkPrintMode === 'direct') {
-          const iframe = document.createElement('iframe');
-          iframe.style.display = 'none';
-          iframe.src = url;
-          document.body.appendChild(iframe);
-          await new Promise<void>(resolve => {
-            iframe.onload = () => {
-              try { iframe.contentWindow?.print(); } catch {}
-              setTimeout(() => {
-                document.body.removeChild(iframe);
-                window.URL.revokeObjectURL(url);
-                resolve();
-              }, 1500);
-            };
-          });
-        } else {
-          window.open(url, '_blank');
-          await new Promise(resolve => setTimeout(resolve, 400));
-        }
-        printed++;
-      } catch (e: any) {
-        if (e?.response?.status === 404) {
-          skipped++;
-        } else {
-          message.error('Hiba a munkalap letöltése során');
-        }
+    try {
+      const response = await api.get(
+        `/manufacturing/cost-items/bulk_work_sheets_for_orders/?order_ids=${orderIds.join(',')}`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      if (bulkPrintMode === 'direct') {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          try { iframe.contentWindow?.print(); } catch {}
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+            window.URL.revokeObjectURL(url);
+          }, 2000);
+        };
+      } else {
+        window.open(url, '_blank');
       }
-    }
-    setBulkPrinting(false);
-    if (skipped > 0) {
-      message.info(`${printed} munkalap feldolgozva, ${skipped} megrendeléshez nem volt munkalap.`);
-    } else {
-      message.success(`${printed} munkalap feldolgozva.`);
+      message.success(`${orderIds.length} megrendelés munkalapjai összefűzve, nyomtatás indul.`);
+    } catch (e: any) {
+      if (e?.response?.status === 404) {
+        message.warning('Egyetlen kijelölt megrendeléshez sem található nyomtatható munkalap.');
+      } else {
+        message.error('Hiba a munkalapok letöltése során');
+      }
+    } finally {
+      setBulkPrinting(false);
     }
   };
 

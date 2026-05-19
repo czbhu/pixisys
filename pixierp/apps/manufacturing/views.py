@@ -1661,6 +1661,74 @@ class ManufacturingCostItemViewSet(
         response['Content-Disposition'] = f'inline; filename="munkalap_product_{product_id}.pdf"'
         return response
 
+    @action(detail=False, methods=['get'], url_path='bulk_work_sheets_for_orders')
+    def bulk_work_sheets_for_orders(self, request):
+        """Merged worksheet PDF for multiple CustomerOrders — single multi-page PDF."""
+        from django.http import HttpResponse
+        from io import BytesIO
+        order_ids_raw = request.query_params.get('order_ids', '')
+        if not order_ids_raw:
+            return Response({'error': 'order_ids kötelező'}, status=400)
+        order_ids = [oid.strip() for oid in order_ids_raw.split(',') if oid.strip()]
+        if not order_ids:
+            return Response({'error': 'order_ids üres'}, status=400)
+
+        from apps.sales.models import CustomerOrder
+        from django.db.models import F
+
+        all_pdf_pages = []
+        for order_id in order_ids:
+            try:
+                order = CustomerOrder.objects.get(pk=order_id)
+            except CustomerOrder.DoesNotExist:
+                continue
+
+            product_ids = []
+            seen = set()
+            for item in order.items.all():
+                qi = getattr(item, 'quote_item', None)
+                mp = getattr(qi, 'manufacturing_product', None) if qi else None
+                if mp and mp.id not in seen:
+                    seen.add(mp.id)
+                    product_ids.append(mp.id)
+
+            for pid in product_ids:
+                ci = (ManufacturingCostItem.objects
+                      .filter(product_id=pid)
+                      .order_by(F('queue_position').asc(nulls_last=True), 'id')
+                      .first())
+                if not ci:
+                    continue
+                try:
+                    pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    if pdf_bytes:
+                        all_pdf_pages.append(pdf_bytes)
+                except Exception:
+                    continue
+
+        if not all_pdf_pages:
+            return Response({'error': 'Nem sikerült munkalapot generálni.'}, status=404)
+
+        if len(all_pdf_pages) == 1:
+            merged_bytes = all_pdf_pages[0]
+        else:
+            try:
+                from pypdf import PdfWriter, PdfReader
+                writer = PdfWriter()
+                for pb in all_pdf_pages:
+                    reader = PdfReader(BytesIO(pb))
+                    for page in reader.pages:
+                        writer.add_page(page)
+                out = BytesIO()
+                writer.write(out)
+                merged_bytes = out.getvalue()
+            except Exception as e:
+                return Response({'error': f'PDF összefűzés sikertelen: {e}'}, status=500)
+
+        response = HttpResponse(merged_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="munkalapok_bulk.pdf"'
+        return response
+
     @action(detail=False, methods=['get'], url_path='work_sheet_for_order')
     def work_sheet_for_order(self, request):
         """Merged worksheet PDF for all manufacturing products in a CustomerOrder."""
