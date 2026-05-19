@@ -57,12 +57,13 @@ const FormContainer = styled.div`
 const FormHeader = styled.div`
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 12px;
   margin-bottom: 24px;
   padding-bottom: 16px;
   border-bottom: 1px solid #ecf0f1;
 
-  @media (max-width: 768px) {
+  @media (max-width: 1100px) {
     flex-direction: column;
     align-items: stretch;
     gap: 12px;
@@ -79,15 +80,25 @@ const Title = styled.h1`
 
 const ButtonGroup = styled.div`
   display: flex;
-  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
 
-  @media (max-width: 768px) {
+  @media (max-width: 1100px) {
     width: 100%;
-    flex-wrap: wrap;
-    gap: 8px;
+    justify-content: flex-start;
 
     > * {
-      flex: 1 1 140px;
+      flex: 1 1 130px;
+      justify-content: center;
+    }
+  }
+
+  @media (max-width: 480px) {
+    gap: 6px;
+
+    > * {
+      flex: 1 1 100%;
       justify-content: center;
     }
   }
