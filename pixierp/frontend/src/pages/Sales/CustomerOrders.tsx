@@ -1625,7 +1625,7 @@ interface CustomerOrder {
               <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: (isPrivate || secondaryName) ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{primaryName}</div>
               {isPrivate && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
               {secondaryName && (
-                <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>
+                <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>{secondaryName}</div>
               )}
             </div>
           </Tooltip>
@@ -1773,7 +1773,7 @@ interface CustomerOrder {
             <div>
               <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: (isPrivate || secondaryName) ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{primaryName}</div>
               {isPrivate && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
-              {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
+              {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical' }}>{secondaryName}</div>}
             </div>
           </Tooltip>
         );
