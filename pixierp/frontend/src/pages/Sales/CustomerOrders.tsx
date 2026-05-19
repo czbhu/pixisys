@@ -476,7 +476,6 @@ interface CustomerOrder {
 
   const handleColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
-    if (active.id === 'actions' || over.id === 'actions') return;
     setColOrder(prev => {
       const oldIndex = (prev || DEFAULT_ITEMS_COL_ORDER).indexOf(active.id as string);
       const newIndex = (prev || DEFAULT_ITEMS_COL_ORDER).indexOf(over.id as string);
@@ -510,7 +509,6 @@ interface CustomerOrder {
 
   const handleOrdersColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
-    if (active.id === 'actions' || over.id === 'actions') return;
     setOrdersColOrder(prev => {
       const oldIndex = (prev || DEFAULT_ORDERS_COL_ORDER).indexOf(active.id as string);
       const newIndex = (prev || DEFAULT_ORDERS_COL_ORDER).indexOf(over.id as string);
@@ -1877,10 +1875,10 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: isActions ? undefined : key,
-          colWidth: isActions ? undefined : w,
-          onResizeMove: isActions ? undefined : handleItemsResizeMove,
-          onResizeEnd: isActions ? undefined : handleItemsResizeEnd,
+          id: key,
+          colWidth: w,
+          onResizeMove: handleItemsResizeMove,
+          onResizeEnd: handleItemsResizeEnd,
         }),
       };
     }) as ColumnsType<any>;
@@ -1899,10 +1897,10 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: isActions ? undefined : key,
-          colWidth: isActions ? undefined : w,
-          onResizeMove: isActions ? undefined : handleOrdersResizeMove,
-          onResizeEnd: isActions ? undefined : handleOrdersResizeEnd,
+          id: key,
+          colWidth: w,
+          onResizeMove: handleOrdersResizeMove,
+          onResizeEnd: handleOrdersResizeEnd,
         }),
       };
     }) as ColumnsType<CustomerOrder>;
