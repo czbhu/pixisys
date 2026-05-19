@@ -396,6 +396,8 @@ class BankStatementSerializer(serializers.ModelSerializer):
 
         with transaction.atomic():
             statement = BankStatement.objects.create(**validated_data)
+            touched_outgoing_ids = set()
+            touched_incoming_ids = set()
             for item in (items_data or []):
                 invoice = item.get('invoice')
                 if invoice and not isinstance(invoice, Invoice):
@@ -417,7 +419,7 @@ class BankStatementSerializer(serializers.ModelSerializer):
                 except Exception:
                     amount = decimal.Decimal('0')
 
-                BankStatementItem.objects.create(
+                bsi = BankStatementItem.objects.create(
                     bank_statement=statement,
                     customer=customer,
                     invoice=invoice,
@@ -425,6 +427,76 @@ class BankStatementSerializer(serializers.ModelSerializer):
                     amount=amount,
                     note=item.get('note') or '',
                 )
+                if bsi.invoice_id:
+                    touched_outgoing_ids.add(str(bsi.invoice_id))
+                if bsi.incoming_invoice_id:
+                    touched_incoming_ids.add(str(bsi.incoming_invoice_id))
+
+            company = validated_data.get('company') or getattr(statement, 'company', None)
+            if company and touched_outgoing_ids:
+                for inv in Invoice.objects.filter(company=company, id__in=list(touched_outgoing_ids)):
+                    agg = BankStatementItem.objects.filter(bank_statement__company=company, invoice=inv).aggregate(
+                        total=models.Sum('amount'),
+                        last_date=models.Max('bank_statement__statement_date')
+                    )
+                    paid_amount = decimal.Decimal(str(agg.get('total') or 0))
+                    if paid_amount < 0:
+                        paid_amount = decimal.Decimal('0')
+                    is_nav_status = inv.status in NAV_PROGRESS_STATUSES
+                    if _is_effectively_paid(inv, paid_amount):
+                        new_status = inv.status if is_nav_status else 'paid'
+                    elif paid_amount > 0:
+                        new_status = inv.status if is_nav_status else 'partially_paid'
+                    elif inv.status in ('paid', 'partially_paid'):
+                        new_status = 'sent'
+                    else:
+                        new_status = inv.status
+                    new_payment_date = agg.get('last_date') if paid_amount > 0 else None
+                    update_fields = []
+                    if inv.amount_paid != paid_amount:
+                        inv.amount_paid = paid_amount
+                        update_fields.append('amount_paid')
+                    if inv.status != new_status:
+                        inv.status = new_status
+                        update_fields.append('status')
+                    if inv.payment_date != new_payment_date:
+                        inv.payment_date = new_payment_date
+                        update_fields.append('payment_date')
+                    if update_fields:
+                        inv.save(update_fields=list(dict.fromkeys(update_fields + ['updated_at'])))
+
+            if company and touched_incoming_ids:
+                for inc in IncomingInvoiceDigest.objects.filter(company=company, id__in=list(touched_incoming_ids)):
+                    qs = BankStatementItem.objects.filter(bank_statement__company=company, incoming_invoice=inc).select_related('bank_statement')
+                    agg = qs.aggregate(last_date=models.Max('bank_statement__statement_date'))
+                    paid_amount = decimal.Decimal('0')
+                    for row in qs:
+                        try:
+                            paid_amount += abs(decimal.Decimal(str(row.amount or 0)))
+                        except Exception:
+                            continue
+                    gross = decimal.Decimal(str((inc.invoice_net_amount or 0) + (inc.invoice_vat_amount or 0)))
+                    new_payment_date = agg.get('last_date') if paid_amount > 0 else None
+                    update_fields = []
+                    if _is_effectively_paid(inc, paid_amount):
+                        new_payment_status = 'paid'
+                    elif paid_amount > 0:
+                        new_payment_status = 'partially_paid'
+                    elif inc.payment_status in ('paid', 'partially_paid'):
+                        new_payment_status = 'unpaid'
+                    else:
+                        new_payment_status = inc.payment_status
+                    if decimal.Decimal(str(inc.amount_paid or 0)) != paid_amount:
+                        inc.amount_paid = paid_amount
+                        update_fields.append('amount_paid')
+                    if inc.payment_status != new_payment_status:
+                        inc.payment_status = new_payment_status
+                        update_fields.append('payment_status')
+                    if inc.payment_date != new_payment_date:
+                        inc.payment_date = new_payment_date
+                        update_fields.append('payment_date')
+                    if update_fields:
+                        inc.save(update_fields=update_fields)
 
         return statement
 
