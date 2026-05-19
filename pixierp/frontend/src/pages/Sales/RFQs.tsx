@@ -1969,7 +1969,9 @@ const RFQs: React.FC = () => {
     } catch {}
     if (!signatureKey && sigs.length > 0) signatureKey = sigs[0].key;
 
-    const defaultTemplate = templates.find((t: any) => t.key === 'rfq_send');
+    const isMultiItem = itemIds && itemIds.length > 1;
+    const templateKey = isMultiItem ? 'rfqs_send' : 'rfq_send';
+    const defaultTemplate = templates.find((t: any) => t.key === templateKey) || templates.find((t: any) => t.key === 'rfq_send');
     let subject = '';
     let body = '';
     let cc = '';
@@ -1981,10 +1983,27 @@ const RFQs: React.FC = () => {
       cc = defaultTemplate.default_cc || '';
       replyTo = defaultTemplate.default_reply_to || '';
       const contactNames = (record.contacts || []).map((c: any) => c.name).filter(Boolean).join(', ') || 'Ügyfelünk';
+      const projectName = record.project?.name || record.company?.name || record.title || '';
+
+      // Compute item_names for rfqs_send: comma-separated, max 50 chars
+      let itemNamesStr = '';
+      if (itemIds && itemIds.length > 0) {
+        const matchedItems = (flattenedItems || []).filter((it: any) => itemIds.includes(it.id));
+        const names = matchedItems.map((it: any) =>
+          it.item_name || it.product_name || it.manufacturing_product_name || it.material_name || it.service_name || ''
+        ).filter(Boolean);
+        itemNamesStr = names.join(', ');
+        if (itemNamesStr.length > 50) {
+          itemNamesStr = itemNamesStr.slice(0, 47).replace(/,\s*$/, '') + '...';
+        }
+      }
+
       subject = subject.replace(/{rfq_number}/g, record.number || record.request_number || '');
       subject = subject.replace(/{rfq_title}/g, record.title || '');
       subject = subject.replace(/{company_name}/g, record.company?.name || '');
       subject = subject.replace(/{contact_names}/g, contactNames);
+      subject = subject.replace(/{project_name}/g, projectName);
+      subject = subject.replace(/{item_names}/g, itemNamesStr);
       body = body.replace(/{rfq_number}/g, record.number || record.request_number || '');
       body = body.replace(/{rfq_title}/g, record.title || '');
       body = body.replace(/{company_name}/g, record.company?.name || '');
@@ -2012,7 +2031,7 @@ const RFQs: React.FC = () => {
       body = body.replace(/{user_phonenumber}/g, userPrefs.phone_number || '');
     }
 
-    sendForm.setFieldsValue({ template_key: 'rfq_send', to: contactEmailTo, cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
+    sendForm.setFieldsValue({ template_key: templateKey, to: contactEmailTo, cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
   };
 
   const handleBulkSendEmail = () => {
