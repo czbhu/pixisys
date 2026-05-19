@@ -461,8 +461,9 @@ interface CustomerOrder {
   );
   // Merge: add new default keys that aren't saved, drop removed keys
   const colOrder = [
-    ...(colOrderRaw || []).filter((k: string) => DEFAULT_ITEMS_COL_ORDER.includes(k)),
-    ...DEFAULT_ITEMS_COL_ORDER.filter(k => !(colOrderRaw || []).includes(k)),
+    ...(colOrderRaw || []).filter((k: string) => DEFAULT_ITEMS_COL_ORDER.includes(k) && k !== 'actions'),
+    ...DEFAULT_ITEMS_COL_ORDER.filter(k => !(colOrderRaw || []).includes(k) && k !== 'actions'),
+    'actions',
   ];
 
   // Column widths – Items view
@@ -489,8 +490,9 @@ interface CustomerOrder {
     DEFAULT_ORDERS_COL_ORDER
   );
   const ordersColOrder = [
-    ...(ordersColOrderRaw || []).filter((k: string) => DEFAULT_ORDERS_COL_ORDER.includes(k)),
-    ...DEFAULT_ORDERS_COL_ORDER.filter(k => !(ordersColOrderRaw || []).includes(k)),
+    ...(ordersColOrderRaw || []).filter((k: string) => DEFAULT_ORDERS_COL_ORDER.includes(k) && k !== 'actions'),
+    ...DEFAULT_ORDERS_COL_ORDER.filter(k => !(ordersColOrderRaw || []).includes(k) && k !== 'actions'),
+    'actions',
   ];
 
   const [ordersColVisRaw, setOrdersColVis] = useUserPreference<Record<string, boolean>>(
@@ -1875,7 +1877,7 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: key,
+          id: isActions ? undefined : key,
           colWidth: w,
           onResizeMove: handleItemsResizeMove,
           onResizeEnd: handleItemsResizeEnd,
@@ -1897,7 +1899,7 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: key,
+          id: isActions ? undefined : key,
           colWidth: w,
           onResizeMove: handleOrdersResizeMove,
           onResizeEnd: handleOrdersResizeEnd,
