@@ -1857,8 +1857,8 @@ const RFQs: React.FC = () => {
       try {
         const res = await salesService.orderAllFromRfq(rfqId, undefined);
         const alreadyExisted = !!(res as any).already_exists;
-        if (sendToProduction && !alreadyExisted) {
-          newCount++;
+        if (sendToProduction) {
+          if (!alreadyExisted) newCount++;
           try {
             await api.post(`/sales/customer-orders/${res.order_id}/update_status/`, { status: 'in_production', send_email: false });
           } catch {}
