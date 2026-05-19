@@ -898,14 +898,14 @@ class CustomerOrderSerializer(serializers.ModelSerializer):
 
 class CustomerOrderListItemSerializer(serializers.ModelSerializer):
     quote_item_id = serializers.IntegerField(source='quote_item.id', read_only=True)
-    product_name = serializers.CharField(source='quote_item.product.name', read_only=True)
+    product_name = serializers.SerializerMethodField()
     product_code = serializers.CharField(source='quote_item.product.code', read_only=True)
-    material_name = serializers.CharField(source='quote_item.material.name', read_only=True)
+    material_name = serializers.SerializerMethodField()
     material_code = serializers.CharField(source='quote_item.material.code', read_only=True)
     manufacturing_product_id = serializers.IntegerField(source='quote_item.manufacturing_product.id', read_only=True, allow_null=True, default=None)
-    manufacturing_product_name = serializers.CharField(source='quote_item.manufacturing_product.name', read_only=True)
+    manufacturing_product_name = serializers.SerializerMethodField()
     manufacturing_product_code = serializers.CharField(source='quote_item.manufacturing_product.code', read_only=True)
-    service_name = serializers.CharField(source='quote_item.service.name', read_only=True)
+    service_name = serializers.SerializerMethodField()
     service_code = serializers.CharField(source='quote_item.service.code', read_only=True)
     product_description = serializers.SerializerMethodField()
     internal_description = serializers.SerializerMethodField()
@@ -921,6 +921,40 @@ class CustomerOrderListItemSerializer(serializers.ModelSerializer):
             'service_name', 'service_code',
             'product_description', 'internal_description', 'net_total', 'supplier_name'
         ]
+
+    def _item_name(self, obj):
+        qi = getattr(obj, 'quote_item', None)
+        if qi and qi.item_name:
+            return qi.item_name
+        return None
+
+    def get_product_name(self, obj):
+        n = self._item_name(obj)
+        if n:
+            return n
+        qi = getattr(obj, 'quote_item', None)
+        return qi.product.name if qi and getattr(qi, 'product', None) else None
+
+    def get_material_name(self, obj):
+        n = self._item_name(obj)
+        if n:
+            return n
+        qi = getattr(obj, 'quote_item', None)
+        return qi.material.name if qi and getattr(qi, 'material', None) else None
+
+    def get_manufacturing_product_name(self, obj):
+        n = self._item_name(obj)
+        if n:
+            return n
+        qi = getattr(obj, 'quote_item', None)
+        return qi.manufacturing_product.name if qi and getattr(qi, 'manufacturing_product', None) else None
+
+    def get_service_name(self, obj):
+        n = self._item_name(obj)
+        if n:
+            return n
+        qi = getattr(obj, 'quote_item', None)
+        return qi.service.name if qi and getattr(qi, 'service', None) else None
 
     def get_product_description(self, obj):
         qi = getattr(obj, 'quote_item', None)
