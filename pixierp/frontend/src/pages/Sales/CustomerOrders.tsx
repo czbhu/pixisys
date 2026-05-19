@@ -221,7 +221,21 @@ interface CustomerOrder {
     };
     if (!id) return <th {...props}>{children}</th>;
     return (
-      <th {...props} ref={setNodeRef} style={style} {...otherAttributes} {...listeners}>
+      <th {...props} ref={setNodeRef} style={style} {...otherAttributes}>
+        <span
+          {...listeners}
+          style={{
+            cursor: isDragging ? 'grabbing' : 'grab',
+            marginRight: 4,
+            color: '#bbb',
+            fontSize: 13,
+            userSelect: 'none',
+            display: 'inline-block',
+            verticalAlign: 'middle',
+            lineHeight: 1,
+          }}
+          title="Húzza az oszlop sorrendjének megváltoztatásához"
+        >⠿</span>
         {children}
         {onResizeMove && (
           <div
@@ -456,7 +470,7 @@ interface CustomerOrder {
 
   // Column order — synced to server per user
   const [colOrderRaw, setColOrder] = useUserPreference<string[]>(
-    'customerOrders_colOrder',
+    'customerOrders_colOrder_v2',
     DEFAULT_ITEMS_COL_ORDER
   );
   // Merge: add new default keys that aren't saved, drop removed keys
@@ -472,7 +486,7 @@ interface CustomerOrder {
   const handleItemsResizeMove = useCallback((key: string, width: number) => setItemsLiveWidths(prev => ({ ...prev, [key]: width })), []);
   const handleItemsResizeEnd = useCallback((key: string, width: number) => { setItemsLiveWidths({}); setItemsColWidthsPref(prev => ({ ...(prev || {}), [key]: width })); }, [setItemsColWidthsPref]);
 
-  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { delay: 400, tolerance: 8 } }));
+  const dndSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
   const handleColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
@@ -485,7 +499,7 @@ interface CustomerOrder {
 
   // Orders-view column order + visibility (server-synced)
   const [ordersColOrderRaw, setOrdersColOrder] = useUserPreference<string[]>(
-    'customerOrders_ordersColOrder',
+    'customerOrders_ordersColOrder_v2',
     DEFAULT_ORDERS_COL_ORDER
   );
   const ordersColOrder = [
