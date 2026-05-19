@@ -65,7 +65,7 @@ interface ItemSelectorModalProps {
   onAdd: (payload: SelectedItemPayload) => Promise<any> | any;
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
-  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string };
+  initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean };
   initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null }>;
   initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
@@ -590,7 +590,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         items.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setManuCostItems(items);
         // Default: sync quantity ON for all cost items when loading a product
-        setSyncQtyRows(new Set(items.map(i => i.id)));
+        // Exception: items loaded from history had manually-configured quantities — keep sync OFF
+        if (!initialSelection?._fromHistory) {
+          setSyncQtyRows(new Set(items.map(i => i.id)));
+        }
         // Restore saved checkbox state; fall back to heuristic for legacy records
         if (typeof p.price_from_cost_calc === 'boolean') {
           setManuPriceFromCalc(p.price_from_cost_calc);

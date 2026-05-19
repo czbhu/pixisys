@@ -196,7 +196,6 @@ const RFQs: React.FC = () => {
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [historySelectedKeys, setHistorySelectedKeys] = useState<React.Key[]>([]);
   const [historyUseQty, setHistoryUseQty] = useState<Record<string | number, boolean>>({});
-  const [historyCostUseQty, setHistoryCostUseQty] = useState<Record<string | number, boolean>>({});
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -1514,7 +1513,6 @@ const RFQs: React.FC = () => {
     setHistoryLoading(true);
     setHistorySelectedKeys([]);
     setHistoryUseQty({});
-    setHistoryCostUseQty({});
     try {
       const res = await api.get('/sales/quote-requests/items_history/', { params: { company_id: companyId } });
       setHistoryItems(res.data || []);
@@ -1538,6 +1536,7 @@ const RFQs: React.FC = () => {
       net_unit_price: it.net_unit_price,
       vat_rate: it.vat_rate,
       description: it.description,
+      _fromHistory: true,
     }));
     setNewItems(prev => [...prev, ...newItemsToAdd]);
     const loadedRfqIds = new Set<number>();
@@ -1551,7 +1550,7 @@ const RFQs: React.FC = () => {
             id: baseId++,
             code: c.code,
             name: c.name,
-            quantity: (historyCostUseQty[c.id] !== false) ? c.quantity : 1,
+            quantity: c.quantity,
             unit: c.unit,
             net_unit_price: c.net_unit_price,
             net_total: c.net_total,
@@ -3672,7 +3671,8 @@ const RFQs: React.FC = () => {
             item_type: newItems[editIdx].item_type, 
             ref_id: newItems[editIdx].ref_id, 
             name: newItems[editIdx].name,
-            code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined)
+            code: (newItems[editIdx] as any).product_code || (newItems[editIdx] as any).code || (newItems[editIdx] as any).manufacturing_product?.code || (newItems[editIdx].item_type === 'manufacturing' ? 'EGYEDI' : undefined),
+            _fromHistory: !!(newItems[editIdx] as any)._fromHistory,
         } : undefined) : undefined}
         initialManuPayload={editIdx !== null && newItems[editIdx]?.item_type === 'manufacturing' ? cloneDraftRfqItem((newItems[editIdx] as any).pendingManuPayload) : undefined}
         initialValues={editIdx !== null ? (newItems[editIdx] ? {
@@ -3730,20 +3730,7 @@ const RFQs: React.FC = () => {
                     columns={[
                       { title: 'Cikkszám', dataIndex: 'code', key: 'code', width: 100 },
                       { title: 'Megnevezés', dataIndex: 'name', key: 'name' },
-                      { title: 'Menny.', key: 'qty', width: 130,
-                        render: (_: any, r: any) => (
-                          <Space size={6}>
-                            <span>{r.quantity} {r.unit}</span>
-                            <Tooltip title={(historyCostUseQty[r.id] !== false) ? 'Eredeti mennyiség másolva' : 'Mennyiség nem másolódik (1 lesz)'}>
-                              <Switch
-                                size="small"
-                                checked={historyCostUseQty[r.id] !== false}
-                                onChange={(v) => setHistoryCostUseQty(prev => ({ ...prev, [r.id]: v }))}
-                              />
-                            </Tooltip>
-                          </Space>
-                        ),
-                      },
+                      { title: 'Menny.', key: 'qty', width: 80, render: (_: any, r: any) => `${r.quantity} ${r.unit}` },
                       { title: 'Egységár', dataIndex: 'net_unit_price', key: 'nup', width: 130,
                         render: (v: number, r: any) => (
                           <Space size={4}>
