@@ -380,7 +380,7 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
 
   return (
     <Card size="small" style={{ marginTop: 16 }}>
-      <Collapse ghost defaultActiveKey={['1']}>
+      <Collapse ghost>
         <Panel
           header={
             <Space>
