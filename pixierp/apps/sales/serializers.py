@@ -6,7 +6,8 @@ from .models import (
     QuoteRequestItemAttachment, QuoteRequestAttachment, QuoteRequestInvitation,
     CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog,
     ApprovalRequest, CustomerOrderAttachment, ExtraWork,
-    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
+    POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment,
+    QuoteRequestEmailLog,
 )
 from apps.manufacturing.models import ManufacturingProduct, Project, Service
 from apps.manufacturing.serializers import ProjectSerializer, ManufacturingProductSerializer, ServiceSerializer as ManufacturingServiceSerializer
@@ -326,7 +327,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
 
     def _has_email_log(self, obj):
         try:
-            prefetched = getattr(obj, '_prefetched_objects_cache', {}).get('email_logs')
+            prefetched = getattr(obj, 'prefetched_email_logs', None)
             if prefetched is not None:
                 return bool(prefetched)
             return obj.email_logs.exists()
@@ -334,44 +335,72 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
             return False
 
     def _aggregate_order_status(self, obj):
-        """Returns (min_status, is_partial) where min_status is the lowest-ranked
-        non-cancelled CustomerOrderItem status across all order items linked to
-        this RFQ's items, and is_partial is True when not every RFQ item has at
-        least one (non-cancelled) order item.
-        Returns (None, None) if the RFQ has no linked customer-order state."""
+        """Returns (min_status, is_partial) — memoized per obj.id.
+        Uses prefetched_active_orders (to_attr from get_queryset) when available
+        to avoid N+1 queries in the list view."""
+        if not hasattr(self, '_agg_cache'):
+            self._agg_cache = {}
+        if obj.id in self._agg_cache:
+            return self._agg_cache[obj.id]
+        result = self._compute_aggregate_order_status(obj)
+        self._agg_cache[obj.id] = result
+        return result
+
+    def _compute_aggregate_order_status(self, obj):
+        """Inner implementation of _aggregate_order_status (not memoized)."""
         has_order_like_status = obj.status in set(self._ORDER_STATUS_LABELS.keys()) | {'ordered'}
-        try:
-            has_linked_orders = obj.customer_orders.exclude(status='cancelled').exists()
-        except Exception:
-            has_linked_orders = False
+
+        # Use prefetched customer_orders if available (to_attr='prefetched_active_orders')
+        prefetched_orders = getattr(obj, 'prefetched_active_orders', None)
+        if prefetched_orders is not None:
+            non_cancelled_orders = prefetched_orders  # already filtered to exclude cancelled
+            has_linked_orders = bool(non_cancelled_orders)
+        else:
+            try:
+                non_cancelled_orders = list(obj.customer_orders.exclude(status='cancelled'))
+                has_linked_orders = bool(non_cancelled_orders)
+            except Exception:
+                has_linked_orders = False
+                non_cancelled_orders = []
+
         if not has_order_like_status and not has_linked_orders:
             return None, None
+
         try:
             rfq_items = list(obj.items.all())
             if not rfq_items:
                 return None, None
-            rfq_item_ids = [i.id for i in rfq_items]
-            order_items = CustomerOrderItem.objects.filter(
-                quote_item_id__in=rfq_item_ids,
-            ).exclude(customer_order__status='cancelled')
+            rfq_item_ids = {i.id for i in rfq_items}
+
+            # Collect order items — use nested prefetch when available
+            order_items = []
+            if prefetched_orders is not None:
+                for order in non_cancelled_orders:
+                    for oi in order.items.all():
+                        if oi.quote_item_id in rfq_item_ids and oi.status != 'cancelled':
+                            order_items.append(oi)
+            else:
+                order_items = list(CustomerOrderItem.objects.filter(
+                    quote_item_id__in=list(rfq_item_ids),
+                ).exclude(customer_order__status='cancelled'))
+
             statuses = [oi.status for oi in order_items if oi.status != 'cancelled']
             if not statuses:
                 return None, None
+
             min_status = min(statuses, key=lambda s: self._ORDER_STATUS_RANK.get(s, 50))
             ordered_rfq_item_ids = {oi.quote_item_id for oi in order_items}
             is_partial = len(ordered_rfq_item_ids) < len(rfq_item_ids)
-            # Promote to 'invoiced' if every linked (non-cancelled) CustomerOrder has invoice_number set
+
+            # Promote to 'invoiced' if every linked non-cancelled order has invoice_number
             try:
-                order_ids = {oi.customer_order_id for oi in order_items}
-                if order_ids:
-                    from .models import CustomerOrder
-                    orders_qs = CustomerOrder.objects.filter(id__in=order_ids).exclude(status='cancelled')
-                    total_orders = orders_qs.count()
-                    invoiced_orders = orders_qs.exclude(invoice_number__isnull=True).exclude(invoice_number='').count()
-                    if total_orders > 0 and invoiced_orders == total_orders:
+                if non_cancelled_orders:
+                    invoiced = sum(1 for o in non_cancelled_orders if o.invoice_number)
+                    if invoiced == len(non_cancelled_orders):
                         return 'invoiced', is_partial
             except Exception:
                 pass
+
             return min_status, is_partial
         except Exception:
             return None, None
