@@ -476,6 +476,7 @@ interface CustomerOrder {
 
   const handleColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
+    if (active.id === 'actions' || over.id === 'actions') return;
     setColOrder(prev => {
       const oldIndex = (prev || DEFAULT_ITEMS_COL_ORDER).indexOf(active.id as string);
       const newIndex = (prev || DEFAULT_ITEMS_COL_ORDER).indexOf(over.id as string);
@@ -509,6 +510,7 @@ interface CustomerOrder {
 
   const handleOrdersColDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
+    if (active.id === 'actions' || over.id === 'actions') return;
     setOrdersColOrder(prev => {
       const oldIndex = (prev || DEFAULT_ORDERS_COL_ORDER).indexOf(active.id as string);
       const newIndex = (prev || DEFAULT_ORDERS_COL_ORDER).indexOf(over.id as string);
@@ -1707,7 +1709,7 @@ interface CustomerOrder {
       ),
     },
     {
-      title: 'Tétel neve', key: 'name', ellipsis: true, width: 220,
+      title: 'Tétel neve', key: 'name', width: 220,
       sorter: (a: any, b: any) => {
         const nameA = a.product_name || a.manufacturing_product_name || a.material_name || a.service_name || '';
         const nameB = b.product_name || b.manufacturing_product_name || b.material_name || b.service_name || '';
@@ -1717,12 +1719,10 @@ interface CustomerOrder {
         const name = record.product_name || record.manufacturing_product_name || record.material_name || record.service_name || '-';
         const code = record.product_code || record.manufacturing_product_code || record.material_code || record.service_code;
         return (
-          <Tooltip title={name} getPopupContainer={() => document.body}>
-            <div>
-              <div style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</div>
-              {code && <div style={{ fontSize: '11px', color: '#666' }}>{code}</div>}
-            </div>
-          </Tooltip>
+          <div>
+            <div style={{ fontWeight: 500, wordBreak: 'break-word', whiteSpace: 'normal' }}>{name}</div>
+            {code && <div style={{ fontSize: '11px', color: '#666' }}>{code}</div>}
+          </div>
         );
       },
     },
@@ -1877,7 +1877,7 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: key,
+          id: isActions ? undefined : key,
           colWidth: isActions ? undefined : w,
           onResizeMove: isActions ? undefined : handleItemsResizeMove,
           onResizeEnd: isActions ? undefined : handleItemsResizeEnd,
@@ -1899,7 +1899,7 @@ interface CustomerOrder {
         ...col,
         ...(w ? { width: w } : {}),
         onHeaderCell: () => ({
-          id: key,
+          id: isActions ? undefined : key,
           colWidth: isActions ? undefined : w,
           onResizeMove: isActions ? undefined : handleOrdersResizeMove,
           onResizeEnd: isActions ? undefined : handleOrdersResizeEnd,
