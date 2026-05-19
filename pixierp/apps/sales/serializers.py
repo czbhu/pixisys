@@ -1373,6 +1373,8 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     description = serializers.CharField(source='customer_order_item.description', read_only=True, default='')
     internal_description = serializers.CharField(source='customer_order_item.remark', read_only=True, default='')
     net_total = serializers.SerializerMethodField()
+
+    class Meta:
         model = DeliveryNoteItem
         fields = '__all__'
 
