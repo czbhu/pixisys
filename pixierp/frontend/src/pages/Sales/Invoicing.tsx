@@ -344,19 +344,6 @@ const Invoicing: React.FC = () => {
       render: (_, record) => renderCustomerName(record),
     },
     {
-      title: 'Tétel neve',
-      key: 'item_names',
-      render: (_, record) => (
-        <div>
-          {record.items?.map((item, i) => (
-            <div key={i} style={{ fontSize: 12, lineHeight: '18px' }}>
-              {item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel'}
-            </div>
-          ))}
-        </div>
-      ),
-    },
-    {
       title: 'Darabszám',
       key: 'quantities',
       width: 90,
