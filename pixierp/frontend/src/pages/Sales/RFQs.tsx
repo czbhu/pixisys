@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useClipboardImagePaste } from '../../hooks/useClipboardImagePaste';
 import EnhancedTable from '../../components/EnhancedTable';
 import type { ColumnsType } from 'antd/es/table';
-import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, InputNumber, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer, Popover } from 'antd';
+import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, Form, Input, InputNumber, DatePicker, Select, Row, Col, Divider, Upload, Checkbox, List, Grid, Drawer, Popover, Switch } from 'antd';
 // @ts-ignore
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
@@ -195,6 +195,7 @@ const RFQs: React.FC = () => {
   const [historyLoading, setHistoryLoading] = useState(false);
   const [historyItems, setHistoryItems] = useState<any[]>([]);
   const [historySelectedKeys, setHistorySelectedKeys] = useState<React.Key[]>([]);
+  const [historyUseQty, setHistoryUseQty] = useState<Record<string | number, boolean>>({});
 
   const lastPasteTargetRef = useRef<{ type: 'rfq' | 'item', id: number } | null>(null);
   const rfqLevelRemarkRef = useRef<Record<number, string>>({});
@@ -1511,6 +1512,7 @@ const RFQs: React.FC = () => {
     setHistoryOpen(true);
     setHistoryLoading(true);
     setHistorySelectedKeys([]);
+    setHistoryUseQty({});
     try {
       const res = await api.get('/sales/quote-requests/items_history/', { params: { company_id: companyId } });
       setHistoryItems(res.data || []);
@@ -1529,7 +1531,7 @@ const RFQs: React.FC = () => {
       ref_id: it.ref_id,
       name: it.name,
       code: it.code,
-      quantity: it.quantity,
+      quantity: historyUseQty[it.item_id] ? it.quantity : 1,
       unit: it.unit,
       net_unit_price: it.net_unit_price,
       vat_rate: it.vat_rate,
@@ -3762,7 +3764,20 @@ const RFQs: React.FC = () => {
               },
               { title: 'Leírás', dataIndex: 'description', key: 'desc', ellipsis: true, render: (v: string) => stripHtml(v) },
               { title: 'Belső leírás', dataIndex: 'internal_description', key: 'idesc', ellipsis: true, render: (v: string) => stripHtml(v) },
-              { title: 'Darabszám', key: 'qty', width: 90, render: (_: any, r: any) => `${r.quantity} ${r.unit}` },
+              { title: 'Darabszám', key: 'qty', width: 130,
+                render: (_: any, r: any) => (
+                  <Space size={6}>
+                    <span>{r.quantity} {r.unit}</span>
+                    <Tooltip title={historyUseQty[r.item_id] ? 'Eredeti mennyiség másolva' : 'Mennyiség nem másolódik (1 lesz)'}>
+                      <Switch
+                        size="small"
+                        checked={!!historyUseQty[r.item_id]}
+                        onChange={(v) => setHistoryUseQty(prev => ({ ...prev, [r.item_id]: v }))}
+                      />
+                    </Tooltip>
+                  </Space>
+                ),
+              },
               { title: 'Nettó egységár', dataIndex: 'net_unit_price', key: 'nup', width: 125,
                 render: (v: number) => `${Math.round(v).toLocaleString('hu-HU')} Ft` },
               { title: 'Nettó összesen', dataIndex: 'net_total', key: 'ntot', width: 125,
