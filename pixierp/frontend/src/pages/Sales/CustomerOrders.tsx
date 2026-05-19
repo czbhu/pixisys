@@ -1707,7 +1707,7 @@ interface CustomerOrder {
       ),
     },
     {
-      title: 'Tétel neve', key: 'name', ellipsis: true,
+      title: 'Tétel neve', key: 'name', ellipsis: true, width: 220,
       sorter: (a: any, b: any) => {
         const nameA = a.product_name || a.manufacturing_product_name || a.material_name || a.service_name || '';
         const nameB = b.product_name || b.manufacturing_product_name || b.material_name || b.service_name || '';
