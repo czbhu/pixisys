@@ -2017,11 +2017,11 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         if existing_count == 0:
             order_number = rfq_num
         else:
-            order_number = f"{rfq_num}-{existing_count + 1}"
+            order_number = f"{rfq_num}{existing_count + 1}"
         # Collision safety
         while CustomerOrder.objects.filter(order_number=order_number).exists():
             existing_count += 1
-            order_number = f"{rfq_num}-{existing_count}"
+            order_number = f"{rfq_num}{existing_count}"
         
         # Optional deadline from request
         deadline_raw = request.data.get('deadline') or None
