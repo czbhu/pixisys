@@ -926,16 +926,8 @@ const RFQs: React.FC = () => {
               <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'quoted'); message.success('Lezárva'); loadData(); }} />
             </Tooltip>
           )}
-          <Tooltip title="Másolás">
-            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async () => {
-              try {
-                const res = await salesService.copyQuoteRequest(record.id);
-                message.success(`Árajánlat másolva: ${res.number}`);
-                navigate(`/sales/rfqs/${res.id}`);
-              } catch (e: any) {
-                message.error(e?.response?.data?.error || 'Nem sikerült másolni');
-              }
-            }} />
+          <Tooltip title="Másolás (preload)">
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={() => openCreateFromCopy(record)} />
           </Tooltip>
 
         </Space>
@@ -1267,17 +1259,8 @@ const RFQs: React.FC = () => {
           <Tooltip title="Küldés">
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
-          <Tooltip title="Másolás">
-            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={async (e) => {
-              e.stopPropagation();
-              try {
-                const res = await salesService.copyQuoteRequest(r.rfq_id);
-                message.success(`Árajánlat másolva: ${res.number}`);
-                navigate(`/sales/rfqs/${res.id}`);
-              } catch (ex: any) {
-                message.error(ex?.response?.data?.error || 'Nem sikerült másolni');
-              }
-            }} />
+          <Tooltip title="Másolás (preload)">
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = rfqs.find((q: any) => q.id === r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq); }} />
           </Tooltip>
           {r.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
@@ -1724,6 +1707,79 @@ const RFQs: React.FC = () => {
       if (pendingContactId) vals.contact_ids = [pendingContactId];
       setPendingFormValues(vals);
     }
+  };
+
+  const openCreateFromCopy = async (rfqRecord: any) => {
+    form.resetFields();
+    setNewItems([]);
+    setNewCosts([]);
+    setRfqFiles([]);
+    setRfqFileRemarks({});
+    setRfqFileDisplayNames({});
+    clearDraft();
+
+    const userName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
+    setCurrentUserName(userName);
+
+    const today = dayjs();
+    const nn = await salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD'));
+    setNextNumber(nn.number);
+
+    try {
+      const currs = await manufacturingService.getCurrencies();
+      setCurrencyList(currs);
+      const def = currs.find((c: any) => c.is_default);
+      if (def?.code) setCurrency(def.code.toUpperCase());
+    } catch {}
+
+    setValidityDays(rfqRecord.validity_days || 30);
+    setPartialOrderAllowed(rfqRecord.partial_order_allowed ?? true);
+
+    // Load company list + contacts for the copied RFQ's company
+    const companyId = rfqRecord.company?.id;
+    if (companyId) {
+      try {
+        const list = await crmService.getCompanies({ is_customer: true, compact: true });
+        const all: any[] = ((list as any).results ?? list) || [];
+        if (!all.find((c: any) => String(c.id) === String(companyId))) {
+          try { const co = await crmService.getCompany(companyId); all.unshift(co); } catch {}
+        }
+        setCompanies(all);
+      } catch {}
+      try {
+        const contactList = await crmService.getContactsByCompany(companyId);
+        setContacts(((contactList as any).results ?? contactList) || []);
+      } catch {}
+    }
+
+    // Map existing items to newItems format
+    const mappedItems = (rfqRecord.items || []).map((item: any, idx: number) => ({
+      id: Date.now() + idx,
+      item_type: item.item_type || 'product',
+      ref_id: item.product?.id ?? item.manufacturing_product?.id ?? item.service?.id ?? item.ref_id,
+      name: item.name || item.product_name || item.manufacturing_product_name || item.service_name || '',
+      code: item.code || item.product?.code || item.manufacturing_product?.code || item.service?.code,
+      quantity: Number(item.quantity) || 1,
+      unit: item.unit || 'db',
+      net_unit_price: Number(item.net_unit_price) || 0,
+      vat_rate: item.vat_rate ?? 27,
+      description: item.description || '',
+      discount_percent: item.discount_percent,
+      discount_amount: item.discount_amount,
+      _fromHistory: true,
+    }));
+    setNewItems(mappedItems);
+
+    setCreateOpen(true);
+
+    const formValues: Record<string, any> = {
+      issue_date: today,
+      title: rfqRecord.title || '',
+      description: rfqRecord.description || '',
+    };
+    if (companyId) formValues.company_id = companyId;
+    if (rfqRecord.contacts?.length) formValues.contact_ids = rfqRecord.contacts.map((c: any) => c.id);
+    setPendingFormValues(formValues);
   };
 
   const DRAFT_KEY = 'rfq_create_draft';
