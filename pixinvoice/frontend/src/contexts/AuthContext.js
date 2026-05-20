@@ -24,8 +24,19 @@ export const AuthProvider = ({ children }) => {
         const savedUser = localStorage.getItem('user');
         
         if (token && savedUser) {
-            setUser(normalizeUser(JSON.parse(savedUser)));
+            const parsed = normalizeUser(JSON.parse(savedUser));
+            setUser(parsed);
             axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            // Refresh profile from server to get up-to-date allowed_menus
+            axios.get('/api/auth/profile/')
+                .then(res => {
+                    const fresh = normalizeUser(res.data);
+                    setUser(fresh);
+                    localStorage.setItem('user', JSON.stringify(fresh));
+                })
+                .catch(() => {
+                    // Token may be expired - keep cached user
+                });
         }
         setLoading(false);
     }, []);
