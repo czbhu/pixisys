@@ -1303,27 +1303,6 @@ const RFQs: React.FC = () => {
       const issueBase = values.issue_date || dayjs();
       const computedValidUntil = issueBase.add(validityDays, 'day').format('YYYY-MM-DD');
 
-      if (!values.deadline) {
-        const suggestedDate = dayjs(values.issue_date || dayjs()).add(14, 'day');
-        const confirmed = await new Promise<boolean>((resolve) => {
-          Modal.confirm({
-            title: 'Nincs határidő megadva',
-            content: `Megadjunk egy 14 napos határidőt? (${suggestedDate.format('YYYY. MM. DD.')})`,
-            okText: 'Igen',
-            cancelText: 'Mégsem',
-            onOk: () => resolve(true),
-            onCancel: () => resolve(false),
-          });
-        });
-
-        if (confirmed) {
-          values.deadline = suggestedDate;
-          form.setFieldValue('deadline', suggestedDate);
-        } else {
-          return;
-        }
-      }
-
       setCreating(true);
 
       // Helper: resolve item display name

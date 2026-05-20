@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, useLocation, useSearchParams } from 'react-router-dom';
-import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert, Upload, Tooltip } from 'antd';
+import { Card, Tag, Divider, Row, Col, Form, Select, Input, Button, message, Modal, Spin, Space, List, DatePicker, Popover, Steps, Dropdown, Alert, Upload, Tooltip, Switch } from 'antd';
 import { ItemsTable } from '../../components/Sales/ItemsTable';
 import { ItemSelectorModal, SelectedItemPayload } from '../../components/Sales/ItemSelectorModal';
 import ExtraWorksPanel from '../../components/Sales/ExtraWorksPanel';
@@ -9,6 +9,8 @@ import dayjs from 'dayjs';
 import { LeftOutlined, TeamOutlined, CheckCircleOutlined, RocketOutlined, CheckOutlined, CarOutlined, UserAddOutlined, UserSwitchOutlined, ClockCircleOutlined, HistoryOutlined, MessageOutlined, FileTextOutlined, FileDoneOutlined, SettingOutlined, SmileOutlined, CloseCircleOutlined, UploadOutlined, DeleteOutlined, PaperClipOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { salesService } from '../../services/salesService';
+import { crmService } from '../../services/crmService';
+import { manufacturingService } from '../../services/manufacturingService';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTimeTracker } from '../../contexts/TimeTrackerContext';
 import { Table } from 'antd';
@@ -47,6 +49,15 @@ const CustomerOrderDetail: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [order, setOrder] = useState<any>();
   const [formBasic] = Form.useForm();
+  const [editMode, setEditMode] = useState(false);
+  const [editCompanies, setEditCompanies] = useState<any[]>([]);
+  const [editContacts, setEditContacts] = useState<any[]>([]);
+  const [editCurrencies, setEditCurrencies] = useState<string[]>([]);
+  const [editProjects, setEditProjects] = useState<any[]>([]);
+  const [editCompanyId, setEditCompanyId] = useState<number | string | null>(null);
+  const [editContactIds, setEditContactIds] = useState<number[]>([]);
+  const [editCurrencyCode, setEditCurrencyCode] = useState<string>('HUF');
+  const [editProjectId, setEditProjectId] = useState<number | null>(null);
   const [orderFiles, setOrderFiles] = useState<UploadFile<any>[]>([]);
   const [orderAttachments, setOrderAttachments] = useState<any[]>([]);
   const [attachUploading, setAttachUploading] = useState(false);
@@ -136,7 +147,22 @@ const CustomerOrderDetail: React.FC = () => {
     load();
   }, [load]);
 
-  // Auto-open edit modal when ?edit_item=<coiId> is present
+  // Load select options when edit mode is turned on
+  useEffect(() => {
+    if (!editMode || !order) return;
+    const rfq = order.quote_request || {};
+    setEditCompanyId(rfq.company?.id ?? null);
+    setEditContactIds((rfq.contacts || []).map((c: any) => c.id));
+    setEditCurrencyCode(rfq.currency_code || 'HUF');
+    setEditProjectId(rfq.project?.id ?? order.project ?? null);
+    crmService.getCompanies({ is_customer: true, compact: true }).then((res: any) => setEditCompanies(res.results ?? res)).catch(() => {});
+    crmService.getContacts().then((res: any) => setEditContacts(res.results ?? res)).catch(() => {});
+    manufacturingService.getActiveCurrencies().then((list: any[]) => setEditCurrencies(list.map((c: any) => c.code))).catch(() => setEditCurrencies(['HUF', 'EUR', 'USD']));
+    manufacturingService.getProjects().then((list: any[]) => setEditProjects(list)).catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode]);
+
+  // Auto-open inline edit when ?edit_item=<coiId> is present
   useEffect(() => {
     const editItemId = searchParams.get('edit_item');
     if (!editItemId || !order?.items) return;
@@ -145,8 +171,21 @@ const CustomerOrderDetail: React.FC = () => {
     setEditContext({ item });
     setSelectorType(item.item_type || 'manufacturing');
     setSelectorExpandCosts(true);
-    setSelectorOpen(true);
   }, [order, searchParams]);
+
+  // Auto-open the first item's edit panel on load (unless already editing or URL param present)
+  useEffect(() => {
+    if (!order?.items?.length) return;
+    if (searchParams.get('edit_item')) return;
+    if (editContext) return;
+    const sorted = [...order.items].sort((a: any, b: any) => (a.sort_order || 0) - (b.sort_order || 0));
+    const first = sorted[0];
+    if (first) {
+      setEditContext({ item: first });
+      setSelectorType(first.item_type || 'manufacturing');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [order?.items]);
 
   useEffect(() => {
     (async () => {
@@ -257,7 +296,6 @@ const CustomerOrderDetail: React.FC = () => {
         }
       }
       message.success('Tétel frissítve');
-      setSelectorOpen(false);
       setEditContext(null);
       load();
     } catch {
@@ -482,6 +520,37 @@ const CustomerOrderDetail: React.FC = () => {
           />
         )}
 
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+          <Switch checked={editMode} onChange={setEditMode} size="small" />
+          <span style={{ color: '#555', fontSize: 13 }}>Szerkesztés</span>
+          {editMode && (
+            <Button
+              type="primary"
+              size="small"
+              onClick={async () => {
+                const vals = formBasic.getFieldsValue();
+                const rfqData = order?.quote_request || {};
+                try {
+                  await salesService.updateQuoteRequestBasic(rfqData.id, {
+                    title: vals.title,
+                    description: vals.description,
+                    internal_description: vals.internal_description,
+                    ...(vals.issue_date ? { issue_date: vals.issue_date.format('YYYY-MM-DD') } : {}),
+                    company_id: editCompanyId ?? null,
+                    contact_ids: editContactIds,
+                    currency_code: editCurrencyCode,
+                    project_id: editProjectId ?? null,
+                  });
+                  message.success('Mentve');
+                  setEditMode(false);
+                  load();
+                } catch {
+                  message.error('Nem sikerült menteni');
+                }
+              }}
+            >Mentés</Button>
+          )}
+        </div>
         <Form layout="vertical" form={formBasic}>
           <Row gutter={12}>
             <Col span={6}>
@@ -496,7 +565,7 @@ const CustomerOrderDetail: React.FC = () => {
             </Col>
             <Col span={6}>
               <Form.Item label="Keltezés" name="issue_date">
-                <DatePicker style={{ width: '100%' }} disabled />
+                <DatePicker style={{ width: '100%' }} disabled={!editMode} />
               </Form.Item>
             </Col>
             <Col span={6}>
@@ -523,43 +592,94 @@ const CustomerOrderDetail: React.FC = () => {
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item label="Cég" name="company_id">
-                <Input disabled />
+                {editMode ? (
+                  <Select
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    placeholder="Válassz céget"
+                    style={{ width: '100%' }}
+                    value={editCompanyId}
+                    onChange={async (val) => {
+                      setEditCompanyId(val ?? null);
+                      setEditContactIds([]);
+                      if (val) {
+                        const list = await crmService.getContactsByCompany(val).catch(() => ({ results: [] }));
+                        setEditContacts((list as any).results ?? list);
+                      } else {
+                        const list = await crmService.getContacts().catch(() => ({ results: [] }));
+                        setEditContacts((list as any).results ?? list);
+                      }
+                    }}
+                    options={editCompanies.map((c: any) => ({ value: c.id, label: c.name }))}
+                  />
+                ) : <Input disabled />}
               </Form.Item>
             </Col>
             <Col span={16}>
               <Form.Item label="Kapcsolattartók" name="contact_ids">
-                <Input disabled />
+                {editMode ? (
+                  <Select
+                    mode="multiple"
+                    allowClear
+                    showSearch
+                    optionFilterProp="label"
+                    placeholder="Válassz kapcsolattartókat"
+                    style={{ width: '100%' }}
+                    value={editContactIds}
+                    onChange={(val) => setEditContactIds(val)}
+                    options={editContacts.map((c: any) => ({ value: c.id, label: c.name || `#${c.id}` }))}
+                  />
+                ) : <Input disabled />}
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={14}>
               <Form.Item label="Megnevezés" name="title">
-                <Input disabled />
+                <Input disabled={!editMode} />
               </Form.Item>
             </Col>
             <Col span={10}>
               <Form.Item label="Projekt" name="project_id">
-                <Input disabled />
+                {editMode ? (
+                  <Select
+                    showSearch
+                    allowClear
+                    optionFilterProp="label"
+                    placeholder="Válassz projektet"
+                    style={{ width: '100%' }}
+                    value={editProjectId}
+                    onChange={(val) => setEditProjectId(val ?? null)}
+                    options={editProjects.map((p: any) => ({ value: p.id, label: p.name }))}
+                  />
+                ) : <Input disabled />}
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={12}>
               <Form.Item label="Leírás" name="description">
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled />
+                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled={!editMode} />
               </Form.Item>
             </Col>
             <Col span={12}>
               <Form.Item label="Belső leírás" name="internal_description">
-                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled />
+                <TextArea autoSize={{ minRows: 1, maxRows: 6 }} disabled={!editMode} />
               </Form.Item>
             </Col>
           </Row>
           <Row gutter={12}>
             <Col span={8}>
               <Form.Item label="Pénznem" name="currency_code">
-                <Input disabled />
+                {editMode ? (
+                  <Select
+                    style={{ width: '100%' }}
+                    value={editCurrencyCode}
+                    onChange={setEditCurrencyCode}
+                    options={editCurrencies.map((c) => ({ value: c, label: c }))}
+                  />
+                ) : <Input disabled />}
               </Form.Item>
             </Col>
             <Col span={16} style={{ display: 'flex', alignItems: 'end', gap: 8 }}>
@@ -695,7 +815,38 @@ const CustomerOrderDetail: React.FC = () => {
           currency={rfq?.currency_code || 'HUF'}
           hidePrices={hidePrices}
           hideDetailLink
+          hideCopyButton
           showInlineSubItems
+          inlineEditItemId={editContext?.item?.id ?? null}
+          inlineEditContent={editContext ? (
+            <ItemSelectorModal
+              key={editContext.item.id}
+              open={true}
+              renderInline={true}
+              defaultType={editContext.item.item_type || selectorType}
+              onCancel={() => { setEditContext(null); setSelectorExpandCosts(false); }}
+              onAdd={onEditSelected}
+              mode="edit"
+              rfqId={rfq?.id ? Number(rfq.id) : undefined}
+              rfqCurrency={rfq?.currency_code || 'HUF'}
+              expandCosts={selectorExpandCosts}
+              initialSelection={{
+                item_type: editContext.item.item_type,
+                ref_id: (editContext.item.quote_item?.product || editContext.item.quote_item?.manufacturing_product || editContext.item.quote_item?.service) as number,
+                name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name),
+              }}
+              initialValues={{
+                quantity: Number(editContext.item.quantity),
+                unit: editContext.item.unit,
+                net_unit_price: Number(editContext.item.net_unit_price),
+                vat_rate: Number(editContext.item.vat_rate),
+                description: editContext.item.description,
+                discount_percent: Number(editContext.item.discount_percent || 0),
+                discount_amount: Number(editContext.item.discount_amount || 0),
+              }}
+              quoteItemId={editContext.item.quote_item?.id}
+            />
+          ) : undefined}
           onEditItem={(() => {
             // Számlázás után már nem szerkeszthető
             if (order.invoice_number) return undefined;
@@ -713,7 +864,6 @@ const CustomerOrderDetail: React.FC = () => {
             return (item: any) => {
               setEditContext({ item });
               setSelectorType(item.item_type);
-              setSelectorOpen(true);
             };
           })()}
         />
@@ -922,33 +1072,6 @@ const CustomerOrderDetail: React.FC = () => {
         objectTitle={order.order_number || ''}
       />
 
-      {selectorOpen && (
-        <ItemSelectorModal
-          open={selectorOpen}
-          defaultType={selectorType}
-          onCancel={() => { setSelectorOpen(false); setEditContext(null); setSelectorExpandCosts(false); }}
-          onAdd={onEditSelected}
-          mode="edit"
-          rfqId={rfq?.id ? Number(rfq.id) : undefined}
-          rfqCurrency={rfq?.currency_code || 'HUF'}
-          expandCosts={selectorExpandCosts}
-          initialSelection={editContext ? {
-            item_type: editContext.item.item_type,
-            ref_id: (editContext.item.quote_item?.product || editContext.item.quote_item?.manufacturing_product || editContext.item.quote_item?.service) as number,
-            name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name),
-          } : undefined}
-          initialValues={editContext ? {
-            quantity: Number(editContext.item.quantity),
-            unit: editContext.item.unit,
-            net_unit_price: Number(editContext.item.net_unit_price),
-            vat_rate: Number(editContext.item.vat_rate),
-            description: editContext.item.description,
-            discount_percent: Number(editContext.item.discount_percent || 0),
-            discount_amount: Number(editContext.item.discount_amount || 0),
-          } : undefined}
-          quoteItemId={editContext?.item?.quote_item?.id}
-        />
-      )}
     </div>
   );
 };

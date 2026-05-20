@@ -214,10 +214,27 @@ class CompanyViewSet(viewsets.ViewSet):
             "vatNumber": number_part
         }
         
+        # Transient VIES error codes that mean "try again", not "invalid VAT"
+        TRANSIENT_ERRORS = {
+            'MS_MAX_CONCURRENT_REQ': 'A VIES szerver jelenleg túlterhelt (MS_MAX_CONCURRENT_REQ) – próbálja újra pár másodperc múlva.',
+            'GLOBAL_MAX_CONCURRENT_REQ': 'A VIES szerver jelenleg túlterhelt – próbálja újra pár másodperc múlva.',
+            'MS_UNAVAILABLE': 'A VIES szerver átmenetileg nem elérhető – próbálja újra később.',
+            'SERVICE_UNAVAILABLE': 'A VIES szolgáltatás átmenetileg nem elérhető – próbálja újra később.',
+            'MS_MAX_CONCURRENT_REQ_TIME': 'A VIES szerver jelenleg túlterhelt – próbálja újra pár másodperc múlva.',
+            'TIMEOUT': 'A VIES szerver nem válaszolt időben – próbálja újra.',
+        }
         try:
             resp = requests.post(url, json=payload, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
+                # Check for transient server-side errors (actionSucceed=false with errorWrappers)
+                if not data.get('actionSucceed', True):
+                    error_codes = [w.get('error', '') for w in data.get('errorWrappers', [])]
+                    for code in error_codes:
+                        if code in TRANSIENT_ERRORS:
+                            return Response({'error': TRANSIENT_ERRORS[code]}, status=503)
+                    # Unknown error wrapper – surface as a retriable error
+                    return Response({'error': f'VIES hiba: {", ".join(error_codes) or "ismeretlen hiba"}'}, status=503)
                 return Response(data)
             else:
                 return Response({'error': 'VIES API hiba', 'details': resp.text}, status=resp.status_code)

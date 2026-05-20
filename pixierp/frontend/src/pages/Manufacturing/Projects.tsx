@@ -15,6 +15,7 @@ import {
     Tag,
     Tooltip,
     Popconfirm,
+    Popover,
     Row,
     Col
 } from 'antd';
@@ -40,6 +41,7 @@ const Projects: React.FC = () => {
     const [projects, setProjects] = useState<Project[]>([]);
     const [filtered, setFiltered] = useState<Project[]>([]);
     const [query, setQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState<string>('open');
     const [contacts, setContacts] = useState<any[]>([]);
     const [companies, setCompanies] = useState<any[]>([]);
     const [employees, setEmployees] = useState<any[]>([]);
@@ -59,19 +61,22 @@ const Projects: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        if (!query) {
-            setFiltered(projects);
-        } else {
-            setFiltered(projects.filter(p =>
+        let result = projects;
+        if (statusFilter !== 'all') {
+            result = result.filter(p => p.status === statusFilter);
+        }
+        if (query) {
+            result = result.filter(p =>
                 searchInMultipleFields(query, [
                     p.name,
                     p.description,
                     ...(p.contact_names || []),
                     p.project_manager_name,
                 ])
-            ));
+            );
         }
-    }, [projects, query]);
+        setFiltered(result);
+    }, [projects, query, statusFilter]);
 
     // Ha ?action=create van az URL-ben, auto-nyissuk meg az új projekt modalt
     useEffect(() => {
@@ -212,6 +217,21 @@ const Projects: React.FC = () => {
         }
     };
 
+    const PROJECT_STATUS_MAP: Record<string, { color: string; text: string }> = {
+        open: { color: 'green', text: 'Nyitott' },
+        closed: { color: 'red', text: 'Zárt' },
+    };
+
+    const handleStatusChange = async (projectId: number, newStatus: string) => {
+        try {
+            const updated = await manufacturingService.patchProject(projectId, { status: newStatus as 'open' | 'closed' });
+            setProjects(prev => prev.map(p => p.id === projectId ? { ...p, status: updated.status } : p));
+            message.success('Projekt státusza frissítve');
+        } catch (err) {
+            message.error('Hiba a státusz frissítésekor');
+        }
+    };
+
     const handleDelete = async (id: number) => {
         try {
             await manufacturingService.deleteProject(id);
@@ -300,11 +320,30 @@ const Projects: React.FC = () => {
             dataIndex: 'status',
             key: 'status',
             width: 100,
-            render: (status: string) => (
-                <Tag color={status === 'open' ? 'green' : 'red'}>
-                    {status === 'open' ? 'Nyitott' : 'Zárt'}
-                </Tag>
-            ),
+            render: (status: string, record: Project) => {
+                const { color, text } = PROJECT_STATUS_MAP[status] || { color: 'default', text: status };
+                const content = (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                        {Object.entries(PROJECT_STATUS_MAP).map(([s, { text: t }]) => (
+                            <Button
+                                key={s}
+                                size="small"
+                                type={s === status ? 'primary' : 'text'}
+                                disabled={s === status}
+                                style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+                                onClick={() => handleStatusChange(record.id, s)}
+                            >
+                                {t}
+                            </Button>
+                        ))}
+                    </div>
+                );
+                return (
+                    <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+                        <Tag color={color} style={{ cursor: 'pointer' }}>{text}</Tag>
+                    </Popover>
+                );
+            },
             sorter: (a: Project, b: Project) => (a.status || '').localeCompare(b.status || ''),
         },
         {
@@ -373,6 +412,18 @@ const Projects: React.FC = () => {
                     searchValue={query}
                     onSearchChange={setQuery}
                     searchPlaceholder="Keresés (név, leírás, kapcsolattartók, projektmenedzser)..."
+                    toolbarExtra={
+                        <Select
+                            size="small"
+                            value={statusFilter}
+                            onChange={setStatusFilter}
+                            style={{ width: 110 }}
+                        >
+                            <Option value="open">Nyitott</Option>
+                            <Option value="closed">Zárt</Option>
+                            <Option value="all">Összes</Option>
+                        </Select>
+                    }
                     columns={columns}
                     dataSource={filtered}
                     pagination={{

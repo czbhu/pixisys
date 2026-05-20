@@ -145,6 +145,11 @@ class ManufacturingService {
         return response.data;
     }
 
+    async patchProject(id: number, data: Partial<CreateProjectData>): Promise<Project> {
+        const response = await api.patch(`/manufacturing/projects/${id}/`, data);
+        return response.data;
+    }
+
     async deleteProject(id: number): Promise<void> {
         await api.delete(`/manufacturing/projects/${id}/`);
     }

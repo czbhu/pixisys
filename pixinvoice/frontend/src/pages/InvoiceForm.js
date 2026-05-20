@@ -16,7 +16,9 @@ import {
   X,
   Clock3,
   BookmarkPlus,
-  Archive
+  Archive,
+  Download,
+  Table2
 } from 'lucide-react';
 import styled from 'styled-components';
 import DatePicker from 'react-datepicker';
@@ -554,6 +556,54 @@ const AddItemButton = styled.button`
   }
 `;
 
+const CsvImportButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background-color: #2980b9;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s;
+
+  &:hover {
+    background-color: #2471a3;
+  }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
+`;
+
+const SampleCsvButton = styled.button`
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  background-color: transparent;
+  color: #555;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background-color 0.2s, border-color 0.2s;
+
+  &:hover {
+    background-color: #f0f0f0;
+    border-color: #999;
+  }
+
+  @media (max-width: 768px) {
+    width: 100%;
+    justify-content: center;
+  }
+`;
+
 const MobileActionBar = styled.div`
   display: none;
 
@@ -813,6 +863,7 @@ const InvoiceForm = () => {
   const [scheduleContactEmails, setScheduleContactEmails] = useState([]);
   const notesTemplateRef = useRef(null);
   const incomingDocInputRef = useRef(null);
+  const csvInputRef = useRef(null);
   const [incomingDocName, setIncomingDocName] = useState('');
   const [incomingDocUrl, setIncomingDocUrl] = useState('');
   const [pendingPrefillJobs, setPendingPrefillJobs] = useState([]);
@@ -3608,6 +3659,106 @@ const InvoiceForm = () => {
     });
   };
 
+  const CSV_SAMPLE_HEADERS = 'Megnevezés,Mennyiség,Me. egység,ÁFA %,Nettó egységár';
+  const CSV_SAMPLE_ROWS = [
+    'Termék neve,1,db,27,10000',
+    'Szolgáltatás,2,óra,27,5000',
+    'Anyag,10,m,5,800',
+  ];
+
+  const handleDownloadSampleCsv = () => {
+    const bom = '\uFEFF';
+    const content = bom + [CSV_SAMPLE_HEADERS, ...CSV_SAMPLE_ROWS].join('\n');
+    const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'minta_tetelek.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleCsvFileChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        let text = evt.target.result;
+        // Remove BOM if present
+        if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
+        const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+        if (lines.length < 2) { toast.error('A CSV fájl legalább egy fejlécsort és egy adatsort kell tartalmazzon.'); return; }
+
+        // Detect delimiter: semicolon or comma
+        const delim = lines[0].includes(';') ? ';' : ',';
+
+        // Parse header to find column indices (case-insensitive, accent-insensitive)
+        const normalize = (s) => s.toLowerCase().replace(/[áéíóöőúüű]/g, (c) => ({á:'a',é:'e',í:'i',ó:'o',ö:'o',ő:'o',ú:'u',ü:'u',ű:'u'}[c] || c)).trim();
+        const headers = lines[0].split(delim).map(normalize);
+        const colIdx = {
+          description: headers.findIndex(h => h === normalize('Megnevezés') || h === 'megnevezes' || h === 'nev' || h === normalize('Név') || h === 'description' || h === 'name'),
+          quantity: headers.findIndex(h => h === normalize('Mennyiség') || h === 'mennyiseg' || h === 'qty' || h === 'quantity'),
+          unit: headers.findIndex(h => h === normalize('Me. egység') || h === 'me. egyseg' || h === normalize('Mértékegység') || h === 'mertekegyseg' || h === 'unit' || h === 'unit_of_measure'),
+          vat: headers.findIndex(h => h === normalize('ÁFA %') || h === 'afa %' || h === 'afa' || h === 'vat_rate' || h === 'vat' || h === 'afa_kulcs'),
+          price: headers.findIndex(h => h === normalize('Nettó egységár') || h === 'netto egysegar' || h === 'egysegar' || h === 'unit_price' || h === 'netto ar' || h === normalize('Ár')),
+        };
+
+        if (colIdx.description === -1) { toast.error('A CSV-ben nem található "Megnevezés" oszlop.'); return; }
+
+        const parseNum = (s) => {
+          if (!s) return 0;
+          // Handle Hungarian number format: 1.000,50 → 1000.50 or 1000,50 → 1000.50
+          const cleaned = String(s).replace(/\s/g, '').replace(/\.(?=\d{3}[,\s]|$)/g, '').replace(',', '.');
+          const n = parseFloat(cleaned);
+          return isNaN(n) ? 0 : n;
+        };
+
+        const defaultVatType = defaultVatTypeForBlock;
+        let importedCount = 0;
+
+        for (let i = 1; i < lines.length; i++) {
+          // Handle quoted fields
+          const fields = [];
+          let cur = '';
+          let inQuote = false;
+          for (const ch of lines[i]) {
+            if (ch === '"') { inQuote = !inQuote; }
+            else if (ch === delim && !inQuote) { fields.push(cur.trim()); cur = ''; }
+            else { cur += ch; }
+          }
+          fields.push(cur.trim());
+
+          const description = colIdx.description >= 0 ? (fields[colIdx.description] || '').replace(/^"|"$/g, '') : '';
+          if (!description) continue;
+
+          const quantity = colIdx.quantity >= 0 ? parseNum(fields[colIdx.quantity]) || 1 : 1;
+          const unit_of_measure = colIdx.unit >= 0 ? (fields[colIdx.unit] || 'db').replace(/^"|"$/g, '') || 'db' : 'db';
+          const vatPct = colIdx.vat >= 0 ? parseNum(fields[colIdx.vat]) : Number(defaultVatType?.percentage || 27);
+          const unit_price = colIdx.price >= 0 ? parseNum(fields[colIdx.price]) : 0;
+
+          // Find matching vat_type_id
+          const matchedVatType = vatTypes?.find(v => Number(v.percentage) === vatPct);
+          const vat_type_id = matchedVatType ? matchedVatType.id : (defaultVatType ? defaultVatType.id : undefined);
+
+          append({ description, quantity, unit_price, vat_rate: vatPct, unit_of_measure, vat_type_id });
+          importedCount++;
+        }
+
+        if (importedCount > 0) {
+          toast.success(`${importedCount} tétel importálva a CSV-ből.`);
+        } else {
+          toast.warning('Nem sikerült tételt importálni. Ellenőrizd a CSV formátumát.');
+        }
+      } catch (err) {
+        console.error('CSV import hiba:', err);
+        toast.error('Hiba a CSV feldolgozásakor. Ellenőrizd a fájl formátumát.');
+      }
+    };
+    reader.readAsText(file, 'UTF-8');
+  };
+
   return (
     <>
       <style type="text/css" media="print">
@@ -4542,13 +4693,34 @@ const InvoiceForm = () => {
             <SectionTitle>
               <BilingualLabel label="Tételek" translationMap={translations} show={bilingual} />
             </SectionTitle>
-            <AddItemButton
-              type="button"
-              onClick={handleAddItem}
-            >
-              <Plus size={16} />
-              Tétel hozzáadása
-            </AddItemButton>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+              {!isReadOnly && (
+                <>
+                  <SampleCsvButton type="button" onClick={handleDownloadSampleCsv} title="Minta CSV letöltése">
+                    <Download size={14} />
+                    Minta CSV
+                  </SampleCsvButton>
+                  <CsvImportButton type="button" onClick={() => csvInputRef.current?.click()} title="Tételek importálása CSV fájlból">
+                    <Table2 size={16} />
+                    CSV import
+                  </CsvImportButton>
+                  <input
+                    ref={csvInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    style={{ display: 'none' }}
+                    onChange={handleCsvFileChange}
+                  />
+                </>
+              )}
+              <AddItemButton
+                type="button"
+                onClick={handleAddItem}
+              >
+                <Plus size={16} />
+                Tétel hozzáadása
+              </AddItemButton>
+            </div>
           </ItemsHeader>
 
           <ItemsTableWrap>

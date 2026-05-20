@@ -64,8 +64,14 @@ interface ItemsTableProps {
   showSubItemsTooltip?: boolean;
   /** Ha true, nem jelenik meg az "Adatlap megnyitása" gomb */
   hideDetailLink?: boolean;
+  /** Ha true, a Másolás gomb nem jelenik meg */
+  hideCopyButton?: boolean;
   /** Ha true, a manufacturing tételek inline kinyithatók altételekkel, megjegyzéssel, csatolmányokkal */
   showInlineSubItems?: boolean;
+  /** Ha meg van adva, az adott id-jű tétel sora automatikusan kinyílik és az edit panel megjelenik */
+  inlineEditItemId?: number | null;
+  /** A szerkesztési panel tartalma — a szülő komponens állítja össze */
+  inlineEditContent?: React.ReactNode;
 }
 
 interface RowContextProps {
@@ -117,7 +123,7 @@ const DraggableRow = ({ children, ...props }: any) => {
   );
 };
 
-export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, showInlineSubItems = false }) => {
+export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEditItem, quoteRequestId, onDeleteItem, onCopyItem, currency = 'HUF', hidePrices, currencySelector, showSubItemsTooltip = false, hideDetailLink = false, hideCopyButton = false, showInlineSubItems = false, inlineEditItemId, inlineEditContent }) => {
   const [attachmentsModalOpen, setAttachmentsModalOpen] = useState(false);
   const [selectedAttachments, setSelectedAttachments] = useState<any[]>([]);
   // Per-tétel impozíció editor cél tétel
@@ -129,6 +135,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
   const [itemRemarks, setItemRemarks] = useState<Record<number, string>>({});
   const [editingItemRemark, setEditingItemRemark] = useState<number | null>(null);
   const [editingItemRemarkVal, setEditingItemRemarkVal] = useState('');
+  // Controlled expanded row keys (for auto-expand on inline edit)
+  const [expandedRowKeys, setExpandedRowKeys] = useState<number[]>([]);
   // Inline expand: item-level attachments (coiId -> att[])
   const [itemAttachments, setItemAttachments] = useState<Record<number, any[]>>({});
   const [itemAttUploading, setItemAttUploading] = useState<Record<number, boolean>>({});
@@ -558,7 +566,7 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
               onClick={() => setImpositionItem(record)}
             />
           </Tooltip>
-          <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>
+          {!hideCopyButton && <Button size="small" onClick={() => copyItem(record)}>Másolás</Button>}
           {record.attachments && record.attachments.length > 0 && (
             <Tooltip title={`Csatolmányok (${record.attachments.length})`}>
               <Button 
@@ -610,6 +618,20 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
     return summary;
   }, [dataSource]);
 
+  // Auto-expand the item row when inlineEditItemId changes
+  useEffect(() => {
+    if (inlineEditItemId != null) {
+      setExpandedRowKeys(prev => prev.includes(inlineEditItemId) ? prev : [...prev, inlineEditItemId]);
+      // Pre-load attachments and remark
+      loadItemAttachments(inlineEditItemId);
+      const item = dataSource.find(i => i.id === inlineEditItemId);
+      if (item && itemRemarks[inlineEditItemId] === undefined) {
+        setItemRemarks(prev => ({ ...prev, [inlineEditItemId]: (item as any).remark || '' }));
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inlineEditItemId]);
+
   const loadItemAttachments = async (coiId: number) => {
     if (itemAttachments[coiId] !== undefined) return;
     try {
@@ -630,6 +652,12 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
 
     return (
       <div style={{ padding: '12px 24px', background: '#fafafa', borderRadius: 4 }}>
+        {/* Inline szerkesztő panel */}
+        {inlineEditContent != null && inlineEditItemId === coiId && (
+          <div style={{ marginBottom: 20, background: 'white', border: '1px solid #d9d9d9', borderRadius: 6, padding: 16 }}>
+            {inlineEditContent}
+          </div>
+        )}
         {/* Altételek fa */}
         {manuProductId > 0 && (
           <div style={{ marginBottom: 16 }}>
@@ -760,6 +788,8 @@ export const ItemsTable: React.FC<ItemsTableProps> = ({ items, onRefresh, onEdit
                     scroll={{ x: 'max-content' }}
                     expandable={showInlineSubItems ? {
                       rowExpandable: () => true,
+                      expandedRowKeys,
+                      onExpandedRowsChange: (keys) => setExpandedRowKeys(keys as number[]),
                       onExpand: (expanded, record) => {
                         if (expanded) {
                           loadItemAttachments(record.id);

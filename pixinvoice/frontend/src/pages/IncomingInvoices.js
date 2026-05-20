@@ -1468,6 +1468,11 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
       toast.info(allowAllPaymentTypesForBatch ? 'Válassz számlákat' : 'Válassz átutalásos számlákat');
       return;
     }
+    // If already editing an existing batch, save to it directly instead of creating a new one
+    if (editingBatch) {
+      saveEditBatch();
+      return;
+    }
     try {
       const [accRes, cntRes] = await Promise.all([
         api.get('/api/company-bank-accounts/', { params: { company_id: companyId } }),
@@ -1928,9 +1933,10 @@ export default function IncomingInvoices({ externalOutgoing = false }) {
           <SecondaryButton
             onClick={openCreateBatchModal}
             disabled={selectedCount===0}
-            title={selectedCount===0 ? (allowAllPaymentTypesForBatch ? 'Válassz számlákat a csomag készítéséhez' : 'Válassz átutalásos számlákat') : 'Fizetési csomag készítése'}
+            title={editingBatch ? `Módosítások mentése: ${editingBatch.name}` : (selectedCount===0 ? (allowAllPaymentTypesForBatch ? 'Válassz számlákat a csomag készítéséhez' : 'Válassz átutalásos számlákat') : 'Fizetési csomag készítése')}
+            style={editingBatch ? { background: '#dbeafe', borderColor: '#3b82f6' } : {}}
           >
-            <PlusCircle size={16}/>{selectedCount > 0 && <span style={{ marginLeft:2 }}>({selectedCount})</span>}
+            {editingBatch ? <Save size={16}/> : <PlusCircle size={16}/>}{selectedCount > 0 && <span style={{ marginLeft:2 }}>({selectedCount})</span>}
           </SecondaryButton>
           {editingBatch && (
             <div style={{ display:'inline-flex', gap:8, marginLeft:8 }}>
