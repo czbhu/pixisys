@@ -1087,14 +1087,6 @@ const RFQDetail: React.FC = () => {
               </Form.Item>
             </Col>
           </Row>
-          <div style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 16 }}>
-            <Form.Item name="partial_order_allowed" valuePropName="checked" style={{ marginBottom: 0 }}>
-              <Checkbox>Részlegesen megrendelhető</Checkbox>
-            </Form.Item>
-          </div>
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { setSelectorType('manufacturing'); setSelectorOpen(true); }}>
-            Tétel hozzáadása
-          </Button>
           <div style={{ marginTop: 6 }}>
             <ItemsTable
               items={rfq.items || []}

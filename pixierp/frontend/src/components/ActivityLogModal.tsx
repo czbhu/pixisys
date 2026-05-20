@@ -1,22 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Modal, Timeline, Tag, Spin, Empty, Typography } from 'antd';
-import {
-  ClockCircleOutlined,
-  UserOutlined,
-} from '@ant-design/icons';
+import { Modal, Table, Tag, Spin, Empty } from 'antd';
+import dayjs from 'dayjs';
 import api from '../services/api';
 
-const { Text } = Typography;
-
-interface ActivityLog {
-  id: number;
-  user_name: string;
-  user_email: string;
-  timestamp: string;
-  timestamp_formatted: string;
-  action: string;
-  action_display: string;
-  description: string;
+interface TimelineEvent {
+  timestamp: string | null;
+  who_role: string;
+  who_name: string;
+  what: string;
+  category: string;
 }
 
 interface ActivityLogModalProps {
@@ -27,16 +19,19 @@ interface ActivityLogModalProps {
   objectTitle: string;
 }
 
-const actionColors: Record<string, string> = {
-  create: 'green',
-  update: 'blue',
-  delete: 'red',
-  approve: 'cyan',
-  reject: 'orange',
-  cancel: 'volcano',
-  send: 'purple',
-  complete: 'geekblue',
-  other: 'default',
+const categoryColors: Record<string, string> = {
+  rfq: 'blue',
+  log: 'default',
+  email: 'purple',
+  order: 'cyan',
+  production: 'orange',
+  ready: 'green',
+  delivery: 'geekblue',
+  delivered: 'geekblue',
+  delivery_note: 'geekblue',
+  delivery_confirmed: 'green',
+  invoice: 'gold',
+  cost_item: 'volcano',
 };
 
 const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
@@ -47,33 +42,77 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
   objectTitle,
 }) => {
   const [loading, setLoading] = useState(false);
-  const [logs, setLogs] = useState<ActivityLog[]>([]);
+  const [events, setEvents] = useState<TimelineEvent[]>([]);
 
   useEffect(() => {
     if (visible && objectId) {
-      fetchLogs();
+      fetchTimeline();
     }
   }, [visible, objectId]);
 
-  const fetchLogs = async () => {
+  const fetchTimeline = async () => {
     setLoading(true);
     try {
-      let endpoint = '';
-      if (objectType === 'quoterequest') {
-        endpoint = `/sales/quote-requests/${objectId}/activity_logs/`;
-      } else if (objectType === 'customerorder') {
-        endpoint = `/sales/customer-orders/${objectId}/activity_logs/`;
-      }
-      
+      const endpoint = objectType === 'quoterequest'
+        ? `/sales/quote-requests/${objectId}/timeline/`
+        : `/sales/customer-orders/${objectId}/activity_logs/`;
       const response = await api.get(endpoint);
-      setLogs(response.data);
+      setEvents(response.data);
     } catch (error) {
       console.error('Hiba a napló betöltésekor:', error);
-      setLogs([]);
+      setEvents([]);
     } finally {
       setLoading(false);
     }
   };
+
+  const columns = [
+    {
+      title: 'Időpont',
+      dataIndex: 'timestamp',
+      key: 'timestamp',
+      width: 150,
+      render: (ts: string | null) =>
+        ts ? dayjs(ts).format('YYYY-MM-DD HH:mm') : '-',
+    },
+    {
+      title: 'Beosztás',
+      dataIndex: 'who_role',
+      key: 'who_role',
+      width: 160,
+      render: (role: string) => role || <span style={{ color: '#bbb' }}>—</span>,
+    },
+    {
+      title: 'Ki csinálta?',
+      dataIndex: 'who_name',
+      key: 'who_name',
+      width: 160,
+      render: (name: string) => name || <span style={{ color: '#bbb' }}>—</span>,
+    },
+    {
+      title: 'Mit csinált?',
+      dataIndex: 'what',
+      key: 'what',
+      render: (what: string, record: TimelineEvent) => (
+        <span>
+          <Tag color={categoryColors[record.category] || 'default'} style={{ marginRight: 6 }}>
+            {record.category === 'rfq' ? 'Létrehozás' :
+             record.category === 'email' ? 'E-mail' :
+             record.category === 'order' ? 'Megrendelés' :
+             record.category === 'production' ? 'Gyártás' :
+             record.category === 'ready' ? 'Kész' :
+             record.category === 'delivery' || record.category === 'delivered' ? 'Szállítás' :
+             record.category === 'delivery_note' ? 'Szállítólevél' :
+             record.category === 'delivery_confirmed' ? 'Visszaigazolás' :
+             record.category === 'invoice' ? 'Számla' :
+             record.category === 'cost_item' ? 'Gyártási tétel' :
+             record.category === 'log' ? 'Napló' : record.category}
+          </Tag>
+          {what}
+        </span>
+      ),
+    },
+  ];
 
   return (
     <Modal
@@ -81,47 +120,22 @@ const ActivityLogModal: React.FC<ActivityLogModalProps> = ({
       open={visible}
       onCancel={onClose}
       footer={null}
-      width={700}
+      width={960}
     >
       {loading ? (
         <div style={{ textAlign: 'center', padding: '40px' }}>
           <Spin size="large" />
         </div>
-      ) : logs.length === 0 ? (
+      ) : events.length === 0 ? (
         <Empty description="Nincs naplóbejegyzés" />
       ) : (
-        <Timeline
-          mode="left"
-          items={logs.map((log) => ({
-            key: log.id,
-            color: actionColors[log.action] === 'red' ? 'red' : 'blue',
-            dot: <ClockCircleOutlined style={{ fontSize: '16px' }} />,
-            children: (
-              <div>
-                <div style={{ marginBottom: 8 }}>
-                  <Text strong>{log.timestamp_formatted}</Text>
-                  <Tag
-                    color={actionColors[log.action] || 'default'}
-                    style={{ marginLeft: 8 }}
-                  >
-                    {log.action_display}
-                  </Tag>
-                </div>
-                <div style={{ marginBottom: 4 }}>
-                  <UserOutlined style={{ marginRight: 4 }} />
-                  <Text type="secondary">
-                    {log.user_name}{' '}
-                    <Text type="secondary" style={{ fontSize: '12px' }}>
-                      ({log.user_email})
-                    </Text>
-                  </Text>
-                </div>
-                <div>
-                  <Text>{log.description}</Text>
-                </div>
-              </div>
-            ),
-          }))}
+        <Table
+          dataSource={events}
+          columns={columns}
+          rowKey={(r, i) => `${r.timestamp}-${i}`}
+          size="small"
+          pagination={false}
+          scroll={{ y: 520 }}
         />
       )}
     </Modal>

@@ -2051,6 +2051,183 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         serializer = ActivityLogSerializer(logs, many=True)
         return Response(serializer.data)
 
+    @action(detail=True, methods=['get'])
+    def timeline(self, request, pk=None):
+        """Comprehensive chronological timeline of all events for this RFQ."""
+        qr = self.get_object()
+        events = []
+
+        def user_info(u):
+            if not u:
+                return {'name': '', 'role': ''}
+            name = u.get_full_name() or u.username
+            role = ''
+            try:
+                depts = list(u.employee_profile.departments.values_list('name', flat=True))
+                role = ', '.join(depts)
+            except Exception:
+                pass
+            if not role:
+                groups = list(u.groups.values_list('name', flat=True))
+                role = ', '.join(groups)
+            return {'name': name, 'role': role}
+
+        def fmt_ts(dt):
+            if dt is None:
+                return None
+            if hasattr(dt, 'isoformat'):
+                return dt.isoformat()
+            return str(dt)
+
+        # 1. RFQ creation
+        u = user_info(qr.created_by)
+        events.append({
+            'timestamp': fmt_ts(qr.created_at),
+            'who_role': u['role'],
+            'who_name': u['name'],
+            'what': 'Létrehozás',
+            'category': 'rfq',
+        })
+
+        # 2. QuoteLog entries
+        for log in qr.logs.select_related('user').order_by('created_at'):
+            u = user_info(log.user)
+            events.append({
+                'timestamp': fmt_ts(log.created_at),
+                'who_role': u['role'],
+                'who_name': u['name'],
+                'what': log.action,
+                'category': 'log',
+            })
+
+        # 3. Email logs (árajánlat e-mail kiküldve) — fresh query to avoid deferred field conflict
+        from .models import QuoteRequestEmailLog as _EmailLog
+        for el in _EmailLog.objects.filter(quote_request=qr).select_related('sent_by').order_by('sent_at'):
+            u = user_info(el.sent_by)
+            to_short = (el.to or '')[:80]
+            events.append({
+                'timestamp': fmt_ts(el.sent_at),
+                'who_role': u['role'],
+                'who_name': u['name'],
+                'what': f'E-mail kiküldve: {el.subject} → {to_short}',
+                'category': 'email',
+            })
+
+        # 4. Customer orders + lifecycle timestamps
+        for order in qr.customer_orders.select_related('created_by').order_by('order_date'):
+            u = user_info(order.created_by)
+            events.append({
+                'timestamp': fmt_ts(order.order_date),
+                'who_role': u['role'],
+                'who_name': u['name'],
+                'what': f'Megrendelés létrehozva: {order.order_number}',
+                'category': 'order',
+            })
+            if order.production_started_at:
+                events.append({
+                    'timestamp': fmt_ts(order.production_started_at),
+                    'who_role': u['role'],
+                    'who_name': u['name'],
+                    'what': f'Gyártásba küldés: {order.order_number}',
+                    'category': 'production',
+                })
+            if order.ready_at:
+                events.append({
+                    'timestamp': fmt_ts(order.ready_at),
+                    'who_role': '',
+                    'who_name': '',
+                    'what': f'Készre jelölve: {order.order_number}',
+                    'category': 'ready',
+                })
+            if order.delivery_started_at:
+                events.append({
+                    'timestamp': fmt_ts(order.delivery_started_at),
+                    'who_role': '',
+                    'who_name': '',
+                    'what': f'Szállítás megkezdve: {order.order_number}',
+                    'category': 'delivery',
+                })
+            if order.delivered_at:
+                events.append({
+                    'timestamp': fmt_ts(order.delivered_at),
+                    'who_role': '',
+                    'who_name': '',
+                    'what': f'Leszállítva: {order.order_number}',
+                    'category': 'delivered',
+                })
+            if order.invoice_number:
+                events.append({
+                    'timestamp': fmt_ts(order.updated_at),
+                    'who_role': '',
+                    'who_name': '',
+                    'what': f'Számlázva: {order.invoice_number}',
+                    'category': 'invoice',
+                })
+
+        # 5. Delivery notes linked to this RFQ
+        from .models import DeliveryNote
+        delivery_notes = (
+            DeliveryNote.objects
+            .filter(items__customer_order_item__customer_order__quote_request=qr)
+            .distinct()
+            .select_related('created_by')
+            .order_by('created_at')
+        )
+        for dn in delivery_notes:
+            u = user_info(dn.created_by)
+            events.append({
+                'timestamp': fmt_ts(dn.created_at),
+                'who_role': u['role'],
+                'who_name': u['name'],
+                'what': f'Szállítólevél: {dn.delivery_note_number}',
+                'category': 'delivery_note',
+            })
+            if dn.is_confirmed and dn.confirmed_at:
+                confirmed_by = dn.confirmed_by_info or (dn.confirmed_by_user.get_full_name() if dn.confirmed_by_user else '')
+                u2 = user_info(dn.confirmed_by_user)
+                events.append({
+                    'timestamp': fmt_ts(dn.confirmed_at),
+                    'who_role': u2['role'],
+                    'who_name': confirmed_by or u2['name'],
+                    'what': f'Szállítólevél visszaigazolva: {dn.delivery_note_number}',
+                    'category': 'delivery_confirmed',
+                })
+
+        # 6. Manufacturing cost items linked to this RFQ's quote items
+        from apps.manufacturing.models import ManufacturingCostItem as MCI
+        mci_status_map = dict(MCI.STATUS_CHOICES)
+        for qi in qr.items.select_related('manufacturing_product').filter(manufacturing_product__isnull=False):
+            mp = qi.manufacturing_product
+            for ci in mp.cost_items.select_related('department', 'supplier').order_by('sort_order', 'id'):
+                if ci.is_internal:
+                    dept_name = ci.department.name if ci.department else ''
+                    role = f'Belső: {dept_name}' if dept_name else 'Belső'
+                    who = dept_name
+                else:
+                    role = 'Külső'
+                    who = ci.supplier.name if ci.supplier else ''
+                status_display = mci_status_map.get(ci.status, ci.status)
+                notes_part = f' – {ci.notes.strip()}' if ci.notes and ci.notes.strip() else ''
+                events.append({
+                    'timestamp': fmt_ts(mp.created_at),
+                    'who_role': role,
+                    'who_name': who,
+                    'what': f'{ci.name} ({status_display}){notes_part}',
+                    'category': 'cost_item',
+                })
+                if ci.supplier_email_sent_at:
+                    events.append({
+                        'timestamp': fmt_ts(ci.supplier_email_sent_at),
+                        'who_role': role,
+                        'who_name': who,
+                        'what': f'Beszállítói e-mail: {ci.name}',
+                        'category': 'email',
+                    })
+
+        # Sort chronologically
+        events.sort(key=lambda e: (e['timestamp'] or ''))
+        return Response(events)
+
     @action(detail=True, methods=['post'])
     def create_quote(self, request, pk=None):
         """Create a Quote from RFQ (demand), preserving company and contacts on RFQ."""
@@ -6355,20 +6532,28 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                 # If remaining > 0 (or some small epsilon), include it
                 if remaining > 0:
                     # Get item name/desc
-                    # CustomerOrderItem description or QuoteItem product name
+                    # Priority: quote_item.item_name > product/material/service name > stripped description
+                    import re as _re
+                    def _strip_html(s):
+                        return _re.sub(r'<[^>]+>', '', s or '').replace('&nbsp;', ' ').strip()
+
                     quote_item = item.quote_item
-                    item_name = item.description
-                    if not item_name and quote_item:
-                         ref = (
+                    item_name = ''
+                    if quote_item and quote_item.item_name:
+                        item_name = quote_item.item_name
+                    elif quote_item:
+                        ref = (
                             quote_item.product.name if quote_item.product else (
                                 quote_item.material.name if quote_item.material else (
                                     quote_item.manufacturing_product.name if quote_item.manufacturing_product else (
-                                        quote_item.service.name if quote_item.service else '-'
+                                        quote_item.service.name if quote_item.service else ''
                                     )
                                 )
                             )
                         )
-                         item_name = ref
+                        item_name = ref
+                    if not item_name:
+                        item_name = _strip_html(item.description)
                         
                     result.append({
                         'order_id': order.id,

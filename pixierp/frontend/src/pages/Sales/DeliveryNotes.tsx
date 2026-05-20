@@ -44,6 +44,7 @@ interface DeliveryNoteItemRow {
   internal_description?: string;
   net_unit_price?: number;
   net_total?: number;
+  rfq_id?: number | null;
 }
 
 interface OrderItemForDelivery {
@@ -528,8 +529,12 @@ const DeliveryNotes: React.FC = () => {
       sorter: (a: any, b: any) => (a.item_name || '').localeCompare(b.item_name || '', 'hu'),
       render: (_, record) => (
         <span>
-            <a onClick={() => setFilterItemName(filterItemName === record.item_name ? '' : record.item_name)}>
-                 {record.item_name}
+            <a
+              href={`/sales/rfqs/${record.rfq_id}`}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              {record.item_name}
             </a>
             <br />
             <small style={{color: '#888'}}>

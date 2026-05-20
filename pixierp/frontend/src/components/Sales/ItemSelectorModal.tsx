@@ -589,10 +589,15 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         });
         items.sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0));
         setManuCostItems(items);
-        // Default: sync quantity ON for all cost items when loading a product
-        // Exception: items loaded from history had manually-configured quantities — keep sync OFF
+        // Restore syncQty from saved formulas._syncQty flag (persisted since fix).
+        // For legacy items without _syncQty saved, default to ON (unless loaded from history).
         if (!initialSelection?._fromHistory) {
-          setSyncQtyRows(new Set(items.map(i => i.id)));
+          const syncSet = new Set(
+            items
+              .filter(i => (i.formulas as any)?._syncQty !== false)
+              .map(i => i.id)
+          );
+          setSyncQtyRows(syncSet);
         }
         // Restore saved checkbox state; fall back to heuristic for legacy records
         if (typeof p.price_from_cost_calc === 'boolean') {
@@ -1202,7 +1207,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             currency: (c.currency_code || 'HUF').toUpperCase(),
             sort_order: idx,
             parent_index: parentIdx >= 0 ? parentIdx : null,
-            formulas: c.formulas || {},
+            formulas: { ...(c.formulas || {}), _syncQty: syncQtyRows.has(c.id) },
           });
         }),
         is_fixed_quantity: false,

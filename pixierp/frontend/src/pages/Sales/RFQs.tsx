@@ -2182,6 +2182,7 @@ const RFQs: React.FC = () => {
                       <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                       <Select.Option value="expired">Lejárt</Select.Option>
                       <Select.Option value="archived">Archív</Select.Option>
+                      <Select.Option value="rejected">Elutasítva</Select.Option>
                     </Select.OptGroup>
                   </Select>
                   <Select
@@ -2247,6 +2248,7 @@ const RFQs: React.FC = () => {
                       <Select.Option value="invoiced">Kiszámlázva</Select.Option>
                       <Select.Option value="expired">Lejárt</Select.Option>
                       <Select.Option value="archived">Archív</Select.Option>
+                      <Select.Option value="rejected">Elutasítva</Select.Option>
                     </Select.OptGroup>
                   </Select>
                   <Select

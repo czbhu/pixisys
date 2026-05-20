@@ -1373,6 +1373,8 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     description = serializers.CharField(source='customer_order_item.description', read_only=True, default='')
     internal_description = serializers.CharField(source='customer_order_item.remark', read_only=True, default='')
     net_total = serializers.SerializerMethodField()
+    rfq_id = serializers.SerializerMethodField()
+    item_name = serializers.SerializerMethodField()
 
     class Meta:
         model = DeliveryNoteItem
@@ -1388,6 +1390,37 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
         except:
             pass
         return ""
+
+    def get_rfq_id(self, obj):
+        try:
+            return obj.customer_order_item.customer_order.quote_request_id
+        except Exception:
+            return None
+
+    def get_item_name(self, obj):
+        import re
+        # Try quote_item.item_name first (clean plain text)
+        try:
+            qi = obj.customer_order_item.quote_item
+            if qi and qi.item_name:
+                return qi.item_name
+            if qi:
+                ref = (
+                    qi.product.name if qi.product else (
+                        qi.material.name if qi.material else (
+                            qi.manufacturing_product.name if qi.manufacturing_product else (
+                                qi.service.name if qi.service else ''
+                            )
+                        )
+                    )
+                )
+                if ref:
+                    return ref
+        except Exception:
+            pass
+        # Fallback: strip HTML from stored item_name
+        raw = obj.item_name or ''
+        return re.sub(r'<[^>]+>', '', raw).replace('&nbsp;', ' ').strip() or raw
 
     def get_contact_names(self, obj):
         # Infer contacts from the Customer Order -> Quote Request
