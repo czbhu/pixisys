@@ -299,10 +299,17 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         return Response(data)
 
     def perform_create(self, serializer):
-        # Új ajánlat száma: yyyymmdd + növekvő sorszám
+        # Új ajánlat száma: yyyymmdd + növekvő sorszám (max alapú, hogy törlés/gap ne okozzon ütközést)
         today_str = timezone.now().strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=timezone.now().date()).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
+        if last_num:
+            try:
+                seq = int(last_num[len(today_str):]) + 1
+            except (ValueError, IndexError):
+                seq = 1
+        else:
+            seq = 1
+        number = f"{today_str}{seq:02d}"
 
         # Kapcsolódó CRM cég és kapcsolattartók
         company_id = self.request.data.get('company_id')
@@ -381,11 +388,18 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         except Exception:
             dt = timezone.now().date()
         today_str = dt.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=dt).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
+        if last_num:
+            try:
+                seq = int(last_num[len(today_str):]) + 1
+            except (ValueError, IndexError):
+                seq = 1
+        else:
+            seq = 1
+        number = f"{today_str}{seq:02d}"
         return Response({
             'date': dt.isoformat(),
-            'count': daily_count,
+            'count': seq,
             'number': number,
         })
 
