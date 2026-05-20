@@ -9,7 +9,7 @@ from invoices.views.views import (
 )
 from invoices.views.nav_api_views import token_exchange, test_nav_connection, lookup_taxpayer, get_exchange_rate, menu_badge_counts
 from invoices.views.import_views import import_customers, import_customers_streaming, import_contacts, import_contacts_streaming, export_customer_sample_csv, export_contact_sample_csv, export_missing_customers_csv, import_suppliers_from_invoices, import_suppliers_from_invoices_streaming
-from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view, switch_user_view
+from invoices.auth_views import login_view, password_reset_request_view, password_reset_confirm_view, sso_login_view, switch_user_view, profile_view
 from invoices.backup_views import export_database_view, import_database_view
 from invoices.views_emergency import emergency_login_view
 from invoices.views.erp_webhook import ERPWebhookTestView
@@ -49,6 +49,7 @@ urlpatterns = [
     path('api/auth/login/', login_view, name='login'),
     path('api/auth/switch-user/', switch_user_view, name='switch_user'),
     path('api/auth/emergency-login/', emergency_login_view, name='emergency_login'),
+    path('api/auth/profile/', profile_view, name='profile'),
     path('api/auth/sso-login/', sso_login_view, name='sso_login'),
     path('api/auth/password-reset/', password_reset_request_view, name='password_reset'),
     path('api/auth/password-reset/confirm/', password_reset_confirm_view, name='password_reset_confirm'),

@@ -523,3 +523,31 @@ def switch_user_view(request):
             'refresh': str(refresh),
         },
     })
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def profile_view(request):
+    """Return current user's fresh profile including up-to-date allowed_menus."""
+    django_user = request.user
+    try:
+        system_user = SystemUser.objects.get(email=django_user.email)
+    except SystemUser.DoesNotExist:
+        return Response({'error': 'SystemUser not found'}, status=status.HTTP_404_NOT_FOUND)
+
+    roles_data, allowed_menus = _serialize_roles_for_user(system_user)
+    companies_data = [
+        {'id': str(c.id), 'name': c.name, 'short_name': c.short_name}
+        for c in system_user.companies.filter(is_active=True)
+    ]
+    return Response({
+        'id': str(system_user.id),
+        'email': system_user.email,
+        'first_name': system_user.first_name,
+        'last_name': system_user.last_name,
+        'full_name': system_user.full_name,
+        'companies': companies_data,
+        'roles': roles_data,
+        'allowed_menus': allowed_menus,
+        'is_superuser': django_user.is_superuser,
+    })
