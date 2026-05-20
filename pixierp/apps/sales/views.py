@@ -1635,8 +1635,15 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         src = self.get_object()
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        new_number = f"{today_str}{daily_count:02d}"
+        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
+        if last_num:
+            try:
+                seq = int(last_num[len(today_str):]) + 1
+            except (ValueError, IndexError):
+                seq = 1
+        else:
+            seq = 1
+        new_number = f"{today_str}{seq:02d}"
 
         # Use the source deadline only if it's still in the future; otherwise
         # leave it unset so the auto-archive logic in list() doesn't immediately
@@ -1766,8 +1773,15 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         """Create an empty demand (RFQ without items), optionally with company/contacts."""
         today = timezone.now().date()
         today_str = today.strftime('%Y%m%d')
-        daily_count = QuoteRequest.objects.filter(issue_date=today).count() + 1
-        number = f"{today_str}{daily_count:02d}"
+        last_num = QuoteRequest.objects.filter(number__startswith=today_str).order_by('-number').values_list('number', flat=True).first()
+        if last_num:
+            try:
+                seq = int(last_num[len(today_str):]) + 1
+            except (ValueError, IndexError):
+                seq = 1
+        else:
+            seq = 1
+        number = f"{today_str}{seq:02d}"
         title = request.data.get('title') or f"Ajánlat {number}"
         description = request.data.get('description') or ''
         deadline = request.data.get('deadline')
