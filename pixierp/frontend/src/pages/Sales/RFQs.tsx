@@ -1752,6 +1752,16 @@ const RFQs: React.FC = () => {
       } catch {}
     }
 
+    // Always ensure the RFQ's own contacts are in the contacts state so the Select shows names
+    const rfqContacts: any[] = rfqRecord.contacts || [];
+    if (rfqContacts.length > 0) {
+      setContacts(prev => {
+        const existing = new Set(prev.map((c: any) => String(c.id)));
+        const toAdd = rfqContacts.filter((c: any) => !existing.has(String(c.id)));
+        return toAdd.length ? [...prev, ...toAdd] : prev;
+      });
+    }
+
     // Map existing items to newItems format
     const mappedItems = (rfqRecord.items || []).map((item: any, idx: number) => ({
       id: Date.now() + idx,
