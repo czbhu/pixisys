@@ -71,7 +71,13 @@ const PickupLocationsPage: React.FC = () => {
 
   const openEdit = (record: PickupLocation) => {
     setEditing(record);
-    form.setFieldsValue({ name: record.name, address: record.address, is_active: record.is_active, is_default: record.is_default });
+    form.resetFields();
+    form.setFieldsValue({
+      name: record.name,
+      address: record.address,
+      is_active: !!record.is_active,
+      is_default: !!record.is_default,
+    });
     setHoursRows((record.pickup_hours || []).length > 0 ? [...record.pickup_hours] : [emptyRow()]);
     setOpen(true);
   };
@@ -83,8 +89,8 @@ const PickupLocationsPage: React.FC = () => {
       const payload = {
         name: values.name,
         address: values.address,
-        is_active: values.is_active !== false,
-        is_default: values.is_default === true,
+        is_active: !!values.is_active,
+        is_default: !!values.is_default,
         pickup_hours: hoursRows,
       };
       if (editing) {
