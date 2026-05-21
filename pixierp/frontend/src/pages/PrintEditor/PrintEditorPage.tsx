@@ -644,7 +644,7 @@ const PrintEditorPage: React.FC = () => {
         okText="Mentés"
         cancelText="Mégse"
         confirmLoading={shareSaving}
-        destroyOnClose={false}
+        destroyOnHidden={false}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Alert

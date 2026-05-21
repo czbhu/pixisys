@@ -992,7 +992,7 @@ interface CustomerOrder {
                             ))}
                           </div>
                         }
-                        overlayInnerStyle={{ padding: '6px 8px' }}
+                        styles={{ body: { padding: '6px 8px' } }}
                       >
                         <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={e => e.stopPropagation()}>{displayLabel}</Tag>
                       </Popover>
@@ -1386,7 +1386,7 @@ interface CustomerOrder {
 
     return (
         <Space>
-            <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+            <Popover content={content} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
                 <Tag color={color} style={{ cursor: 'pointer' }}>{displayText}</Tag>
             </Popover>
             {record.pending_approval && (

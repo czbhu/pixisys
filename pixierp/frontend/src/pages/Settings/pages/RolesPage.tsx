@@ -4,7 +4,6 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, KeyOutlined, LockOutlined, 
 import { rolesService, Role, Permission, ModulesAndActions } from '../../../services/rolesService';
 
 const { TextArea } = Input;
-const { Panel } = Collapse;
 
 const RolesPage: React.FC = () => {
   const [loading, setLoading] = useState(true);
@@ -473,98 +472,89 @@ const RolesPage: React.FC = () => {
           </Space>
         </div>
 
-        <Collapse>
-          {modulesAndActions.modules.map(module => {
+        <Collapse items={modulesAndActions.modules.map(module => {
             const moduleResources = modulesAndActions.resources[module.value];
-            
-            return (
-              <Panel 
-                header={module.label} 
-                key={module.value}
-                extra={
-                  // Modul szintű checkboxok
-                  <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
-                    {/* Ha nincs almodul: megadott jogok összefoglalója */}
-                    {(!moduleResources || moduleResources.resources.length === 0) && (() => {
-                      const enabled = modulesAndActions.actions.filter(a => permissions[module.value]?.includes(a.value));
-                      return enabled.length > 0
-                        ? <span style={{ display: 'flex', gap: 3, marginRight: 4 }}>
-                            {enabled.map(a => <Tag key={a.value} color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>{a.label}</Tag>)}
-                          </span>
-                        : <span style={{ fontSize: 11, color: '#bbb', marginRight: 4 }}>–</span>;
-                    })()}
-                    {modulesAndActions.actions.map(action => (
-                      <Checkbox
-                        key={action.value}
-                        checked={isModuleActionChecked(module.value, action.value)}
-                        indeterminate={isModuleActionIndeterminate(module.value, action.value)}
-                        onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
-                        style={{ marginLeft: 2, fontSize: 11, whiteSpace: 'nowrap' }}
-                      >
-                        <span style={{ fontSize: 11 }}>{action.label}</span>
-                      </Checkbox>
-                    ))}
-                  </div>
-                }
-              >
-                {moduleResources && moduleResources.resources.length > 0 ? (
-                  // Ha vannak almodulok (resources), jelenítsd meg őket
-                  <Collapse>
-                    {moduleResources.resources.map(resource => {
-                      const enabledActions = modulesAndActions.actions.filter(a => permissions[resource.value]?.includes(a.value));
-                      return (
-                      <Panel
-                        header={resource.label}
-                        key={resource.value}
-                        className="ml-4"
-                        extra={
-                          <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-                            {enabledActions.length === 0
-                              ? <span style={{ fontSize: 11, color: '#bbb' }}>–</span>
-                              : enabledActions.map(a => (
-                                <Tag key={a.value} color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>{a.label}</Tag>
-                              ))
-                            }
-                          </div>
+            return {
+              key: module.value,
+              label: module.label,
+              extra: (
+                // Modul szintű checkboxok
+                <div onClick={e => e.stopPropagation()} style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'nowrap' }}>
+                  {/* Ha nincs almodul: megadott jogok összefoglalója */}
+                  {(!moduleResources || moduleResources.resources.length === 0) && (() => {
+                    const enabled = modulesAndActions.actions.filter(a => permissions[module.value]?.includes(a.value));
+                    return enabled.length > 0
+                      ? <span style={{ display: 'flex', gap: 3, marginRight: 4 }}>
+                          {enabled.map(a => <Tag key={a.value} color="blue" style={{ fontSize: 10, lineHeight: '16px', padding: '0 4px', margin: 0 }}>{a.label}</Tag>)}
+                        </span>
+                      : <span style={{ fontSize: 11, color: '#bbb', marginRight: 4 }}>–</span>;
+                  })()}
+                  {modulesAndActions.actions.map(action => (
+                    <Checkbox
+                      key={action.value}
+                      checked={isModuleActionChecked(module.value, action.value)}
+                      indeterminate={isModuleActionIndeterminate(module.value, action.value)}
+                      onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
+                      style={{ marginLeft: 2, fontSize: 11, whiteSpace: 'nowrap' }}
+                    >
+                      <span style={{ fontSize: 11 }}>{action.label}</span>
+                    </Checkbox>
+                  ))}
+                </div>
+              ),
+              children: moduleResources && moduleResources.resources.length > 0 ? (
+                // Ha vannak almodulok (resources), jelenítsd meg őket
+                <Collapse items={moduleResources.resources.map(resource => {
+                  const enabledActions = modulesAndActions.actions.filter(a => permissions[resource.value]?.includes(a.value));
+                  return {
+                    key: resource.value,
+                    className: 'ml-4',
+                    label: resource.label,
+                    extra: (
+                      <div onClick={e => e.stopPropagation()} style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+                        {enabledActions.length === 0
+                          ? <span style={{ fontSize: 11, color: '#bbb' }}>–</span>
+                          : enabledActions.map(a => (
+                            <Tag key={a.value} color="blue" style={{ fontSize: 11, lineHeight: '18px', padding: '0 6px', margin: 0 }}>{a.label}</Tag>
+                          ))
                         }
+                      </div>
+                    ),
+                    children: (
+                      <Row gutter={[8, 8]}>
+                        {modulesAndActions.actions.map(action => (
+                          <Col span={8} key={action.value}>
+                            <Checkbox
+                              checked={permissions[resource.value]?.includes(action.value) || false}
+                              onChange={e => handlePermissionChange(resource.value, action.value, e.target.checked)}
+                              style={{ fontSize: 12 }}
+                            >
+                              <span style={{ fontSize: 12 }}>{action.label}</span>
+                            </Checkbox>
+                          </Col>
+                        ))}
+                      </Row>
+                    ),
+                  };
+                })} />
+              ) : (
+                // Ha nincsenek almodulok, modul szinten jelenítsd meg
+                <Row gutter={[8, 8]}>
+                  {modulesAndActions.actions.map(action => (
+                    <Col span={8} key={action.value}>
+                      <Checkbox
+                        checked={permissions[module.value]?.includes(action.value) || false}
+                        onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
+                        style={{ fontSize: 12 }}
                       >
-                        <Row gutter={[8, 8]}>
-                          {modulesAndActions.actions.map(action => (
-                            <Col span={8} key={action.value}>
-                              <Checkbox
-                                checked={permissions[resource.value]?.includes(action.value) || false}
-                                onChange={e => handlePermissionChange(resource.value, action.value, e.target.checked)}
-                                style={{ fontSize: 12 }}
-                              >
-                                <span style={{ fontSize: 12 }}>{action.label}</span>
-                              </Checkbox>
-                            </Col>
-                          ))}
-                        </Row>
-                      </Panel>
-                      );
-                    })}
-                  </Collapse>
-                ) : (
-                  // Ha nincsenek almodulok, modul szinten jelenítsd meg
-                  <Row gutter={[8, 8]}>
-                    {modulesAndActions.actions.map(action => (
-                      <Col span={8} key={action.value}>
-                        <Checkbox
-                          checked={permissions[module.value]?.includes(action.value) || false}
-                          onChange={e => handlePermissionChange(module.value, action.value, e.target.checked)}
-                          style={{ fontSize: 12 }}
-                        >
-                          <span style={{ fontSize: 12 }}>{action.label}</span>
-                        </Checkbox>
-                      </Col>
-                    ))}
-                  </Row>
-                )}
-              </Panel>
-            );
-          })}
-        </Collapse>
+                        <span style={{ fontSize: 12 }}>{action.label}</span>
+                      </Checkbox>
+                    </Col>
+                  ))}
+                </Row>
+              ),
+            };
+          })} />
       </Modal>
     </div>
   );

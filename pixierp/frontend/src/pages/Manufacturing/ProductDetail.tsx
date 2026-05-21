@@ -705,7 +705,7 @@ const ManufacturingProductDetail: React.FC = () => {
             </Select>
           ) : (
             <Select style={{ width: '100%' }} value={r.supplier_id} onChange={v => updateCostItem(r.id, 'supplier_id', v)} allowClear showSearch optionFilterProp="label" status={!r.supplier_id ? 'error' : ''} placeholder="Válassz beszállítót"
-              dropdownRender={menu => (<>{menu}<div style={{ padding: 8, borderTop: '1px solid #e8e8e8' }}><Button type="link" icon={<PlusOutlined />} block onClick={() => window.open('/crm/companies?action=create&preset=supplier', '_blank')}>Új beszállító</Button></div></>)}>
+              popupRender={menu => (<>{menu}<div style={{ padding: 8, borderTop: '1px solid #e8e8e8' }}><Button type="link" icon={<PlusOutlined />} block onClick={() => window.open('/crm/companies?action=create&preset=supplier', '_blank')}>Új beszállító</Button></div></>)}>
               {suppliers.map(s => <Select.Option key={s.id} value={s.id} label={s.name}>{s.name}</Select.Option>)}
             </Select>
           )}

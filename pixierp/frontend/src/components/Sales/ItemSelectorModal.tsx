@@ -56,6 +56,9 @@ export interface SelectedItemPayload {
   formulas?: Record<string, string | null>;
   /** Stored manufacturing product creation payload for deferred creation (new unsaved RFQ) */
   pendingManuPayload?: any;
+  /** Fixed exchange rate at RFQ-item level: when true, conversions use locked_exchange_rate. */
+  is_rate_locked?: boolean;
+  locked_exchange_rate?: number | null;
 }
 
 interface ItemSelectorModalProps {
@@ -66,7 +69,7 @@ interface ItemSelectorModalProps {
   allowCreate?: boolean;
   mode?: 'add' | 'edit';
   initialSelection?: { item_type: ItemType; ref_id: number; name?: string; code?: string; _fromHistory?: boolean };
-  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null }>;
+  initialValues?: Partial<{ quantity: number; unit: string; net_unit_price: number; cost_price: number; vat_rate: number; description: string; discount_percent: number; discount_amount: number; cost_type: string; customer_order_item: number | null; is_rate_locked: boolean; locked_exchange_rate: number | null }>;
   initialFormulas?: Record<string, string | null>;
   customer?: { id: any; name: string; company_id?: any };
   rfqId?: number;
@@ -150,6 +153,9 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   const [savingClose, setSavingClose] = useState(false);
   const manuKeepOpenRef = useRef(false);
   const userEditedManuFieldsRef = useRef<Set<string>>(new Set());
+  // Stores the manufacturing product's own sell-currency net_unit_price after async load.
+  // Used to restore the form field if something (timing, effect order) resets it to 0.
+  const manuInitialPriceRef = useRef<number | null>(null);
   const [impositionOpen, setImpositionOpen] = useState(false);
   const [impositionInitialPresetId, setImpositionInitialPresetId] = useState<string | null>(null);
   const [impositionPresets, setImpositionPresets] = useState<Array<{ id: string; name: string; updatedAt?: string }>>([]);
@@ -218,6 +224,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   // Cost-side currency (prices in the cost panel are entered in this currency)
   const [manuCostCurrencyCode, setManuCostCurrencyCode] = useState<string>('HUF');
   const [manuCostCurrencyId, setManuCostCurrencyId] = useState<number | null>(null);
+  // Locked exchange rate: when true, conversions use the saved rate (lockedExchangeRate)
+  // instead of the current Currency.exchange_rate. Stored per RFQ item.
+  const [isRateLocked, setIsRateLocked] = useState<boolean>(false);
+  const [lockedExchangeRate, setLockedExchangeRate] = useState<number | null>(null);
 
   // Unit autocomplete suggestions
   const [unitSuggestions, setUnitSuggestions] = useState<{ unit: string; count: number }[]>([]);
@@ -368,13 +378,29 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
       const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
       const unitSellingConverted = exchRate !== 1 ? parseFloat((unitSelling / exchRate).toFixed(2)) : parseFloat(unitSelling.toFixed(2));
-      console.log('[manuCalcEffect] OVERWRITING price:', unitSellingConverted, 'manuCostItems:', manuCostItems.length);
       manuForm.setFieldsValue({
         manu_net_unit_price: unitSellingConverted,
         manu_net_total: parseFloat((unitSellingConverted * q).toFixed(2)),
       });
     }
   }, [manuCostItems, manuPriceFromCalc, manuSellCurrencyCode, manuSellCurrencyId, manuCostCurrencyCode, manuCostCurrencyId, manuCurrencies]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Defensive: after the product loads and manuPriceFromCalc settles to false, ensure the
+  // price field is not 0 or undefined.  manuCreatedId is set in the same state batch as
+  // manuPriceFromCalc=false, so this effect fires once after both values are committed.
+  useEffect(() => {
+    if (!manuCreatedId || manuPriceFromCalc) return;
+    const storedPrice = manuInitialPriceRef.current;
+    if (storedPrice === null || storedPrice <= 0) return;
+    const currentPrice = manuForm.getFieldValue('manu_net_unit_price');
+    if (!currentPrice) {
+      const q = manuForm.getFieldValue('manu_quantity') || 1;
+      manuForm.setFieldsValue({
+        manu_net_unit_price: storedPrice,
+        manu_net_total: parseFloat((storedPrice * q).toFixed(2)),
+      });
+    }
+  }, [manuCreatedId, manuPriceFromCalc]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!open) return;
@@ -384,6 +410,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setPendingFileRemarks({});
     manuForm.resetFields();
     userEditedManuFieldsRef.current = new Set();
+    manuInitialPriceRef.current = null;
     setManuCostItems([]);
     setSyncQtyRows(new Set());
     setManuDimensionsPerUnit(true);
@@ -402,11 +429,16 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setManuDefaultMarkupActive(false);
     setManuCreatedId(null);
     setSelected(null);
-    form.resetFields();
+    const nextKey = (mode === 'edit' && initialSelection?.item_type ? initialSelection.item_type : defaultType) as ItemType;
+    if (!(mode === 'edit' && nextKey === 'manufacturing') && !(nextKey === 'manufacturing' && !!quoteItemId)) {
+      form.resetFields();
+    }
     setManuSellCurrencyCode('HUF');
     setManuSellCurrencyId(null);
     setManuCostCurrencyCode('HUF');
     setManuCostCurrencyId(null);
+    setIsRateLocked(false);
+    setLockedExchangeRate(null);
     setLinkedItem(null);
     setLinkSearchQuery('');
     loadData();
@@ -424,6 +456,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           cost_type: initialValues.cost_type || 'customer',
           customer_order_item: initialValues.customer_order_item ?? undefined,
         });
+        if (initialValues.is_rate_locked != null) setIsRateLocked(!!initialValues.is_rate_locked);
+        if (initialValues.locked_exchange_rate != null) setLockedExchangeRate(Number(initialValues.locked_exchange_rate));
       }
       if (initialFormulas) {
         setItemFormFormulas(initialFormulas);
@@ -517,16 +551,16 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         if (cancelled || !p) return;
         const qty = Number(p.quantity) || 1;
         const unitPrice = Number(p.net_unit_price) || 0;
-        // When editing an existing RFQ item, preload the saved line-item values
-        // (quantity and price) instead of the manufacturing product master's values.
-        const savedPrice = ((mode === 'edit' || !!quoteItemId) && initialValues?.net_unit_price != null && Number(initialValues.net_unit_price) > 0)
-          ? Number(initialValues.net_unit_price)
-          : null;
+        // Always use the manufacturing product's own sell-currency price (p.net_unit_price).
+        // initialValues.net_unit_price is in RFQ currency and must NOT be used here — it
+        // would show e.g. 133 HUF in an EUR price field when currencies differ.
         const savedQty = ((mode === 'edit' || !!quoteItemId) && initialValues?.quantity != null && Number(initialValues.quantity) > 0)
           ? Number(initialValues.quantity)
           : null;
         const displayQty = savedQty ?? qty;
-        const displayPrice = savedPrice ?? unitPrice;
+        const displayPrice = unitPrice;
+        // Store for defensive effect below (handles race where form ends up 0)
+        manuInitialPriceRef.current = unitPrice;
         setManuFormInitialValues({
           // When editing an RFQ item, use the item's saved display name (item_name if set,
           // otherwise manufacturing product name) — NOT the manufacturing master's name.
@@ -612,7 +646,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         if (typeof p.price_from_cost_calc === 'boolean') {
           setManuPriceFromCalc(p.price_from_cost_calc);
         } else {
-          setManuPriceFromCalc(savedPrice == null && items.length > 0);
+          setManuPriceFromCalc(unitPrice === 0 && items.length > 0);
         }
         // Restore saved currency
         if (p.currency_info) {
@@ -1181,7 +1215,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
 
       // Convert from manu sell currency → RFQ currency
       const _sellCurrObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode.toUpperCase());
-      const _sellCurrRate = (_sellCurrObj && _sellCurrObj.exchange_rate > 0) ? _sellCurrObj.exchange_rate : 1;
+      const _liveSellRate = (_sellCurrObj && _sellCurrObj.exchange_rate > 0) ? _sellCurrObj.exchange_rate : 1;
+      const _sellCurrRate = (isRateLocked && lockedExchangeRate && lockedExchangeRate > 0) ? lockedExchangeRate : _liveSellRate;
       const _rfqCurrObj = rfqCurrency ? manuCurrencies.find(c => c.code.toUpperCase() === rfqCurrency.toUpperCase()) : null;
       const _rfqCurrRate = (_rfqCurrObj && _rfqCurrObj.exchange_rate > 0) ? _rfqCurrObj.exchange_rate : 1;
       const netUnitPriceForRfq = parseFloat((netUnitPriceForPayload * _sellCurrRate / _rfqCurrRate).toFixed(4));
@@ -1273,6 +1308,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           description: updated.description || '',
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
+          is_rate_locked: isRateLocked,
+          locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
         };
         await onAdd({ ...rfqUpdatePayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
         setLastSavedAt(dayjs());
@@ -1305,6 +1342,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           discount_percent: Number(form.getFieldValue('discount_percent')) || 0,
           discount_amount: Number(form.getFieldValue('discount_amount')) || 0,
           pendingManuPayload: deferredPayload,
+          is_rate_locked: isRateLocked,
+          locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
         };
         await onAdd({ ...pendingUpdatePayload, keepOpen } as any);
         message.success('Egyedi gyártás módosítva (az ajánlat mentésekor kerül a rendszerbe)');
@@ -1367,6 +1406,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             vat_rate: 27,
             description: created.description || '',
             manuCostItems: costItemsForRfq,
+            is_rate_locked: isRateLocked,
+            locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
           };
           await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
           setManuPendingFiles([]);
@@ -1439,6 +1480,8 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
             description: v.description || '',
             manuCostItems: costItemsForRfq,
             pendingManuPayload: deferredPayload,
+            is_rate_locked: isRateLocked,
+            locked_exchange_rate: isRateLocked ? lockedExchangeRate : null,
           };
           await onAdd({ ...rfqPayload, files: manuPendingFiles, fileRemarks: manuPendingFileRemarks, keepOpen } as any);
           setManuPendingFiles([]);
@@ -2111,25 +2154,48 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           <Select.Option key={c.code} value={c.code.toUpperCase()}>{c.code.toUpperCase()} – {c.name}</Select.Option>
                         ))}
                       </Select>
+                      <Checkbox
+                        style={{ marginLeft: 8 }}
+                        checked={isRateLocked}
+                        onChange={e => {
+                          const checked = e.target.checked;
+                          setIsRateLocked(checked);
+                          if (checked) {
+                            const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                            const rate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                            setLockedExchangeRate(rate);
+                          } else {
+                            setLockedExchangeRate(null);
+                          }
+                        }}
+                      >Árfolyam rögzítése</Checkbox>
                       {(() => {
                         const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
-                        if (currObj && currObj.exchange_rate && currObj.exchange_rate !== 1) {
+                        const liveRate = (currObj && currObj.exchange_rate && currObj.exchange_rate !== 1) ? currObj.exchange_rate : null;
+                        const effRate = isRateLocked && lockedExchangeRate ? lockedExchangeRate : liveRate;
+                        if (effRate) {
                           const defCurr = manuCurrencies.find(c => c.is_default);
                           const baseName = defCurr?.code?.toUpperCase() || 'HUF';
-                          return <div style={{ fontSize: 11, color: '#888', marginTop: 2 }}>1 {currObj.code.toUpperCase()} = {currObj.exchange_rate.toLocaleString('hu-HU')} {baseName}</div>;
+                          return <div style={{ fontSize: 11, color: isRateLocked ? '#1677ff' : '#888', marginTop: 2 }}>
+                            1 {(currObj?.code || manuSellCurrencyCode).toUpperCase()} = {Number(effRate).toLocaleString('hu-HU')} {baseName}
+                            {isRateLocked && <span style={{ marginLeft: 4 }}>(rögzítve)</span>}
+                          </div>;
                         }
                         return null;
                       })()}
                     </Form.Item>
                     {(manuWatchQty != null) && (() => {
                       const qty = manuWatchQty || 1;
-                      const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);
+                      const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                      const liveRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                      const exchRate = (isRateLocked && lockedExchangeRate && lockedExchangeRate > 0) ? lockedExchangeRate : liveRate;
+                      // manuWatchPrice is entered in sell currency; convert to base (HUF) for profit math.
+                      const watchPriceBase = (manuWatchPrice || 0) * exchRate;
+                      const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : watchPriceBase;
                       const totalRevenue = effectiveUnitPrice * qty;
                       const totalCost = manuDisplayedTotals.totalCost;
                       const profit = totalRevenue - totalCost;
                       const showProfit = totalCost > 0;
-                      const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
-                      const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
                       const profitInSellCurr = exchRate !== 1 ? profit / exchRate : profit;
                       const currLabel = manuSellCurrencyCode || 'HUF';
                       return (
@@ -2155,8 +2221,12 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                     </Col>
                   </Row>
 
-                  <Collapse ghost size="small" style={{ marginBottom: 8 }} activeKey={manuCollapseKeys} onChange={(k) => setManuCollapseKeys(Array.isArray(k) ? k as string[] : [k as string])}>
-                    <Collapse.Panel header={<span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>} key="imposition" extra={<Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); openImpositionWithPreset(null); }}>Új megnyitása</Button>}>
+                  <Collapse ghost size="small" style={{ marginBottom: 8 }} activeKey={manuCollapseKeys} onChange={(k) => setManuCollapseKeys(Array.isArray(k) ? k as string[] : [k as string])} items={[
+                    {
+                      key: 'imposition',
+                      label: <span><AppstoreOutlined /> Impozíció – produkciózás segédlet</span>,
+                      extra: <Button size="small" type="primary" ghost onClick={(e) => { e.stopPropagation(); openImpositionWithPreset(null); }}>Új megnyitása</Button>,
+                      children: (<>
                       <div style={{ fontSize: 12, color: '#666', marginBottom: impositionPresets.length ? 8 : 0 }}>Számítsd ki a produkciós ív kihozatalt: több termékméret és több ívméret kombinációi, érhetőség (készlet) figyelembe vételével.</div>
                       {impositionPresets.length > 0 && (
                         <div>
@@ -2202,8 +2272,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           </div>
                         </div>
                       )}
-                    </Collapse.Panel>
-                    <Collapse.Panel header="Méret és súly" key="dims">
+                    </>
+                      ),
+                    },
+                    {
+                      key: 'dims',
+                      label: 'Méret és súly',
+                      children: (<>
                       <Row gutter={8}>
                         <Col span={6}>
                           <Form.Item label="Szélesség" name="width" style={{ marginBottom: 8 }}>
@@ -2284,8 +2359,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           </Form.Item>
                         </Col>
                       </Row>
-                    </Collapse.Panel>
-                    <Collapse.Panel header="Beszállítók és árkalkuláció" key="costs">
+                    </>
+                      ),
+                    },
+                    {
+                      key: 'costs',
+                      label: 'Beszállítók és árkalkuláció',
+                      children: (<>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
                         <span style={{ fontSize: 13 }}>Alap haszonkulcs:</span>
                         <NumInput formula size="small" value={manuDefaultMarkup} min={0} style={{ width: 100 }} onChange={v => {
@@ -2414,18 +2494,23 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
                           )}
                         </SortableContext>
                       </DndContext>
-                    </Collapse.Panel>
-                  </Collapse>
+                    </>
+                      ),
+                    },
+                  ]} />
 
                       {manuCostItems.length > 0 && (() => {
                         const qty = manuWatchQty || 1;
-                        const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : (manuWatchPrice || 0);
+                        const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
+                        const liveRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
+                        const exchRate = (isRateLocked && lockedExchangeRate && lockedExchangeRate > 0) ? lockedExchangeRate : liveRate;
+                        // manuWatchPrice is in sell currency; convert to base for revenue/profit math.
+                        const watchPriceBase = (manuWatchPrice || 0) * exchRate;
+                        const effectiveUnitPrice = manuPriceFromCalc ? manuDisplayedTotals.unitSelling : watchPriceBase;
                         const totalRevenue = effectiveUnitPrice * qty;
                         const totalCost = manuDisplayedTotals.totalCost;
                         const profit = totalRevenue - totalCost;
                         const profitPct = totalCost > 0 ? (profit / totalCost * 100) : null;
-                        const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
-                        const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
                         const defCurr = manuCurrencies.find(c => c.is_default);
                         const baseCurrLabel = defCurr?.code?.toUpperCase() || 'HUF';
                         const sellCurrLabel = manuSellCurrencyCode || baseCurrLabel;
@@ -2668,7 +2753,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         onCancel={() => { setCostSearchModal({ open: false, type: null }); setCostSearchEditId(null); }}
         footer={null}
         width={860}
-        destroyOnClose
+        destroyOnHidden
       >
         {(() => {
           const isMat = costSearchModal.type === 'material';
@@ -2823,7 +2908,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         onCancel={() => setLinkSearchModal({ open: false, type: null })}
         footer={null}
         width={860}
-        destroyOnClose
+        destroyOnHidden
       >
         {(() => {
           const isProd = linkSearchModal.type === 'product';

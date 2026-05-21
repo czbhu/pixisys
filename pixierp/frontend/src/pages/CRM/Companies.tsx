@@ -1146,7 +1146,7 @@ const Companies: React.FC = () => {
                 cancelText="Mégse"
                 confirmLoading={contactSaving}
                 width={600}
-                destroyOnClose
+                destroyOnHidden
             >
                 <Form layout="vertical" form={contactForm}>
                     <Row gutter={16}>

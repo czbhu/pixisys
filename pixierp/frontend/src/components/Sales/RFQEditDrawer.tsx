@@ -236,7 +236,7 @@ const RFQEditDrawer: React.FC<Props> = ({ open, rfqId, itemId, onClose, onDataCh
             </Space>
           </div>
         }
-        destroyOnClose
+        destroyOnHidden
       >
         {loading ? (
           <div style={{ textAlign: 'center', padding: 40 }}><Spin /></div>

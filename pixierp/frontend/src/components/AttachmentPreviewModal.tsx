@@ -19,7 +19,7 @@ const AttachmentPreviewModal: React.FC<Props> = ({ open, title, url, onClose }) 
     onCancel={onClose}
     footer={null}
     width={960}
-    destroyOnClose
+    destroyOnHidden
   >
     {url ? (
       isPdfUrl(url) ? (

@@ -396,6 +396,13 @@ class QuoteRequestItem(models.Model):
         blank=True,
         verbose_name="Tétel státusz"
     )
+    # Rögzített árfolyam: ha is_rate_locked=True, a locked_exchange_rate értékét
+    # használjuk a sell-currency → RFQ-currency konverziónál az aktuális Currency.exchange_rate helyett.
+    is_rate_locked = models.BooleanField(default=False, verbose_name="Árfolyam rögzítve")
+    locked_exchange_rate = models.DecimalField(
+        max_digits=14, decimal_places=6, null=True, blank=True,
+        verbose_name="Rögzített árfolyam"
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

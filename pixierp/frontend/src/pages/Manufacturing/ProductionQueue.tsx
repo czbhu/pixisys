@@ -539,7 +539,7 @@ const ProductionQueue: React.FC = () => {
             </div>
         );
         return (
-            <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+            <Popover content={content} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
                 <Tag color={color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>{text}</Tag>
             </Popover>
         );
@@ -648,7 +648,7 @@ const ProductionQueue: React.FC = () => {
                                 )}
                             </div>
                         }
-                        overlayInnerStyle={{ padding: '10px 12px' }}
+                        styles={{ body: { padding: '10px 12px' } }}
                     >
                         <span onClick={e => e.stopPropagation()}>{tag}</span>
                     </Popover>

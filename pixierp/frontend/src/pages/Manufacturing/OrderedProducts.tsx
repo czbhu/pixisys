@@ -1083,7 +1083,7 @@ const OrderedProducts: React.FC = () => {
                         content={content}
                         title="Státusz váltás"
                         trigger="click"
-                        overlayInnerStyle={{ padding: '6px 8px' }}
+                        styles={{ body: { padding: '6px 8px' } }}
                     >
                         <Tag
                             color={color}

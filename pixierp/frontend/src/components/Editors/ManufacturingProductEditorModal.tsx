@@ -1032,8 +1032,8 @@ const ManufacturingProductEditorModal: React.FC<Props> = ({ open, onCancel, onCr
                         status={!r.supplier_id ? 'error' : ''}
                         placeholder={!r.supplier_id ? "Válassz beszállítót" : ""}
                         popupMatchSelectWidth={false}
-                        dropdownStyle={{ minWidth: 300, maxWidth: 500 }}
-                        dropdownRender={(menu) => (
+                        styles={{ popup: { root: { minWidth: 300, maxWidth: 500 } } }}
+                        popupRender={(menu) => (
                             <>
                                 {menu}
                                 <div style={{ padding: '8px', borderTop: '1px solid #e8e8e8' }}>

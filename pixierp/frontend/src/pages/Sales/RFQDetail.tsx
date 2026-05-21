@@ -437,12 +437,14 @@ const RFQDetail: React.FC = () => {
         item_name: payload.name,
         quantity: payload.quantity,
         unit: payload.unit,
-        net_unit_price: payload.net_unit_price,
+        net_unit_price: payload.net_unit_price != null ? parseFloat(Number(payload.net_unit_price).toFixed(2)) : payload.net_unit_price,
         vat_rate: payload.vat_rate,
         description: payload.description,
         discount_percent: (payload as any).discount_percent,
         discount_amount: (payload as any).discount_amount,
         formulas: (payload as any).formulas || {},
+        is_rate_locked: !!(payload as any).is_rate_locked,
+        locked_exchange_rate: (payload as any).is_rate_locked ? ((payload as any).locked_exchange_rate ?? null) : null,
       };
       if (payload.item_type === 'product') {
         patch.item_type = 'product';
@@ -1116,6 +1118,8 @@ const RFQDetail: React.FC = () => {
               description: editContext.item.description,
               discount_percent: Number(editContext.item.discount_percent || 0),
               discount_amount: Number(editContext.item.discount_amount || 0),
+              is_rate_locked: !!editContext.item.is_rate_locked,
+              locked_exchange_rate: editContext.item.locked_exchange_rate != null ? Number(editContext.item.locked_exchange_rate) : null,
             }}
             initialFormulas={editContext.item.formulas || {}}
             quoteItemId={editContext.item.id}

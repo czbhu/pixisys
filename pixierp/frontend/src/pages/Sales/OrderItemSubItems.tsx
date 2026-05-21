@@ -358,7 +358,7 @@ const OrderItemSubItems: React.FC = () => {
                 />
               </div>
             }
-            overlayInnerStyle={{ padding: '10px 12px' }}
+            styles={{ body: { padding: '10px 12px' } }}
           >
             <span
               onClick={e => e.stopPropagation()}
@@ -392,7 +392,7 @@ const OrderItemSubItems: React.FC = () => {
           </div>
         );
         return (
-          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }}>
+          <Popover content={content} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }}>
             <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>
               {opt.label}
             </Tag>

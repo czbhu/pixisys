@@ -482,7 +482,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
                 )}
               </div>
             }
-            overlayInnerStyle={{ padding: '10px 12px' }}
+            styles={{ body: { padding: '10px 12px' } }}
           >
             <span onClick={e => e.stopPropagation()}>{tag}</span>
           </Popover>
@@ -511,7 +511,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
           </div>
         );
         return (
-          <Popover content={content} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+          <Popover content={content} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
             <Tag color={opt.color} style={{ cursor: 'pointer' }} onClick={(e) => e.stopPropagation()}>{opt.label}</Tag>
           </Popover>
         );
@@ -769,7 +769,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
         onOk={handleEditSave}
         okText="Mentés"
         cancelText="Mégse"
-        destroyOnClose
+        destroyOnHidden
         width={480}
       >
         <Form form={editForm} layout="vertical" size="small">

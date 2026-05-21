@@ -520,7 +520,7 @@ const Invoicing: React.FC = () => {
         okText="Átadás rögzítése"
         cancelText="Mégse"
         width={520}
-        destroyOnClose
+        destroyOnHidden
       >
         <Space direction="vertical" style={{ width: '100%' }} size="middle">
           <Statistic

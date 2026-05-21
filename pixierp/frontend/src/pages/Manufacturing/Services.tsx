@@ -1239,7 +1239,7 @@ const Services: React.FC = () => {
                 <TreeSelect
                     style={{ width: 250 }}
                     value={selectedCategoryFilter}
-                    dropdownStyle={{ maxHeight: 400, overflow: 'auto' }}
+                    styles={{ popup: { root: { maxHeight: 400, overflow: 'auto' } } }}
                     treeData={buildGroupTree(serviceGroups)}
                     placeholder="Minden kategória"
                     treeDefaultExpandAll={false}

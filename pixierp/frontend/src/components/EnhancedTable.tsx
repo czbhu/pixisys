@@ -558,11 +558,11 @@ function EnhancedTable<T extends object = any>({
   }, [rawColumns, mergedColVis, defaultVisibility, allKeys, noColumnManager]);
 
   const colButton = !noColumnManager && (
-    <Tooltip title="Oszlopok kezelése">
-      <Dropdown menu={{ items: dropdownItems }} trigger={['click']}>
+    <Dropdown menu={{ items: dropdownItems }} trigger={['click']}>
+      <Tooltip title="Oszlopok kezelése">
         <Button icon={<AppstoreOutlined />} />
-      </Dropdown>
-    </Tooltip>
+      </Tooltip>
+    </Dropdown>
   );
 
   const hasSearch = searchValue !== undefined && onSearchChange;

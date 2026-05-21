@@ -6,7 +6,6 @@ import { warehouseService } from '../../services/warehouseService';
 import { salesService } from '../../services/salesService';
 import { buildTreeMetaFromDepths, CostTreeGuide } from '../Manufacturing/CostDnd';
 
-const { Panel } = Collapse;
 const { Text } = Typography;
 
 interface CurrencyItem {
@@ -380,16 +379,15 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
 
   return (
     <Card size="small" style={{ marginTop: 16 }}>
-      <Collapse ghost>
-        <Panel
-          header={
-            <Space>
-              <CalculatorOutlined />
-              <Text strong>Költség Kalkuláció</Text>
-            </Space>
-          }
-          key="1"
-        >
+      <Collapse ghost items={[{
+        key: '1',
+        label: (
+          <Space>
+            <CalculatorOutlined />
+            <Text strong>Költség Kalkuláció</Text>
+          </Space>
+        ),
+        children: (<>
           {/* Currency selector */}
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
             <Text type="secondary" style={{ fontSize: 12 }}>Megjelenítési deviza:</Text>
@@ -492,8 +490,8 @@ export const RFQCostsTable: React.FC<RFQCostsTableProps> = ({
               </Col>
             </Row>
           </div>
-        </Panel>
-      </Collapse>
+        </>),
+      }]} />
     </Card>
   );
 };

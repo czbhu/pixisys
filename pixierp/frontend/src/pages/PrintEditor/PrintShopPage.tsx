@@ -847,7 +847,7 @@ const PrintShopPage: React.FC = () => {
         onOk={handleSavePreviewShare}
         okText="Mentés" cancelText="Mégse"
         confirmLoading={shareSaving}
-        destroyOnClose={false}
+        destroyOnHidden={false}
       >
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
           <Alert type="info" showIcon message="Preview: belső kollégáknak | Megosztási link: külső ügyfeleknek" />

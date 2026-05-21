@@ -802,7 +802,7 @@ const RFQs: React.FC = () => {
       </div>
     );
     return (
-      <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+      <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
         <span style={{ cursor: 'pointer' }}>{statusTag(currentStatus, currentLabel)}</span>
       </Popover>
     );
@@ -861,7 +861,7 @@ const RFQs: React.FC = () => {
       </div>
     );
     return (
-      <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+      <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
         <span style={{ cursor: 'pointer' }}><Tag color={meta.color}>{displayLabel}</Tag></span>
       </Popover>
     );
@@ -909,7 +909,8 @@ const RFQs: React.FC = () => {
           status: itemStatus,
           effective_status: rfq.effective_status,
           effective_status_label: rfq.effective_status_label,
-          currency_symbol: rfq.currency_symbol || 'Ft',
+          currency_symbol: rfq.currency_symbol || rfq.currency_code || 'Ft',
+          currency_code: rfq.currency_code || '',
           created_by_name: rfq.created_by_name,
           _costTopStatus: costTopStatus,
           _costIsPartial: costIsPartial,
@@ -1109,7 +1110,7 @@ const RFQs: React.FC = () => {
       title: 'Ajánlat szám', key: 'rfq_number', width: 140,
       sorter: (a: any, b: any) => (a.rfq_number || '').localeCompare(b.rfq_number || ''),
       render: (_: any, r: any) => (
-        <a style={{ color: '#1677ff', fontWeight: 500, cursor: 'pointer' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}`)}>
+        <a style={{ color: '#1677ff', fontWeight: 500, cursor: 'pointer' }} onClick={() => navigate(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`)}>
           {r.rfq_number}
         </a>
       ),
@@ -3077,7 +3078,7 @@ const RFQs: React.FC = () => {
                     placeholder="Válassz kapcsolattartókat"
                     style={{ width: 'calc(100% - 190px)' }}
                     popupMatchSelectWidth={false}
-                    dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
+                    styles={{ popup: { root: { minWidth: 200, maxWidth: 'calc(100vw - 32px)' } } }}
                     onFocus={async () => {
                       // Frissítjük a kapcsolattartók listáját amikor rákattintanak
                       const companyId = form.getFieldValue('company_id');
@@ -3373,7 +3374,7 @@ const RFQs: React.FC = () => {
                     placeholder="Válassz kapcsolattartókat"
                     style={{ width: 'calc(100% - 96px)' }}
                     popupMatchSelectWidth={false}
-                    dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
+                    styles={{ popup: { root: { minWidth: 200, maxWidth: 'calc(100vw - 32px)' } } }}
                     onDropdownVisibleChange={(open) => {
                       if (!open) {
                         // Dropdown closed → auto-close the sub-modal
@@ -3511,7 +3512,7 @@ const RFQs: React.FC = () => {
                     showSearch
                     optionFilterProp="label"
                     placeholder="Válassz projektet"
-                    dropdownRender={(menu) => (
+                    popupRender={(menu) => (
                       <>
                         {menu}
                         <Divider style={{ margin: '4px 0' }} />
@@ -3929,7 +3930,7 @@ const RFQs: React.FC = () => {
                       placeholder="Válassz kapcsolattartókat"
                       style={{ width: 'calc(100% - 190px)' }}
                       popupMatchSelectWidth={false}
-                      dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
+                      styles={{ popup: { root: { minWidth: 200, maxWidth: 'calc(100vw - 32px)' } } }}
                       value={copyItemContactIds}
                       onChange={(val) => setCopyItemContactIds(val || [])}
                       onFocus={async () => {

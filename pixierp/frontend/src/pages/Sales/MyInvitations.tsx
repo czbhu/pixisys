@@ -7,7 +7,6 @@ import { salesService } from '../../services/salesService';
 import { deepSearchMatch } from '../../utils/searchUtils';
 
 const { Text, Paragraph } = Typography;
-const { Panel } = Collapse;
 
 const MyInvitations: React.FC = () => {
   const navigate = useNavigate();
@@ -67,8 +66,10 @@ const MyInvitations: React.FC = () => {
         const items: any[] = r.items || [];
         if (!items.length) return <Text type="secondary">Nincs tétel</Text>;
         return (
-          <Collapse ghost size="small" style={{ minWidth: 200 }}>
-            <Panel header={<Text type="secondary" style={{ fontSize: 12 }}>{items.length} tétel (kattints)</Text>} key="1">
+          <Collapse ghost size="small" style={{ minWidth: 200 }} items={[{
+            key: '1',
+            label: <Text type="secondary" style={{ fontSize: 12 }}>{items.length} tétel (kattints)</Text>,
+            children: (
               <Table
                 dataSource={items}
                 rowKey="id"
@@ -81,8 +82,8 @@ const MyInvitations: React.FC = () => {
                   { dataIndex: 'net_unit_price', key: 'price', width: 100, align: 'right' as const, render: (v: string) => <span style={{ fontSize: 12 }}>{Number(v).toLocaleString('hu-HU')} Ft</span> },
                 ]}
               />
-            </Panel>
-          </Collapse>
+            ),
+          }]} />
         );
       },
     },
