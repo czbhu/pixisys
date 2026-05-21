@@ -1655,7 +1655,14 @@ const InvoiceForm = () => {
       if (!raw) return;
       const parsed = JSON.parse(raw);
       hasDraftRef.current = true;
-      const reviveDate = (v) => (v ? new Date(v) : null);
+      const reviveDate = (v) => {
+        if (!v) return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+          const [y, mo, d] = String(v).split('-').map(Number);
+          return new Date(y, mo - 1, d); // local midnight, avoids UTC-offset shift
+        }
+        return new Date(v);
+      };
       if (parsed.issue_date) setValue('issue_date', reviveDate(parsed.issue_date));
       if (parsed.due_date) setValue('due_date', reviveDate(parsed.due_date));
       if ('delivery_date' in parsed) setValue('delivery_date', reviveDate(parsed.delivery_date));
@@ -1742,7 +1749,16 @@ const InvoiceForm = () => {
       window.clearTimeout(t);
       t = window.setTimeout(() => {
         try {
-          const toISO = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d || null);
+          const toISO = (d) => {
+            if (!d) return null;
+            if (d instanceof Date) {
+              const y = d.getFullYear();
+              const mo = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              return `${y}-${mo}-${day}`; // local date, avoids UTC-offset shift
+            }
+            return d || null;
+          };
           const draft = {
             customer_id: value.customer_id || '',
             company_id: value.company_id || '',
@@ -2713,9 +2729,9 @@ const InvoiceForm = () => {
     const invoiceData = {
       ...data,
       customer_id: data.customer_id,
-      issue_date: data.issue_date.toISOString().split('T')[0],
-      due_date: data.due_date.toISOString().split('T')[0],
-      delivery_date: data.delivery_date ? data.delivery_date.toISOString().split('T')[0] : null,
+      issue_date: data.issue_date ? [data.issue_date.getFullYear(), String(data.issue_date.getMonth()+1).padStart(2,'0'), String(data.issue_date.getDate()).padStart(2,'0')].join('-') : null,
+      due_date: data.due_date ? [data.due_date.getFullYear(), String(data.due_date.getMonth()+1).padStart(2,'0'), String(data.due_date.getDate()).padStart(2,'0')].join('-') : null,
+      delivery_date: data.delivery_date ? [data.delivery_date.getFullYear(), String(data.delivery_date.getMonth()+1).padStart(2,'0'), String(data.delivery_date.getDate()).padStart(2,'0')].join('-') : null,
       items,
       company_id: data.company_id || undefined,
       currency,
@@ -2833,7 +2849,16 @@ const InvoiceForm = () => {
     const totalNet = items.reduce((acc, item) => {
       return acc + (parseFloat(item.quantity) || 0) * (parseFloat(item.unit_price) || 0);
     }, 0);
-    const toISO = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : d || null);
+    const toISO = (d) => {
+      if (!d) return null;
+      if (d instanceof Date) {
+        const y = d.getFullYear();
+        const mo = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${y}-${mo}-${day}`; // local date, avoids UTC-offset shift
+      }
+      return d || null;
+    };
     const draft = {
       id: Date.now(),
       savedAt: new Date().toISOString(),
@@ -2872,7 +2897,14 @@ const InvoiceForm = () => {
   };
 
   const loadDraftIntoForm = (draft) => {
-    const reviveDate = (v) => (v ? new Date(v) : null);
+    const reviveDate = (v) => {
+      if (!v) return null;
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+        const [y, mo, d] = String(v).split('-').map(Number);
+        return new Date(y, mo - 1, d); // local midnight, avoids UTC-offset shift
+      }
+      return new Date(v);
+    };
     const fd = draft.formData;
     if (fd.issue_date) setValue('issue_date', reviveDate(fd.issue_date));
     if (fd.due_date) setValue('due_date', reviveDate(fd.due_date));
