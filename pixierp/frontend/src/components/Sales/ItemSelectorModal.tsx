@@ -443,7 +443,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     setLinkSearchQuery('');
     loadData();
     if (mode === 'edit') {
-      if (initialValues) {
+      if (initialValues && nextKey !== 'manufacturing') {
         form.setFieldsValue({
           quantity: initialValues.quantity,
           unit: initialValues.unit,
