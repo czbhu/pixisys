@@ -1663,7 +1663,8 @@ const InvoiceForm = () => {
         }
         return new Date(v);
       };
-      if (parsed.issue_date) setValue('issue_date', reviveDate(parsed.issue_date));
+      // For new invoices, issue_date is always today (field is disabled); don't load stale draft date
+      if (isEdit && parsed.issue_date) setValue('issue_date', reviveDate(parsed.issue_date));
       if (parsed.due_date) setValue('due_date', reviveDate(parsed.due_date));
       if ('delivery_date' in parsed) setValue('delivery_date', reviveDate(parsed.delivery_date));
       [
@@ -3429,6 +3430,8 @@ const InvoiceForm = () => {
         erpOrderIdsRef.current = draft.erp_order_ids;
       }
       
+      // Always set issue_date to today for new invoices from ERP (draft may have loaded a stale date)
+      setValue('issue_date', new Date());
       toast.success('Adatok betöltve az ERP-ből');
     } catch (e) {
       console.error('[ERP] Error loading draft from URL:', e);
