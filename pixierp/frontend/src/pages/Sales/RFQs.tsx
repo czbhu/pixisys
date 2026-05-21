@@ -57,8 +57,8 @@ const cloneDraftRfqItem = <T,>(value: T): T => {
 const { TextArea } = Input;
 
 const STATUS_COMBOS: Record<string, string[]> = {
-  mind: ['new', 'sent', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired'],
-  aktiv: ['new', 'sent', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'],
+  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired'],
+  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'],
   szamlazható: ['ready', 'in_delivery', 'delivered'],
 };
 
@@ -84,6 +84,19 @@ const RFQs: React.FC = () => {
   const [contacts, setContacts] = useState<any[]>([]);
   const [projects, setProjects] = useState<any[]>([]);
   const [createOpen, setCreateOpen] = useState(false);
+  const [copySourceItem, setCopySourceItem] = useState<any | null>(null);
+  const [copySourceRfq, setCopySourceRfq] = useState<any | null>(null);
+  const [copyItemModalOpen, setCopyItemModalOpen] = useState(false);
+  const copyItemSaveRef = useRef<{ save: (keepOpen: boolean) => Promise<void> } | null>(null);
+  const [copyItemIssueDate, setCopyItemIssueDate] = useState<any>(dayjs());
+  const [copyItemDeadline, setCopyItemDeadline] = useState<any>(null);
+  const [copyItemValidityDays, setCopyItemValidityDays] = useState<number>(30);
+  const [copyItemProjectId, setCopyItemProjectId] = useState<number | null>(null);
+  const [copyItemCompanyId, setCopyItemCompanyId] = useState<any>(null);
+  const [copyItemContactIds, setCopyItemContactIds] = useState<number[]>([]);
+  const [copyItemContacts, setCopyItemContacts] = useState<any[]>([]);
+  const [copyItemNextNumber, setCopyItemNextNumber] = useState<string>('');
+  const [copyItemUserName, setCopyItemUserName] = useState<string>('');
   // Ctrl+V paste support in create modal
   useClipboardImagePaste(handleCreateModalPaste, createOpen);
   const [nextNumber, setNextNumber] = useState<string>('');
@@ -153,10 +166,10 @@ const RFQs: React.FC = () => {
   const watchedContactIds = Form.useWatch('contact_ids', form);
   const watchedIssueDate = Form.useWatch('issue_date', form);
   const [csvSelectedKeys, setCsvSelectedKeys] = useState<React.Key[]>([]);
-  const isItemsView = true;
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [createOrderLoading, setCreateOrderLoading] = useState(false);
+  const [bulkSetOrderedLoading, setBulkSetOrderedLoading] = useState(false);
   // Confirmation email flow after order creation
   const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
   const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }[]>([]);
@@ -172,7 +185,6 @@ const RFQs: React.FC = () => {
   // Track additionalRfqIds and itemIds for the currently open send modal (used in render/preview)
   const currentSendAdditionalRfqIdsRef = React.useRef<number[]>([]);
   const currentSendItemIdsRef = React.useRef<number[]>([]);
-  const isDemandView = searchParams.get('view') === 'demands';
   const [expandedRfqKeys, setExpandedRfqKeys] = useState<React.Key[]>([]);
   const [rfqExpandedItems, setRfqExpandedItems] = useState<Record<number, any[]>>({});
   const [rfqExpandedLoading, setRfqExpandedLoading] = useState<Record<number, boolean>>({});
@@ -229,7 +241,7 @@ const RFQs: React.FC = () => {
         .finally(() => setRfqItemUploading(prev => ({ ...prev, [itemId]: Math.max(0, (prev[itemId] || 0) - 1) })));
     }
   }, []);
-  useClipboardImagePaste(handleRfqRowPaste, expandedRfqKeys.length > 0);
+  useClipboardImagePaste(handleRfqRowPaste, true);
 
   const loadRfqExpandedItems = async (record: any) => {
     const rfqId = Number(record?.id || 0);
@@ -552,7 +564,7 @@ const RFQs: React.FC = () => {
             rowExpandable: (r: any) => !!(r.item_type === 'manufacturing' && r.manufacturing_product),
             expandedRowRender: (r: any) => (
               <div style={{ padding: '8px 0 8px 28px' }}>
-                <ProductSubItemsTable productId={Number(r.manufacturing_product)} />
+                <ProductSubItemsTable productId={Number(r.manufacturing_product)} onStatusChange={loadData} />
                 <MaterialNeedsTree
                   manufacturingProductId={Number(r.manufacturing_product)}
                   quantity={Number(r.quantity || 1)}
@@ -577,56 +589,30 @@ const RFQs: React.FC = () => {
       tmp.innerHTML = html;
       return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
     };
-    if (isItemsView) {
-      if (bulkSelectedKeys.length === 0) {
-        message.warning('Jelölj ki legalább egy tételt a CSV exporthoz!');
-        return;
-      }
-      const source = flattenedItems.filter((r: any) => bulkSelectedKeys.includes(r.uniqueId));
-      const rows = source.map((r: any) => ({
-        'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
-        'Ajánlat szám': r.rfq_number ?? '',
-        'Tétel neve': r.product_name || r.manufacturing_product_name || r.service_name || r.name || '',
-        'Leírás': stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''),
-        'Belső leírás': stripHtml(r.manufacturing_product_internal_description ?? ''),
-        'Megjegyzés': stripHtml(r.description ?? ''),
-        'Ügyfél': r.company_name ?? '',
-        'Nettó összeg': (Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toFixed(2),
-        'Státusz': r.status ?? '',
-      }));
-      if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
-      const headers = Object.keys(rows[0]);
-      const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
-      const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
-      const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_tetelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
-      URL.revokeObjectURL(url);
+    if (bulkSelectedKeys.length === 0) {
+      message.warning('Jelölj ki legalább egy tételt a CSV exporthoz!');
       return;
     }
-    const rows = (csvSelectedKeys.length > 0 ? filtered.filter((r: any) => csvSelectedKeys.includes(r.id)) : filtered)
-      .map((r: any) => ({
-        'Szám': r.request_number ?? r.number ?? '',
-        'Dátum': r.created_at ? dayjs(r.created_at).format('YYYY-MM-DD') : '',
-        'Cég': r.company?.name ?? '',
-        'Kapcsolattartók': (r.contacts || []).map((c: any) => c.name).filter(Boolean).join('; '),
-        'Tárgy': r.title ?? '',
-        'Projekt': r.project?.name ?? '',
-        'Státusz': r.status ?? '',
-        'Deviza': r.currency ?? '',
-        'Nettó összeg': r.total_amount ?? '',
-        'Rögzítő': r.created_by_name ?? '',
-        'Határidő': r.deadline ? dayjs(r.deadline).format('YYYY-MM-DD') : '',
-      }));
+    const source = flattenedItems.filter((r: any) => bulkSelectedKeys.includes(r.uniqueId));
+    const rows = source.map((r: any) => ({
+      'Dátum': r.issue_date ? dayjs(r.issue_date).format('YYYY-MM-DD') : '',
+      'Ajánlat szám': r.rfq_number ?? '',
+      'Tétel neve': r.product_name || r.manufacturing_product_name || r.service_name || r.name || '',
+      'Leírás': stripHtml(r.description || r.manufacturing_product_description || r.product_description || ''),
+      'Belső leírás': stripHtml(r.manufacturing_product_internal_description ?? ''),
+      'Megjegyzés': stripHtml(r.description ?? ''),
+      'Ügyfél': r.company_name ?? '',
+      'Nettó összeg': (Number(r.quantity || 0) * Number(r.net_unit_price || 0)).toFixed(2),
+      'Státusz': r.status ?? '',
+    }));
     if (!rows.length) { message.warning('Nincs exportálható adat.'); return; }
     const headers = Object.keys(rows[0]);
     const escape = (v: any) => { const s = String(v ?? ''); return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s; };
     const csv = [headers.join(','), ...rows.map(r => headers.map(h => escape((r as any)[h])).join(','))].join('\n');
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
+    const a = document.createElement('a'); a.href = url; a.download = `arajanlatok_tetelek_${dayjs().format('YYYY-MM-DD')}.csv`; a.click();
     URL.revokeObjectURL(url);
-    setCsvMode(false); setCsvSelectedKeys([]);
   };
 
   const QUILL_EMPTY = new Set(['', '<p><br></p>', '<p></p>', '<br>']);
@@ -720,17 +706,6 @@ const RFQs: React.FC = () => {
 
   useEffect(() => {
     let filtered = rfqs || [];
-    const displayStatusOf = (record: any) => record.effective_status || record.status;
-
-    // Expand combo + individual status filter values
-    const activeFilter = statusFilter.length > 0 ? statusFilter : ['mind'];
-    const effectiveStatuses = new Set<string>();
-    for (const s of activeFilter) {
-      const expanded = STATUS_COMBOS[s];
-      if (expanded) expanded.forEach(st => effectiveStatuses.add(st));
-      else effectiveStatuses.add(s);
-    }
-    filtered = filtered.filter(r => effectiveStatuses.has(displayStatusOf(r)));
 
     // Creator filter
     if (creatorFilter) {
@@ -766,6 +741,7 @@ const RFQs: React.FC = () => {
   const rfqStatusOptions = [
     { value: 'new', label: 'Új' },
     { value: 'sent', label: 'Kiküldve' },
+    { value: 'ordered', label: 'Megrendelve' },
     { value: 'confirmed', label: 'Megerősítve' },
     { value: 'in_production', label: 'Gyártásban' },
     { value: 'ready', label: 'Kész' },
@@ -775,7 +751,27 @@ const RFQs: React.FC = () => {
     { value: 'expired', label: 'Lejárt' },
   ];
 
-  const getDisplayStatus = (record: any) => record?.effective_status || record?.status || 'new';
+  const getDisplayStatus = (record: any) => record?._costTopStatus || record?.effective_status || record?.status || 'new';
+
+  const COST_ITEM_STATUS_ORDER = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered'];
+  const COST_STATUS_META: Record<string, { color: string; text: string }> = {
+    new:          { color: 'blue',     text: 'Új' },
+    confirmed:    { color: 'cyan',     text: 'Megerősítve' },
+    sent:         { color: 'gold',     text: 'Kiküldve' },
+    in_production:{ color: 'orange',   text: 'Gyártásban' },
+    ready:        { color: 'green',    text: 'Kész' },
+    in_delivery:  { color: 'purple',   text: 'Szállítás alatt' },
+    delivered:    { color: 'geekblue', text: 'Kiszállítva' },
+  };
+  const COST_ITEM_STATUS_OPTIONS = [
+    { value: 'new',          label: 'Új' },
+    { value: 'confirmed',    label: 'Megerősítve' },
+    { value: 'sent',         label: 'Kiküldve' },
+    { value: 'in_production',label: 'Gyártásban' },
+    { value: 'ready',        label: 'Kész' },
+    { value: 'in_delivery',  label: 'Szállítás alatt' },
+    { value: 'delivered',    label: 'Kiszállítva' },
+  ];
 
   const statusTag = (status: string, label?: string) => {
     const meta = RFQ_STATUS_META[status] || { color: 'default', text: status };
@@ -812,131 +808,67 @@ const RFQs: React.FC = () => {
     );
   };
 
-  const columns = useMemo(() => ([
-  { 
-    title: 'Ajánlat', 
-    key: 'main_info', 
-    width: 230,
-    sorter: (a: any, b: any) => (a.number || '').localeCompare(b.number || ''),
-    render: (_: any, r: any) => {
-      const items: any[] = r.items || [];
-      const tooltipContent = items.length === 0 ? 'Nincsenek tételek' : (
-        <div style={{ maxWidth: 320 }}>
-          {items.map((it: any, idx: number) => (
-            <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0', borderBottom: idx < items.length - 1 ? '1px solid rgba(255,255,255,0.15)' : 'none' }}>
-              <span style={{ flex: 1 }}>{it.product_name || it.manufacturing_product_name || it.service_name || it.name || it.description || `Tétel #${idx + 1}`}</span>
-              <span style={{ whiteSpace: 'nowrap', opacity: 0.85 }}>{it.quantity} {it.quantity_unit || 'db'}</span>
-            </div>
-          ))}
-        </div>
-      );
-      return (
-        <Tooltip title={tooltipContent} placement="right" color="#1d2939">
-          <div style={{ lineHeight: '1.3', cursor: 'default' }}>
-            {r.title && <div style={{ fontWeight: 600 }}>{r.title}</div>}
-            <div style={{ fontSize: '0.75em', color: '#888' }}>{r.number || r.request_number}</div>
-          </div>
-        </Tooltip>
-      );
+  const renderItemCostStatusControl = (r: any) => {
+    const costStatuses: { id: number; status: string }[] = r.cost_items_statuses || [];
+    if (!costStatuses.length) {
+      return renderRfqStatusControl(r, r.rfq_id);
     }
-  },
-  { 
-    title: 'Keltezés', 
-    dataIndex: 'issue_date', 
-    key: 'issue_date', 
-    width: 100,
-    responsive: ['lg'], 
-    render: (d: string, r: any): React.ReactNode => (
-      <div>
-        <div>{d ? new Date(d).toLocaleDateString('hu-HU') : ''}</div>
-        {r.created_by_name && (
-          <div style={{ fontSize: '11px', color: '#888' }}>
-            {r.created_by_name}
-          </div>
-        )}
-      </div>
-    ), 
-    sorter: (a: any, b: any) => (a.issue_date || '').localeCompare(b.issue_date || '') 
-  },
-  {
-    title: 'Ügyfél', key: 'customer_name', width: 160,
-    sorter: (a: any, b: any) => {
-      const aName = a.is_private ? (a.contact_names || '') : (a.company?.name || a.company_name || '');
-      const bName = b.is_private ? (b.contact_names || '') : (b.company?.name || b.company_name || '');
-      return aName.localeCompare(bName, 'hu');
-    },
-    render: (_: any, r: any): React.ReactNode => {
-      // Company can come from r.company, r.company_name, or inferred from a contact's company
-      const contactCompany = (r.contacts || []).find((c: any) => c.company_name || c.company?.name);
-      const resolvedCompanyName = r.company?.name || r.company_name || contactCompany?.company_name || contactCompany?.company?.name;
-      const isPrivate = !resolvedCompanyName;
-      const primaryName = isPrivate
-        ? (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', ') || 'Magánszemély')
-        : resolvedCompanyName;
-      const secondaryName = isPrivate
-        ? null
-        : (r.contact_names || (r.contacts || []).map((c: any) => c.name).join(', '));
-      const tooltipText = isPrivate
-        ? primaryName
-        : [primaryName, secondaryName].filter(Boolean).join(' – ');
-      return (
-        <Tooltip title={tooltipText}>
-          <div>
-            <div style={{ fontWeight: 'bold', display: '-webkit-box', WebkitLineClamp: (isPrivate || secondaryName) ? 2 : 3, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>{primaryName}</div>
-            {isPrivate && <div style={{ fontSize: 10, color: '#aaa', lineHeight: '14px' }}>Magánszemély</div>}
-            {secondaryName && <div style={{ fontSize: 11, color: '#666', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{secondaryName}</div>}
-          </div>
-        </Tooltip>
-      );
-    },
-  },
-    { 
-      title: 'Nettó összeg', 
-      key: 'total_net_amount', 
-      width: 120,
-      render: (_: any, r: any): React.ReactNode => {
-        const amount = r.total_net_amount || 0;
-        const currencySymbol = r.currency_symbol || 'Ft';
-        return <span style={{ whiteSpace: 'nowrap' }}>{`${amount.toLocaleString('hu-HU', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} ${currencySymbol}`}</span>;
-      },
-      sorter: (a: any, b: any) => (a.total_net_amount || 0) - (b.total_net_amount || 0),
-      align: 'right' as const
-    },
-    { title: 'Státusz', dataIndex: 'status', key: 'status', width: 140, render: (_: any, r: any) => renderRfqStatusControl(r, r.id), sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)) },
-    { title: 'Határidő', dataIndex: 'deadline', key: 'deadline', width: 100, responsive: ['md'], render: (d: string): React.ReactNode => new Date(d).toLocaleDateString('hu-HU'), sorter: (a: any, b: any) => (a.deadline || '').localeCompare(b.deadline || '') },
-    {
-      title: 'Műveletek', key: 'actions', width: 270, render: (record: any): React.ReactNode => (
-        <Space size="small" wrap>
-          <Tooltip title="Szerkesztés">
-            <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => navigate(`/sales/rfqs/${record.id}`)} />
-          </Tooltip>
-          <Tooltip title="Megrendelés">
-            <Button icon={<ShoppingCartOutlined style={{ color: '#096dd9' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} loading={createOrderLoading} onClick={() => handleCreateOrder([record.id], false)} />
-          </Tooltip>
-          <Tooltip title="Kiküldés e-mailben">
-            <Button icon={<MailOutlined style={{ color: '#b45309' }} />} size="small" style={{ background: '#fff7e6', borderColor: '#ffd591' }} onClick={() => { setSendRfqList([{ rfqId: record.id, sent: false }]); setSendRfqIndex(0); openSendModal(record.id); }} />
-          </Tooltip>
-          {record.status !== 'in_progress' && (
-            <Tooltip title="Nyitás">
-              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
-            </Tooltip>
-          )}
-          {record.status !== 'quoted' && (
-            <Tooltip title="Zárás (Árazva)">
-              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async () => { await salesService.setQuoteRequestStatus(record.id, 'quoted'); message.success('Lezárva'); loadData(); }} />
-            </Tooltip>
-          )}
-          <Tooltip title="Másolás (preload)">
-            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={() => openCreateFromCopy(record)} />
-          </Tooltip>
+    const topStatus = r._costTopStatus || 'new';
+    const isPartial = r._costIsPartial;
+    const meta = COST_STATUS_META[topStatus] || { color: 'default', text: topStatus };
+    const displayLabel = isPartial ? `${meta.text} (részben)` : meta.text;
 
-        </Space>
-      )
-    }
-  ]), [navigate]);
+    const handleCostStatusChange = (newStatus: string) => {
+      const IN_PROD_ABOVE = ['in_production', 'ready', 'in_delivery', 'delivered'];
+      const activeCount = costStatuses.filter(ci => IN_PROD_ABOVE.includes(ci.status)).length;
+      const doUpdate = async () => {
+        try {
+          await salesService.updateRfqItemCostItemsStatus(r.id, newStatus);
+          message.success(`Státusz módosítva: ${COST_ITEM_STATUS_OPTIONS.find(o => o.value === newStatus)?.label}`);
+          loadData();
+        } catch {
+          message.error('Hiba a státusz frissítésekor');
+        }
+      };
+      if (activeCount > 0) {
+        Modal.confirm({
+          title: 'Gyártási folyamat módosítása',
+          icon: <ExclamationCircleOutlined style={{ color: '#faad14' }} />,
+          content: `${activeCount} költségtétel gyártásban vagy felette van. Biztosan módosítja az összes státuszát erre: "${COST_ITEM_STATUS_OPTIONS.find(o => o.value === newStatus)?.label}"?`,
+          okText: 'Igen, módosít',
+          cancelText: 'Mégse',
+          onOk: doUpdate,
+        });
+      } else {
+        doUpdate();
+      }
+    };
+
+    const popoverContent = (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+        {COST_ITEM_STATUS_OPTIONS.map(option => (
+          <Button
+            key={option.value}
+            size="small"
+            type={option.value === topStatus ? 'primary' : 'text'}
+            disabled={option.value === topStatus}
+            style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
+            onClick={() => handleCostStatusChange(option.value)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+    );
+    return (
+      <Popover content={popoverContent} title="Státusz váltás" trigger="click" overlayInnerStyle={{ padding: '6px 8px' }} getPopupContainer={() => document.body} zIndex={9999}>
+        <span style={{ cursor: 'pointer' }}><Tag color={meta.color}>{displayLabel}</Tag></span>
+      </Popover>
+    );
+  };
+
 
   const flattenedItems = useMemo(() => {
-    if (!isItemsView) return [];
     const res: any[] = [];
     filtered.forEach((rfq: any) => {
       const allItems: any[] = rfq.items || [];
@@ -953,6 +885,15 @@ const RFQs: React.FC = () => {
         const itemStatus = rfq.status === 'ordered'
           ? (item.is_ordered ? (rfq.effective_status || 'ordered') : 'quoted')
           : rfq.status;
+        const rawCostStatuses: string[] = ((item.cost_items_statuses || []) as any[])
+          .map((ci: any) => ci.status)
+          .filter((s: string) => COST_ITEM_STATUS_ORDER.includes(s));
+        const costTopStatus: string | null = rawCostStatuses.length > 0
+          ? rawCostStatuses.reduce((best: string, s: string) =>
+              COST_ITEM_STATUS_ORDER.indexOf(s) > COST_ITEM_STATUS_ORDER.indexOf(best) ? s : best
+            )
+          : null;
+        const costIsPartial = costTopStatus !== null && rawCostStatuses.some(s => s !== costTopStatus);
         return {
           ...item,
           uniqueId: `${rfq.id}_${item.id ?? idx}`,
@@ -970,6 +911,8 @@ const RFQs: React.FC = () => {
           effective_status_label: rfq.effective_status_label,
           currency_symbol: rfq.currency_symbol || 'Ft',
           created_by_name: rfq.created_by_name,
+          _costTopStatus: costTopStatus,
+          _costIsPartial: costIsPartial,
         };
       };
 
@@ -992,8 +935,22 @@ const RFQs: React.FC = () => {
         res.push(node);
       });
     });
+    // Apply status filter at item level (based on derived cost item status or rfq status)
+    const activeFilter = statusFilter.length > 0 ? statusFilter : ['mind'];
+    if (!activeFilter.includes('mind')) {
+      const effectiveStatuses = new Set<string>();
+      for (const s of activeFilter) {
+        const expanded = STATUS_COMBOS[s as keyof typeof STATUS_COMBOS];
+        if (expanded) (expanded as string[]).forEach((st: string) => effectiveStatuses.add(st));
+        else effectiveStatuses.add(s);
+      }
+      return res.filter((item: any) => {
+        const itemStatus = item._costTopStatus || item.effective_status || item.status || 'new';
+        return effectiveStatuses.has(itemStatus);
+      });
+    }
     return res;
-  }, [filtered, isItemsView]);
+  }, [filtered, statusFilter]);
 
   const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
@@ -1034,7 +991,7 @@ const RFQs: React.FC = () => {
         )}
         {isMfg && (
           <>
-            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments />
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments onStatusChange={loadData} />
             <MaterialNeedsTree
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}
@@ -1244,7 +1201,7 @@ const RFQs: React.FC = () => {
     {
       title: 'Státusz', key: 'item_status', width: 150,
       sorter: (a: any, b: any) => getDisplayStatus(a).localeCompare(getDisplayStatus(b)),
-      render: (_: any, r: any) => renderRfqStatusControl(r, r.rfq_id),
+      render: (_: any, r: any) => renderItemCostStatusControl(r),
     },
     {
       title: 'Műveletek', key: 'actions', width: 200,
@@ -1260,7 +1217,7 @@ const RFQs: React.FC = () => {
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
           <Tooltip title="Másolás (preload)">
-            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = rfqs.find((q: any) => q.id === r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq); }} />
+            <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = rfqs.find((q: any) => q.id === r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq, r); }} />
           </Tooltip>
           {r.status !== 'in_progress' && (
             <Tooltip title="Nyitás">
@@ -1325,6 +1282,15 @@ const RFQs: React.FC = () => {
               manuRefId = createdProduct.id;
             } catch {
               message.error(`Egyedi gyártás létrehozása sikertelen: ${it.name}`);
+              return;
+            }
+          } else if (it.ref_id > 0) {
+            // Duplicate the manufacturing product so the copy is fully independent
+            try {
+              const dup = await manufacturingService.duplicateProduct(it.ref_id);
+              manuRefId = dup.id;
+            } catch {
+              message.error(`Egyedi gyártás másolása sikertelen: ${it.name}`);
               return;
             }
           }
@@ -1709,7 +1675,56 @@ const RFQs: React.FC = () => {
     }
   };
 
-  const openCreateFromCopy = async (rfqRecord: any) => {
+  const openCreateFromCopy = async (rfqRecord: any, sourceItem?: any) => {
+    // Single-item copy: open a dedicated modal, skip the full create form
+    if (sourceItem) {
+      setCopySourceItem(sourceItem);
+      setCopySourceRfq(rfqRecord);
+      if (rfqRecord.currency_code) setCurrency(rfqRecord.currency_code.toUpperCase());
+      const today = dayjs();
+      setCopyItemIssueDate(today);
+      setCopyItemDeadline(null);
+      setCopyItemValidityDays(rfqRecord.validity_days || 30);
+      setCopyItemProjectId(rfqRecord.project?.id ?? null);
+      setCopyItemCompanyId(rfqRecord.company?.id ?? null);
+      const rfqContacts: any[] = rfqRecord.contacts || [];
+      setCopyItemContactIds(rfqContacts.map((c: any) => c.id));
+      setCopyItemContacts(rfqContacts);
+      const uName = user?.first_name && user?.last_name ? `${user.last_name} ${user.first_name}` : user?.username || '';
+      setCopyItemUserName(uName);
+      try {
+        const [currs, nn] = await Promise.all([
+          manufacturingService.getCurrencies(),
+          salesService.getNextQuoteRequestNumber(today.format('YYYY-MM-DD')),
+        ]);
+        setCurrencyList(currs);
+        const def = currs.find((c: any) => c.is_default);
+        if (def?.code && !rfqRecord.currency_code) setCurrency(def.code.toUpperCase());
+        setCopyItemNextNumber(nn.number || '');
+      } catch {}
+      try {
+        const companyId = rfqRecord.company?.id;
+        const [companyList] = await Promise.all([
+          crmService.getCompanies({ is_customer: true, compact: true }).catch(() => []),
+        ]);
+        const all: any[] = ((companyList as any).results ?? companyList) || [];
+        if (companyId && !all.find((c: any) => String(c.id) === String(companyId))) {
+          try { const co = await crmService.getCompany(companyId); all.unshift(co); } catch {}
+        }
+        setCompanies(all);
+        if (companyId) {
+          const cl = await crmService.getContactsByCompany(companyId);
+          const loaded: any[] = (cl.results ?? cl) || [];
+          setCopyItemContacts(prev => {
+            const existing = new Set(prev.map((c: any) => String(c.id)));
+            const toAdd = loaded.filter((c: any) => !existing.has(String(c.id)));
+            return toAdd.length ? [...prev, ...toAdd] : prev;
+          });
+        }
+      } catch {}
+      setCopyItemModalOpen(true);
+      return;
+    }
     form.resetFields();
     setNewItems([]);
     setNewCosts([]);
@@ -1762,23 +1777,29 @@ const RFQs: React.FC = () => {
       });
     }
 
-    // Map existing items to newItems format
-    const mappedItems = (rfqRecord.items || []).map((item: any, idx: number) => ({
-      id: Date.now() + idx,
-      item_type: item.item_type || 'product',
-      ref_id: item.product?.id ?? item.manufacturing_product?.id ?? item.service?.id ?? item.ref_id,
-      name: item.name || item.product_name || item.manufacturing_product_name || item.service_name || '',
-      code: item.code || item.product?.code || item.manufacturing_product?.code || item.service?.code,
-      quantity: Number(item.quantity) || 1,
-      unit: item.unit || 'db',
-      net_unit_price: Number(item.net_unit_price) || 0,
-      vat_rate: item.vat_rate ?? 27,
-      description: item.description || '',
-      discount_percent: item.discount_percent,
-      discount_amount: item.discount_amount,
-      _fromHistory: true,
-    }));
-    setNewItems(mappedItems);
+    // When copying a specific item, leave newItems empty — the inline editor will populate it.
+    // When copying the whole RFQ (no sourceItem), pre-populate all items.
+    if (!sourceItem) {
+      const mappedItems = (rfqRecord.items || []).map((item: any, idx: number) => ({
+        id: Date.now() + idx,
+        item_type: item.item_type || 'product',
+        ref_id: item.product?.id ?? item.manufacturing_product?.id ?? item.service?.id ?? item.ref_id,
+        name: item.name || item.product_name || item.manufacturing_product_name || item.service_name || '',
+        code: item.code || item.product?.code || item.manufacturing_product?.code || item.service?.code,
+        quantity: Number(item.quantity) || 1,
+        unit: item.unit || 'db',
+        net_unit_price: Number(item.net_unit_price) || 0,
+        vat_rate: item.vat_rate ?? 27,
+        description: item.description || '',
+        discount_percent: item.discount_percent,
+        discount_amount: item.discount_amount,
+        _fromHistory: true,
+      }));
+      setNewItems(mappedItems);
+    } else {
+      setNewItems([]);
+      setNewCosts([]);
+    }
 
     setCreateOpen(true);
 
@@ -1790,6 +1811,50 @@ const RFQs: React.FC = () => {
     if (companyId) formValues.company_id = companyId;
     if (rfqRecord.contacts?.length) formValues.contact_ids = rfqRecord.contacts.map((c: any) => c.id);
     setPendingFormValues(formValues);
+  };
+
+  const handleCopyItemSave = async (p: SelectedItemPayload) => {
+    try {
+      const today = copyItemIssueDate || dayjs();
+      const vDays = copyItemValidityDays || 30;
+      const itemName = (p as any).name || (p as any).manufacturing_product_name || '';
+      const rfq = await salesService.createQuoteRequest({
+        title: itemName,
+        description: itemName || 'Másolat',
+        issue_date: today.format('YYYY-MM-DD'),
+        ...(copyItemDeadline ? { deadline: copyItemDeadline.format('YYYY-MM-DD') } : {}),
+        validity_days: vDays,
+        valid_until: today.add(vDays, 'day').format('YYYY-MM-DD'),
+        partial_order_allowed: copySourceRfq?.partial_order_allowed ?? true,
+      });
+      await salesService.updateQuoteRequestBasic(rfq.id, {
+        contact_ids: copyItemContactIds,
+        currency_code: currency,
+        project_id: copyItemProjectId ?? null,
+        ...(copyItemCompanyId ? { company_id: copyItemCompanyId } : {}),
+      });
+      if (p.item_type === 'product') {
+        await salesService.addRfqProductItem(rfq.id, p.ref_id!, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount, p.ref_id!);
+      } else if (p.item_type === 'manufacturing') {
+        let manuRefId = p.ref_id!;
+        if ((p as any).pendingManuPayload && p.ref_id! < 0) {
+          // mode='add' deferred path: the product hasn't been created yet — create it now
+          const { _costItemsState: _cs, _currency: _cur, _costCurrency: _cc, ...manuPayload } = (p as any).pendingManuPayload;
+          const createdProduct = await manufacturingService.createProduct(manuPayload);
+          manuRefId = createdProduct.id;
+        }
+        await salesService.addRfqManufacturingItem(rfq.id, manuRefId, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
+      } else {
+        await salesService.addRfqServiceItem(rfq.id, p.ref_id!, p.name || '', p.quantity || 1, (p as any).description || '', p.unit || 'db', p.net_unit_price || 0, p.vat_rate || 27, (p as any).discount_percent, (p as any).discount_amount);
+      }
+      message.success('Árajánlat létrehozva');
+      setCopyItemModalOpen(false);
+      setCopySourceItem(null);
+      setCopySourceRfq(null);
+      loadData();
+    } catch {
+      message.error('Hiba az árajánlat létrehozásakor');
+    }
   };
 
   const DRAFT_KEY = 'rfq_create_draft';
@@ -1880,14 +1945,15 @@ const RFQs: React.FC = () => {
         cancelText: 'Mégse',
         onOk: () => {
           clearDraft();
-          setCreateOpen(false);
-          form.resetFields();
-          clearParams();
+      setCopySourceItem(null);
+      setCreateOpen(false);
+      form.resetFields();
+      clearParams();
         },
       });
     } else {
       clearDraft();
-      setCreateOpen(false);
+      setCopySourceItem(null);
       form.resetFields();
       clearParams();
     }
@@ -2150,6 +2216,28 @@ const RFQs: React.FC = () => {
     sendForm.setFieldsValue({ template_key: templateKey, to: contactEmailTo, cc, reply_to: replyTo, signature_key: signatureKey, subject, body });
   };
 
+  const handleBulkSetOrdered = async () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+    if (!rfqIds.length) return;
+    setBulkSetOrderedLoading(true);
+    let successCount = 0;
+    for (const rfqId of rfqIds) {
+      try {
+        await salesService.setQuoteRequestStatus(rfqId, 'ordered');
+        successCount++;
+      } catch {
+        message.error(`Hiba az ajánlat #${rfqId} státuszának frissítésekor`);
+      }
+    }
+    setBulkSetOrderedLoading(false);
+    if (successCount > 0) {
+      message.success(`${successCount} ajánlat Megrendelve státuszba helyezve`);
+      setBulkSelectedKeys([]);
+      loadData();
+    }
+  };
+
   const handleBulkSendEmail = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
@@ -2191,6 +2279,10 @@ const RFQs: React.FC = () => {
 
   return (
     <div>
+      <style>{`
+        .ant-table-tbody tr.rfq-row-colored > td { background: #f3e8ff !important; }
+        .ant-table-tbody tr.rfq-row-colored:hover > td { background: #ead5ff !important; }
+      `}</style>
       <Card
         title="Árajánlatok"
         extra={
@@ -2219,6 +2311,7 @@ const RFQs: React.FC = () => {
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
                       <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
@@ -2285,6 +2378,7 @@ const RFQs: React.FC = () => {
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
                       <Select.Option value="sent">Kiküldve</Select.Option>
+                      <Select.Option value="ordered">Megrendelve</Select.Option>
                       <Select.Option value="confirmed">Megerősítve</Select.Option>
                       <Select.Option value="in_production">Gyártásban</Select.Option>
                       <Select.Option value="ready">Kész</Select.Option>
@@ -2316,9 +2410,10 @@ const RFQs: React.FC = () => {
       >
         {error && <Alert type="error" message={error} style={{ marginBottom: 16 }} />}
         
-        {isItemsView && bulkSelectedKeys.length > 0 && (
+        {bulkSelectedKeys.length > 0 && (
           <div style={{ position: 'sticky', top: 0, zIndex: 20, background: '#fff', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0', marginBottom: 2 }}>
             <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+            <Button size="small" loading={bulkSetOrderedLoading} onClick={handleBulkSetOrdered} style={{ background: '#f9f0ff', borderColor: '#d3adf7', color: '#722ed1' }}>Megrendelve</Button>
             <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
               const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
               const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
@@ -2330,26 +2425,15 @@ const RFQs: React.FC = () => {
           </div>
         )}
 
-        <EnhancedTable key={isItemsView ? 'rfqs-items' : 'rfqs'} tableKey={isItemsView ? 'rfqs-items' : 'rfqs'} searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={isItemsView ? itemsColumns as any : columns as any} dataSource={isItemsView ? flattenedItems : filtered} rowKey={isItemsView ? 'uniqueId' : 'id'} pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={isItemsView ? { offsetScroll: 0 } : undefined} className={isItemsView ? 'rfq-items-table' : undefined} onRow={isItemsView ? (r: any) => ({ onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } }) : undefined} rowSelection={isItemsView ? { selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 } : undefined} expandable={isItemsView ? {
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+          const st = getDisplayStatus(r);
+          const bg = !['new', 'sent'].includes(st) ? { background: '#f3e8ff' } : {};
+          return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer', ...bg } };
+        }}
+        rowClassName={(r: any) => !['new', 'sent'].includes(getDisplayStatus(r)) ? 'rfq-row-colored' : ''} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
           columnWidth: 24,
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
-        } : {
-          expandedRowKeys: expandedRfqKeys,
-          onExpand: (expanded: boolean, record: any) => {
-            if (expanded) {
-              setExpandedRfqKeys(prev => Array.from(new Set([...prev, record.id])));
-              loadRfqExpandedItems(record);
-            } else {
-              setExpandedRfqKeys(prev => prev.filter((k) => k !== record.id));
-            }
-          },
-          expandedRowRender: renderExpandedRfqRow,
-          rowExpandable: (record: any) => {
-            const count = Array.isArray(record?.items) ? record.items.length : 0;
-            const attCount = Array.isArray(record?.attachments) ? record.attachments.length : 0;
-            return count > 0 || attCount > 0;
-          },
         }} />
       </Card>
       <Modal 
@@ -3732,6 +3816,246 @@ const RFQs: React.FC = () => {
           discount_amount: Number((newItems[editIdx] as any).discount_amount || 0),
         } : undefined) : undefined}
       />
+      {/* ── Tétel másolása ─────────────────────────────────────────────────── */}
+      {copySourceItem && (
+        <Modal
+          title="Tétel másolása új árajánlatba"
+          open={copyItemModalOpen}
+          onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}
+          footer={[
+            <Button key="cancel" onClick={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}>Mégse</Button>,
+            <Button key="save" type="primary" onClick={() => copyItemSaveRef.current?.save(false)}>Létrehozás</Button>,
+          ]}
+          width={isMobile ? '100vw' : 1100}
+          maskClosable={false}
+          destroyOnHidden
+        >
+          {/* ── Alap adatok ── */}
+          <div style={{ background: '#f0f5ff', border: '1px solid #d6e4ff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#2f54eb', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Alap adatok</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={4}>
+                <Form.Item label="Ajánlatszám" style={{ marginBottom: 6 }}>
+                  <Input value={copyItemNextNumber} readOnly style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={6}>
+                <Form.Item label="Rögzítette" style={{ marginBottom: 6 }}>
+                  <Input value={copyItemUserName} readOnly style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={4}>
+                <Form.Item label="Keltezés" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} value={copyItemIssueDate} onChange={(d) => setCopyItemIssueDate(d || dayjs())} format="YYYY-MM-DD" />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={4}>
+                <Form.Item label="Határidő" style={{ marginBottom: 6 }}>
+                  <DatePicker style={{ width: '100%' }} value={copyItemDeadline} onChange={(d) => setCopyItemDeadline(d || null)} format="YYYY-MM-DD" allowClear />
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={4}>
+                <Form.Item
+                  label="Érvény. (nap)"
+                  style={{ marginBottom: 6 }}
+                  help={<span style={{ fontSize: 11, color: '#888' }}>Lejár: {(copyItemIssueDate || dayjs()).add(copyItemValidityDays, 'day').format('YYYY.MM.DD.')}</span>}
+                >
+                  <InputNumber min={1} value={copyItemValidityDays} onChange={(v) => setCopyItemValidityDays(v ?? 30)} style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          {/* ── Ügyfél ── */}
+          <div style={{ background: '#f6ffed', border: '1px solid #b7eb8f', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+            <div style={{ fontSize: 11, fontWeight: 600, color: '#389e0d', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Ügyfél</div>
+            <Row gutter={[8, 4]}>
+              <Col xs={24} md={6}>
+                <Form.Item label="Cég" style={{ marginBottom: 6 }}>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Select
+                      showSearch allowClear optionFilterProp="label"
+                      filterOption={accentInsensitiveLabelFilter}
+                      placeholder="Válassz céget"
+                      style={{ width: 'calc(100% - 32px)' }}
+                      value={copyItemCompanyId}
+                      onChange={async (val) => {
+                        setCopyItemCompanyId(val ?? null);
+                        setCopyItemContactIds([]);
+                        if (val && val !== 'private') {
+                          try {
+                            const cl = await crmService.getContactsByCompany(val);
+                            setCopyItemContacts((cl.results ?? cl) || []);
+                          } catch {}
+                        }
+                      }}
+                      onFocus={async () => {
+                        try {
+                          const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                          setCompanies((list.results ?? list) || []);
+                        } catch {}
+                      }}
+                    >
+                      <Select.Option key="private" value="private" label="Magánszemély">Magánszemély</Select.Option>
+                      {companies.map((c: any) => (
+                        <Select.Option key={c.id} value={c.id} label={c.name}>{c.name}</Select.Option>
+                      ))}
+                    </Select>
+                    <Tooltip title="Új cég hozzáadása">
+                      <Button icon={<PlusCircleOutlined />} onClick={() => {
+                        const popup = window.open('/crm/companies?action=create', '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                const list = await crmService.getCompanies({ is_customer: true, compact: true });
+                                setCompanies((list.results ?? list) || []);
+                                message.success('Cégek listája frissítve');
+                              } catch {}
+                            }
+                          }, 500);
+                        }
+                      }} />
+                    </Tooltip>
+                  </Space.Compact>
+                </Form.Item>
+              </Col>
+              <Col xs={24} md={18}>
+                <Form.Item label="Kapcsolattartók" style={{ marginBottom: 6 }}>
+                  <Space.Compact style={{ width: '100%' }}>
+                    <Select
+                      mode="multiple" allowClear showSearch optionFilterProp="label"
+                      filterOption={accentInsensitiveLabelFilter}
+                      placeholder="Válassz kapcsolattartókat"
+                      style={{ width: 'calc(100% - 190px)' }}
+                      popupMatchSelectWidth={false}
+                      dropdownStyle={{ minWidth: 200, maxWidth: 'calc(100vw - 32px)' }}
+                      value={copyItemContactIds}
+                      onChange={(val) => setCopyItemContactIds(val || [])}
+                      onFocus={async () => {
+                        if (copyItemCompanyId && copyItemCompanyId !== 'private') {
+                          try {
+                            const cl = await crmService.getContactsByCompany(copyItemCompanyId);
+                            setCopyItemContacts((cl.results ?? cl) || []);
+                          } catch {}
+                        }
+                      }}
+                    >
+                      {copyItemContacts.map((c: any) => (
+                        <Select.Option key={c.id} value={c.id} label={c.full_name || c.name}>{c.full_name || c.name}</Select.Option>
+                      ))}
+                    </Select>
+                    <Tooltip title="Új kapcsolattartó hozzáadása">
+                      <Button icon={<PlusCircleOutlined />} onClick={() => {
+                        let url = '/crm/contacts?action=create';
+                        if (copyItemCompanyId && copyItemCompanyId !== 'private') {
+                          url += `&company=${copyItemCompanyId}`;
+                          const co = companies.find((c: any) => c.id === copyItemCompanyId);
+                          if (co?.name) url += `&company_name=${encodeURIComponent(co.name)}`;
+                        }
+                        const popup = window.open(url, '_blank');
+                        if (popup) {
+                          const timer = setInterval(async () => {
+                            if (popup.closed) {
+                              clearInterval(timer);
+                              try {
+                                if (copyItemCompanyId && copyItemCompanyId !== 'private') {
+                                  const cl = await crmService.getContactsByCompany(copyItemCompanyId);
+                                  setCopyItemContacts((cl.results ?? cl) || []);
+                                }
+                                message.success('Kapcsolattartók listája frissítve');
+                              } catch {}
+                            }
+                          }, 500);
+                        }
+                      }} />
+                    </Tooltip>
+                    <Button onClick={async () => {
+                      if (copyItemCompanyId && copyItemCompanyId !== 'private') {
+                        try {
+                          const cl = await crmService.getContactsByCompany(copyItemCompanyId);
+                          setCopyItemContacts((cl.results ?? cl) || []);
+                          message.success('Kapcsolattartók frissítve');
+                        } catch {}
+                      } else {
+                        message.warning('Először válassz céget');
+                      }
+                    }}>Frissítés</Button>
+                  </Space.Compact>
+                </Form.Item>
+              </Col>
+            </Row>
+          </div>
+          {/* ── Projekt ── */}
+          <div style={{ marginBottom: 10 }}>
+            <Form.Item label="Projekt" style={{ marginBottom: 0 }}>
+              <Space.Compact style={{ width: '100%' }}>
+                <Select
+                  allowClear showSearch optionFilterProp="label"
+                  placeholder="Válassz projektet"
+                  style={{ width: 'calc(100% - 32px)' }}
+                  value={copyItemProjectId}
+                  onChange={(val) => setCopyItemProjectId(val ?? null)}
+                >
+                  {(projects || []).filter((p: any) => {
+                    if (!p.company) return true;
+                    if (!copyItemCompanyId || copyItemCompanyId === 'private') return false;
+                    return String(p.company) === String(copyItemCompanyId);
+                  }).map((p: any) => (
+                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}{p.company_name ? <span style={{ color: '#999', marginLeft: 6, fontSize: 11 }}>{p.company_name}</span> : null}</Select.Option>
+                  ))}
+                </Select>
+                <Tooltip title="Új projekt létrehozása">
+                  <Button icon={<PlusCircleOutlined />} onClick={() => {
+                    let url = '/sales/projects?action=create';
+                    if (copyItemCompanyId && copyItemCompanyId !== 'private') url += `&company=${copyItemCompanyId}`;
+                    const popup = window.open(url, '_blank');
+                    if (popup) {
+                      const timer = setInterval(async () => {
+                        if (popup.closed) {
+                          clearInterval(timer);
+                          try {
+                            const projRes = await manufacturingService.getProjects();
+                            setProjects(projRes as any);
+                            message.success('Projektek listája frissítve');
+                          } catch {}
+                        }
+                      }, 500);
+                    }
+                  }} />
+                </Tooltip>
+              </Space.Compact>
+            </Form.Item>
+          </div>
+          {/* ── Tétel szerkesztő ── */}
+          <ItemSelectorModal
+            renderInline
+            open={true}
+            saveRef={copyItemSaveRef}
+            mode='add'
+            defaultType={copySourceItem.item_type || 'manufacturing'}
+            rfqCurrency={currency}
+            onCancel={() => { setCopyItemModalOpen(false); setCopySourceItem(null); setCopySourceRfq(null); }}
+            onAdd={handleCopyItemSave}
+            initialSelection={{
+              item_type: copySourceItem.item_type || 'manufacturing',
+              ref_id: copySourceItem.manufacturing_product || copySourceItem.product || copySourceItem.service || copySourceItem.ref_id,
+              name: copySourceItem.manufacturing_product_name || copySourceItem.product_name || copySourceItem.service_name || copySourceItem.name || '',
+            }}
+            initialValues={{
+              quantity: Number(copySourceItem.quantity) || 1,
+              unit: copySourceItem.unit || 'db',
+              net_unit_price: Number(copySourceItem.net_unit_price) || 0,
+              vat_rate: Number(copySourceItem.vat_rate) || 27,
+              description: copySourceItem.description || '',
+              discount_percent: Number(copySourceItem.discount_percent || 0),
+              discount_amount: Number(copySourceItem.discount_amount || 0),
+            }}
+            initialFormulas={copySourceItem.formulas || {}}
+            quoteItemId={copySourceItem.id}
+          />
+        </Modal>
+      )}
       <AttachmentPreviewModal
         open={rfqAttPreviewOpen}
         title={rfqAttPreviewTitle}

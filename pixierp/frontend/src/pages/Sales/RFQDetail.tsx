@@ -501,7 +501,9 @@ const RFQDetail: React.FC = () => {
       } else {
         refreshItems();
       }
-    } catch (e) {
+    } catch (e: any) {
+      const errData = e?.response?.data;
+      if (errData) console.error('[onEditSelected] API error:', JSON.stringify(errData));
       message.error(e instanceof Error && e.message ? e.message : 'Nem sikerült frissíteni a tételt');
     }
   };
@@ -1048,33 +1050,8 @@ const RFQDetail: React.FC = () => {
 
 
         {/* ── Tételek ──────────────────────────────────────────────────── */}
+        {!editContext && (
         <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
-          {editContext ? (
-            <ItemSelectorModal
-              renderInline
-              saveRef={itemSaveRef}
-              open={true}
-              mode="edit"
-              defaultType={selectorType}
-              onCancel={() => setEditContext(null)}
-              onAdd={async (p) => onEditSelected(p)}
-              rfqId={Number(id)}
-              rfqCurrency={activeCurrency}
-              initialSelection={{ item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name) }}
-              initialValues={{
-                quantity: Number(editContext.item.quantity),
-                unit: editContext.item.unit,
-                net_unit_price: Number(editContext.item.net_unit_price),
-                vat_rate: Number(editContext.item.vat_rate),
-                description: editContext.item.description,
-                discount_percent: Number(editContext.item.discount_percent || 0),
-                discount_amount: Number(editContext.item.discount_amount || 0),
-              }}
-              initialFormulas={editContext.item.formulas || {}}
-              quoteItemId={editContext.item.id}
-            />
-          ) : (
-            <>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
             <Col xs={24} md={10}>
@@ -1113,10 +1090,38 @@ const RFQDetail: React.FC = () => {
               }
             />
           </div>
-            </>
-          )}
         </div>
+        )}
         </Form>
+
+        {/* ── Inline item editor — rendered OUTSIDE formBasic to avoid nested <form> ── */}
+        {editContext && (
+        <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
+          <ItemSelectorModal
+            renderInline
+            saveRef={itemSaveRef}
+            open={true}
+            mode="edit"
+            defaultType={selectorType}
+            onCancel={() => setEditContext(null)}
+            onAdd={async (p) => onEditSelected(p)}
+            rfqId={Number(id)}
+            rfqCurrency={activeCurrency}
+            initialSelection={{ item_type: editContext.item.item_type, ref_id: (editContext.item.product || editContext.item.manufacturing_product || editContext.item.service) as number, name: (editContext.item.product_name || editContext.item.manufacturing_product_name || editContext.item.service_name) }}
+            initialValues={{
+              quantity: Number(editContext.item.quantity),
+              unit: editContext.item.unit,
+              net_unit_price: Number(editContext.item.net_unit_price),
+              vat_rate: Number(editContext.item.vat_rate),
+              description: editContext.item.description,
+              discount_percent: Number(editContext.item.discount_percent || 0),
+              discount_amount: Number(editContext.item.discount_amount || 0),
+            }}
+            initialFormulas={editContext.item.formulas || {}}
+            quoteItemId={editContext.item.id}
+          />
+        </div>
+        )}
 
         <AttachmentPreviewModal
           open={filePreviewOpen}

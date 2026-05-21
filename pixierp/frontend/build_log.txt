@@ -1,0 +1,721 @@
+
+> pixierp-frontend@0.704.0 build
+> REACT_APP_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev') react-scripts build
+
+Creating an optimized production build...
+Compiled with warnings.
+
+[eslint] 
+src/components/AccessCredentialsModal.tsx
+  Line 59:8:  React Hook useEffect has a missing dependency: 'loadCredentials'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/components/ActivityLogModal.tsx
+  Line 51:6:  React Hook useEffect has a missing dependency: 'fetchTimeline'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/components/AttendanceQRModal.tsx
+  Line 45:12:  'scanning' is assigned a value but never used                                                                                @typescript-eslint/no-unused-vars
+  Line 201:8:  React Hook useEffect has missing dependencies: 'fetchToken' and 'token'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 228:8:  React Hook useEffect has a missing dependency: 'selectedCameraId'. Either include it or remove the dependency array          react-hooks/exhaustive-deps
+  Line 244:8:  React Hook useEffect has a missing dependency: 'startScanner'. Either include it or remove the dependency array              react-hooks/exhaustive-deps
+
+src/components/Chat/ChatDrawer.tsx
+  Line 2:47:   'Avatar' is defined but never used                                                                                                  @typescript-eslint/no-unused-vars
+  Line 2:55:   'Tag' is defined but never used                                                                                                     @typescript-eslint/no-unused-vars
+  Line 2:60:   'Tooltip' is defined but never used                                                                                                 @typescript-eslint/no-unused-vars
+  Line 2:69:   'Dropdown' is defined but never used                                                                                                @typescript-eslint/no-unused-vars
+  Line 2:79:   'Menu' is defined but never used                                                                                                    @typescript-eslint/no-unused-vars
+  Line 2:123:  'Spin' is defined but never used                                                                                                    @typescript-eslint/no-unused-vars
+  Line 3:43:   'UserOutlined' is defined but never used                                                                                            @typescript-eslint/no-unused-vars
+  Line 3:71:   'EllipsisOutlined' is defined but never used                                                                                        @typescript-eslint/no-unused-vars
+  Line 3:89:   'DownloadOutlined' is defined but never used                                                                                        @typescript-eslint/no-unused-vars
+  Line 18:12:  'loading' is assigned a value but never used                                                                                        @typescript-eslint/no-unused-vars
+  Line 18:21:  'setLoading' is assigned a value but never used                                                                                     @typescript-eslint/no-unused-vars
+  Line 45:8:   React Hook useEffect has missing dependencies: 'loadDocItems' and 'loadThread'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 59:23:  'res' is assigned a value but never used                                                                                            @typescript-eslint/no-unused-vars
+
+src/components/Editors/ManufacturingProductEditorModal.tsx
+  Line 2:30:    'InputNumber' is defined but never used                                                                                                   @typescript-eslint/no-unused-vars
+  Line 2:88:    'Popconfirm' is defined but never used                                                                                                    @typescript-eslint/no-unused-vars
+  Line 9:10:    'salesService' is defined but never used                                                                                                  @typescript-eslint/no-unused-vars
+  Line 55:9:    'navigate' is assigned a value but never used                                                                                             @typescript-eslint/no-unused-vars
+  Line 59:10:   'productClasses' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 60:10:   'projects' is assigned a value but never used                                                                                             @typescript-eslint/no-unused-vars
+  Line 85:10:   'materialGroups' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 85:26:   'setMaterialGroups' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 242:6:   React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array                                   react-hooks/exhaustive-deps
+  Line 250:8:   React Hook useEffect has a missing dependency: 'getEditorSnapshot'. Either include it or remove the dependency array                      react-hooks/exhaustive-deps
+  Line 259:8:   React Hook useEffect has missing dependencies: 'getEditorSnapshot' and 'open'. Either include them or remove the dependency array         react-hooks/exhaustive-deps
+  Line 277:6:   React Hook useEffect has missing dependencies: 'form' and 'generateCode'. Either include them or remove the dependency array              react-hooks/exhaustive-deps
+  Line 367:6:   React Hook useEffect has a missing dependency: 'suppliers'. Either include it or remove the dependency array                              react-hooks/exhaustive-deps
+  Line 687:24:  React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked  react-hooks/exhaustive-deps
+  Line 907:9:   'customerOptions' is assigned a value but never used                                                                                      @typescript-eslint/no-unused-vars
+
+src/components/Editors/ProductEditorModal.tsx
+  Line 2:30:  'InputNumber' is defined but never used                                                                  @typescript-eslint/no-unused-vars
+  Line 4:10:  'EditOutlined' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  Line 38:6:  React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/components/Editors/ServiceEditorModal.tsx
+  Line 2:30:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/components/EnhancedTable.tsx
+  Line 283:9:   The 'mergedColVis' object makes the dependencies of useMemo Hook (at line 485) change on every render. To fix this, wrap the initialization of 'mergedColVis' in its own useMemo() Hook                                         react-hooks/exhaustive-deps
+  Line 293:9:   The 'mergedWidths' object makes the dependencies of useMemo Hook (at line 485) change on every render. Move it inside the useMemo callback. Alternatively, wrap the initialization of 'mergedWidths' in its own useMemo() Hook  react-hooks/exhaustive-deps
+  Line 558:6:   React Hook useMemo has missing dependencies: 'labelFor', 'setColOrder', 'setColVis', 'setColWidthsPref', and 'toggleCol'. Either include them or remove the dependency array                                                    react-hooks/exhaustive-deps
+  Line 577:9:   The 'fullDataSource' logical expression could make the dependencies of useMemo Hook (at line 601) change on every render. To fix this, wrap the initialization of 'fullDataSource' in its own useMemo() Hook                    react-hooks/exhaustive-deps
+  Line 631:6:   React Hook useMemo has a missing dependency: 'tableProps'. Either include it or remove the dependency array                                                                                                                     react-hooks/exhaustive-deps
+  Line 631:7:   React Hook useMemo has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked                                                                                          react-hooks/exhaustive-deps
+  Line 631:41:  React Hook useMemo has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked                                                                                          react-hooks/exhaustive-deps
+
+src/components/HungarianDatePicker.tsx
+  Line 39:11:  'handleInputChange' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/components/Layout/Header.tsx
+  Line 3:91:   'LoginOutlined' is defined but never used                                                                                @typescript-eslint/no-unused-vars
+  Line 304:8:  React Hook useEffect has a missing dependency: 'handleInactiveLogout'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/components/Layout/Sidebar.tsx
+  Line 188:6:  React Hook useEffect has a missing dependency: 'getSelectedKey'. Either include it or remove the dependency array                                                                                                                                                                                                                                                  react-hooks/exhaustive-deps
+  Line 217:9:  'getCount' is assigned a value but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 818:9:  The href attribute requires a valid value to be accessible. Provide a valid, navigable address as the href value. If you cannot provide a valid href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/components/Manufacturing/MaterialNeedsTree.tsx
+  Line 58:32:  'updateItem' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/components/QRScannerModal.tsx
+  Line 47:8:   React Hook useEffect has a missing dependency: 'getInitialMode'. Either include it or remove the dependency array    react-hooks/exhaustive-deps
+  Line 111:8:  React Hook useEffect has a missing dependency: 'selectedCameraId'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 126:8:  React Hook useEffect has a missing dependency: 'startCamera'. Either include it or remove the dependency array       react-hooks/exhaustive-deps
+
+src/components/ResponsiveCardList.tsx
+  Line 12:30:  'Spin' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/components/Sales/ImpositionHelperModal.tsx
+  Line 3:103:   'EditOutlined' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 3:117:   'FolderOpenOutlined' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 190:24:  Function declared in a loop contains unsafe references to variable(s) 'started', 'cursorX', 'cursorX', 'shelfH', 'shelfY'  no-loop-func
+  Line 634:9:   'renamePresetInline' is assigned a value but never used                                                                    @typescript-eslint/no-unused-vars
+  Line 642:9:   'deletePresetById' is assigned a value but never used                                                                      @typescript-eslint/no-unused-vars
+  Line 736:9:   'sheetUsage' is assigned a value but never used                                                                            @typescript-eslint/no-unused-vars
+  Line 972:9:   'rollUsage' is assigned a value but never used                                                                             @typescript-eslint/no-unused-vars
+
+src/components/Sales/ItemSelectorModal.tsx
+  Line 2:51:     'InputNumber' is defined but never used                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 2:97:     'Alert' is defined but never used                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 2:131:    'Drawer' is defined but never used                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 4:54:     'SearchOutlined' is defined but never used                                                                                                                                                              @typescript-eslint/no-unused-vars
+  Line 4:141:    'UpOutlined' is defined but never used                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  Line 4:153:    'DownOutlined' is defined but never used                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 4:167:    'LeftOutlined' is defined but never used                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 4:181:    'RightOutlined' is defined but never used                                                                                                                                                               @typescript-eslint/no-unused-vars
+  Line 124:9:    'navigate' is assigned a value but never used                                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 136:10:   'createError' is assigned a value but never used                                                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 336:6:    React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array                                                                                                 react-hooks/exhaustive-deps
+  Line 356:11:   'costExchRate' is assigned a value but never used                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 456:6:    React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array                                                                                                 react-hooks/exhaustive-deps
+  Line 627:6:    React Hook useEffect has missing dependencies: 'initialManuPayload', 'initialValues.net_unit_price', 'quoteItemId', and 'setManuFormInitialValues'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 1554:9:   'manuApplyDefaultMarkup' is assigned a value but never used                                                                                                                                             @typescript-eslint/no-unused-vars
+  Line 1564:9:   'manuMoveCostItem' is assigned a value but never used                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 1577:9:   'manuIndentCostItem' is assigned a value but never used                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 1592:25:  Function declared in a loop contains unsafe references to variable(s) 'cur'                                                                                                                             no-loop-func
+  Line 1598:9:   'manuOutdentCostItem' is assigned a value but never used                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 1608:9:   'manuCostDepthMap' is assigned a value but never used                                                                                                                                                   @typescript-eslint/no-unused-vars
+
+src/components/Sales/ItemsTable.tsx
+  Line 4:91:   'DragOverlay' is defined but never used        @typescript-eslint/no-unused-vars
+  Line 160:9:  'depthMap' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/components/Warehouse/QRLabelModal.tsx
+  Line 2:25:   'InputNumber' is defined but never used         @typescript-eslint/no-unused-vars
+  Line 22:11:  'canvasRef' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/components/WorkLog/TimerModal.tsx
+  Line 2:93:   'Divider' is defined but never used                                                                      @typescript-eslint/no-unused-vars
+  Line 19:12:  'selectedOrderId' is assigned a value but never used                                                     @typescript-eslint/no-unused-vars
+  Line 123:8:  React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/contexts/TimeTrackerContext.tsx
+  Line 60:6:  React Hook useEffect has a missing dependency: 'refreshActiveLog'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/CRM/CRMModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/CRM/Companies.tsx
+  Line 137:11:  'navigate' is assigned a value but never used                                                                       @typescript-eslint/no-unused-vars
+  Line 210:8:   React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/CRM/Contacts.tsx
+  Line 149:8:  React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Dashboard.tsx
+  Line 13:5:    'ClockCircleOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 125:17:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 202:17:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 243:31:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 388:32:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 477:17:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 552:32:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/Finance/CashRegisters.tsx
+  Line 4:11:   'Table' is defined but never used                                                                                      @typescript-eslint/no-unused-vars
+  Line 5:5:    'InputNumber' is defined but never used                                                                                @typescript-eslint/no-unused-vars
+  Line 146:8:  React Hook useEffect has a missing dependency: 'fetchCashRegisters'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 154:8:  React Hook useEffect has a missing dependency: 'fetchTransactions'. Either include it or remove the dependency array   react-hooks/exhaustive-deps
+
+src/pages/Finance/FinanceModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/HR/ActivityLog.tsx
+  Line 4:3:   'Table' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 17:8:  'dayjs' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 74:6:  React Hook useEffect has a missing dependency: 'fetchLogs'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/HR/AttendanceReport.tsx
+  Line 100:12:  'tempTime' is assigned a value but never used                                                                           @typescript-eslint/no-unused-vars
+  Line 100:22:  'setTempTime' is assigned a value but never used                                                                        @typescript-eslint/no-unused-vars
+  Line 158:8:   React Hook useEffect has a missing dependency: 'searchParams'. Either include it or remove the dependency array         react-hooks/exhaustive-deps
+  Line 164:8:   React Hook useEffect has a missing dependency: 'fetchAttendanceData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 409:15:  'isEditing' is assigned a value but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 442:11:  'handleTimeOk' is assigned a value but never used                                                                       @typescript-eslint/no-unused-vars
+  Line 451:11:  'handleTimeCancel' is assigned a value but never used                                                                   @typescript-eslint/no-unused-vars
+
+src/pages/HR/Departments.tsx
+  Line 174:8:  React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/HR/Employees.tsx
+  Line 5:5:     'Table' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 100:12:  'roles' is assigned a value but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 148:8:   React Hook useEffect has a missing dependency: 'loadEmployees'. Either include it or remove the dependency array    react-hooks/exhaustive-deps
+  Line 156:8:   React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 181:8:   React Hook useEffect has a missing dependency: 'loadEmployees'. Either include it or remove the dependency array    react-hooks/exhaustive-deps
+  Line 241:8:   React Hook useEffect has a missing dependency: 'departments'. Either include it or remove the dependency array      react-hooks/exhaustive-deps
+  Line 253:8:   React Hook useEffect has a missing dependency: 'editingEmployee'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 594:17:  'savedEmployee' is assigned a value but never used                                                                  @typescript-eslint/no-unused-vars
+
+src/pages/HR/HRModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/HR/TaskSettings.tsx
+  Line 263:9:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/HR/WorkLogs.tsx
+  Line 2:16:    'Table' is defined but never used                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  Line 2:90:    'Statistic' is defined but never used                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 65:8:    React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array                                                                                                                                                                                                                                                                   react-hooks/exhaustive-deps
+  Line 133:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 134:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 135:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 136:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 137:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 138:33:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/Manufacturing/Calculator.tsx
+  Line 4:15:    'InputNumber' is defined but never used                                                                                     @typescript-eslint/no-unused-vars
+  Line 5:45:    'Input' is defined but never used                                                                                           @typescript-eslint/no-unused-vars
+  Line 9:23:    'SaveOutlined' is defined but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 139:9:   'navigate' is assigned a value but never used                                                                               @typescript-eslint/no-unused-vars
+  Line 163:10:  'loading' is assigned a value but never used                                                                                @typescript-eslint/no-unused-vars
+  Line 164:10:  'form' is assigned a value but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 182:10:  'totalCost' is assigned a value but never used                                                                              @typescript-eslint/no-unused-vars
+  Line 191:6:   React Hook useEffect has a missing dependency: 'fetchTemplate'. Either include it or remove the dependency array            react-hooks/exhaustive-deps
+  Line 195:6:   React Hook useEffect has a missing dependency: 'recalculateAllMaterials'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 204:6:   React Hook useEffect has a missing dependency: 'calculateTotals'. Either include it or remove the dependency array          react-hooks/exhaustive-deps
+  Line 477:14:  'drawH' is assigned a value but never used                                                                                  @typescript-eslint/no-unused-vars
+  Line 735:9:   'recalculateServices' is assigned a value but never used                                                                    @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/CalculatorTemplates.tsx
+  Line 2:45:   'InputNumber' is defined but never used               @typescript-eslint/no-unused-vars
+  Line 2:109:  'Card' is defined but never used                      @typescript-eslint/no-unused-vars
+  Line 2:115:  'List' is defined but never used                      @typescript-eslint/no-unused-vars
+  Line 2:121:  'Checkbox' is defined but never used                  @typescript-eslint/no-unused-vars
+  Line 7:8:    'UnifiedQuickSearchHeader' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/ManufacturingModule.tsx
+  Line 2:25:  'Navigate' is defined but never used             @typescript-eslint/no-unused-vars
+  Line 9:5:   'ForkOutlined' is defined but never used         @typescript-eslint/no-unused-vars
+  Line 10:5:  'DatabaseOutlined' is defined but never used     @typescript-eslint/no-unused-vars
+  Line 11:5:  'ToolOutlined' is defined but never used         @typescript-eslint/no-unused-vars
+  Line 12:5:  'CheckCircleOutlined' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/OrderedProducts.tsx
+  Line 38:5:   'MenuOutlined' is defined but never used  @typescript-eslint/no-unused-vars
+  Line 54:10:  'isPdf' is defined but never used         @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/ProductClasses.tsx
+  Line 5:5:    'Table' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 24:5:   'SearchOutlined' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 125:8:  React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Manufacturing/ProductDetail.tsx
+  Line 1:50:    'useRef' is defined but never used                                                                               @typescript-eslint/no-unused-vars
+  Line 7:154:   'RightOutlined' is defined but never used                                                                        @typescript-eslint/no-unused-vars
+  Line 311:6:   React Hook useEffect has a missing dependency: 'suppliers'. Either include it or remove the dependency array     react-hooks/exhaustive-deps
+  Line 324:6:   React Hook useEffect has a missing dependency: 'form'. Either include it or remove the dependency array          react-hooks/exhaustive-deps
+  Line 495:9:   'moveCostItem' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+  Line 508:9:   'indentCostItem' is assigned a value but never used                                                              @typescript-eslint/no-unused-vars
+  Line 523:25:  Function declared in a loop contains unsafe references to variable(s) 'cur'                                      no-loop-func
+  Line 529:9:   'outdentCostItem' is assigned a value but never used                                                             @typescript-eslint/no-unused-vars
+  Line 540:9:   'costDepthMap' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+  Line 761:6:   React Hook useMemo has an unnecessary dependency: 'costItems'. Either exclude it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Manufacturing/ProductEditor.tsx
+  Line 4:53:    'InputNumber' is defined but never used                   @typescript-eslint/no-unused-vars
+  Line 165:9:   'navigate' is assigned a value but never used             @typescript-eslint/no-unused-vars
+  Line 247:11:  'categoryPathMap' is assigned a value but never used      @typescript-eslint/no-unused-vars
+  Line 247:28:  'sortedCategories' is assigned a value but never used     @typescript-eslint/no-unused-vars
+  Line 329:9:   'openImpositionModal' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/ProductionQueue.tsx
+  Line 229:8:  React Hook useEffect has a missing dependency: 'setFilterSupplier'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Manufacturing/Products.tsx
+  Line 12:5:    'DatePicker' is defined but never used                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 13:5:    'InputNumber' is defined but never used                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 20:5:    'Spin' is defined but never used                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 29:5:    'ReloadOutlined' is defined but never used                                                                                                                             @typescript-eslint/no-unused-vars
+  Line 35:8:    'HungarianDatePicker' is defined but never used                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 36:10:   'createIntelligentFilter' is defined but never used                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 38:8:    'UnifiedQuickSearchHeader' is defined but never used                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 41:9:    'TextArea' is assigned a value but never used                                                                                                                          @typescript-eslint/no-unused-vars
+  Line 85:12:   'updatingRates' is assigned a value but never used                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 116:8:   React Hook useEffect has a missing dependency: 'searchParams'. Either include it or remove the dependency array                                                        react-hooks/exhaustive-deps
+  Line 116:9:   React Hook useEffect has a complex expression in the dependency array. Extract it to a separate variable so it can be statically checked                               react-hooks/exhaustive-deps
+  Line 185:8:   React Hook useEffect has missing dependencies: 'location.pathname', 'location.state', 'navigate', and 'showModal'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 270:11:  'handleSubmit' is assigned a value but never used                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 350:11:  'handleUpdateExchangeRates' is assigned a value but never used                                                                                                         @typescript-eslint/no-unused-vars
+  Line 365:11:  'getCurrentCurrencySymbol' is assigned a value but never used                                                                                                          @typescript-eslint/no-unused-vars
+  Line 371:11:  'calculateTotalPrice' is assigned a value but never used                                                                                                               @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/Projects.tsx
+  Line 6:5:    'Table' is defined but never used                    @typescript-eslint/no-unused-vars
+  Line 13:5:   'DatePicker' is defined but never used               @typescript-eslint/no-unused-vars
+  Line 28:5:   'SearchOutlined' is defined but never used           @typescript-eslint/no-unused-vars
+  Line 35:10:  'createIntelligentFilter' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Manufacturing/ServiceGroups.tsx
+  Line 4:3:   'Table' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 26:8:  'UnifiedQuickSearchHeader' is defined but never used                                                                @typescript-eslint/no-unused-vars
+  Line 76:6:  React Hook useEffect has a missing dependency: 'loadGroups'. Either include it or remove the dependency array       react-hooks/exhaustive-deps
+  Line 84:6:  React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Manufacturing/Services.tsx
+  Line 4:45:    'InputNumber' is defined but never used                                                                                                      @typescript-eslint/no-unused-vars
+  Line 4:105:   'AutoComplete' is defined but never used                                                                                                     @typescript-eslint/no-unused-vars
+  Line 6:102:   'SearchOutlined' is defined but never used                                                                                                   @typescript-eslint/no-unused-vars
+  Line 103:10:  'filteredSuppliers' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 105:10:  'isInternalProduction' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 121:10:  'printCostItems' is assigned a value but never used                                                                                          @typescript-eslint/no-unused-vars
+  Line 125:10:  'supplierSearchValue' is assigned a value but never used                                                                                     @typescript-eslint/no-unused-vars
+  Line 126:10:  'filteredSuppliersForAdd' is assigned a value but never used                                                                                 @typescript-eslint/no-unused-vars
+  Line 298:6:   React Hook useEffect has missing dependencies: 'form', 'handleCreate', and 'handleEdit'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 306:6:   React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array                           react-hooks/exhaustive-deps
+  Line 483:9:   'fetchPrintCostItems' is assigned a value but never used                                                                                     @typescript-eslint/no-unused-vars
+  Line 765:9:   'handleSupplierSearch' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 772:9:   'handleSupplierSelect' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 780:9:   'handleSupplierSearchForAdd' is assigned a value but never used                                                                              @typescript-eslint/no-unused-vars
+  Line 801:9:   'handleAddSupplier' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 819:9:   'handleRemoveSupplier' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 850:9:   'handleSourceChange' is assigned a value but never used                                                                                      @typescript-eslint/no-unused-vars
+  Line 955:9:   'getAverageMarkup' is assigned a value but never used                                                                                        @typescript-eslint/no-unused-vars
+  Line 962:9:   'handleTransferPrices' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+
+src/pages/Orders/OrdersModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/POS/POS.tsx
+  Line 2:60:   'InputNumber' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 4:10:   'ShoppingCartOutlined' is defined but never used                                                                    @typescript-eslint/no-unused-vars
+  Line 119:6:  React Hook useEffect has a missing dependency: 'filterMaterials'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 322:9:  'handleQuantityChange' is assigned a value but never used                                                           @typescript-eslint/no-unused-vars
+  Line 347:9:  'getCustomerButtonText' is assigned a value but never used                                                          @typescript-eslint/no-unused-vars
+
+src/pages/POS/POSModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/POS/components/CheckoutSummary.tsx
+  Line 17:3:   'InputNumber' is defined but never used              @typescript-eslint/no-unused-vars
+  Line 37:9:   'TextArea' is assigned a value but never used        @typescript-eslint/no-unused-vars
+  Line 263:9:  'handleVerifyQR' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/POS/components/CustomerSelection.tsx
+  Line 17:3:    'Spin' is defined but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 22:68:   'EyeOutlined' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 27:9:    'TabPane' is assigned a value but never used                                                                        @typescript-eslint/no-unused-vars
+  Line 110:27:  'setViewingCustomer' is assigned a value but never used                                                             @typescript-eslint/no-unused-vars
+  Line 112:10:  'form' is assigned a value but never used                                                                           @typescript-eslint/no-unused-vars
+  Line 115:10:  'selectedCountry' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+  Line 115:27:  'setSelectedCountry' is assigned a value but never used                                                             @typescript-eslint/no-unused-vars
+  Line 122:9:   'tableScrollRef' is assigned a value but never used                                                                 @typescript-eslint/no-unused-vars
+  Line 125:9:   'watchedCountry' is assigned a value but never used                                                                 @typescript-eslint/no-unused-vars
+  Line 154:6:   React Hook useEffect has a missing dependency: 'filterCustomers'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Personal/Approvals.tsx
+  Line 14:11:  'navigate' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Personal/MyOrders.tsx
+  Line 3:16:  'Table' is defined but never used                     @typescript-eslint/no-unused-vars
+  Line 3:47:  'Tag' is defined but never used                       @typescript-eslint/no-unused-vars
+  Line 8:8:   'UnifiedQuickSearchHeader' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Personal/MyTasks.tsx
+  Line 3:73:   'Table' is defined but never used                                                                                                  @typescript-eslint/no-unused-vars
+  Line 8:8:    'UnifiedQuickSearchHeader' is defined but never used                                                                               @typescript-eslint/no-unused-vars
+  Line 120:6:  React Hook useEffect has a missing dependency: 'loadTasks'. Either include it or remove the dependency array                       react-hooks/exhaustive-deps
+  Line 128:6:  React Hook useEffect has a missing dependency: 'selectedTask?.active_execution'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Personal/PersonalModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/PrintShopPage.tsx
+  Line 5:47:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/PrintStoragePage.tsx
+  Line 311:19:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 319:21:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/PrintEditor/PrintTemplatesPage.tsx
+  Line 3:37:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+  Line 4:15:  'Tabs' is defined but never used         @typescript-eslint/no-unused-vars
+  Line 4:43:  'Spin' is defined but never used         @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/components/PrintCommentView.tsx
+  Line 14:51:   'FontColorsOutlined' is defined but never used         @typescript-eslint/no-unused-vars
+  Line 1292:9:  'handleDeletePage' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/components/PrintParamsPanel.tsx
+  Line 2:18:    'InputNumber' is defined but never used                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+  Line 4:10:    'InfoCircleOutlined' is defined but never used                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 318:6:   React Hook useEffect has a missing dependency: 'onTemplateCategoriesChange'. Either include it or remove the dependency array. If 'onTemplateCategoriesChange' changes too often, find the parent component that defines it and wrap that definition in useCallback  react-hooks/exhaustive-deps
+  Line 383:6:   React Hook useCallback has a missing dependency: 'onPriceChange'. Either include it or remove the dependency array. If 'onPriceChange' changes too often, find the parent component that defines it and wrap that definition in useCallback                          react-hooks/exhaustive-deps
+  Line 525:34:  Unexpected mix of '||' and '&&'. Use parentheses to clarify the intended order of operations                                                                                                                                                                         no-mixed-operators
+  Line 525:60:  Unexpected mix of '||' and '&&'. Use parentheses to clarify the intended order of operations                                                                                                                                                                         no-mixed-operators
+
+src/pages/PrintEditor/components/Step2CanvasEditor.tsx
+  Line 3:35:     'InputNumber' is defined but never used                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 4:48:     'Modal' is defined but never used                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+  Line 15:34:    'HighlightOutlined' is defined but never used                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  Line 15:68:    'CloseOutlined' is defined but never used                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 16:3:     'ArrowRightOutlined' is defined but never used                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 138:7:    'COMMENT_AREA_FILL' is assigned a value but never used                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  Line 139:7:    'COMMENT_AREA_STROKE' is assigned a value but never used                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 288:10:   'layerDrawerOpen' is assigned a value but never used                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 288:27:   'setLayerDrawerOpen' is assigned a value but never used                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 990:11:   'dpr' is assigned a value but never used                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 1071:13:  'absLeft' is assigned a value but never used                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 1072:13:  'absTop' is assigned a value but never used                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 1257:18:  The ref value 'initGenRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'initGenRef.current' to a variable inside the effect, and use that variable in the cleanup function            react-hooks/exhaustive-deps
+  Line 1286:27:  The ref value 'sheetDesignsRef.current' will likely have changed by the time this effect cleanup function runs. If this ref points to a node rendered by React, copy 'sheetDesignsRef.current' to a variable inside the effect, and use that variable in the cleanup function  react-hooks/exhaustive-deps
+  Line 2091:2:   Unnecessary escape character: \/                                                                                                                                                                                                                                               no-useless-escape
+  Line 2194:2:   Unnecessary escape character: \/                                                                                                                                                                                                                                               no-useless-escape
+  Line 3422:33:  'angle' is assigned a value but never used                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 3423:33:  'headLen' is assigned a value but never used                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/components/Step3OrderSummary.tsx
+  Line 4:29:  'Spin' is defined but never used            @typescript-eslint/no-unused-vars
+  Line 13:9:  'Title' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/PrintEditor/components/TemplatePicker.tsx
+  Line 2:56:  'Image' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Public/ClientPortal.tsx
+  Line 39:6:  React Hook useEffect has missing dependencies: 'load' and 'navigate'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Public/KioskPage.tsx
+  Line 3:38:   'message' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 4:10:   'ClockCircleOutlined' is defined but never used                                                                       @typescript-eslint/no-unused-vars
+  Line 89:8:   React Hook useEffect has a missing dependency: 'checkDeviceStatus'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 129:8:  React Hook useEffect has a missing dependency: 'breathingStyle'. Either include it or remove the dependency array     react-hooks/exhaustive-deps
+
+src/pages/Public/PublicDelivery.tsx
+  Line 54:6:  React Hook useEffect has a missing dependency: 'fetchDeliveryData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Public/PublicDeliveryNote.tsx
+  Line 3:69:   'Checkbox' is defined but never used                                                                                  @typescript-eslint/no-unused-vars
+  Line 123:8:  React Hook useEffect has a missing dependency: 'fetchDeliveryData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Public/PublicQuoteOrder.tsx
+  Line 81:6:   React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 226:9:  'totalVat' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+
+src/pages/Public/PublicSite.tsx
+  Line 81:6:  React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Public/PublicTicket.tsx
+  Line 40:6:  React Hook useEffect has a missing dependency: 'loadTicket'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/CustomerOrderDetail.tsx
+  Line 19:10:  'isPdf' is defined but never used                                                                                  @typescript-eslint/no-unused-vars
+  Line 19:17:  'openPdfPreview' is defined but never used                                                                         @typescript-eslint/no-unused-vars
+  Line 87:10:  'selectorOpen' is assigned a value but never used                                                                  @typescript-eslint/no-unused-vars
+  Line 87:24:  'setSelectorOpen' is assigned a value but never used                                                               @typescript-eslint/no-unused-vars
+  Line 144:6:  React Hook useCallback has a missing dependency: 'formBasic'. Either include it or remove the dependency array     react-hooks/exhaustive-deps
+  Line 209:6:  React Hook useCallback has a missing dependency: 'location.key'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/CustomerOrders.tsx
+  Line 3:95:     'Switch' is defined but never used                                                                                                                                                                                                                                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 7:55:     'ToolOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  Line 7:82:     'CheckCircleOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 7:147:    'RocketOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 7:322:    'SearchOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 16:10:    'manufacturingService' is defined but never used                                                                                                                                                                                                                                                                                                                          @typescript-eslint/no-unused-vars
+  Line 23:10:    'isPdf' is defined but never used                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  Line 23:17:    'openPdfPreview' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 84:11:    'confirm' is assigned a value but never used                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+  Line 176:9:    'ORDERS_COL_LABELS' is assigned a value but never used                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 261:10:   'costItemsCache' is assigned a value but never used                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 261:26:   'setCostItemsCache' is assigned a value but never used                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 262:10:   'costItemsLoading' is assigned a value but never used                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 262:28:   'setCostItemsLoading' is assigned a value but never used                                                                                                                                                                                                                                                                                                                  @typescript-eslint/no-unused-vars
+  Line 338:25:   'setSelectedOrder' is assigned a value but never used                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 340:27:   'setTimestampAction' is assigned a value but never used                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 501:9:    'toggleOrdersCol' is assigned a value but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 557:6:    React Hook useEffect has a missing dependency: 'fetchOrders'. Either include it or remove the dependency array                                                                                                                                                                                                                                                            react-hooks/exhaustive-deps
+  Line 1421:9:   'handleItemStatusChange' is assigned a value but never used                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  Line 1591:11:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 1872:13:  'isActions' is assigned a value but never used                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  Line 1894:13:  'isActions' is assigned a value but never used                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  Line 1944:9:   'orderMatchesSearch' is assigned a value but never used                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 2104:6:   React Hook useMemo has a missing dependency: 'ITEM_COL_WIDTHS'. Either include it or remove the dependency array                                                                                                                                                                                                                                                          react-hooks/exhaustive-deps
+  Line 2299:19:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/Sales/DeliveryNotes.tsx
+  Line 2:68:    'InputNumber' is defined but never used                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 5:10:    'useNavigate' is defined but never used                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 224:6:   React Hook useEffect has a missing dependency: 'fetchDeliveryNoteItems'. Either include it or remove the dependency array                                                                                                                                                                                                                                                 react-hooks/exhaustive-deps
+  Line 233:6:   React Hook useEffect has a missing dependency: 'initCreateFromOrder'. Either include it or remove the dependency array                                                                                                                                                                                                                                                    react-hooks/exhaustive-deps
+  Line 523:25:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 541:17:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/Sales/Invoicing.tsx
+  Line 2:10:  'Table' is defined but never used                     @typescript-eslint/no-unused-vars
+  Line 4:10:  'useNavigate' is defined but never used               @typescript-eslint/no-unused-vars
+  Line 8:8:   'UnifiedQuickSearchHeader' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Sales/MyInvitations.tsx
+  Line 2:16:  'Tag' is defined but never used           @typescript-eslint/no-unused-vars
+  Line 2:64:  'Descriptions' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Sales/OrderDetail.tsx
+  Line 15:8:  React Hook useEffect has a missing dependency: 'loadOrder'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/OrderForm.tsx
+  Line 3:73:  'InputNumber' is defined but never used                                                                       @typescript-eslint/no-unused-vars
+  Line 23:8:  React Hook useEffect has a missing dependency: 'loadOrder'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/OrderItemsDrawer.tsx
+  Line 1:38:  'useMemo' is defined but never used                                                                            @typescript-eslint/no-unused-vars
+  Line 46:6:  React Hook useEffect has a missing dependency: 'fetchItems'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/Orders.tsx
+  Line 3:16:   'Table' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 3:73:   'Input' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 5:110:  'SearchOutlined' is defined but never used                                                                 @typescript-eslint/no-unused-vars
+  Line 93:9:   React Hook useMemo has a missing dependency: 'navigate'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/QuoteDetail.tsx
+  Line 30:32:  React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Sales/RFQDetail.tsx
+  Line 3:109:  'List' is defined but never used                                                                                                                                             @typescript-eslint/no-unused-vars
+  Line 3:144:  'Popover' is defined but never used                                                                                                                                          @typescript-eslint/no-unused-vars
+  Line 12:10:  'Upload' is defined but never used                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 12:18:  'Popconfirm' is defined but never used                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 16:77:  'LogoutOutlined' is defined but never used                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 22:10:  'isPdf' is defined but never used                                                                                                                                            @typescript-eslint/no-unused-vars
+  Line 22:17:  'openPdfPreview' is defined but never used                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 46:9:   'autoFirstItemRef' is assigned a value but never used                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 61:10:  'rfqFiles' is assigned a value but never used                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 62:10:  'rfqPendingRemark' is assigned a value but never used                                                                                                                        @typescript-eslint/no-unused-vars
+  Line 62:28:  'setRfqPendingRemark' is assigned a value but never used                                                                                                                     @typescript-eslint/no-unused-vars
+  Line 81:20:  'setNavDebug' is assigned a value but never used                                                                                                                             @typescript-eslint/no-unused-vars
+  Line 85:9:   'selectedCompanyId' is assigned a value but never used                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 219:6:  React Hook useCallback has missing dependencies: 'formBasic', 'user.first_name', 'user.last_name', and 'user?.username'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 511:9:  'openLogs' is assigned a value but never used                                                                                                                                @typescript-eslint/no-unused-vars
+
+src/pages/Sales/RFQs.tsx
+  Line 10:24:    'EyeOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 10:109:   'SearchOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 10:236:   'CameraOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 10:252:   'PictureOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+  Line 10:269:   'UploadOutlined' is defined but never used                                                                                                                                                                                                                                                                                                                                @typescript-eslint/no-unused-vars
+  Line 11:10:    'isPdf' is defined but never used                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+  Line 25:8:     'UnifiedQuickSearchHeader' is defined but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 26:8:     'Demands' is defined but never used                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  Line 57:9:     'TextArea' is assigned a value but never used                                                                                                                                                                                                                                                                                                                             @typescript-eslint/no-unused-vars
+  Line 67:24:    'setSearchParams' is assigned a value but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 117:10:   'editingRfqNameKey' is assigned a value but never used                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 117:29:   'setEditingRfqNameKey' is assigned a value but never used                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 118:10:   'editingRfqNameVal' is assigned a value but never used                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 118:29:   'setEditingRfqNameVal' is assigned a value but never used                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 120:26:   'setRemarkModalKey' is assigned a value but never used                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 149:29:   'setOrderStatusFilter' is assigned a value but never used                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 159:10:   'csvMode' is assigned a value but never used                                                                                                                                                                                                                                                                                                                              @typescript-eslint/no-unused-vars
+  Line 159:19:   'setCsvMode' is assigned a value but never used                                                                                                                                                                                                                                                                                                                           @typescript-eslint/no-unused-vars
+  Line 168:10:   'csvSelectedKeys' is assigned a value but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 168:27:   'setCsvSelectedKeys' is assigned a value but never used                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 188:10:   'expandedRfqKeys' is assigned a value but never used                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+  Line 188:27:   'setExpandedRfqKeys' is assigned a value but never used                                                                                                                                                                                                                                                                                                                   @typescript-eslint/no-unused-vars
+  Line 246:9:    'loadRfqExpandedItems' is assigned a value but never used                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 299:9:    'renderExpandedRfqRow' is assigned a value but never used                                                                                                                                                                                                                                                                                                                 @typescript-eslint/no-unused-vars
+  Line 653:9:    The 'loadData' function makes the dependencies of useEffect Hook (at line 1898) change on every render. To fix this, wrap the definition of 'loadData' in its own useCallback() Hook                                                                                                                                                                                      react-hooks/exhaustive-deps
+  Line 953:6:    React Hook useMemo has a missing dependency: 'COST_ITEM_STATUS_ORDER'. Either include it or remove the dependency array                                                                                                                                                                                                                                                   react-hooks/exhaustive-deps
+  Line 1112:9:   The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+  Line 1236:7:   React Hook useMemo has missing dependencies: 'handleCreateOrder', 'openCreateFromCopy', 'openSendModal', 'renderItemCostStatusControl', and 'rfqs'. Either include them or remove the dependency array                                                                                                                                                                    react-hooks/exhaustive-deps
+  Line 1573:79:  Expected '===' and instead saw '=='                                                                                                                                                                                                                                                                                                                                       eqeqeq
+
+src/pages/Sales/SalesModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+  Line 12:8:  'Demands' is defined but never used   @typescript-eslint/no-unused-vars
+
+src/pages/Settings/AttendanceKiosk.tsx
+  Line 7:9:  'Title' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/Backup.tsx
+  Line 14:3:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/CompanySettings.tsx
+  Line 7:9:  'TabPane' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/SettingsModule.tsx
+  Line 2:25:  'Navigate' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/Zones.tsx
+  Line 2:87:  'Row' is defined but never used  @typescript-eslint/no-unused-vars
+  Line 2:92:  'Col' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/pages/AccessControlSettingsPage.tsx
+  Line 41:6:  React Hook useEffect has a missing dependency: 'connectWebSocket'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/AttendanceKioskSettingsPage.tsx
+  Line 2:22:  'InputNumber' is defined but never used                                                                        @typescript-eslint/no-unused-vars
+  Line 9:9:   'Option' is assigned a value but never used                                                                    @typescript-eslint/no-unused-vars
+  Line 20:8:  React Hook useEffect has a missing dependency: 'loadConfig'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/CurrenciesPage.tsx
+  Line 2:87:   'InputNumber' is defined but never used     @typescript-eslint/no-unused-vars
+  Line 2:100:  'Select' is defined but never used          @typescript-eslint/no-unused-vars
+  Line 4:70:   'SearchOutlined' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/pages/EmailServerPage.tsx
+  Line 2:29:   'InputNumber' is defined but never used                                                                  @typescript-eslint/no-unused-vars
+  Line 33:32:  React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/HestiaPage.tsx
+  Line 73:6:  React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/IntegrationsPage.tsx
+  Line 2:73:  'Input' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/pages/IotPage.tsx
+  Line 4:62:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/pages/NfcPage.tsx
+  Line 4:62:  'InputNumber' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Settings/pages/PixinvoiceSettingsPage.tsx
+  Line 33:9:   'activeItem' is assigned a value but never used                                                          @typescript-eslint/no-unused-vars
+  Line 77:32:  React Hook useEffect has a missing dependency: 'load'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/PrintProductsPage.tsx
+  Line 3:51:  'InputNumber' is defined but never used                                                                         @typescript-eslint/no-unused-vars
+  Line 75:6:  React Hook useEffect has a missing dependency: 'loadPricing'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/PublicSitePage.tsx
+  Line 38:6:  React Hook useEffect has a missing dependency: 'loadData'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Settings/pages/RolesPage.tsx
+  Line 4:30:  'Permission' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Storage/StoragePage.tsx
+  Line 10:15:   'UploadFile' is defined but never used                                                                                                                                                                                                                                                                                                                                    @typescript-eslint/no-unused-vars
+  Line 122:9:   'uploadRef' is assigned a value but never used                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  Line 499:17:  The href attribute is required for an anchor to be keyboard accessible. Provide a valid, navigable address as the href value. If you cannot provide an href, but still need the element to resemble a link, use a button and change it with appropriate styles. Learn more: https://github.com/jsx-eslint/eslint-plugin-jsx-a11y/blob/HEAD/docs/rules/anchor-is-valid.md  jsx-a11y/anchor-is-valid
+
+src/pages/Tickets/Tickets.tsx
+  Line 166:6:  React Hook useEffect has a missing dependency: 'loadAll'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Warehouse/Inventory.tsx
+  Line 60:8:  React Hook useEffect has a missing dependency: 'loadInventory'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 90:8:  React Hook useEffect has a missing dependency: 'loadInventory'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Warehouse/MaterialGroups.tsx
+  Line 63:6:  React Hook useEffect has a missing dependency: 'loadGroups'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Warehouse/Materials.tsx
+  Line 246:6:   React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array                           react-hooks/exhaustive-deps
+  Line 280:6:   React Hook useEffect has missing dependencies: 'form', 'handleCreate', and 'handleEdit'. Either include them or remove the dependency array  react-hooks/exhaustive-deps
+  Line 432:10:  'stockModalVisible' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 432:29:  'setStockModalVisible' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 456:26:  'setUploadingImage' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 564:6:   React Hook useEffect has a missing dependency: 'fetchMaterials'. Either include it or remove the dependency array                            react-hooks/exhaustive-deps
+  Line 584:6:   React Hook useEffect has a missing dependency: 'fetchMaterials'. Either include it or remove the dependency array                            react-hooks/exhaustive-deps
+  Line 1222:9:  'handleSaveWithoutClose' is assigned a value but never used                                                                                  @typescript-eslint/no-unused-vars
+  Line 1338:9:  'handleAddSupplier' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 1381:9:  'handleRemoveSupplier' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+  Line 1427:9:  'handleAddCostItem' is assigned a value but never used                                                                                       @typescript-eslint/no-unused-vars
+  Line 1513:9:  'getAverageMarkup' is assigned a value but never used                                                                                        @typescript-eslint/no-unused-vars
+  Line 1520:9:  'handleTransferPrices' is assigned a value but never used                                                                                    @typescript-eslint/no-unused-vars
+
+src/pages/Warehouse/Reports.tsx
+  Line 12:5:  'Tag' is defined but never used  @typescript-eslint/no-unused-vars
+
+src/pages/Warehouse/Scraps.tsx
+  Line 41:6:  React Hook useEffect has a missing dependency: 'fetchScraps'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Warehouse/SupplierInvoices.tsx
+  Line 10:3:    'InputNumber' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 21:3:    'Upload' is defined but never used                                                                                  @typescript-eslint/no-unused-vars
+  Line 32:3:    'CloseOutlined' is defined but never used                                                                           @typescript-eslint/no-unused-vars
+  Line 34:3:    'CameraOutlined' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 35:3:    'UploadOutlined' is defined but never used                                                                          @typescript-eslint/no-unused-vars
+  Line 39:15:   'UploadFile' is defined but never used                                                                              @typescript-eslint/no-unused-vars
+  Line 39:27:   'UploadProps' is defined but never used                                                                             @typescript-eslint/no-unused-vars
+  Line 40:17:   'Dayjs' is defined but never used                                                                                   @typescript-eslint/no-unused-vars
+  Line 200:10:  'uploadingImage' is assigned a value but never used                                                                 @typescript-eslint/no-unused-vars
+  Line 210:10:  'navSearchResults' is assigned a value but never used                                                               @typescript-eslint/no-unused-vars
+  Line 211:10:  'navSearching' is assigned a value but never used                                                                   @typescript-eslint/no-unused-vars
+  Line 212:10:  'navImporting' is assigned a value but never used                                                                   @typescript-eslint/no-unused-vars
+  Line 229:6:   React Hook useEffect has a missing dependency: 'getFormSnapshot'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 246:6:   React Hook useEffect has a missing dependency: 'handleNavImport'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 489:9:   'handleNavSearch' is assigned a value but never used                                                                @typescript-eslint/no-unused-vars
+
+src/pages/Warehouse/Suppliers.tsx
+  Line 14:5:  'InputNumber' is defined but never used                                                                           @typescript-eslint/no-unused-vars
+  Line 60:8:  React Hook useEffect has a missing dependency: 'loadSuppliers'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  Line 99:8:  React Hook useEffect has a missing dependency: 'loadSuppliers'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+
+src/pages/Warehouse/Warehouses.tsx
+  Line 36:9:    'Panel' is assigned a value but never used            @typescript-eslint/no-unused-vars
+  Line 267:11:  'showCreateShelf' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+Search for the keywords to learn more about each warning.
+To ignore, add // eslint-disable-next-line to the line before.
+
+File sizes after gzip:
+
+  1.43 MB    build/static/js/main.7daa6fa2.js
+  120.56 kB  build/static/js/412.9961011f.chunk.js
+  106.39 kB  build/static/js/619.4cbd32bc.chunk.js
+  46.31 kB   build/static/js/52.c15a0454.chunk.js
+  33.29 kB   build/static/js/790.1a90e472.chunk.js
+  8.67 kB    build/static/js/82.e6149beb.chunk.js
+  7.65 kB    build/static/css/main.9fd6b142.css
+  2.94 kB    build/static/js/847.1445e5f6.chunk.js
+
+The bundle size is significantly larger than recommended.
+Consider reducing it with code splitting: https://goo.gl/9VhYWB
+You can also analyze the project dependencies: https://goo.gl/LeUzfb
+
+The project was built assuming it is hosted at /.
+You can control this with the homepage field in your package.json.
+
+The build folder is ready to be deployed.
+You may serve it with a static server:
+
+  npm install -g serve
+  serve -s build
+
+Find out more about deployment here:
+
+  https://cra.link/deployment
+

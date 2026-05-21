@@ -190,7 +190,7 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
             net_unit_price=original.net_unit_price,
             net_total_price=original.net_total_price,
             currency=original.currency,
-            status=original.status,
+            status='quote_request_open',
             contact=original.contact,
             contact_external_id=original.contact_external_id,
             deadline=original.deadline,
@@ -204,8 +204,10 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
         for c in original.allowed_contacts.all():
             new_product.allowed_contacts.add(c)
 
-        for ci in original.cost_items.all():
-            ManufacturingCostItem.objects.create(
+        # First pass: create all cost items without parent links, track old→new id mapping
+        old_id_to_new = {}
+        for ci in original.cost_items.order_by('sort_order', 'id'):
+            new_ci = ManufacturingCostItem.objects.create(
                 product=new_product,
                 type=ci.type,
                 ref_id=ci.ref_id,
@@ -222,9 +224,18 @@ class ManufacturingProductViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 department=ci.department,
                 currency=ci.currency,
                 is_per_unit=ci.is_per_unit,
-                status=ci.status,
+                sort_order=ci.sort_order,
+                status='new',
                 formulas=ci.formulas or {},
             )
+            old_id_to_new[ci.id] = new_ci.id
+
+        # Second pass: restore parent relationships using the id mapping
+        for ci in original.cost_items.filter(parent__isnull=False):
+            if ci.parent_id in old_id_to_new and ci.id in old_id_to_new:
+                ManufacturingCostItem.objects.filter(pk=old_id_to_new[ci.id]).update(
+                    parent_id=old_id_to_new[ci.parent_id]
+                )
 
         serializer = self.get_serializer(new_product)
         return Response(serializer.data, status=status.HTTP_201_CREATED)

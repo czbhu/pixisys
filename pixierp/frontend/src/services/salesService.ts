@@ -453,6 +453,10 @@ export const salesService = {
         const response = await api.patch(`/sales/quote-request-items/${itemId}/`, data);
         return response.data;
     },
+    async updateRfqItemCostItemsStatus(itemId: number, newStatus: string) {
+        const response = await api.post(`/sales/quote-request-items/${itemId}/update_cost_items_status/`, { status: newStatus });
+        return response.data;
+    },
     async deleteQuoteRequestItem(itemId: number, quoteRequestId?: number) {
         if (quoteRequestId) {
             const response = await api.post(`/sales/quote-requests/${quoteRequestId}/delete_item/`, { item_id: itemId });

@@ -33,6 +33,7 @@ import { formatBytes } from '../../utils/fileUtils';
 const STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
   { value: 'new', label: 'Új', color: 'blue' },
   { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
+  { value: 'sent', label: 'Kiküldve', color: 'gold' },
   { value: 'in_production', label: 'Gyártásban', color: 'orange' },
   { value: 'ready', label: 'Kész', color: 'green' },
   { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
@@ -84,6 +85,8 @@ interface Props {
   showPrices?: boolean;
   /** Auto-expand all cost item rows on mount (requires showNotesAndAttachments). Default: false */
   defaultExpandAllRows?: boolean;
+  /** Callback when any cost item's status changes (e.g. to refresh parent). */
+  onStatusChange?: () => void;
 }
 
 export const ProductSubItemsTable: React.FC<Props> = ({
@@ -95,6 +98,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
   showNotesAndAttachments = false,
   showPrices = true,
   defaultExpandAllRows = false,
+  onStatusChange,
 }) => {
   const [loading, setLoading] = useState(!initialProduct);
   const [saving, setSaving] = useState(false);
@@ -379,6 +383,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
     setItems(items.map(it => it.id === id ? { ...it, status: newStatus } : it));
     try {
       await api.patch(`/manufacturing/cost-items/${id}/`, { status: newStatus });
+      onStatusChange?.();
     } catch (e) {
       console.error(e);
       message.error('Státusz frissítése sikertelen');

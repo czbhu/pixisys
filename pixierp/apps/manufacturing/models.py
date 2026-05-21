@@ -347,6 +347,7 @@ class ManufacturingCostItem(models.Model):
     STATUS_CHOICES = [
         ('new', 'Új'),
         ('confirmed', 'Megerősítve'),
+        ('sent', 'Kiküldve'),
         ('in_production', 'Gyártásban'),
         ('ready', 'Kész'),
         ('in_delivery', 'Szállítás alatt'),

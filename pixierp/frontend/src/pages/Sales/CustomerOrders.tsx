@@ -934,7 +934,7 @@ interface CustomerOrder {
                   title: 'Státusz', key: 'item_status', width: 160,
                   render: (_: any, r: any) => {
                     const ITEM_STATUS_OPTS = [
-                      { value: 'new', label: 'Új', color: 'blue' },
+                      { value: 'new', label: 'Megrendelve', color: 'purple' },
                       { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
                       { value: 'in_production', label: 'Gyártásban', color: 'orange' },
                       { value: 'ready', label: 'Kész', color: 'green' },
@@ -1344,7 +1344,7 @@ interface CustomerOrder {
         );
     }
     const statusMap: Record<string, { color: string; text: string }> = {
-      new: { color: 'blue', text: 'Új' },
+      new: { color: 'purple', text: 'Megrendelve' },
       confirmed: { color: 'cyan', text: 'Megerősítve' },
       in_production: { color: 'orange', text: 'Gyártásban' },
       ready: { color: 'green', text: 'Kész' },
@@ -2444,7 +2444,7 @@ interface CustomerOrder {
               items: [
                 {
                   key: 'not_ready',
-                  label: 'Nincs kész (Új, Megerősítve, Gyártásban)',
+                  label: 'Nincs kész (Megrendelve, Megerősítve, Gyártásban)',
                   onClick: () => setStatusFilter(['new', 'confirmed', 'in_production']),
                 },
                 {
@@ -2482,7 +2482,7 @@ interface CustomerOrder {
           <Tooltip
             title={statusFilter.length > 0
               ? statusFilter.map(v => ({
-                  new: 'Új', confirmed: 'Megerősítve', in_production: 'Gyártásban',
+                  new: 'Megrendelve', confirmed: 'Megerősítve', in_production: 'Gyártásban',
                   ready: 'Kész', in_delivery: 'Szállítás alatt', delivered: 'Leszállítva',
                   invoiced: 'Kiszámlázva', cancelled: 'Törölve',
                 }[v] ?? v)).join(' · ')
@@ -2497,7 +2497,7 @@ interface CustomerOrder {
             value={statusFilter}
             onChange={setStatusFilter}
             options={[
-              { value: 'new', label: 'Új' },
+              { value: 'new', label: 'Megrendelve' },
               { value: 'confirmed', label: 'Megerősítve' },
               { value: 'in_production', label: 'Gyártásban' },
               { value: 'ready', label: 'Kész' },
@@ -2509,7 +2509,7 @@ interface CustomerOrder {
             maxTagCount="responsive"
             tagRender={({ value, label, onClose }) => {
               const colorMap: Record<string, { bg: string; text: string; border: string }> = {
-                new:          { bg: '#e6f4ff', text: '#1677ff', border: '#91caff' },
+                new:          { bg: '#f9f0ff', text: '#722ed1', border: '#d3adf7' },
                 confirmed:    { bg: '#e6fffb', text: '#08979c', border: '#87e8de' },
                 in_production:{ bg: '#fff7e6', text: '#d46b08', border: '#ffd591' },
                 ready:        { bg: '#f6ffed', text: '#389e0d', border: '#b7eb8f' },

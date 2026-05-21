@@ -368,6 +368,7 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
       const currObj = manuCurrencies.find(c => c.id === manuSellCurrencyId || c.code.toUpperCase() === manuSellCurrencyCode);
       const exchRate = (currObj && currObj.exchange_rate > 0) ? currObj.exchange_rate : 1;
       const unitSellingConverted = exchRate !== 1 ? parseFloat((unitSelling / exchRate).toFixed(2)) : parseFloat(unitSelling.toFixed(2));
+      console.log('[manuCalcEffect] OVERWRITING price:', unitSellingConverted, 'manuCostItems:', manuCostItems.length);
       manuForm.setFieldsValue({
         manu_net_unit_price: unitSellingConverted,
         manu_net_total: parseFloat((unitSellingConverted * q).toFixed(2)),
@@ -457,10 +458,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
     pickFromLists();
   }, [open, products, manuProducts, services, initialSelection]);
 
-  // When editing an existing manufacturing item, fetch full product (incl. cost_items) and pre-fill the inline form
+  // When editing an existing manufacturing item, fetch full product (incl. cost_items) and pre-fill the inline form.
+  // Also runs when mode='add' with an existing ref_id (copy flow) — pre-fills the form but does NOT set manuCreatedId,
+  // so that saving creates a new independent product instead of patching the original.
   useEffect(() => {
     if (!open) return;
-    if (mode !== 'edit') return;
+    const isAddWithPreload = mode === 'add' && (initialSelection?.ref_id ?? 0) > 0 && initialSelection?.item_type === 'manufacturing';
+    if (mode !== 'edit' && !isAddWithPreload) return;
     if (!initialSelection || initialSelection.item_type !== 'manufacturing' || !initialSelection.ref_id) return;
     let cancelled = false;
     (async () => {
@@ -513,11 +517,16 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         if (cancelled || !p) return;
         const qty = Number(p.quantity) || 1;
         const unitPrice = Number(p.net_unit_price) || 0;
-        const totalPrice = Number(p.net_total_price) || (unitPrice * qty);
-        // Detect whether a saved order-item price exists (used to disable auto-calc below)
-        const savedPrice = (mode === 'edit' && initialValues?.net_unit_price != null && Number(initialValues.net_unit_price) > 0)
+        // When editing an existing RFQ item, preload the saved line-item values
+        // (quantity and price) instead of the manufacturing product master's values.
+        const savedPrice = ((mode === 'edit' || !!quoteItemId) && initialValues?.net_unit_price != null && Number(initialValues.net_unit_price) > 0)
           ? Number(initialValues.net_unit_price)
           : null;
+        const savedQty = ((mode === 'edit' || !!quoteItemId) && initialValues?.quantity != null && Number(initialValues.quantity) > 0)
+          ? Number(initialValues.quantity)
+          : null;
+        const displayQty = savedQty ?? qty;
+        const displayPrice = savedPrice ?? unitPrice;
         setManuFormInitialValues({
           // When editing an RFQ item, use the item's saved display name (item_name if set,
           // otherwise manufacturing product name) — NOT the manufacturing master's name.
@@ -526,10 +535,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
           code: p.code,
           description: p.description || '',
           internal_description: p.internal_description || '',
-          manu_quantity: qty,
+          manu_quantity: displayQty,
           quantity_unit: p.quantity_unit || 'db',
-          manu_net_unit_price: unitPrice,
-          manu_net_total: totalPrice,
+          manu_net_unit_price: displayPrice,
+          manu_net_total: parseFloat((displayPrice * displayQty).toFixed(2)),
           width: p.width ?? null,
           length: p.length ?? null,
           height: p.height ?? null,
@@ -618,7 +627,11 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         } else if ((p as any).cost_currency) {
           setManuCostCurrencyId((p as any).cost_currency);
         }
-        setManuCreatedId(p.id);
+        // In edit mode: track the product ID so save() patches it.
+        // In add+preload mode (copy flow): leave manuCreatedId=null so save() creates a new product.
+        if (mode === 'edit') {
+          setManuCreatedId(p.id);
+        }
         setSelected({ ...p, __type: 'manufacturing' });
         setActiveKey('manufacturing');
       } catch (e) {
@@ -2547,8 +2560,10 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
         {/* Manufacturing tab: also show the price/qty/discount form when selected.
             When editing a manufacturing item the detailed inline form already contains qty/price,
             so we hide this simplified line-item form.
-            Also hide when the item was created/edited via the inline form (manuCreatedId is set). */}
-        {(activeKey !== 'manufacturing' || selected) && !(mode === 'edit' && activeKey === 'manufacturing') && !(activeKey === 'manufacturing' && manuCreatedId !== null) && (
+            Also hide when the item was created/edited via the inline form (manuCreatedId is set).
+            Also hide in the copy flow (quoteItemId set + manufacturing tab) — the inline manu editor
+            already exposes quantity / price fields. */}
+        {(activeKey !== 'manufacturing' || selected) && !(mode === 'edit' && activeKey === 'manufacturing') && !(activeKey === 'manufacturing' && manuCreatedId !== null) && !(activeKey === 'manufacturing' && !!quoteItemId) && (
           <Form layout="vertical" form={form} onValuesChange={handleLineFormValuesChange}>
             {commonFields}
           </Form>
@@ -2875,11 +2890,13 @@ export const ItemSelectorModal: React.FC<ItemSelectorModalProps> = ({ open, defa
   );
   if (renderInline) {
     const isManuEdit = mode === 'edit' && initialSelection?.item_type === 'manufacturing';
-    const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
-    const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || isManuEdit ? 'Mentés & bezárás'
+    // Copy flow: mode='add' with a preloaded manufacturing source → use the inline manu editor
+    const isManuCopy = mode === 'add' && !!quoteItemId && initialSelection?.item_type === 'manufacturing';
+    const useManuFlow = activeKey === 'manufacturing' && (isManuEdit || isManuCopy || !selected || ((selected as any).__type === 'manufacturing' && manuCreatedId));
+    const primaryLabel = (activeKey === 'manufacturing' && manuCreatedId) || isManuEdit || isManuCopy ? 'Mentés & bezárás'
       : activeKey === 'manufacturing' && !selected ? 'Hozzáadás & bezárás'
       : mode === 'edit' ? 'Mentés & bezárás' : 'Hozzáadás & bezárás';
-    const secondaryLabel = mode === 'edit' || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
+    const secondaryLabel = mode === 'edit' || isManuCopy || (activeKey === 'manufacturing' && manuCreatedId) ? 'Mentés' : 'Hozzáadás';
     const doSave = async (keepOpen: boolean) => {
       if (keepOpen) setSavingKeepOpen(true); else setSavingClose(true);
       try {

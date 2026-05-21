@@ -355,9 +355,9 @@ body,
 }
 
 /* Table: zebra striping – every second data row slightly darker */
-.ant-table.ant-table-small .ant-table-tbody > tr:nth-child(even):not(.ant-table-measure-row) > td {
+/* .ant-table.ant-table-small .ant-table-tbody > tr:nth-child(even):not(.ant-table-measure-row) > td {
   background-color: #f6f7f9 !important;
-}
+} */
 
 .ant-table-tbody > tr.ant-table-measure-row {
   visibility: collapse;

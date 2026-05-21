@@ -139,6 +139,18 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
             return mp.printshop_params
         return None
 
+    cost_items_statuses = serializers.SerializerMethodField()
+
+    def get_cost_items_statuses(self, obj):
+        """Returns [{id, status}] for all non-cancelled cost items of the manufacturing product."""
+        mp = getattr(obj, 'manufacturing_product', None)
+        if not mp:
+            return []
+        return [
+            {'id': ci.id, 'status': ci.status}
+            for ci in mp.cost_items.exclude(status='cancelled')
+        ]
+
     def _display_item_name(self, obj, related_attr):
         if obj.item_name:
             return obj.item_name

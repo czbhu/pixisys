@@ -3009,6 +3009,20 @@ class QuoteRequestItemViewSet(viewsets.ModelViewSet):
         file_url = request.build_absolute_uri(att.file.url) if att.file else None
         return Response({'original_filename': att.original_filename, 'file': att.file.name if att.file else None, 'file_url': file_url})
 
+    @action(detail=True, methods=['post'])
+    def update_cost_items_status(self, request, pk=None):
+        """Set all ManufacturingCostItems of this item's manufacturing product to the given status."""
+        item = self.get_object()
+        new_status = request.data.get('status')
+        VALID_STATUSES = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered']
+        if new_status not in VALID_STATUSES:
+            return Response({'error': 'Érvénytelen státusz'}, status=status.HTTP_400_BAD_REQUEST)
+        mp = getattr(item, 'manufacturing_product', None)
+        if not mp:
+            return Response({'error': 'Nincs gyártási termék'}, status=status.HTTP_400_BAD_REQUEST)
+        updated = mp.cost_items.exclude(status='cancelled').update(status=new_status)
+        return Response({'status': new_status, 'updated': updated})
+
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
