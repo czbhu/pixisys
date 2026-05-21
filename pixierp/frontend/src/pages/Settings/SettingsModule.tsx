@@ -33,6 +33,7 @@ import PublicSitePage from './pages/PublicSitePage';
 import IotPage from './pages/IotPage';
 import NfcPage from './pages/NfcPage';
 import PrintProductsPage from './pages/PrintProductsPage';
+import PickupLocationsPage from './pages/PickupLocationsPage';
 import ModuleDashboard from '../../components/ModuleDashboard';
 
 const SettingsModule: React.FC = () => {
@@ -53,6 +54,7 @@ const SettingsModule: React.FC = () => {
         { key: '/settings/public-site', label: 'Publikus oldal', icon: <GlobalOutlined /> },
         { key: '/settings/iot', label: 'IoT eszközök', icon: <WifiOutlined /> },
         { key: '/settings/nfc', label: 'NFC tagek', icon: <ScanOutlined /> },
+        { key: '/settings/pickup-locations', label: 'Átvételi helyek', icon: <EnvironmentOutlined /> },
   ];
 
   return (
@@ -75,6 +77,7 @@ const SettingsModule: React.FC = () => {
       <Route path="/iot" element={<IotPage />} />
       <Route path="/nfc" element={<NfcPage />} />
       <Route path="/print-products" element={<PrintProductsPage />} />
+      <Route path="/pickup-locations" element={<PickupLocationsPage />} />
     </Routes>
   );
 };

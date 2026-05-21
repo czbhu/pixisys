@@ -25,6 +25,7 @@ router.register(r'extra-works', views.ExtraWorkViewSet, basename='extra-works')
 router.register(r'chats', views.ChatThreadViewSet)
 router.register(r'delivery-notes', views.DeliveryNoteViewSet)
 router.register(r'delivery-note-items', views.DeliveryNoteItemViewSet)
+router.register(r'pickup-locations', views.PickupLocationViewSet)
 
 # POS endpoints
 router.register(r'pos/customer-identifications', views.POSCustomerIdentificationViewSet, basename='pos-customer-identification')

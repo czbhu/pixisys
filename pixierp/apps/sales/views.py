@@ -14,7 +14,7 @@ from .models import (
     Customer, Product, QuoteRequest, Quote, QuoteItem, QuoteRequestItem,
     Order, OrderItem, Lead, Opportunity, Forecast, CustomerOrder, CustomerOrderItem, QuoteRequestCost, WorkLog, QuoteLog, ApprovalRequest,
     ChatThread, ChatMessage, ChatMessageAttachment, QuoteRequestAttachment, QuoteRequestItemAttachment,
-    DeliveryNote, DeliveryNoteItem, ExtraWork,
+    DeliveryNote, DeliveryNoteItem, PickupLocation, ExtraWork,
     POSCustomerIdentification, POSCoupon, POSTransaction, POSTransactionItem, POSPayment
 )
 from .serializers import (
@@ -25,7 +25,7 @@ from .serializers import (
     InvoiceableOrderSerializer,
     CustomerOrderItemSerializer, QuoteRequestCostSerializer, WorkLogSerializer,
     ChatThreadSerializer, ChatMessageSerializer,
-    DeliveryNoteSerializer, DeliveryNoteItemSerializer, ApprovalRequestSerializer,
+    DeliveryNoteSerializer, DeliveryNoteItemSerializer, PickupLocationSerializer, ApprovalRequestSerializer,
     ExtraWorkSerializer,
     POSCustomerIdentificationSerializer, POSCouponSerializer, POSTransactionSerializer,
     POSTransactionItemSerializer, POSPaymentSerializer, POSTransactionCreateSerializer
@@ -6110,6 +6110,19 @@ class ChatThreadViewSet(viewsets.ModelViewSet):
             return Response({'status': 'ok', 'id': created.id})
         return Response({'error': 'Invalid target'}, status=400)
 
+class PickupLocationViewSet(viewsets.ModelViewSet):
+    queryset = PickupLocation.objects.all().order_by('name')
+    serializer_class = PickupLocationSerializer
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get_queryset(self):
+        qs = super().get_queryset()
+        active_only = self.request.query_params.get('active_only')
+        if active_only in ('1', 'true', 'True'):
+            qs = qs.filter(is_active=True)
+        return qs
+
+
 class DeliveryNoteViewSet(viewsets.ModelViewSet):
     queryset = DeliveryNote.objects.all().order_by('-created_at')
     serializer_class = DeliveryNoteSerializer
@@ -6758,6 +6771,16 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             },
             **extra_context,
         }
+
+        # Add pickup location context
+        if dn.delivery_type == 'pickup' and dn.pickup_location:
+            ctx['pickup_location_name'] = dn.pickup_location.name
+            ctx['pickup_location_address'] = dn.pickup_location.address
+            ctx['pickup_location_hours'] = dn.pickup_location.hours_display()
+        else:
+            ctx['pickup_location_name'] = ''
+            ctx['pickup_location_address'] = ''
+            ctx['pickup_location_hours'] = ''
         
         def render_tpl(content, context):
             if not content: return ""
@@ -7052,6 +7075,16 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             },
             **extra_context,
         }
+
+        # Add pickup location context
+        if dn.delivery_type == 'pickup' and dn.pickup_location:
+            ctx['pickup_location_name'] = dn.pickup_location.name
+            ctx['pickup_location_address'] = dn.pickup_location.address
+            ctx['pickup_location_hours'] = dn.pickup_location.hours_display()
+        else:
+            ctx['pickup_location_name'] = ''
+            ctx['pickup_location_address'] = ''
+            ctx['pickup_location_hours'] = ''
         
         def render_tpl(content, context):
             if not content: return ""

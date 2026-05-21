@@ -748,6 +748,40 @@ class ChatMessageAttachment(models.Model):
     def __str__(self):
         return self.original_filename
 
+class PickupLocation(models.Model):
+    """Átvételi hely"""
+    name = models.CharField(max_length=255, verbose_name="Hely neve")
+    address = models.CharField(max_length=500, verbose_name="Cím")
+    pickup_hours = models.JSONField(default=list, blank=True, verbose_name="Átvételi időpontok")
+    # Format: [{"day_from": "H", "day_to": "P", "time_from": "09:00", "time_to": "16:00"}, ...]
+    is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Átvételi hely"
+        verbose_name_plural = "Átvételi helyek"
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+    def hours_display(self):
+        parts = []
+        for row in (self.pickup_hours or []):
+            d_from = row.get('day_from', '')
+            d_to = row.get('day_to', '')
+            t_from = row.get('time_from', '')
+            t_to = row.get('time_to', '')
+            if d_from and d_to and d_from == d_to:
+                parts.append(f"{d_from}: {t_from}-{t_to}")
+            elif d_from and d_to:
+                parts.append(f"{d_from}-{d_to}: {t_from}-{t_to}")
+            elif d_from:
+                parts.append(f"{d_from}: {t_from}-{t_to}")
+        return ', '.join(parts) if parts else '—'
+
+
 class DeliveryNote(models.Model):
     """Szállítólevél"""
     delivery_note_number = models.CharField(max_length=50, unique=True, verbose_name="Szállítólevél száma")
@@ -771,7 +805,28 @@ class DeliveryNote(models.Model):
     rejection_reason = models.TextField(blank=True, verbose_name="Elutasítás oka")
     
     notes = models.TextField(blank=True, verbose_name="Megjegyzés")
-    
+
+    # Delivery type
+    DELIVERY_TYPE_HOME = 'home'
+    DELIVERY_TYPE_PICKUP = 'pickup'
+    DELIVERY_TYPE_CHOICES = [
+        ('home', 'Házhozszállítás'),
+        ('pickup', 'Átvételi pont'),
+    ]
+    delivery_type = models.CharField(
+        max_length=20,
+        choices=DELIVERY_TYPE_CHOICES,
+        default='home',
+        verbose_name="Szállítás típusa"
+    )
+    pickup_location = models.ForeignKey(
+        'PickupLocation',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name="Átvételi hely"
+    )
+
     # Public access
     public_token = models.CharField(max_length=64, blank=True, null=True, unique=True)
     public_expires_at = models.DateTimeField(blank=True, null=True)

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip, Checkbox, Image } from 'antd';
+import { Table, Button, Input, Modal, Select, message, Tag, Space, InputNumber, Descriptions, Popconfirm, Form, Divider, Tooltip, Checkbox, Image, Radio } from 'antd';
 import NumInput from '../../components/NumInput';
 import { PlusOutlined, SendOutlined, DeleteOutlined, EyeOutlined, FileTextOutlined, FileImageOutlined } from '@ant-design/icons';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -45,6 +45,9 @@ interface DeliveryNoteItemRow {
   net_unit_price?: number;
   net_total?: number;
   rfq_id?: number | null;
+  delivery_type?: 'home' | 'pickup';
+  pickup_location_id?: number | null;
+  pickup_location_name?: string;
 }
 
 interface OrderItemForDelivery {
@@ -75,6 +78,14 @@ interface EmailTemplate {
 interface SignatureTemplate {
     key: string;
     name: string;
+}
+
+interface PickupLocation {
+  id: number;
+  name: string;
+  address: string;
+  hours_display: string;
+  is_active: boolean;
 }
 
 const DeliveryNotes: React.FC = () => {
@@ -124,6 +135,9 @@ const DeliveryNotes: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [deliveryNoteNotes, setDeliveryNoteNotes] = useState('');
   const [deliveryDate, setDeliveryDate] = useState(dayjs().format('YYYY-MM-DD'));
+  const [deliveryType, setDeliveryType] = useState<'home' | 'pickup'>('home');
+  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState<number | null>(null);
+  const [pickupLocations, setPickupLocations] = useState<PickupLocation[]>([]);
   
   // Documentation modal state
   const [docModalOpen, setDocModalOpen] = useState(false);
@@ -222,6 +236,12 @@ const DeliveryNotes: React.FC = () => {
   useEffect(() => {
     fetchDeliveryNoteItems();
   }, [filterNoteNumber, filterOrderNumber, filterItemName]);
+
+  useEffect(() => {
+    api.get('/sales/pickup-locations/?active_only=1')
+      .then(r => setPickupLocations(r.data.results || r.data))
+      .catch(() => {});
+  }, []);
 
   // Handle "Create from Order" link
   useEffect(() => {
@@ -324,6 +344,8 @@ const DeliveryNotes: React.FC = () => {
     setAvailableItems([]);
     setDeliveryNoteNotes('');
     setDeliveryDate(dayjs().format('YYYY-MM-DD'));
+    setDeliveryType('home');
+    setSelectedPickupLocationId(null);
     fetchDeliverableCustomers();
   };
 
@@ -376,6 +398,7 @@ const DeliveryNotes: React.FC = () => {
         issue_date: deliveryDate, 
         notes: deliveryNoteNotes,
         is_confirmed: false, // Do not auto-confirm
+        delivery_type: deliveryType,
         items_data: itemsToDeliver.map(i => ({
           customer_order_item: i.order_item_id,
           quantity: i.to_deliver,
@@ -384,6 +407,10 @@ const DeliveryNotes: React.FC = () => {
           unit: i.unit
         }))
       };
+
+      if (deliveryType === 'pickup' && selectedPickupLocationId) {
+        payload.pickup_location = selectedPickupLocationId;
+      }
 
       if (selected.type === 'company') {
           payload.customer = selected.real_id;
@@ -402,7 +429,8 @@ const DeliveryNotes: React.FC = () => {
           openEmailModal({
               id: newNote.id,
               delivery_note_number: newNote.delivery_note_number,
-              customer_name: newNote.customer_name || newNote.contact_name || selected.name
+              customer_name: newNote.customer_name || newNote.contact_name || selected.name,
+              delivery_type: deliveryType,
           });
       }
 
@@ -425,7 +453,7 @@ const DeliveryNotes: React.FC = () => {
   };
 
   /* Email Logic */
-  const openEmailModal = (target: { id: number, delivery_note_number: string, customer_name?: string }) => {
+  const openEmailModal = (target: { id: number, delivery_note_number: string, customer_name?: string, delivery_type?: 'home' | 'pickup' }) => {
       setEmailTargetId(target.id);
       setEmailTargetName(target.customer_name || 'Ügyfelünk');
       setEmailTargetNumber(target.delivery_note_number);
@@ -439,8 +467,9 @@ const DeliveryNotes: React.FC = () => {
           setSignatureTemplates(sigRes.data.results || sigRes.data);
       }).catch(err => console.error("Could not load templates", err));
       
+      const initialTemplateKey = target.delivery_type === 'pickup' ? 'atveteli_pont' : 'szallitolevel';
       const initialValues = {
-          template_key: 'szallitolevel',
+          template_key: initialTemplateKey,
           signature_key: 'default'
       };
       
@@ -689,9 +718,10 @@ const DeliveryNotes: React.FC = () => {
                 onClick={() => openEmailModal({
                     id: record.delivery_note, 
                     delivery_note_number: record.delivery_note_number,
-                    customer_name: record.customer_name
+                    customer_name: record.customer_name,
+                    delivery_type: record.delivery_type,
                 })}
-                title="Kiküldés"
+                title={record.delivery_type === 'pickup' ? 'Átvételi értesítő küldése' : 'Kiküldés'}
              />
               <Popconfirm 
                 title="Biztosan törli a teljes szállítólevelet?" 
@@ -902,6 +932,26 @@ const DeliveryNotes: React.FC = () => {
                 <Descriptions.Item label="Megjegyzés" span={2}>
                     <Input.TextArea value={deliveryNoteNotes} onChange={e => setDeliveryNoteNotes(e.target.value)} rows={2} />
                 </Descriptions.Item>
+                <Descriptions.Item label="Szállítás típusa" span={2}>
+                    <Radio.Group value={deliveryType} onChange={e => { setDeliveryType(e.target.value); setSelectedPickupLocationId(null); }}>
+                        <Radio value="home">Házhozszállítás</Radio>
+                        <Radio value="pickup">Átvételi pont</Radio>
+                    </Radio.Group>
+                </Descriptions.Item>
+                {deliveryType === 'pickup' && (
+                    <Descriptions.Item label="Átvételi hely" span={2}>
+                        <Select
+                            placeholder="Válasszon átvételi helyet"
+                            style={{ width: 320 }}
+                            value={selectedPickupLocationId}
+                            onChange={v => setSelectedPickupLocationId(v)}
+                            options={pickupLocations.map(p => ({
+                                label: `${p.name} – ${p.hours_display}`,
+                                value: p.id,
+                            }))}
+                        />
+                    </Descriptions.Item>
+                )}
             </Descriptions>
         </Space>
 

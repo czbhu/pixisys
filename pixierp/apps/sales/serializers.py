@@ -1363,7 +1363,18 @@ class ChatThreadSerializer(serializers.ModelSerializer):
         model = ChatThread
         fields = '__all__'
 
-from .models import DeliveryNote, DeliveryNoteItem
+from .models import DeliveryNote, DeliveryNoteItem, PickupLocation
+
+class PickupLocationSerializer(serializers.ModelSerializer):
+    hours_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PickupLocation
+        fields = '__all__'
+
+    def get_hours_display(self, obj):
+        return obj.hours_display()
+
 
 class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     order_number = serializers.CharField(source='customer_order_item.customer_order.order_number', read_only=True)
@@ -1387,6 +1398,9 @@ class DeliveryNoteItemSerializer(serializers.ModelSerializer):
     net_total = serializers.SerializerMethodField()
     rfq_id = serializers.SerializerMethodField()
     item_name = serializers.SerializerMethodField()
+    delivery_type = serializers.CharField(source='delivery_note.delivery_type', read_only=True)
+    pickup_location_id = serializers.IntegerField(source='delivery_note.pickup_location_id', read_only=True)
+    pickup_location_name = serializers.CharField(source='delivery_note.pickup_location.name', read_only=True, default='')
 
     class Meta:
         model = DeliveryNoteItem
@@ -1504,6 +1518,9 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
     contact_name = serializers.CharField(source='contact.name', read_only=True)
     created_by_name = serializers.CharField(source='created_by.get_full_name', read_only=True)
     confirmed_by_user_name = serializers.CharField(source='confirmed_by_user.get_full_name', read_only=True)
+    pickup_location_name = serializers.CharField(source='pickup_location.name', read_only=True, default='')
+    pickup_location_address = serializers.CharField(source='pickup_location.address', read_only=True, default='')
+    pickup_location_hours_display = serializers.SerializerMethodField()
     
     # Computed totals
     total_quantity = serializers.SerializerMethodField()
@@ -1530,6 +1547,11 @@ class DeliveryNoteSerializer(serializers.ModelSerializer):
         
     def get_item_count(self, obj):
         return obj.items.count()
+
+    def get_pickup_location_hours_display(self, obj):
+        if obj.pickup_location:
+            return obj.pickup_location.hours_display()
+        return ''
 
     def get_public_url(self, obj):
         if not obj.public_token:
