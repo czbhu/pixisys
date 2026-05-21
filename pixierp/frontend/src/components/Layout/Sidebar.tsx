@@ -113,6 +113,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
       , '/settings/public-site'
       , '/settings/iot'
       , '/settings/nfc'
+      , '/settings/pickup-locations'
     ];
     
     // Find the longest matching prefix
@@ -600,6 +601,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
         { key: '/settings/public-site', label: 'Publikus oldal' },
         { key: '/settings/iot', label: 'IoT eszközök' },
         { key: '/settings/nfc', label: 'NFC tagek' },
+        { key: '/settings/pickup-locations', label: 'Átvételi helyek' },
         { key: '/settings/print-products', label: 'Termékszerkesztők' },
       ],
     },
@@ -705,6 +707,7 @@ const Sidebar: React.FC<SidebarProps> = ({ collapsed: propCollapsed, onCollapse,
     '/settings/iot': 'settings.iot',
     '/settings/nfc': 'settings.nfc',
     '/settings/zones': 'settings.zones',
+    '/settings/pickup-locations': 'settings.pickup_locations',
     '/settings/print-products': 'settings.print_products',
     '/site-management': 'site_management.manage',
     '/personal/cash-registers': 'finance.cash_registers',

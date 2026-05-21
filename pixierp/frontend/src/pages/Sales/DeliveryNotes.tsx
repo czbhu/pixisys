@@ -86,6 +86,7 @@ interface PickupLocation {
   address: string;
   hours_display: string;
   is_active: boolean;
+  is_default: boolean;
 }
 
 const DeliveryNotes: React.FC = () => {
@@ -933,7 +934,7 @@ const DeliveryNotes: React.FC = () => {
                     <Input.TextArea value={deliveryNoteNotes} onChange={e => setDeliveryNoteNotes(e.target.value)} rows={2} />
                 </Descriptions.Item>
                 <Descriptions.Item label="Szállítás típusa" span={2}>
-                    <Radio.Group value={deliveryType} onChange={e => { setDeliveryType(e.target.value); setSelectedPickupLocationId(null); }}>
+                    <Radio.Group value={deliveryType} onChange={e => { const v = e.target.value; setDeliveryType(v); if (v === 'pickup') { const def = pickupLocations.find(p => p.is_default); setSelectedPickupLocationId(def ? def.id : null); } else { setSelectedPickupLocationId(null); } }}>
                         <Radio value="home">Házhozszállítás</Radio>
                         <Radio value="pickup">Átvételi pont</Radio>
                     </Radio.Group>

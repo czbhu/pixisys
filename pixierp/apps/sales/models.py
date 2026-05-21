@@ -755,6 +755,7 @@ class PickupLocation(models.Model):
     pickup_hours = models.JSONField(default=list, blank=True, verbose_name="Átvételi időpontok")
     # Format: [{"day_from": "H", "day_to": "P", "time_from": "09:00", "time_to": "16:00"}, ...]
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -765,6 +766,12 @@ class PickupLocation(models.Model):
 
     def __str__(self):
         return self.name
+
+    def save(self, *args, **kwargs):
+        if self.is_default:
+            # Unset any other default
+            PickupLocation.objects.exclude(pk=self.pk).filter(is_default=True).update(is_default=False)
+        super().save(*args, **kwargs)
 
     def hours_display(self):
         parts = []

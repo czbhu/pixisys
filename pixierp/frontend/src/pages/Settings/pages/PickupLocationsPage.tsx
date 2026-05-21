@@ -3,7 +3,7 @@ import {
   Card, Table, Button, Modal, Form, Input, Switch, Select, Tag, message,
   Space, Popconfirm, Typography,
 } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlusOutlined, DeleteOutlined, StarFilled, StarOutlined } from '@ant-design/icons';
 import api from '../../../services/api';
 
 const { Text } = Typography;
@@ -32,6 +32,7 @@ interface PickupLocation {
   pickup_hours: PickupHoursRow[];
   hours_display: string;
   is_active: boolean;
+  is_default: boolean;
 }
 
 const emptyRow = (): PickupHoursRow => ({ day_from: 'H', day_to: 'P', time_from: '09:00', time_to: '17:00' });
@@ -70,7 +71,7 @@ const PickupLocationsPage: React.FC = () => {
 
   const openEdit = (record: PickupLocation) => {
     setEditing(record);
-    form.setFieldsValue({ name: record.name, address: record.address, is_active: record.is_active });
+    form.setFieldsValue({ name: record.name, address: record.address, is_active: record.is_active, is_default: record.is_default });
     setHoursRows((record.pickup_hours || []).length > 0 ? [...record.pickup_hours] : [emptyRow()]);
     setOpen(true);
   };
@@ -83,6 +84,7 @@ const PickupLocationsPage: React.FC = () => {
         name: values.name,
         address: values.address,
         is_active: values.is_active !== false,
+        is_default: values.is_default === true,
         pickup_hours: hoursRows,
       };
       if (editing) {
@@ -112,6 +114,16 @@ const PickupLocationsPage: React.FC = () => {
     }
   };
 
+  const handleSetDefault = async (record: PickupLocation) => {
+    try {
+      await api.patch(`/sales/pickup-locations/${record.id}/`, { is_default: true });
+      message.success(`„${record.name}" beállítva alapértelmezettként`);
+      load();
+    } catch {
+      message.error('Nem sikerült beállítani');
+    }
+  };
+
   const updateRow = (index: number, field: keyof PickupHoursRow, value: string) => {
     setHoursRows(prev => prev.map((r, i) => i === index ? { ...r, [field]: value } : r));
   };
@@ -121,6 +133,15 @@ const PickupLocationsPage: React.FC = () => {
   const removeRow = (index: number) => setHoursRows(prev => prev.filter((_, i) => i !== index));
 
   const columns = [
+    {
+      title: '',
+      key: 'is_default',
+      width: 36,
+      render: (_: any, record: PickupLocation) =>
+        record.is_default
+          ? <StarFilled style={{ color: '#faad14', fontSize: 16 }} title="Alapértelmezett" />
+          : <StarOutlined style={{ color: '#ccc', fontSize: 16, cursor: 'pointer' }} title="Beállítás alapértelmezettnek" onClick={() => handleSetDefault(record)} />,
+    },
     { title: 'Hely neve', dataIndex: 'name', key: 'name' },
     { title: 'Cím', dataIndex: 'address', key: 'address' },
     {
@@ -140,6 +161,9 @@ const PickupLocationsPage: React.FC = () => {
       key: 'actions',
       render: (_: any, record: PickupLocation) => (
         <Space>
+          {!record.is_default && (
+            <Button size="small" icon={<StarOutlined />} onClick={() => handleSetDefault(record)}>Alapértelmezett</Button>
+          )}
           <Button size="small" onClick={() => openEdit(record)}>Szerkesztés</Button>
           <Popconfirm
             title="Biztosan törli ezt az átvételi helyet?"
@@ -230,6 +254,10 @@ const PickupLocationsPage: React.FC = () => {
 
           <Form.Item name="is_active" label="Aktív" valuePropName="checked">
             <Switch checkedChildren="Aktív" unCheckedChildren="Inaktív" />
+          </Form.Item>
+
+          <Form.Item name="is_default" label="Alapértelmezett" valuePropName="checked">
+            <Switch checkedChildren="Alapértelmezett" unCheckedChildren="Nem alapértelmezett" />
           </Form.Item>
         </Form>
       </Modal>
