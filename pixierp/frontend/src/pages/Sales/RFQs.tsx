@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -38,8 +38,9 @@ const { useBreakpoint } = Grid;
 
 const accentInsensitiveLabelFilter = (input: string, option: any): boolean => {
   if (!input) return true;
-  const label = (option?.label ?? option?.children ?? '').toString();
-  return normalizeTextForSearch(label).includes(normalizeTextForSearch(input));
+  const label = normalizeTextForSearch((option?.label ?? option?.children ?? '').toString());
+  const tokens = normalizeTextForSearch(input).split(/\s+/).filter(Boolean);
+  return tokens.every(token => label.includes(token));
 };
 
 const cloneDraftRfqItem = <T,>(value: T): T => {
@@ -57,10 +58,14 @@ const cloneDraftRfqItem = <T,>(value: T): T => {
 const { TextArea } = Input;
 
 const STATUS_COMBOS: Record<string, string[]> = {
-  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired'],
-  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered'],
+  mind: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced', 'expired', 'archived'],
+  foglalkozos: ['ordered', 'confirmed', 'in_production', 'ready'],
+  szallitando: ['ready'],
+  szamlazando: ['ready', 'in_delivery', 'delivered'],
+  aktiv: ['new', 'sent', 'ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'],
   szamlazható: ['ready', 'in_delivery', 'delivered'],
 };
+const STATUS_COMBO_KEYS = ['foglalkozos', 'szallitando', 'szamlazando', 'aktiv', 'szamlazható'] as const;
 
 const RFQs: React.FC = () => {
   const navigate = useNavigate();
@@ -77,6 +82,7 @@ const RFQs: React.FC = () => {
   }, []);
   // (hook call placed after createOpen state is declared — see below)
   const [loading, setLoading] = useState(true);
+  const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
   const [filtered, setFiltered] = useState<any[]>([]);
@@ -126,7 +132,8 @@ const RFQs: React.FC = () => {
   const [sendForm] = Form.useForm();
   const [confirmEmailForm] = Form.useForm();
   const [sendPreview, setSendPreview] = useState<any | null>(null);
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(() => localStorage.getItem('rfqs_search_query') || '');
+  const handleSearchChange = (v: string) => { setQuery(v); localStorage.setItem('rfqs_search_query', v); };
   const [partialOrderOpenId, setPartialOrderOpenId] = useState<number | null>(null);
   const [partialSelection, setPartialSelection] = useState<number[]>([]);
   const [partialLoading, setPartialLoading] = useState(false);
@@ -141,7 +148,20 @@ const RFQs: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('rfqs_status_filter');
-      return saved ? JSON.parse(saved) : ['mind'];
+      if (!saved) return ['mind'];
+      const parsed: string[] = JSON.parse(saved);
+      if (parsed.includes('mind')) return ['mind'];
+      // Expand any legacy/combo keys that may have been stored
+      if (parsed.some(v => (STATUS_COMBO_KEYS as readonly string[]).includes(v))) {
+        const expanded = new Set<string>();
+        for (const v of parsed) {
+          const combo = STATUS_COMBOS[v];
+          if (combo) combo.forEach((s: string) => expanded.add(s));
+          else expanded.add(v);
+        }
+        return expanded.size > 0 ? Array.from(expanded) : ['mind'];
+      }
+      return parsed;
     } catch {
       return ['mind'];
     }
@@ -154,7 +174,9 @@ const RFQs: React.FC = () => {
       return [];
     }
   });
-  const [creatorFilter, setCreatorFilter] = useState<string | null>(null);
+  const [creatorFilter, setCreatorFilter] = useState<string | null>(() => {
+    try { return localStorage.getItem('rfqs_creator_filter') || null; } catch { return null; }
+  });
   const [partialOrderAllowed, setPartialOrderAllowed] = useState<boolean>(true);
   const [csvMode, setCsvMode] = useState(false);
   const [filterDrawerOpen, setFilterDrawerOpen] = useState(false);
@@ -169,7 +191,18 @@ const RFQs: React.FC = () => {
   const [bulkSelectedKeys, setBulkSelectedKeys] = useState<React.Key[]>([]);
   const [bulkOrderLoading, setBulkOrderLoading] = useState(false);
   const [createOrderLoading, setCreateOrderLoading] = useState(false);
+  const [rfqBulkPrinting, setRfqBulkPrinting] = useState(false);
+  const [rfqBulkPrintModalOpen, setRfqBulkPrintModalOpen] = useState(false);
+  const [rfqBulkPrintMode, setRfqBulkPrintMode] = useState<'preview' | 'direct'>('direct');
   const [bulkSetOrderedLoading, setBulkSetOrderedLoading] = useState(false);
+  // Bulk delivery (Szállítás) state
+  const [deliveryModalOpen, setDeliveryModalOpen] = useState(false);
+  const [deliveryType, setDeliveryType] = useState<'home' | 'pickup'>('home');
+  const [selectedPickupLocationId, setSelectedPickupLocationId] = useState<number | null>(null);
+  const [pickupLocations, setPickupLocations] = useState<any[]>([]);
+  const [bulkDeliveryLoading, setBulkDeliveryLoading] = useState(false);
+  // Bulk invoice (Számlázás) state
+  const [bulkInvoiceLoading, setBulkInvoiceLoading] = useState(false);
   // Confirmation email flow after order creation
   const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
   const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }[]>([]);
@@ -654,19 +687,35 @@ const RFQs: React.FC = () => {
     try {
       setLoading(true);
       setError(null);
-    const [rfqRes, projRes] = await Promise.all([
-        salesService.getQuoteRequests(),
+      const PAGE_SIZE = 50;
+      const [firstPageData, projRes] = await Promise.all([
+        salesService.getQuoteRequestsPage(1, PAGE_SIZE),
         manufacturingService.getProjects(),
       ]);
-    const rfqRaw = (rfqRes.results ?? rfqRes) as any[];
-    const rfqList = (rfqRaw || []);
-    setRfqs(rfqList);
-    setFiltered(rfqList);
-    setProjects(projRes as any);
+      const firstResults: any[] = firstPageData.results ?? [];
+      const totalCount: number = firstPageData.count ?? firstResults.length;
+      setRfqs(firstResults);
+      setProjects(projRes as any);
+      setLoading(false);
+
+      // Háttérben betöltjük a maradék oldalakat
+      if (totalCount > PAGE_SIZE) {
+        setBackgroundLoading(true);
+        const totalPages = Math.ceil(totalCount / PAGE_SIZE);
+        for (let page = 2; page <= totalPages; page++) {
+          try {
+            const pageData = await salesService.getQuoteRequestsPage(page, PAGE_SIZE);
+            const results: any[] = pageData.results ?? [];
+            setRfqs(prev => [...prev, ...results]);
+          } catch (e) {
+            console.error(`Hiba a(z) ${page}. oldal betöltésekor:`, e);
+          }
+        }
+        setBackgroundLoading(false);
+      }
     } catch (e) {
       console.error(e);
       setError('Hiba történt az adatok betöltése során');
-    } finally {
       setLoading(false);
     }
   };
@@ -699,10 +748,31 @@ const RFQs: React.FC = () => {
     try {
       localStorage.setItem('rfqs_status_filter', JSON.stringify(statusFilter));
       localStorage.setItem('rfqs_order_status_filter', JSON.stringify(orderStatusFilter));
+      if (creatorFilter) localStorage.setItem('rfqs_creator_filter', creatorFilter);
+      else localStorage.removeItem('rfqs_creator_filter');
     } catch {
       // Ignore localStorage errors
     }
-  }, [statusFilter, orderStatusFilter]);
+  }, [statusFilter, orderStatusFilter, creatorFilter]);
+
+  // Combo-aware status filter change handler:
+  // when a combo key is newly selected it expands to its individual statuses,
+  // so the user sees which individual statuses are active and can fine-tune them.
+  const handleStatusFilterChange = (newValues: string[]) => {
+    if (newValues.length === 0) { setStatusFilter(['mind']); return; }
+    if (newValues.includes('mind') && !statusFilter.includes('mind')) {
+      setStatusFilter(['mind']); return;
+    }
+    const newlyAdded = newValues.filter(v => !statusFilter.includes(v));
+    const newCombo = newlyAdded.find(v => (STATUS_COMBO_KEYS as readonly string[]).includes(v));
+    if (newCombo) {
+      // Replace entire filter with this combo's expansion
+      setStatusFilter(STATUS_COMBOS[newCombo] ?? ['mind']); return;
+    }
+    // Regular individual-status change — strip out any combo keys
+    const individual = newValues.filter(v => v !== 'mind' && !(STATUS_COMBO_KEYS as readonly string[]).includes(v));
+    setStatusFilter(individual.length > 0 ? individual : ['mind']);
+  };
 
   useEffect(() => {
     let filtered = rfqs || [];
@@ -749,11 +819,12 @@ const RFQs: React.FC = () => {
     { value: 'delivered', label: 'Leszállítva' },
     { value: 'invoiced', label: 'Kiszámlázva' },
     { value: 'expired', label: 'Lejárt' },
+    { value: 'rejected', label: 'Elutasítva' },
   ];
 
   const getDisplayStatus = (record: any) => record?._costTopStatus || record?.effective_status || record?.status || 'new';
 
-  const COST_ITEM_STATUS_ORDER = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered'];
+  const COST_ITEM_STATUS_ORDER = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
   const COST_STATUS_META: Record<string, { color: string; text: string }> = {
     new:          { color: 'blue',     text: 'Új' },
     confirmed:    { color: 'cyan',     text: 'Megerősítve' },
@@ -762,6 +833,7 @@ const RFQs: React.FC = () => {
     ready:        { color: 'green',    text: 'Kész' },
     in_delivery:  { color: 'purple',   text: 'Szállítás alatt' },
     delivered:    { color: 'geekblue', text: 'Kiszállítva' },
+    rejected:     { color: 'red',      text: 'Elutasítva' },
   };
   const COST_ITEM_STATUS_OPTIONS = [
     { value: 'new',          label: 'Új' },
@@ -771,6 +843,7 @@ const RFQs: React.FC = () => {
     { value: 'ready',        label: 'Kész' },
     { value: 'in_delivery',  label: 'Szállítás alatt' },
     { value: 'delivered',    label: 'Kiszállítva' },
+    { value: 'rejected',     label: 'Elutasítva' },
   ];
 
   const statusTag = (status: string, label?: string) => {
@@ -802,9 +875,21 @@ const RFQs: React.FC = () => {
       </div>
     );
     return (
-      <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
-        <span style={{ cursor: 'pointer' }}>{statusTag(currentStatus, currentLabel)}</span>
-      </Popover>
+      <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+        <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
+          <span style={{ cursor: 'pointer' }}>{statusTag(currentStatus, currentLabel)}</span>
+        </Popover>
+        {(['in_delivery', 'delivered'].includes(currentStatus) && record?.delivery_note_number) && (
+          <a href={`/sales/delivery-notes?id=${record.delivery_note_id}`} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: '#1677ff', lineHeight: 1.2 }}
+            onClick={e => e.stopPropagation()}>
+            {record.delivery_note_number}
+          </a>
+        )}
+        {(currentStatus === 'invoiced' && record?.invoice_number) && (
+          <span style={{ fontSize: 11, color: '#52c41a', lineHeight: 1.2 }}>{record.invoice_number}</span>
+        )}
+      </div>
     );
   };
 
@@ -860,10 +945,25 @@ const RFQs: React.FC = () => {
         ))}
       </div>
     );
+    const deliveryNum = r.delivery_note_number;
+    const deliveryId = r.delivery_note_id;
+    const invoiceNum = r.invoice_number;
     return (
-      <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
-        <span style={{ cursor: 'pointer' }}><Tag color={meta.color}>{displayLabel}</Tag></span>
-      </Popover>
+      <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2 }}>
+        <Popover content={popoverContent} title="Státusz váltás" trigger="click" styles={{ body: { padding: '6px 8px' } }} getPopupContainer={() => document.body} zIndex={9999}>
+          <span style={{ cursor: 'pointer' }}><Tag color={meta.color}>{displayLabel}</Tag></span>
+        </Popover>
+        {(deliveryNum && deliveryId && ['in_delivery', 'delivered'].includes(topStatus)) && (
+          <a href={`/sales/delivery-notes?id=${deliveryId}`} target="_blank" rel="noreferrer"
+            style={{ fontSize: 11, color: '#1677ff', lineHeight: 1.2 }}
+            onClick={e => e.stopPropagation()}>
+            {deliveryNum}
+          </a>
+        )}
+        {(invoiceNum && topStatus === 'invoiced') && (
+          <span style={{ fontSize: 11, color: '#52c41a', lineHeight: 1.2 }}>{invoiceNum}</span>
+        )}
+      </div>
     );
   };
 
@@ -907,6 +1007,7 @@ const RFQs: React.FC = () => {
           deadline: rfq.deadline,
           project_name: rfq.project?.name || rfq.project_name || '',
           status: itemStatus,
+          rfq_status: rfq.status,
           effective_status: rfq.effective_status,
           effective_status_label: rfq.effective_status_label,
           currency_symbol: rfq.currency_symbol || rfq.currency_code || 'Ft',
@@ -968,6 +1069,7 @@ const RFQs: React.FC = () => {
             pagination={false}
             dataSource={subItems}
             rowKey="uniqueId"
+            rowClassName={(sr: any) => { const st = getDisplayStatus(sr); return st !== 'new' ? `rfq-row-${st}` : ''; }}
             columns={[
               {
                 title: 'Megnevezés', key: 'name',
@@ -1211,9 +1313,22 @@ const RFQs: React.FC = () => {
           <Tooltip title="Megnyitás">
             <Button icon={<EditOutlined style={{ color: '#595959' }} />} size="small" style={{ background: '#f5f5f5', borderColor: '#d9d9d9' }} onClick={() => window.open(`/sales/rfqs/${r.rfq_id}?editItemId=${r.id}`, '_blank')} />
           </Tooltip>
-          <Tooltip title="Megrendelés">
-            <Button icon={<ShoppingCartOutlined style={{ color: '#096dd9' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} loading={createOrderLoading} onClick={(e) => { e.stopPropagation(); handleCreateOrder([r.rfq_id], false); }} />
-          </Tooltip>
+          {(() => {
+            const ORDERED_ABOVE = ['ordered', 'partially_ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
+            const rfqAlreadyOrdered = ORDERED_ABOVE.includes(r.rfq_status);
+            return (
+              <Tooltip title={rfqAlreadyOrdered ? 'Már megrendelve – nem rendelhető újra' : 'Megrendelés'}>
+                <Button
+                  icon={<ShoppingCartOutlined style={{ color: rfqAlreadyOrdered ? '#aaa' : '#096dd9' }} />}
+                  size="small"
+                  style={{ background: rfqAlreadyOrdered ? '#f5f5f5' : '#e6f4ff', borderColor: rfqAlreadyOrdered ? '#d9d9d9' : '#91caff' }}
+                  loading={createOrderLoading}
+                  disabled={rfqAlreadyOrdered}
+                  onClick={(e) => { e.stopPropagation(); handleCreateOrder([r.rfq_id], false); }}
+                />
+              </Tooltip>
+            );
+          })()}
           <Tooltip title="Küldés">
             <Button icon={<SendOutlined style={{ color: '#1677ff' }} />} size="small" style={{ background: '#e6f4ff', borderColor: '#91caff' }} onClick={(e) => { e.stopPropagation(); setSendRfqList([{ rfqId: r.rfq_id, sent: false }]); setSendRfqIndex(0); openSendModal(r.rfq_id); }} />
           </Tooltip>
@@ -2239,23 +2354,72 @@ const RFQs: React.FC = () => {
     }
   };
 
+  const [bulkStatusChangeLoading, setBulkStatusChangeLoading] = useState(false);
+  const handleBulkChangeStatus = async (newStatus: string) => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedItems.length) return;
+    const label = rfqStatusOptions.find(o => o.value === newStatus)?.label || newStatus;
+    setBulkStatusChangeLoading(true);
+    let successCount = 0;
+
+    // Items with cost items: change cost_items status (visible status comes from cost_items_statuses)
+    const itemsWithCosts = selectedItems.filter((item: any) => (item.cost_items_statuses || []).length > 0);
+    for (const item of itemsWithCosts) {
+      try {
+        await salesService.updateRfqItemCostItemsStatus(item.id, newStatus);
+        successCount++;
+      } catch {
+        message.error(`Hiba a tétel #${item.id} státuszának frissítésekor`);
+      }
+    }
+
+    // Items without cost items: change RFQ (QuoteRequest) status
+    const rfqIdsNoCost = Array.from(new Set(
+      selectedItems
+        .filter((item: any) => !(item.cost_items_statuses || []).length)
+        .map((item: any) => item.rfq_id as number)
+    ));
+    for (const rfqId of rfqIdsNoCost) {
+      try {
+        await salesService.setQuoteRequestStatus(rfqId, newStatus);
+        successCount++;
+      } catch {
+        message.error(`Hiba az ajánlat #${rfqId} státuszának frissítésekor`);
+      }
+    }
+
+    setBulkStatusChangeLoading(false);
+    if (successCount > 0) {
+      message.success(`${successCount} tétel → ${label}`);
+      setBulkSelectedKeys([]);
+      loadData();
+    }
+  };
+
   const handleBulkSendEmail = () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
     const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
     if (!rfqIds.length) return;
-    // Group RFQs by company so same-company RFQs are combined into one email
+    // Group RFQs by company so same-company RFQs are combined into one email.
+    // For private persons (no company), group by sorted contact IDs so same-person RFQs are also combined.
+    const getRfqGroupKey = (rfq: any, fallbackId: number): string => {
+      if (rfq?.company?.id || rfq?.company_id) return String(rfq?.company?.id || rfq?.company_id);
+      const contactIds = ((rfq?.contacts || []) as any[]).map((c: any) => c.id).sort();
+      if (contactIds.length) return `contacts_${contactIds.join('_')}`;
+      return `_${fallbackId}`;
+    };
     const byCompany = new Map<string, number[]>();
     const itemIdsByCompany = new Map<string, number[]>();
     rfqIds.forEach(rfqId => {
       const rfq = (rfqs || []).find((r: any) => r.id === rfqId);
-      const companyKey = String(rfq?.company?.id || rfq?.company_id || `_${rfqId}`);
+      const companyKey = getRfqGroupKey(rfq, rfqId);
       if (!byCompany.has(companyKey)) byCompany.set(companyKey, []);
       byCompany.get(companyKey)!.push(rfqId);
     });
     // Collect real item IDs (database IDs) per company group
     selectedItems.forEach((item: any) => {
       const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
-      const companyKey = String(rfq?.company?.id || rfq?.company_id || `_${item.rfq_id}`);
+      const companyKey = getRfqGroupKey(rfq, item.rfq_id);
       if (!itemIdsByCompany.has(companyKey)) itemIdsByCompany.set(companyKey, []);
       if (item.id) itemIdsByCompany.get(companyKey)!.push(item.id);
     });
@@ -2270,22 +2434,239 @@ const RFQs: React.FC = () => {
     openSendModal(list[0].rfqId, list[0].additionalRfqIds, list[0].itemIds);
   };
 
-  if (loading) {
-    return (
-      <div style={{ padding: 24, textAlign: 'center' }}>
-        <Spin />
-      </div>
-    );
-  }
+  const handleBulkDelivery = async () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    const orderedItems = selectedItems.filter((item: any) => item.is_ordered);
+    if (!orderedItems.length) {
+      message.warning('Nincs megrendelt tétel a kijelöltek között (csak megrendelt tételeket lehet szállítani)');
+      return;
+    }
+    // Load pickup locations if not loaded yet
+    if (!pickupLocations.length) {
+      try {
+        const res = await api.get('/sales/pickup-locations/?active_only=1');
+        setPickupLocations(res.data?.results || res.data || []);
+      } catch {
+        setPickupLocations([]);
+      }
+    }
+    setDeliveryType('home');
+    setSelectedPickupLocationId(null);
+    setDeliveryModalOpen(true);
+  };
+
+  const confirmBulkDelivery = async () => {
+    if (deliveryType === 'pickup' && !selectedPickupLocationId) {
+      message.error('Válasszon átvételi pontot!');
+      return;
+    }
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && item.is_ordered);
+    if (!selectedItems.length) return;
+
+    // Group by company (use company_name as key, also track company_id / contact data)
+    const groups = new Map<string, { items: any[]; rfqId: number }>();
+    selectedItems.forEach((item: any) => {
+      const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
+      const companyKey = String(rfq?.company?.id || rfq?.company_id || item.rfq_id);
+      if (!groups.has(companyKey)) groups.set(companyKey, { items: [], rfqId: item.rfq_id });
+      groups.get(companyKey)!.items.push(item);
+    });
+
+    setBulkDeliveryLoading(true);
+    let successCount = 0;
+    const createdNoteIds: number[] = [];
+    try {
+      for (const group of Array.from(groups.values())) {
+        const rfq = (rfqs || []).find((r: any) => r.id === group.rfqId);
+        const payload: any = {
+          rfq_item_ids: group.items.map((i: any) => i.id),
+          delivery_type: deliveryType,
+          delivery_date: new Date().toISOString().split('T')[0],
+        };
+        if (deliveryType === 'pickup' && selectedPickupLocationId) {
+          payload.pickup_location_id = selectedPickupLocationId;
+        }
+        if (rfq?.company?.id) {
+          payload.customer_id = rfq.company.id;
+        } else if (rfq?.contacts?.length) {
+          payload.contact_id = typeof rfq.contacts[0] === 'object' ? rfq.contacts[0].id : rfq.contacts[0];
+        }
+        try {
+          const res = await api.post('/sales/delivery-notes/create_from_rfq_items/', payload);
+          createdNoteIds.push(res.data.id);
+          successCount++;
+        } catch (err: any) {
+          message.error('Hiba a szállítólevél létrehozásakor: ' + (err?.response?.data?.error || err?.message || 'Ismeretlen hiba'));
+        }
+      }
+    } finally {
+      setBulkDeliveryLoading(false);
+      setDeliveryModalOpen(false);
+    }
+    if (successCount > 0) {
+      message.success(`${successCount} szállítólevél létrehozva`);
+      setBulkSelectedKeys([]);
+      loadData();
+      // Open delivery notes page in new tab with email modal for first created note
+      const noteParam = createdNoteIds.length > 0 ? `?email_note_id=${createdNoteIds[0]}` : '';
+      window.open(`/sales/delivery-notes${noteParam}`, '_blank');
+    }
+  };
+
+  const handleBulkInvoice = async () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && item.is_ordered);
+    if (!selectedItems.length) {
+      message.warning('Nincs megrendelt tétel a kijelöltek között (csak megrendelt tételeket lehet számlázni)');
+      return;
+    }
+    setBulkInvoiceLoading(true);
+    try {
+      // Group by company
+      const groups = new Map<string, { items: any[]; rfqId: number }>();
+      selectedItems.forEach((item: any) => {
+        const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
+        const companyKey = String(rfq?.company?.id || rfq?.company_id || item.rfq_id);
+        if (!groups.has(companyKey)) groups.set(companyKey, { items: [], rfqId: item.rfq_id });
+        groups.get(companyKey)!.items.push(item);
+      });
+
+      for (const group of Array.from(groups.values())) {
+        const rfq = (rfqs || []).find((r: any) => r.id === group.rfqId);
+        const company = rfq?.company;
+        const contacts = rfq?.contacts;
+
+        let customerData: any = {};
+        if (company) {
+          customerData = {
+            name: company.name,
+            tax_number: company.tax_number,
+            city: company.city,
+            postal_code: company.postal_code,
+            address: company.address,
+          };
+        } else if (contacts?.length) {
+          const c = typeof contacts[0] === 'object' ? contacts[0] : null;
+          if (c) {
+            customerData = {
+              name: c.name || c.company || '',
+              tax_number: c.tax_number || '',
+              address: c.address || '',
+            };
+          }
+        }
+
+        const invoiceItems: any[] = group.items.map((item: any) => ({
+          description: item.product_name || item.material_name || item.manufacturing_product_name || item.service_name || 'Tétel',
+          product_code_value: item.product_code || item.material_code || item.manufacturing_product_code || item.service_code || '',
+          quantity: parseFloat(item.quantity),
+          unit_price: parseFloat(item.net_unit_price),
+          vat_rate: parseFloat(item.vat_rate),
+          unit_of_measure: item.unit || 'db',
+        }));
+
+        // Collect unique customer_order_ids for ERP callback
+        const orderIds = Array.from(new Set(
+          group.items.map((i: any) => i.customer_order_id).filter(Boolean)
+        ));
+
+        const invoiceData = {
+          customer: customerData,
+          items: invoiceItems,
+          notes: `ERP árajánlat tételek: ${Array.from(new Set(group.items.map((i: any) => i.rfq_number))).join(', ')}`,
+          erp_order_ids: orderIds,
+        };
+
+        const encodedData = btoa(encodeURIComponent(JSON.stringify(invoiceData)));
+        const PixInvoiceUrl = process.env.REACT_APP_PIXINVOICE_URL || 'https://i.pixisys.eu';
+        window.open(`${PixInvoiceUrl}/invoices/new?erp_data=${encodedData}`, '_blank');
+        message.success(`Számla előkészítve: ${company?.name || contacts?.[0]?.name || 'Ügyfél'}`);
+      }
+      setBulkSelectedKeys([]);
+    } catch (err: any) {
+      message.error('Hiba a számlázás előkészítésekor: ' + (err?.message || 'Ismeretlen hiba'));
+    } finally {
+      setBulkInvoiceLoading(false);
+    }
+  };
+
+  const handleBulkDelete = () => {
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    if (!selectedItems.length) return;
+    Modal.confirm({
+      title: 'Tételek törlése',
+      icon: <ExclamationCircleOutlined style={{ color: '#ff4d4f' }} />,
+      content: `Biztosan töröl ${selectedItems.length} kijelölt tételt? Ez a művelet nem visszavonható.`,
+      okText: 'Igen, törlöm',
+      okButtonProps: { danger: true },
+      cancelText: 'Mégse',
+      onOk: async () => {
+        let successCount = 0;
+        for (const item of selectedItems) {
+          try {
+            await salesService.deleteQuoteRequestItem(item.id, item.rfq_id);
+            successCount++;
+          } catch {
+            message.error(`Hiba a tétel #${item.id} törlésekor`);
+          }
+        }
+        if (successCount > 0) {
+          message.success(`${successCount} tétel törölve`);
+          setBulkSelectedKeys([]);
+          loadData();
+        }
+      },
+    });
+  };
+
+  const executeRfqBulkPrint = async () => {
+    setRfqBulkPrintModalOpen(false);
+    setRfqBulkPrinting(true);
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+    const rfqIds = Array.from(new Set(selectedItems.map((item: any) => item.rfq_id as number)));
+    try {
+      const response = await api.get(
+        `/manufacturing/cost-items/bulk_work_sheets_for_rfqs/?rfq_ids=${rfqIds.join(',')}`,
+        { responseType: 'blob' }
+      );
+      const blob = new Blob([response.data], { type: 'application/pdf' });
+      const url = window.URL.createObjectURL(blob);
+      if (rfqBulkPrintMode === 'direct') {
+        const iframe = document.createElement('iframe');
+        iframe.style.display = 'none';
+        iframe.src = url;
+        document.body.appendChild(iframe);
+        iframe.onload = () => {
+          try { iframe.contentWindow?.print(); } catch {}
+          setTimeout(() => {
+            document.body.removeChild(iframe);
+            window.URL.revokeObjectURL(url);
+          }, 2000);
+        };
+      } else {
+        window.open(url, '_blank');
+      }
+      message.success(`${rfqIds.length} ajánlat munkalapjai összefűzve, nyomtatás indul.`);
+    } catch (e: any) {
+      if (e?.response?.status === 404) {
+        message.warning('Egyetlen kijelölt ajánlathoz sem található nyomtatható munkalap.');
+      } else {
+        message.error('Hiba a munkalapok letöltése során');
+      }
+    } finally {
+      setRfqBulkPrinting(false);
+    }
+  };
+
+  const handleRfqBulkPrintWorksheets = () => {
+    if (bulkSelectedKeys.length === 0) return;
+    setRfqBulkPrintModalOpen(true);
+  };
 
   return (
     <div>
-      <style>{`
-        .ant-table-tbody tr.rfq-row-colored > td { background: #f3e8ff !important; }
-        .ant-table-tbody tr.rfq-row-colored:hover > td { background: #ead5ff !important; }
-      `}</style>
+
       <Card
-        title="Árajánlatok"
+        title={<span>Árajánlatok{backgroundLoading && <> <Spin size="small" style={{ marginLeft: 8 }} /><span style={{ fontSize: 12, color: '#888', marginLeft: 4 }}>Betöltés…</span></>}</span>}
         extra={
             <Space wrap className="rfqs-toolbar-actions pixi-unified-card-actions">
               <Tooltip title={bulkSelectedKeys.length > 0 ? `CSV export (${bulkSelectedKeys.length} kijelölve)` : 'CSV export (jelölj ki tételeket)'}>
@@ -2299,15 +2680,17 @@ const RFQs: React.FC = () => {
                     mode="multiple"
                     placeholder="Státusz szűrő"
                     value={statusFilter}
-                    onChange={(value) => setStatusFilter(value)}
+                    onChange={handleStatusFilterChange}
                     style={{ width: 220 }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
                   >
-                    <Select.OptGroup label="Kombinációk">
+                    <Select.OptGroup label="Kombinációk (gyorskiválasztás)">
                       <Select.Option value="mind">Mind</Select.Option>
                       <Select.Option value="aktiv">Aktív</Select.Option>
-                      <Select.Option value="szamlazható">Számlázható</Select.Option>
+                      <Select.Option value="foglalkozos">Foglalkozós</Select.Option>
+                      <Select.Option value="szallitando">Szállítandó</Select.Option>
+                      <Select.Option value="szamlazando">Számlázandó</Select.Option>
                     </Select.OptGroup>
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
@@ -2366,15 +2749,17 @@ const RFQs: React.FC = () => {
                     mode="multiple"
                     placeholder="Státusz szűrő"
                     value={statusFilter}
-                    onChange={(value) => setStatusFilter(value)}
+                    onChange={handleStatusFilterChange}
                     style={{ width: '100%' }}
                     popupMatchSelectWidth={false}
                     maxTagCount="responsive"
                   >
-                    <Select.OptGroup label="Kombinációk">
+                    <Select.OptGroup label="Kombinációk (gyorskiválasztás)">
                       <Select.Option value="mind">Mind</Select.Option>
                       <Select.Option value="aktiv">Aktív</Select.Option>
-                      <Select.Option value="szamlazható">Számlázható</Select.Option>
+                      <Select.Option value="foglalkozos">Foglalkozós</Select.Option>
+                      <Select.Option value="szallitando">Szállítandó</Select.Option>
+                      <Select.Option value="szamlazando">Számlázandó</Select.Option>
                     </Select.OptGroup>
                     <Select.OptGroup label="Egyéni">
                       <Select.Option value="new">Új</Select.Option>
@@ -2414,6 +2799,19 @@ const RFQs: React.FC = () => {
         {bulkSelectedKeys.length > 0 && (
           <div style={{ position: 'sticky', top: 0, zIndex: 20, background: '#fff', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 8px 10px', flexWrap: 'wrap', borderBottom: '1px solid #f0f0f0', marginBottom: 2 }}>
             <span style={{ fontSize: 13, color: '#555' }}>{bulkSelectedKeys.length} tétel kijelölve</span>
+            <Select
+              size="small"
+              placeholder="Státusz váltás…"
+              style={{ minWidth: 150 }}
+              loading={bulkStatusChangeLoading}
+              value={null}
+              onChange={(v: string) => handleBulkChangeStatus(v)}
+              dropdownStyle={{ minWidth: 160 }}
+            >
+              {rfqStatusOptions.map(o => (
+                <Select.Option key={o.value} value={o.value}>{o.label}</Select.Option>
+              ))}
+            </Select>
             <Button size="small" loading={bulkSetOrderedLoading} onClick={handleBulkSetOrdered} style={{ background: '#f9f0ff', borderColor: '#d3adf7', color: '#722ed1' }}>Megrendelve</Button>
             <Button icon={<ShoppingCartOutlined />} size="small" loading={createOrderLoading} onClick={() => {
               const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
@@ -2421,20 +2819,34 @@ const RFQs: React.FC = () => {
               if (rfqIds.length) handleCreateOrder(rfqIds, false);
             }}>Megrendelés</Button>
             <Button type="primary" size="small" loading={bulkOrderLoading} onClick={handleBulkOrder}>Gyártásba küld</Button>
+            <Tooltip title="Munkalap nyomtatása">
+              <Button icon={<PrinterOutlined />} size="small" loading={rfqBulkPrinting} onClick={handleRfqBulkPrintWorksheets} />
+            </Tooltip>
             <Button size="small" onClick={handleBulkSendEmail}>Árajánlat küldés</Button>
-            <Button size="small" onClick={() => setBulkSelectedKeys([])}>Kijelölés törlése</Button>
+            <Button size="small" loading={bulkDeliveryLoading} onClick={handleBulkDelivery} style={{ background: '#e6f7ff', borderColor: '#91d5ff', color: '#096dd9' }}>Szállítás</Button>
+            <Button size="small" loading={bulkInvoiceLoading} onClick={handleBulkInvoice} style={{ background: '#f6ffed', borderColor: '#b7eb8f', color: '#389e0d' }}>Számlázás</Button>
+            <Button size="small" danger onClick={handleBulkDelete}>Kijelöltek törlése</Button>
           </div>
         )}
 
-        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={setQuery} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
-          const st = getDisplayStatus(r);
-          const bg = !['new', 'sent'].includes(st) ? { background: '#f3e8ff' } : {};
-          return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer', ...bg } };
+        <EnhancedTable key="rfqs-items" tableKey="rfqs-items" searchValue={query} onSearchChange={handleSearchChange} searchPlaceholder="Keresés…" columns={itemsColumns as any} dataSource={flattenedItems} rowKey="uniqueId" pagination={{ pageSize: 10 }} size="small" cardBreakpoint={750} sticky={{ offsetScroll: 0 }} className="rfq-items-table" onRow={(r: any) => {
+          return { onDoubleClick: () => window.open(`/sales/rfqs/${r.rfq_id}`, '_blank'), style: { cursor: 'pointer' } };
         }}
-        rowClassName={(r: any) => !['new', 'sent'].includes(getDisplayStatus(r)) ? 'rfq-row-colored' : ''} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
+        rowClassName={(r: any) => { const st = getDisplayStatus(r); return st !== 'new' ? `rfq-row-${st}` : ''; }} rowSelection={{ selectedRowKeys: bulkSelectedKeys, onChange: (keys) => setBulkSelectedKeys(keys), columnWidth: 32 }} expandable={{
           columnWidth: 24,
           rowExpandable: (r: any) => (r.sub_items?.length > 0) || (r.item_type === 'manufacturing' && !!r.manufacturing_product),
           expandedRowRender: renderExpandedItemRow,
+          onExpand: (expanded: boolean, record: any) => {
+            // ?light=1 esetén a tétel-csatolmányok nincsenek előtöltve — igény szerint töltjük be
+            if (expanded && rfqItemAtts[record.id] === undefined) {
+              salesService.getQuoteRequestItemAttachments(record.id)
+                .then((data: any) => {
+                  const list = Array.isArray(data) ? data : (data?.results ?? []);
+                  setRfqItemAtts(prev => ({ ...prev, [record.id]: list }));
+                })
+                .catch(() => {});
+            }
+          },
         }} />
       </Card>
       <Modal 
@@ -4308,6 +4720,95 @@ const RFQs: React.FC = () => {
               </div>
             </div>
           </div>
+        )}
+      </Modal>
+
+      {/* Bulk Szállítás modal */}
+      <Modal
+        title="Szállítás típusa"
+        open={deliveryModalOpen}
+        onCancel={() => setDeliveryModalOpen(false)}
+        onOk={confirmBulkDelivery}
+        okText="Szállítólevél létrehozása"
+        cancelText="Mégse"
+        confirmLoading={bulkDeliveryLoading}
+        width={420}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8, fontWeight: 500 }}>Szállítás típusa:</div>
+          <Select
+            value={deliveryType}
+            onChange={(v) => { setDeliveryType(v); setSelectedPickupLocationId(null); }}
+            style={{ width: '100%' }}
+          >
+            <Select.Option value="home">Házhozszállítás</Select.Option>
+            <Select.Option value="pickup">Átvételi pont</Select.Option>
+          </Select>
+        </div>
+        {deliveryType === 'pickup' && (
+          <div>
+            <div style={{ marginBottom: 8, fontWeight: 500 }}>Átvételi pont:</div>
+            <Select
+              value={selectedPickupLocationId}
+              onChange={setSelectedPickupLocationId}
+              style={{ width: '100%' }}
+              placeholder="Válasszon átvételi pontot…"
+              showSearch
+              optionFilterProp="label"
+            >
+              {pickupLocations.map((loc: any) => (
+                <Select.Option key={loc.id} value={loc.id} label={loc.name}>
+                  {loc.name}{loc.address ? ` — ${loc.address}` : ''}
+                </Select.Option>
+              ))}
+            </Select>
+          </div>
+        )}
+      </Modal>
+
+      <Modal
+        open={rfqBulkPrintModalOpen}
+        title={<><PrinterOutlined style={{ marginRight: 8 }} />Munkalap nyomtatása</>}
+        okText="Nyomtatás"
+        cancelText="Mégsem"
+        onOk={executeRfqBulkPrint}
+        onCancel={() => setRfqBulkPrintModalOpen(false)}
+        width={440}
+      >
+        <p style={{ marginBottom: 16 }}>
+          <strong>{new Set(bulkSelectedKeys.map((k) => String(k).split('_')[0])).size}</strong> kijelölt ajánlat munkalapját nyomtatod ki.
+        </p>
+        <div style={{ marginBottom: 8, fontWeight: 500 }}>Nyomtató / mód:</div>
+        <Select
+          value={rfqBulkPrintMode}
+          onChange={(v) => setRfqBulkPrintMode(v)}
+          style={{ width: '100%' }}
+          options={[
+            {
+              value: 'direct',
+              label: (
+                <span>
+                  <PrinterOutlined style={{ marginRight: 6 }} />
+                  Közvetlen nyomtatás — nyomtatóválasztó ablak nyílik meg minden munkalaphoz
+                </span>
+              ),
+            },
+            {
+              value: 'preview',
+              label: (
+                <span>
+                  <EyeOutlined style={{ marginRight: 6 }} />
+                  Előnézet — PDF megnyitása új tabban (kézzel nyomtatható)
+                </span>
+              ),
+            },
+          ]}
+        />
+        {rfqBulkPrintMode === 'direct' && (
+          <p style={{ marginTop: 12, color: '#6b7280', fontSize: 12 }}>
+            Minden munkalaphoz megnyílik a böngésző nyomtatási párbeszédablaka, ahol kiválaszthatod a nyomtatót és a beállításokat.
+          </p>
         )}
       </Modal>
 

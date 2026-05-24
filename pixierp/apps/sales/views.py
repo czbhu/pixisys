@@ -1,6 +1,6 @@
 from rest_framework import viewsets, status, permissions
 from django.db import models
-from django.db.models import Q, Prefetch, Count
+from django.db.models import Q, Prefetch, Count, OuterRef, Subquery, Exists
 from django.template import Template, Context
 import datetime
 import re
@@ -239,22 +239,61 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
 
     def get_queryset(self):
         """Alapértelmezetten csak a nem törölt árajánlatok + OwnDataFilterMixin szűrés"""
-        # Először alkalmazzuk az OwnDataFilterMixin szűrést
         queryset = super().get_queryset()
-        # Majd szűrjük a törölt elemeket
         queryset = queryset.filter(is_deleted=False)
-        return queryset.select_related(
-            'customer', 'company', 'requested_by', 'created_by', 'project', 'currency', 'owner'
-        ).prefetch_related(
-            'contacts',
-            'assignees',
-            Prefetch('email_logs', queryset=QuoteRequestEmailLog.objects.only('id', 'quote_request_id', 'sent_at')),
-            Prefetch(
-                'items',
-                queryset=QuoteRequestItem.objects.select_related(
-                    'product', 'material', 'manufacturing_product', 'service'
-                ).prefetch_related('attachments')
+
+        # ?light=1: listanézet gyorsítása — csatolmányok és email logok kihagyása
+        try:
+            light = getattr(self, 'request', None) and self.request.query_params.get('light') == '1'
+        except Exception:
+            light = False
+
+        # SQL subquery annotations on items — eliminates N+1 for is_ordered/ordered_at/customer_order_id
+        _active_coi = CustomerOrderItem.objects.filter(
+            quote_item=OuterRef('pk')
+        ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
+
+        items_qs = QuoteRequestItem.objects.select_related(
+            'product', 'material', 'manufacturing_product', 'service'
+        ).annotate(
+            _is_ordered=Exists(_active_coi),
+            _ordered_at=Subquery(
+                _active_coi.order_by('customer_order__created_at')
+                .values('customer_order__created_at')[:1]
             ),
+            _customer_order_id=Subquery(
+                _active_coi.order_by('customer_order__created_at')
+                .values('customer_order_id')[:1]
+            ),
+        ).prefetch_related(
+            Prefetch(
+                'manufacturing_product__cost_items',
+                queryset=ManufacturingCostItem.objects.all(),
+                to_attr='prefetched_cost_items',
+            ),
+            Prefetch(
+                'customerorderitem_set',
+                queryset=CustomerOrderItem.objects.exclude(
+                    customer_order__status='cancelled'
+                ).exclude(status='cancelled').select_related(
+                    'customer_order'
+                ).prefetch_related(
+                    Prefetch(
+                        'delivery_items',
+                        queryset=DeliveryNoteItem.objects.select_related('delivery_note'),
+                        to_attr='prefetched_delivery_items',
+                    )
+                ).order_by('customer_order__created_at'),
+                to_attr='prefetched_active_cois',
+            ),
+        )
+        if not light:
+            items_qs = items_qs.prefetch_related('attachments')
+
+        prefetches = [
+            Prefetch('contacts', queryset=Contact.objects.select_related('company')),
+            'assignees',
+            Prefetch('items', queryset=items_qs),
             Prefetch('attachments', queryset=QuoteRequestAttachment.objects.all()),
             Prefetch(
                 'invitations',
@@ -267,18 +306,27 @@ class QuoteRequestViewSet(OwnDataFilterMixin, viewsets.ModelViewSet):
                 ),
                 to_attr='prefetched_active_orders',
             ),
-            Prefetch('email_logs', to_attr='prefetched_email_logs'),
-        )
+        ]
+        if not light:
+            prefetches.append(Prefetch('email_logs', to_attr='prefetched_email_logs'))
+
+        return queryset.select_related(
+            'customer', 'company', 'requested_by', 'created_by', 'project', 'currency', 'owner'
+        ).prefetch_related(*prefetches)
 
     def list(self, request, *args, **kwargs):
         """List árajánlatok, automatikusan frissítve az archív státuszt"""
-        # Frissítjük az archív státuszt a lejárt árajánlatoknál
+        # Frissítjük az archív státuszt (max 1/perc/user, hogy ne lassítsa minden listát)
         from django.utils import timezone
-        QuoteRequest.objects.filter(
-            deadline__lt=timezone.now().date()
-        ).exclude(
-            status__in=['archived', 'ordered']
-        ).update(status='archived')
+        from django.core.cache import cache
+        _cache_key = f'rfq_archive_upd_{getattr(request.user, "id", 0)}'
+        if not cache.get(_cache_key):
+            QuoteRequest.objects.filter(
+                deadline__lt=timezone.now().date()
+            ).exclude(
+                status__in=['archived', 'ordered']
+            ).update(status='archived')
+            cache.set(_cache_key, True, 60)
 
         # Optional ?order_status=... filter — applied AFTER computing
         # effective_status (in Python). Accepts comma-separated values.
@@ -6648,7 +6696,84 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
                  created_by=self.request.user,
                  public_token=secrets.token_urlsafe(24)
              )
-             
+
+    @action(detail=False, methods=['post'], url_path='create_from_rfq_items')
+    def create_from_rfq_items(self, request):
+        """Create a delivery note from selected QuoteRequestItem IDs (bulk action from RFQs page)."""
+        rfq_item_ids = request.data.get('rfq_item_ids', [])
+        delivery_type = request.data.get('delivery_type', 'home')
+        pickup_location_id = request.data.get('pickup_location_id')
+        customer_id = request.data.get('customer_id')
+        contact_id = request.data.get('contact_id')
+        delivery_date = request.data.get('delivery_date', timezone.now().strftime('%Y-%m-%d'))
+        notes = request.data.get('notes', '')
+
+        if not rfq_item_ids:
+            return Response({'error': 'rfq_item_ids kötelező'}, status=400)
+
+        items_data = []
+        for rfq_item_id in rfq_item_ids:
+            try:
+                quote_item = QuoteRequestItem.objects.get(id=rfq_item_id)
+            except QuoteRequestItem.DoesNotExist:
+                continue
+
+            cois = CustomerOrderItem.objects.filter(
+                quote_item=quote_item
+            ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
+
+            for coi in cois:
+                delivered = DeliveryNoteItem.objects.filter(
+                    customer_order_item=coi
+                ).aggregate(total=models.Sum('quantity'))['total'] or 0
+                remaining = float(coi.quantity) - float(delivered)
+                if remaining <= 0:
+                    continue
+
+                item_name = coi.description or ''
+                if not item_name:
+                    qi = quote_item
+                    item_name = (
+                        qi.product.name if qi.product else (
+                            qi.material.name if qi.material else (
+                                qi.manufacturing_product.name if qi.manufacturing_product else (
+                                    qi.service.name if qi.service else '-'
+                                )
+                            )
+                        )
+                    )
+
+                items_data.append({
+                    'customer_order_item': coi.id,
+                    'quantity': remaining,
+                    'net_unit_price': float(coi.net_unit_price),
+                    'item_name': item_name,
+                    'unit': coi.unit,
+                })
+
+        if not items_data:
+            return Response({'error': 'Nincs szállítható tétel a kiválasztott tételeknél (vagy már szállítva van)'}, status=400)
+
+        payload = {
+            'delivery_date': delivery_date,
+            'issue_date': delivery_date,
+            'notes': notes,
+            'is_confirmed': False,
+            'delivery_type': delivery_type,
+            'items_data': items_data,
+        }
+        if delivery_type == 'pickup' and pickup_location_id:
+            payload['pickup_location'] = pickup_location_id
+        if customer_id:
+            payload['customer'] = customer_id
+        elif contact_id:
+            payload['contact'] = contact_id
+
+        serializer = self.get_serializer(data=payload)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         note = self.get_object()

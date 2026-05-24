@@ -230,6 +230,7 @@ const PublicQuoteOrder: React.FC = () => {
   const allSelected = orderableItems.length > 0 && selectedItems.size === orderableItems.length;
   const indeterminate = partialAllowed && selectedItems.size > 0 && selectedItems.size < orderableItems.length;
 
+  const ORDERED_OR_ABOVE = ['ordered', 'partially_ordered', 'confirmed', 'in_production', 'ready', 'in_delivery', 'delivered', 'invoiced'];
   const columns = [
     { 
       title: () => (
@@ -264,6 +265,14 @@ const PublicQuoteOrder: React.FC = () => {
               <Text type="success" style={{ fontSize: 11, lineHeight: 1.1 }}>
                 Megrendelve{dt ? ` ${dt}` : ''}
               </Text>
+            </div>
+          );
+        }
+        if (ORDERED_OR_ABOVE.includes(data?.status || '')) {
+          return (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <Checkbox checked disabled />
+              <Text type="success" style={{ fontSize: 11, lineHeight: 1.1 }}>Megrendelve</Text>
             </div>
           );
         }
@@ -566,7 +575,7 @@ const PublicQuoteOrder: React.FC = () => {
               icon={<ShoppingCartOutlined />}
               onClick={handleOrder}
               loading={submitting}
-              disabled={selectedItems.size === 0 || !!data?.is_expired}
+              disabled={selectedItems.size === 0 || !!data?.is_expired || ORDERED_OR_ABOVE.includes(data?.status || '')}
             >
               Megrendelés ({selectedItems.size} tétel)
             </Button>

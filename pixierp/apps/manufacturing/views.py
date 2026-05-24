@@ -1199,14 +1199,15 @@ class ManufacturingCostItemViewSet(
 
         return Response({'results': results})
 
-    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None):
+    def _render_full_work_sheet_pdf_bytes(self, ci, highlight_id=None, *, _product=None, _rfq=None, _order=None):
         """Generate the full two-section (KÜLSŐ + BELSŐ) worksheet PDF for a
         cost item and return the raw bytes.  Raises ImportError if ReportLab /
         qrcode are not installed.
         highlight_id: the cost item id to bold-highlight in the altételek list.
-        If None, defaults to ci.id (the cost item itself).  Pass 0 to suppress."""
+        If None, defaults to ci.id (the cost item itself).  Pass 0 to suppress.
+        _product, _rfq, _order: override context when ci is None."""
         if highlight_id is None:
-            highlight_id = ci.id
+            highlight_id = ci.id if ci else 0
         from io import BytesIO
         from reportlab.pdfgen import canvas
         from reportlab.lib.pagesizes import A4
@@ -1232,8 +1233,13 @@ class ManufacturingCostItemViewSet(
             s = _re.sub(r'\n\s*\n+', '\n', s)
             return s.strip()
 
-        product = ci.product
-        order, coi = self._resolve_order_context(ci)
+        product = _product if _product is not None else ci.product
+        if _order is not None:
+            order, coi = _order, None
+        elif ci is not None:
+            order, coi = self._resolve_order_context(ci)
+        else:
+            order, coi = None, None
 
         # Font setup
         try:
@@ -1259,8 +1265,13 @@ class ManufacturingCostItemViewSet(
         item_qty_str = ''
         rfq_desc = ''
         rfq_internal_desc = ''
+        _rfq_for_header = None
         if order and order.quote_request:
-            rfq = order.quote_request
+            _rfq_for_header = order.quote_request
+        elif _rfq:
+            _rfq_for_header = _rfq
+        if _rfq_for_header:
+            rfq = _rfq_for_header
             if rfq.company:
                 customer_name = rfq.company.name
             elif rfq.customer:
@@ -1694,24 +1705,22 @@ class ManufacturingCostItemViewSet(
             except CustomerOrder.DoesNotExist:
                 continue
 
-            product_ids = []
             seen = set()
             for item in order.items.all():
                 qi = getattr(item, 'quote_item', None)
                 mp = getattr(qi, 'manufacturing_product', None) if qi else None
-                if mp and mp.id not in seen:
-                    seen.add(mp.id)
-                    product_ids.append(mp.id)
-
-            for pid in product_ids:
+                if not mp or mp.id in seen:
+                    continue
+                seen.add(mp.id)
                 ci = (ManufacturingCostItem.objects
-                      .filter(product_id=pid)
+                      .filter(product_id=mp.id)
                       .order_by(F('queue_position').asc(nulls_last=True), 'id')
                       .first())
-                if not ci:
-                    continue
                 try:
-                    pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    if ci:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    else:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _order=order)
                     if pdf_bytes:
                         all_pdf_pages.append(pdf_bytes)
                 except Exception:
@@ -1738,6 +1747,68 @@ class ManufacturingCostItemViewSet(
 
         response = HttpResponse(merged_bytes, content_type='application/pdf')
         response['Content-Disposition'] = f'inline; filename="munkalapok_bulk.pdf"'
+        return response
+
+    @action(detail=False, methods=['get'], url_path='bulk_work_sheets_for_rfqs')
+    def bulk_work_sheets_for_rfqs(self, request):
+        """Merged worksheet PDF for multiple QuoteRequests — single multi-page PDF."""
+        from django.http import HttpResponse
+        from io import BytesIO
+        rfq_ids_raw = request.query_params.get('rfq_ids', '')
+        if not rfq_ids_raw:
+            return Response({'error': 'rfq_ids kötelező'}, status=400)
+        rfq_ids = [rid.strip() for rid in rfq_ids_raw.split(',') if rid.strip()]
+        if not rfq_ids:
+            return Response({'error': 'rfq_ids üres'}, status=400)
+
+        from apps.sales.models import QuoteRequest
+        from django.db.models import F
+
+        all_pdf_pages = []
+        for rfq_id in rfq_ids:
+            try:
+                rfq = QuoteRequest.objects.get(pk=rfq_id)
+            except QuoteRequest.DoesNotExist:
+                continue
+
+            seen = set()
+            for item in rfq.items.all():
+                mp = getattr(item, 'manufacturing_product', None)
+                if not mp or mp.id in seen:
+                    continue
+                seen.add(mp.id)
+                ci = (ManufacturingCostItem.objects
+                      .filter(product_id=mp.id)
+                      .order_by(F('queue_position').asc(nulls_last=True), 'id')
+                      .first())
+                try:
+                    if ci:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(ci, highlight_id=0)
+                    else:
+                        pdf_bytes = self._render_full_work_sheet_pdf_bytes(None, highlight_id=0, _product=mp, _rfq=rfq)
+                    if pdf_bytes:
+                        all_pdf_pages.append(pdf_bytes)
+                except Exception:
+                    continue
+
+        if len(all_pdf_pages) == 1:
+            merged_bytes = all_pdf_pages[0]
+        else:
+            try:
+                from pypdf import PdfWriter, PdfReader
+                writer = PdfWriter()
+                for pb in all_pdf_pages:
+                    reader = PdfReader(BytesIO(pb))
+                    for page in reader.pages:
+                        writer.add_page(page)
+                out = BytesIO()
+                writer.write(out)
+                merged_bytes = out.getvalue()
+            except Exception as e:
+                return Response({'error': f'PDF összefűzés sikertelen: {e}'}, status=500)
+
+        response = HttpResponse(merged_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'inline; filename="munkalapok_rfq_bulk.pdf"'
         return response
 
     @action(detail=False, methods=['get'], url_path='work_sheet_for_order')

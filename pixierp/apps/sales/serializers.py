@@ -113,22 +113,25 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
     attachments = QuoteRequestItemAttachmentSerializer(many=True, read_only=True)
     is_ordered = serializers.SerializerMethodField()
     ordered_at = serializers.SerializerMethodField()
-
-    manufacturing_total_cost = serializers.SerializerMethodField()
-
+    customer_order_id = serializers.SerializerMethodField()
+    delivery_note_number = serializers.SerializerMethodField()
+    delivery_note_id = serializers.SerializerMethodField()
+    invoice_number = serializers.SerializerMethodField()
     def get_manufacturing_total_cost(self, obj):
         mp = getattr(obj, 'manufacturing_product', None)
         if not mp:
             return None
         try:
             product_qty = float(mp.quantity) or 1
+            # Use prefetched cost_items if available (set by views.py prefetch)
+            prefetched = getattr(mp, 'prefetched_cost_items', None)
+            cost_items = prefetched if prefetched is not None else list(mp.cost_items.all())
             total = sum(
                 float(ci.cost_price) * float(ci.quantity) * (product_qty if ci.is_per_unit else 1)
-                for ci in mp.cost_items.all()
+                for ci in cost_items
             )
             if not total:
                 return None
-            # Return cost per 1 unit of the product so frontend can multiply by order quantity
             return round(total / product_qty, 2)
         except Exception:
             return None
@@ -146,6 +149,13 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         mp = getattr(obj, 'manufacturing_product', None)
         if not mp:
             return []
+        # Use prefetched cost_items if available, filter cancelled in Python
+        prefetched = getattr(mp, 'prefetched_cost_items', None)
+        if prefetched is not None:
+            return [
+                {'id': ci.id, 'status': ci.status}
+                for ci in prefetched if ci.status != 'cancelled'
+            ]
         return [
             {'id': ci.id, 'status': ci.status}
             for ci in mp.cost_items.exclude(status='cancelled')
@@ -170,17 +180,83 @@ class QuoteRequestItemSerializer(serializers.ModelSerializer):
         return self._display_item_name(obj, 'service')
 
     def get_is_ordered(self, obj):
+        # Use SQL annotation when available (prefetch via views.py get_queryset)
+        ann = getattr(obj, '_is_ordered', None)
+        if ann is not None:
+            return bool(ann)
         return obj.customerorderitem_set.exclude(
             customer_order__status='cancelled'
         ).exclude(status='cancelled').exists()
 
     def get_ordered_at(self, obj):
+        # SQL annotation is set even when None (no active orders) — use hasattr to distinguish "not annotated" from "annotated as NULL"
+        if hasattr(obj, '_ordered_at'):
+            return getattr(obj, '_ordered_at')
+        prefetched = getattr(obj, 'prefetched_active_cois', None)
+        if prefetched is not None:
+            coi = prefetched[0] if prefetched else None
+            return coi.customer_order.created_at if coi else None
         coi = obj.customerorderitem_set.exclude(
             customer_order__status='cancelled'
         ).exclude(status='cancelled').order_by('customer_order__created_at').first()
         if not coi:
             return None
         return coi.customer_order.created_at
+
+    def get_customer_order_id(self, obj):
+        """Returns the CustomerOrder.id for the first active CustomerOrderItem, or None."""
+        if hasattr(obj, '_customer_order_id'):
+            return getattr(obj, '_customer_order_id')
+        prefetched = getattr(obj, 'prefetched_active_cois', None)
+        if prefetched is not None:
+            coi = prefetched[0] if prefetched else None
+            return coi.customer_order_id if coi else None
+        coi = obj.customerorderitem_set.exclude(
+            customer_order__status='cancelled'
+        ).exclude(status='cancelled').order_by('customer_order__created_at').first()
+        return coi.customer_order_id if coi else None
+
+    def _get_first_active_coi(self, obj):
+        """Returns the first active CustomerOrderItem, using prefetched data if available."""
+        if hasattr(obj, '_cached_first_active_coi'):
+            return obj._cached_first_active_coi
+        prefetched = getattr(obj, 'prefetched_active_cois', None)
+        if prefetched is not None:
+            result = prefetched[0] if prefetched else None
+        else:
+            result = obj.customerorderitem_set.exclude(
+                customer_order__status='cancelled'
+            ).exclude(status='cancelled').select_related('customer_order').order_by('customer_order__created_at').first()
+        obj._cached_first_active_coi = result
+        return result
+
+    def get_delivery_note_number(self, obj):
+        coi = self._get_first_active_coi(obj)
+        if not coi:
+            return None
+        delivery_items = getattr(coi, 'prefetched_delivery_items', None)
+        if delivery_items is not None:
+            dni = delivery_items[0] if delivery_items else None
+        else:
+            dni = coi.delivery_items.select_related('delivery_note').first()
+        return dni.delivery_note.delivery_note_number if dni else None
+
+    def get_delivery_note_id(self, obj):
+        coi = self._get_first_active_coi(obj)
+        if not coi:
+            return None
+        delivery_items = getattr(coi, 'prefetched_delivery_items', None)
+        if delivery_items is not None:
+            dni = delivery_items[0] if delivery_items else None
+        else:
+            dni = coi.delivery_items.select_related('delivery_note').first()
+        return dni.delivery_note.id if dni else None
+
+    def get_invoice_number(self, obj):
+        coi = self._get_first_active_coi(obj)
+        if not coi:
+            return None
+        return coi.customer_order.invoice_number or None
 
     class Meta:
         model = QuoteRequestItem
@@ -261,7 +337,8 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
 
     def get_invitations_pending(self, obj):
         try:
-            invs = obj.invitations.filter(status='pending').select_related('invitee')
+            # Use prefetched invitations to avoid N+1 (prefetched without to_attr, filter in Python)
+            invs = obj.invitations.all()
             return [
                 {
                     'id': inv.id,
@@ -270,6 +347,7 @@ class QuoteRequestSerializer(serializers.ModelSerializer):
                     'created_at': inv.created_at,
                 }
                 for inv in invs
+                if inv.status == 'pending'
             ]
         except Exception:
             return []

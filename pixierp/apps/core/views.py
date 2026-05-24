@@ -1,4 +1,6 @@
 from rest_framework import status
+from rest_framework.authentication import SessionAuthentication
+from rest_framework_simplejwt.authentication import JWTAuthentication as _JWTAuthentication
 from rest_framework.decorators import api_view, permission_classes, action, authentication_classes
 import logging
 
@@ -2823,6 +2825,7 @@ def _verify_ntag424_sun(enc_picc_hex: str, cmac_hex: str, key_hex: str):
 
 
 class NfcTagViewSet(viewsets.ModelViewSet):
+    authentication_classes = [_JWTAuthentication, SessionAuthentication]
     permission_classes = [IsAuthenticated]
     pagination_class = None
 

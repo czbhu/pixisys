@@ -10,3 +10,27 @@
 .rfq-items-table .ant-table-expanded-row > td {
   padding: 0 !important;
 }
+
+/* Status-based row background colors (used by RFQs main table, sub-items, and ProductSubItemsTable) */
+.ant-table-tbody tr.rfq-row-sent > td { background: #ededed !important; }
+.ant-table-tbody tr.rfq-row-sent:hover > td { background: #dedede !important; }
+.ant-table-tbody tr.rfq-row-ordered > td { background: #fffbd1 !important; }
+.ant-table-tbody tr.rfq-row-ordered:hover > td { background: #fff3b0 !important; }
+.ant-table-tbody tr.rfq-row-confirmed > td { background: #fff7aa !important; }
+.ant-table-tbody tr.rfq-row-confirmed:hover > td { background: #ffee7a !important; }
+.ant-table-tbody tr.rfq-row-in_production > td { background: #fff160 !important; }
+.ant-table-tbody tr.rfq-row-in_production:hover > td { background: #ffe833 !important; }
+.ant-table-tbody tr.rfq-row-ready > td { background: #e2ffc4 !important; }
+.ant-table-tbody tr.rfq-row-ready:hover > td { background: #ccffaa !important; }
+.ant-table-tbody tr.rfq-row-in_delivery > td { background: #ffdbf6 !important; }
+.ant-table-tbody tr.rfq-row-in_delivery:hover > td { background: #ffbfee !important; }
+.ant-table-tbody tr.rfq-row-delivered > td { background: #fcb8eb !important; }
+.ant-table-tbody tr.rfq-row-delivered:hover > td { background: #fa90dc !important; }
+.ant-table-tbody tr.rfq-row-invoiced > td { background: #b8fcfb !important; }
+.ant-table-tbody tr.rfq-row-invoiced:hover > td { background: #8afaf9 !important; }
+.ant-table-tbody tr.rfq-row-expired > td { background: #ffdddd !important; }
+.ant-table-tbody tr.rfq-row-expired:hover > td { background: #ffbbbb !important; }
+.ant-table-tbody tr.rfq-row-archived > td { background: #fcb5b5 !important; }
+.ant-table-tbody tr.rfq-row-archived:hover > td { background: #fa9090 !important; }
+.ant-table-tbody tr.rfq-row-rejected > td { background: #ffdddd !important; }
+.ant-table-tbody tr.rfq-row-rejected:hover > td { background: #ffbbbb !important; }

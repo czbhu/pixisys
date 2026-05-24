@@ -81,5 +81,8 @@ export const deepSearchMatch = (searchText: string, value: unknown): boolean => 
     const searchableValues: string[] = [];
     collectDeepSearchValues(value, searchableValues);
 
-    return searchInMultipleFields(searchText, searchableValues);
+    // Split query into tokens — all tokens must match somewhere in the record (AND logic)
+    const tokens = normalizeTextForSearch(searchText).split(/\s+/).filter(Boolean);
+    const combined = searchableValues.map(v => normalizeTextForSearch(v)).join(' ');
+    return tokens.every(token => combined.includes(token));
 };

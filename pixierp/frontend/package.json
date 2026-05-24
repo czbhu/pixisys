@@ -36,7 +36,7 @@
   "scripts": {
     "postinstall": "patch-package",
     "start": "REACT_APP_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev') react-scripts start",
-    "build": "REACT_APP_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev') react-scripts build",
+    "build": "REACT_APP_VERSION=$(git describe --tags --abbrev=0 2>/dev/null || echo 'dev') NODE_OPTIONS=--max-old-space-size=3072 react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"
   },

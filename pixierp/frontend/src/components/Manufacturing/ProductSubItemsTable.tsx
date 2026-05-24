@@ -729,6 +729,7 @@ export const ProductSubItemsTable: React.FC<Props> = ({
       pagination={false}
       dataSource={items}
       columns={columns}
+      rowClassName={(r: any) => { const st = r.status || 'new'; return st !== 'new' ? `rfq-row-${st}` : ''; }}
       components={readOnly ? undefined : { body: { row: CostDraggableRow } }}
       expandable={showNotesAndAttachments ? {
         expandedRowKeys: expandedSubItems,

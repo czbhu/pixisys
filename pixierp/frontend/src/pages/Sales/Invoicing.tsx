@@ -500,6 +500,7 @@ const Invoicing: React.FC = () => {
           loading={loading}
           size="small"
           cardBreakpoint={800}
+          rowClassName={(r: any) => { const st = r.invoice_number ? 'invoiced' : (r.status || 'delivered'); return st !== 'new' ? `rfq-row-${st}` : ''; }}
           pagination={{ pageSize: 20 }}
           onRow={(record, index) => ({
             onClick: (event) => handleRowClick(record, index!, event),

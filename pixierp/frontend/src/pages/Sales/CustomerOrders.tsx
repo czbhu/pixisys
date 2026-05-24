@@ -2611,6 +2611,7 @@ interface CustomerOrder {
             columnWidth: 32,
           }}
           className="co-responsive-table"
+          rowClassName={(r: any) => { const st = r.status || 'new'; return st !== 'new' ? `rfq-row-${st}` : ''; }}
           tableLayout="auto"
           pagination={{
             pageSize: pageSize,

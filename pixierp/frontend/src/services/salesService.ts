@@ -153,6 +153,11 @@ export const salesService = {
       }
       return data;
     },
+
+    async getQuoteRequestsPage(page: number = 1, pageSize: number = 50) {
+      const response = await api.get(`/sales/quote-requests/?light=1&page=${page}&page_size=${pageSize}`);
+      return response.data as { count: number; next: string | null; previous: string | null; results: any[] };
+    },
     async createDemand(data: Partial<{ title: string; description: string; deadline: string; company_id: number; contact_ids: number[]; currency_code: string }>) {
         const response = await api.post('/sales/quote-requests/create_demand/', data || {});
         return response.data;

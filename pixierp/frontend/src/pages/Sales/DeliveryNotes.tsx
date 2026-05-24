@@ -251,6 +251,20 @@ const DeliveryNotes: React.FC = () => {
     if (orderId) {
         initCreateFromOrder(orderId);
     }
+    const emailNoteId = params.get('email_note_id');
+    if (emailNoteId) {
+        api.get(`/sales/delivery-notes/${emailNoteId}/`).then(res => {
+            const note = res.data;
+            if (note && note.id) {
+                openEmailModal({
+                    id: note.id,
+                    delivery_note_number: note.delivery_note_number,
+                    customer_name: note.customer_name || note.contact_name,
+                    delivery_type: note.delivery_type,
+                });
+            }
+        }).catch(() => {});
+    }
   }, [location.search]);
 
   const initCreateFromOrder = async (orderId: string) => {
@@ -888,6 +902,7 @@ const DeliveryNotes: React.FC = () => {
         loading={loading}
         size="small"
         cardBreakpoint={850}
+        rowClassName={(r: any) => { const st = r.invoice_number ? 'invoiced' : (r.is_confirmed ? 'delivered' : 'in_delivery'); return `rfq-row-${st}`; }}
         rowSelection={csvMode ? { selectedRowKeys: csvSelectedKeys, onChange: (keys) => setCsvSelectedKeys(keys), columnWidth: 40 } : undefined}
       />
 
