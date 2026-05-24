@@ -6441,9 +6441,23 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             p.drawString(2*cm, y, dn.customer.name)
             y -= 0.5*cm
             p.setFont(font_name, 9)
+            # Full address first; if empty, try to build from components
             addr = dn.customer.full_address or ""
+            if not addr:
+                parts = []
+                if dn.customer.postal_code or dn.customer.city:
+                    parts.append(f"{dn.customer.postal_code} {dn.customer.city}".strip())
+                if dn.customer.street_name:
+                    st = f"{dn.customer.street_name} {dn.customer.street_type or ''} {dn.customer.house_number or ''}".strip()
+                    parts.append(st)
+                if not parts and dn.customer.address:
+                    parts.append(dn.customer.address)
+                addr = ", ".join(x for x in parts if x)
             if addr:
                 p.drawString(2*cm, y, addr)
+                y -= 0.45*cm
+            elif dn.customer.country:
+                p.drawString(2*cm, y, dn.customer.country)
                 y -= 0.45*cm
             tax = (dn.customer.tax_number or dn.customer.group_tax_number or dn.customer.eu_tax_number or "")
             if tax:
@@ -6474,33 +6488,72 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         y -= 0.8*cm
         
         total_net = 0
-        
+
+        import re as _re
+        from reportlab.pdfbase.pdfmetrics import stringWidth as _sw
+
+        def _strip_html(s):
+            s = _re.sub(r'<[^>]+>', ' ', s or '')
+            s = s.replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').replace('&#39;', "'")
+            return ' '.join(s.split()).strip()
+
+        def _wrap(text, max_w_pt, fn, fs):
+            words = text.split()
+            lines, cur = [], ''
+            for w in words:
+                test = (cur + ' ' + w).strip()
+                if _sw(test, fn, fs) <= max_w_pt:
+                    cur = test
+                else:
+                    if cur:
+                        lines.append(cur)
+                    cur = w
+            if cur:
+                lines.append(cur)
+            return lines or [text[:80]]
+
+        NAME_COL_PT = 8.2 * cm  # available width for name column
+
         for item in dn.items.all():
-            p.setFont(font_name, 9)
-            # Find item code
+            # --- item code ---
             item_code = ""
             try:
-                # Same logic as serializer
                 coi = item.customer_order_item
                 qi = coi.quote_item
                 if qi.material: item_code = qi.material.code
-                if qi.service: item_code = qi.service.code
+                if qi.service:  item_code = qi.service.code
             except:
-                pass
-                
-            # Item name — strip HTML tags before rendering
-            import re as _re
-            def _strip_html(s):
-                return _re.sub(r'<[^>]+>', ' ', s or '').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').strip()
-                return ' '.join(s.split())
-            raw_name = _strip_html(item.item_name)
-            item_text = raw_name[:55]
-            if len(raw_name) > 55:
-                item_text = raw_name[:54] + '…'
-            if item_code:
-                item_text = f"[{item_code}] {item_text}"
+                qi = None
 
-            # Order number — show on second line in smaller font
+            # --- product name (primary identifier, HTML-free) ---
+            product_name = ''
+            description_text = ''
+            try:
+                qi = item.customer_order_item.quote_item
+                product_name = (qi.item_name or '').strip()
+                if not product_name:
+                    product_name = (
+                        qi.product.name if qi.product else (
+                            qi.material.name if qi.material else (
+                                qi.manufacturing_product.name if qi.manufacturing_product else (
+                                    qi.service.name if qi.service else ''
+                                )
+                            )
+                        )
+                    )
+                # description as secondary line (stripped HTML)
+                raw_desc = _strip_html(qi.description or '')
+                if raw_desc and raw_desc[:40].lower() != product_name[:40].lower():
+                    description_text = raw_desc
+            except Exception:
+                pass
+
+            if not product_name:
+                product_name = _strip_html(item.item_name)
+
+            main_label = f"[{item_code}] {product_name}" if item_code else product_name
+
+            # --- order number ---
             order_num = ""
             try:
                 if item.customer_order_item and item.customer_order_item.customer_order:
@@ -6508,27 +6561,50 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             except Exception:
                 pass
 
-            p.drawString(2*cm, y, item_text)
-            if order_num:
-                p.setFont(font_name, 7)
-                p.drawString(2*cm, y - 0.35*cm, f"Megr.: {order_num}")
-                p.setFont(font_name, 9)
-                y -= 0.35*cm
-            p.drawRightString(11*cm, y, f"{item.quantity}")
-            p.drawString(11.5*cm, y, item.unit)
-            
-            if show_prices:
-                p.drawRightString(15*cm, y, f"{item.net_unit_price:,.2f}")
-                net_line = item.quantity * item.net_unit_price
-                total_net += net_line
-                p.drawRightString(18*cm, y, f"{net_line:,.2f}")
-                
-            y -= 0.6*cm
-            if y < 4*cm:
+            # --- wrap lines ---
+            name_lines = _wrap(main_label, NAME_COL_PT, font_name, 9)[:3]
+            desc_lines = _wrap(description_text, NAME_COL_PT, font_name, 7.5)[:4] if description_text else []
+
+            row_h = len(name_lines) * 0.48*cm + len(desc_lines) * 0.37*cm + (0.3*cm if order_num else 0) + 0.25*cm
+            if y - row_h < 4*cm:
                 p.showPage()
                 y = height - 2*cm
-                p.setFont(font_name, 10)
-        
+                p.setFont(font_name, 9)
+
+            row_top = y
+
+            # draw name lines
+            cur_y = y
+            for line in name_lines:
+                p.setFont(font_name, 9)
+                p.drawString(2*cm, cur_y, line)
+                cur_y -= 0.48*cm
+
+            # draw description lines
+            for line in desc_lines:
+                p.setFont(font_name, 7.5)
+                p.drawString(2*cm, cur_y, line)
+                cur_y -= 0.37*cm
+
+            # draw order number
+            if order_num:
+                p.setFont(font_name, 7)
+                p.drawString(2*cm, cur_y, f"Megr.: {order_num}")
+                cur_y -= 0.3*cm
+
+            # quantity / unit / price aligned to first line
+            p.setFont(font_name, 9)
+            p.drawRightString(11*cm, row_top, f"{item.quantity}")
+            p.drawString(11.5*cm, row_top, item.unit)
+
+            if show_prices:
+                p.drawRightString(15*cm, row_top, f"{item.net_unit_price:,.2f}")
+                net_line = item.quantity * item.net_unit_price
+                total_net += net_line
+                p.drawRightString(18*cm, row_top, f"{net_line:,.2f}")
+
+            y = cur_y - 0.2*cm
+
         if show_prices:
              y -= 0.5*cm
              p.line(12*cm, y+0.4*cm, 18*cm, y+0.4*cm)
