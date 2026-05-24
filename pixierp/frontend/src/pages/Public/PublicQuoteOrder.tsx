@@ -213,13 +213,12 @@ const PublicQuoteOrder: React.FC = () => {
   // Check if any item has discount
   const hasDiscount = data.items.some(item => item.discount_percent > 0);
 
-  // Calculate totals for selected items only
-  const selectedItemsData = data.items.filter(item => selectedItems.has(item.id));
-  const totalNet = selectedItemsData.reduce((sum, item) => {
+  // Calculate totals for all items (regardless of checkbox selection)
+  const totalNet = data.items.reduce((sum, item) => {
     const netValue = item.discount_percent > 0 ? Number(item.discounted_net_total) : Number(item.net_total);
     return sum + (isNaN(netValue) ? 0 : netValue);
   }, 0);
-  const totalGross = selectedItemsData.reduce((sum, item) => {
+  const totalGross = data.items.reduce((sum, item) => {
     const grossValue = item.discount_percent > 0 ? Number(item.discounted_gross_total) : Number(item.gross_total);
     return sum + (isNaN(grossValue) ? 0 : grossValue);
   }, 0);
@@ -269,10 +268,13 @@ const PublicQuoteOrder: React.FC = () => {
           );
         }
         if (ORDERED_OR_ABOVE.includes(data?.status || '')) {
+          const dt = record.ordered_at ? new Date(record.ordered_at).toLocaleDateString('hu-HU') : '';
           return (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
               <Checkbox checked disabled />
-              <Text type="success" style={{ fontSize: 11, lineHeight: 1.1 }}>Megrendelve</Text>
+              <Text type="success" style={{ fontSize: 11, lineHeight: 1.1 }}>
+                Megrendelve{dt ? ` ${dt}` : ''}
+              </Text>
             </div>
           );
         }
@@ -400,9 +402,6 @@ const PublicQuoteOrder: React.FC = () => {
             display: none !important;
           }
           .print-summary-row .ant-table-cell:first-child {
-            display: none !important;
-          }
-          .unselected-row {
             display: none !important;
           }
           .ant-table-wrapper {
