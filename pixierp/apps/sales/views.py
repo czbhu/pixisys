@@ -6438,14 +6438,21 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         y -= 0.5*cm
         p.setFont(font_name, 11)
         if dn.customer:
-             p.drawString(2*cm, y, dn.customer.name)
-             y -= 0.5*cm
-             p.setFont(font_name, 9)
-             p.drawString(2*cm, y, dn.customer.full_address)
-             y -= 0.5*cm
+            p.drawString(2*cm, y, dn.customer.name)
+            y -= 0.5*cm
+            p.setFont(font_name, 9)
+            addr = dn.customer.full_address or ""
+            if addr:
+                p.drawString(2*cm, y, addr)
+                y -= 0.45*cm
+            tax = (dn.customer.tax_number or dn.customer.group_tax_number or dn.customer.eu_tax_number or "")
+            if tax:
+                p.drawString(2*cm, y, f"Adószám: {tax}")
+                y -= 0.45*cm
         if dn.contact:
-             p.drawString(2*cm, y, f"Kapcsolattartó: {dn.contact.name}")
-             y -= 0.5*cm
+            p.setFont(font_name, 9)
+            p.drawString(2*cm, y, f"Kapcsolattartó: {dn.contact.name}")
+            y -= 0.45*cm
              
         y = height - 10*cm
         
@@ -6481,17 +6488,32 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
             except:
                 pass
                 
-            # Item name
-            item_text = item.item_name[:40]
+            # Item name — strip HTML tags before rendering
+            import re as _re
+            def _strip_html(s):
+                return _re.sub(r'<[^>]+>', ' ', s or '').replace('&nbsp;', ' ').replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>').strip()
+                return ' '.join(s.split())
+            raw_name = _strip_html(item.item_name)
+            item_text = raw_name[:55]
+            if len(raw_name) > 55:
+                item_text = raw_name[:54] + '…'
             if item_code:
                 item_text = f"[{item_code}] {item_text}"
-                
-            # Order number
-            order_num = item.customer_order_item.customer_order.order_number if item.customer_order_item and item.customer_order_item.customer_order else ""
-            if order_num:
-                item_text += f" - {order_num}"
-                
+
+            # Order number — show on second line in smaller font
+            order_num = ""
+            try:
+                if item.customer_order_item and item.customer_order_item.customer_order:
+                    order_num = item.customer_order_item.customer_order.order_number or ""
+            except Exception:
+                pass
+
             p.drawString(2*cm, y, item_text)
+            if order_num:
+                p.setFont(font_name, 7)
+                p.drawString(2*cm, y - 0.35*cm, f"Megr.: {order_num}")
+                p.setFont(font_name, 9)
+                y -= 0.35*cm
             p.drawRightString(11*cm, y, f"{item.quantity}")
             p.drawString(11.5*cm, y, item.unit)
             
