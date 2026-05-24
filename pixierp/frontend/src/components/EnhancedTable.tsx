@@ -632,7 +632,7 @@ function EnhancedTable<T extends object = any>({
 
   const pagRow = pag !== false ? (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: 4 }}>
-      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
+      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
       <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
     </div>
   ) : null;
@@ -641,7 +641,7 @@ function EnhancedTable<T extends object = any>({
 
   const footerFn = pag !== false && dataLen > size ? () => (
     <div style={{ position: 'relative', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" />
+      <Pagination current={page} pageSize={size} total={dataLen} onChange={handlePageChange} showTotal={(t: number, r: [number, number]) => `${r[0]}-${r[1]} / ${t}`} size="small" showSizeChanger={false} />
       <Select value={size} onChange={handleSizeChange} size="small" variant="borderless" style={{ position: 'absolute', right: 0, width: 100, fontSize: 11, height: 24, lineHeight: '24px' }} popupMatchSelectWidth={false} options={pagSizeOptions} />
     </div>
   ) : undefined;
