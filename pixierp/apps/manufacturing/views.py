@@ -537,50 +537,109 @@ class ManufacturingCostItemViewSet(
     @action(detail=False, methods=['get'], url_path='queue')
     def queue(self, request):
         """List all cost_items belonging to non-cancelled/non-delivered customer orders.
-        Sorted by queue_position (nulls last by id)."""
-        from django.db.models import F, Count
+        Sorted by queue_position (nulls last by id).
+        Optimised: uses bulk queries instead of per-row N+1 DB calls."""
+        from django.db.models import F, Count, Prefetch
+        from apps.sales.models import QuoteRequestItem, CustomerOrderItem, QuoteRequest
+        from apps.warehouse.models import Material
+
+        # ── 1. Load all cost items ───────────────────────────────────────────
         qs = (ManufacturingCostItem.objects
               .select_related('product', 'supplier', 'department')
               .annotate(_att_count=Count('attachments'))
               .order_by(F('queue_position').asc(nulls_last=True), 'id'))
+        cost_items = list(qs)
+        if not cost_items:
+            return Response([])
 
-        # Optional filters
+        # ── 2. Bulk-resolve product_id → (order, coi) ────────────────────────
+        product_ids = [ci.product_id for ci in cost_items if ci.product_id]
+        cois_qs = (CustomerOrderItem.objects
+                   .select_related(
+                       'quote_item',
+                       'customer_order',
+                       'customer_order__quote_request',
+                       'customer_order__quote_request__company',
+                       'customer_order__quote_request__customer',
+                   )
+                   .filter(quote_item__manufacturing_product_id__in=product_ids)
+                   .exclude(status='cancelled')
+                   .exclude(customer_order__status__in=('delivered', 'cancelled'))
+                   .order_by('-customer_order__order_date'))
+
+        # Map product_id → most-recent active COI
+        product_to_coi: dict = {}
+        for coi in cois_qs:
+            qi = coi.quote_item
+            if not qi:
+                continue
+            pid = qi.manufacturing_product_id
+            if pid not in product_to_coi:
+                product_to_coi[pid] = coi
+
+        # ── 3. Bulk-load first contact per QuoteRequest ──────────────────────
+        qr_ids = list({
+            coi.customer_order.quote_request_id
+            for coi in product_to_coi.values()
+            if coi.customer_order.quote_request_id
+        })
+        qr_first_contact: dict = {}  # qr_id → {name, company_id, company_name}
+        if qr_ids:
+            qrs_prefetched = (QuoteRequest.objects
+                              .filter(id__in=qr_ids)
+                              .prefetch_related(
+                                  Prefetch('contacts',
+                                           queryset=Contact.objects.select_related('company')
+                                                    .only('id', 'name', 'company_id'),
+                                           to_attr='_first_contacts')
+                              )
+                              .only('id'))
+            for qr_obj in qrs_prefetched:
+                contacts_list = getattr(qr_obj, '_first_contacts', [])
+                if contacts_list:
+                    c = contacts_list[0]
+                    qr_first_contact[qr_obj.id] = {
+                        'name': c.name or '',
+                        'company_id': c.company_id,
+                        'company_name': c.company.name if getattr(c, 'company', None) else '',
+                    }
+
+        # ── 4. Bulk-load material/service codes ──────────────────────────────
+        mat_ids = [ci.ref_id for ci in cost_items if ci.type == 'material' and ci.ref_id]
+        svc_ids = [ci.ref_id for ci in cost_items if ci.type == 'service' and ci.ref_id]
+        mat_codes: dict = {}
+        svc_codes: dict = {}
+        if mat_ids:
+            mat_codes = dict(Material.objects.filter(id__in=mat_ids).values_list('id', 'code'))
+        if svc_ids:
+            svc_codes = dict(Service.objects.filter(id__in=svc_ids).values_list('id', 'code'))
+
+        # ── 5. Optional filters & build response ─────────────────────────────
         customer_id = request.query_params.get('customer')
         order_id = request.query_params.get('order')
         supplier_id = request.query_params.get('supplier')
 
         data = []
-        for ci in qs:
-            order, coi = self._resolve_order_context(ci)
-            if not order:
+        for ci in cost_items:
+            coi = product_to_coi.get(ci.product_id)
+            if not coi:
                 continue
-            if order.status in ('delivered', 'cancelled'):
-                continue
+            order = coi.customer_order
             qr = order.quote_request
-            company = (qr.company if qr else None) or (qr.customer if qr else None)
+
+            company = (qr.company if qr else None) or (getattr(qr, 'customer', None) if qr else None)
             cust_name = company.name if company else ''
             cust_id = company.id if company else None
             contact_name = ''
+
             if qr:
-                try:
-                    first_contact = qr.contacts.first()
-                    if first_contact and first_contact.name:
-                        contact_name = first_contact.name
-                        if not cust_id and getattr(first_contact, 'company', None):
-                            cust_id = first_contact.company.id
-                except Exception:
-                    pass
-            # In queue list, customer column must show customer/company name,
-            # not contact person. Keep contact separately in `contact_name`.
-            # Legacy fallback: first contact's company (legacy data with no FK)
-            if not cust_name and qr:
-                try:
-                    first_contact = qr.contacts.first()
-                    if first_contact and getattr(first_contact, 'company', None):
-                        cust_name = first_contact.company.name or ''
-                        cust_id = first_contact.company.id
-                except Exception:
-                    pass
+                ci_info = qr_first_contact.get(qr.id, {})
+                contact_name = ci_info.get('name', '')
+                if not cust_id and ci_info.get('company_id'):
+                    cust_id = ci_info['company_id']
+                if not cust_name and ci_info.get('company_name'):
+                    cust_name = ci_info['company_name']
+
             if customer_id and str(cust_id) != str(customer_id):
                 continue
             if order_id and str(order.id) != str(order_id):
@@ -588,20 +647,11 @@ class ManufacturingCostItemViewSet(
             if supplier_id and str(ci.supplier_id or '') != str(supplier_id):
                 continue
 
-            # Resolve code via serializer logic
             code = ''
-            try:
-                if ci.type == 'material' and ci.ref_id:
-                    from apps.warehouse.models import Material
-                    m = Material.objects.filter(id=ci.ref_id).only('code').first()
-                    if m:
-                        code = m.code
-                elif ci.type == 'service' and ci.ref_id:
-                    s = Service.objects.filter(id=ci.ref_id).only('code').first()
-                    if s:
-                        code = s.code
-            except Exception:
-                pass
+            if ci.type == 'material' and ci.ref_id:
+                code = mat_codes.get(ci.ref_id, '')
+            elif ci.type == 'service' and ci.ref_id:
+                code = svc_codes.get(ci.ref_id, '')
 
             data.append({
                 'id': ci.id,
@@ -614,7 +664,7 @@ class ManufacturingCostItemViewSet(
                 'customer_id': cust_id,
                 'customer_name': cust_name,
                 'contact_name': contact_name,
-                'customer_order_item_id': coi.id if coi else None,
+                'customer_order_item_id': coi.id,
                 'manufacturing_product_id': ci.product_id,
                 'product_name': ci.product.name if ci.product else '',
                 'item_name': ci.name,
