@@ -34,3 +34,16 @@
 .ant-table-tbody tr.rfq-row-archived:hover > td { background: #fa9090 !important; }
 .ant-table-tbody tr.rfq-row-rejected > td { background: #ffdddd !important; }
 .ant-table-tbody tr.rfq-row-rejected:hover > td { background: #ffbbbb !important; }
+
+/* Status-based card colors – mobile / responsive card layout */
+.responsive-card.rfq-row-sent { background: #ededed !important; border-color: #d0d0d0; }
+.responsive-card.rfq-row-ordered { background: #fffbd1 !important; border-color: #e8e0a0; }
+.responsive-card.rfq-row-confirmed { background: #fff7aa !important; border-color: #e0d870; }
+.responsive-card.rfq-row-in_production { background: #fff160 !important; border-color: #d4c830; }
+.responsive-card.rfq-row-ready { background: #e2ffc4 !important; border-color: #a8e870; }
+.responsive-card.rfq-row-in_delivery { background: #ffdbf6 !important; border-color: #f0a8e0; }
+.responsive-card.rfq-row-delivered { background: #fcb8eb !important; border-color: #e880d0; }
+.responsive-card.rfq-row-invoiced { background: #b8fcfb !important; border-color: #70e8e0; }
+.responsive-card.rfq-row-expired { background: #ffdddd !important; border-color: #f0a0a0; }
+.responsive-card.rfq-row-archived { background: #fcb5b5 !important; border-color: #e88080; }
+.responsive-card.rfq-row-rejected { background: #ffdddd !important; border-color: #f0a0a0; }

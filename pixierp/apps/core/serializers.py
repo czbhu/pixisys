@@ -130,7 +130,7 @@ class CompanySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Company
-        fields = ['id', 'name', 'tax_number', 'eu_tax_number', 'address', 'phone', 'email', 'website', 'logo', 'is_default', 'is_active', 'bank_accounts', 'created_at', 'updated_at']
+        fields = ['id', 'name', 'tax_number', 'eu_tax_number', 'address', 'phone', 'email', 'website', 'logo', 'is_default', 'is_active', 'quote_validity_days', 'bank_accounts', 'created_at', 'updated_at']
         read_only_fields = ['id', 'created_at', 'updated_at']
 
 
@@ -625,6 +625,10 @@ class NfcTagSerializer(serializers.ModelSerializer):
     tag_type_display = serializers.CharField(source='get_tag_type_display', read_only=True)
     iot_device_name = serializers.SerializerMethodField()
     iot_device_type = serializers.SerializerMethodField()
+    allowed_departments = serializers.PrimaryKeyRelatedField(
+        many=True, queryset=Department.objects.all(),
+        required=False,
+    )
 
     class Meta:
         model = NfcTag
@@ -632,6 +636,7 @@ class NfcTagSerializer(serializers.ModelSerializer):
             'id', 'name', 'tag_type', 'tag_type_display', 'location', 'is_active',
             'iot_device', 'iot_device_name', 'iot_device_type', 'iot_channel',
             'sun_key', 'last_counter', 'require_login',
+            'allowed_departments',
             'created_at', 'updated_at',
         ]
         read_only_fields = ['last_counter', 'created_at', 'updated_at']
@@ -641,6 +646,22 @@ class NfcTagSerializer(serializers.ModelSerializer):
 
     def get_iot_device_type(self, obj):
         return obj.iot_device.device_type if obj.iot_device else None
+
+
+class NfcTriggerLogSerializer(serializers.ModelSerializer):
+    user_display = serializers.SerializerMethodField()
+
+    class Meta:
+        from .models import NfcTriggerLog
+        model = NfcTriggerLog
+        fields = ['id', 'triggered_at', 'success', 'note', 'user_display']
+        read_only_fields = fields
+
+    def get_user_display(self, obj):
+        if not obj.triggered_by:
+            return 'Névtelen'
+        full = obj.triggered_by.get_full_name()
+        return full if full.strip() else obj.triggered_by.username
 
 
 class StorageFolderSerializer(serializers.ModelSerializer):

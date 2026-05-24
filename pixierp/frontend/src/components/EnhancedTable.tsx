@@ -710,6 +710,7 @@ function EnhancedTable<T extends object = any>({
           pageSize={size}
           onPageChange={handlePageChange}
           onPageSizeChange={handleSizeChange}
+          rowClassName={(tableProps as any).rowClassName}
         />
       ) : (
         <DndContext

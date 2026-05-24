@@ -36,6 +36,8 @@ export interface ResponsiveCardListProps {
   onPageSizeChange?: (size: number) => void;
   /** Column visibility map – if provided, cells with false are hidden */
   colVisibility?: Record<string, boolean>;
+  /** Optional function to compute extra CSS class(es) per row card – mirrors Ant Design rowClassName */
+  rowClassName?: (record: any, index: number) => string;
 }
 
 function getKeyFromCol(col: any): string {
@@ -70,6 +72,7 @@ const ResponsiveCardList: React.FC<ResponsiveCardListProps> = ({
   onPageChange,
   onPageSizeChange,
   colVisibility,
+  rowClassName,
 }) => {
   const page = currentPage ?? 1;
   const size = pageSize ?? 20;
@@ -156,8 +159,9 @@ const ResponsiveCardList: React.FC<ResponsiveCardListProps> = ({
         paginatedData.map((record, recIdx) => {
           if (record == null) return null;
           const key = getRecordKey(record, rowKey, recIdx);
+          const extraClass = rowClassName ? rowClassName(record, recIdx) : '';
           return (
-            <div key={key} className="responsive-card">
+            <div key={key} className={`responsive-card${extraClass ? ` ${extraClass}` : ''}`}>
               {colRows.map((row, rowIdx) => (
                 <div key={rowIdx} className="rc-row">
                   {row.map((col) => {

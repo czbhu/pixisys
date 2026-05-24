@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Table, Button, Modal, Form, Input, Switch, message, Space, Popconfirm, Tabs, Select } from 'antd';
+import { Card, Table, Button, Modal, Form, Input, InputNumber, Switch, message, Space, Popconfirm, Tabs, Select } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined, BankOutlined, CheckCircleOutlined } from '@ant-design/icons';
 import api from '../../services/api';
 import { settingsService } from '../../services/settingsService';
@@ -37,6 +37,7 @@ interface Company {
   website: string;
   is_default: boolean;
   is_active: boolean;
+  quote_validity_days: number;
   bank_accounts: BankAccount[];
 }
 
@@ -101,7 +102,7 @@ const CompanySettings: React.FC = () => {
   const handleAdd = () => {
     setEditingCompany(null);
     form.resetFields();
-    form.setFieldsValue({ is_active: true, is_default: false });
+    form.setFieldsValue({ is_active: true, is_default: false, quote_validity_days: 30 });
     setModalVisible(true);
   };
 
@@ -509,6 +510,14 @@ const CompanySettings: React.FC = () => {
             name="website"
           >
             <Input />
+          </Form.Item>
+
+          <Form.Item
+            label="Ajánlati érvényesség (nap)"
+            name="quote_validity_days"
+            rules={[{ required: true, message: 'Kérlek add meg az érvényességi napok számát!' }]}
+          >
+            <InputNumber min={1} max={3650} style={{ width: '100%' }} addonAfter="nap" />
           </Form.Item>
 
           <Form.Item

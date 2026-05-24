@@ -7,7 +7,7 @@ import { Card, Table, Button, Space, Tag, Spin, Alert, message, Tooltip, Modal, 
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import type { UploadFile } from 'antd/es/upload/interface';
-import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, LockOutlined, UnlockOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined } from '@ant-design/icons';
+import { PlusOutlined, EyeOutlined, SendOutlined, MailOutlined, EditOutlined, SearchOutlined, CopyOutlined, PlusCircleOutlined, ExclamationCircleOutlined, FileTextOutlined, DeleteOutlined, FilterOutlined, CameraOutlined, PictureOutlined, UploadOutlined, PaperClipOutlined, LeftOutlined, RightOutlined, ShoppingCartOutlined, HistoryOutlined, WarningOutlined, PrinterOutlined, UserSwitchOutlined } from '@ant-design/icons';
 import { isPdf, openPdfPreview } from '../../utils/pdfPreview';
 import { useNavigate, useSearchParams } from 'react-router-dom'; // Add useSearchParams
 import './RFQs.css';
@@ -203,6 +203,13 @@ const RFQs: React.FC = () => {
   const [bulkDeliveryLoading, setBulkDeliveryLoading] = useState(false);
   // Bulk invoice (Számlázás) state
   const [bulkInvoiceLoading, setBulkInvoiceLoading] = useState(false);
+  // Bulk customer/contact change state
+  const [bulkCustomerModalOpen, setBulkCustomerModalOpen] = useState(false);
+  const [bulkCustomerLoading, setBulkCustomerLoading] = useState(false);
+  const [bulkCustomerCompanyId, setBulkCustomerCompanyId] = useState<number | null>(null);
+  const [bulkCustomerContactIds, setBulkCustomerContactIds] = useState<number[]>([]);
+  const [bulkCustomerContacts, setBulkCustomerContacts] = useState<any[]>([]);
+  const [bulkCustomerContactsLoading, setBulkCustomerContactsLoading] = useState(false);
   // Confirmation email flow after order creation
   const [confirmEmailAskOpen, setConfirmEmailAskOpen] = useState(false);
   const [confirmEmailOrders, setConfirmEmailOrders] = useState<{ primaryOrderId: number; orderIds: number[]; rfqId: number; rfqIds: number[] }[]>([]);
@@ -1335,16 +1342,6 @@ const RFQs: React.FC = () => {
           <Tooltip title="Másolás (preload)">
             <Button icon={<CopyOutlined style={{ color: '#5c3bc2' }} />} size="small" style={{ background: '#f5f0ff', borderColor: '#d3adf7' }} onClick={(e) => { e.stopPropagation(); const parentRfq = rfqs.find((q: any) => q.id === r.rfq_id); if (parentRfq) openCreateFromCopy(parentRfq, r); }} />
           </Tooltip>
-          {r.status !== 'in_progress' && (
-            <Tooltip title="Nyitás">
-              <Button icon={<UnlockOutlined style={{ color: '#2d7d46' }} />} size="small" style={{ background: '#eaf6ee', borderColor: '#b7dfc3' }} onClick={async (e) => { e.stopPropagation(); await salesService.setQuoteRequestStatus(r.rfq_id, 'in_progress'); message.success('Megnyitva'); loadData(); }} />
-            </Tooltip>
-          )}
-          {r.status !== 'quoted' && (
-            <Tooltip title="Zárás (Árazva)">
-              <Button icon={<LockOutlined style={{ color: '#cf1322' }} />} size="small" style={{ background: '#fff1f0', borderColor: '#ffa39e' }} onClick={async (e) => { e.stopPropagation(); await salesService.setQuoteRequestStatus(r.rfq_id, 'quoted'); message.success('Lezárva'); loadData(); }} />
-            </Tooltip>
-          )}
 
         </Space>
       ),
@@ -2434,11 +2431,15 @@ const RFQs: React.FC = () => {
     openSendModal(list[0].rfqId, list[0].additionalRfqIds, list[0].itemIds);
   };
 
+  const DELIVERABLE_RFQ_STATUSES = ['ordered', 'confirmed', 'in_production', 'ready', 'in_delivery'];
+
   const handleBulkDelivery = async () => {
     const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
-    const orderedItems = selectedItems.filter((item: any) => item.is_ordered);
+    const orderedItems = selectedItems.filter((item: any) =>
+      item.is_ordered || DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status)
+    );
     if (!orderedItems.length) {
-      message.warning('Nincs megrendelt tétel a kijelöltek között (csak megrendelt tételeket lehet szállítani)');
+      message.warning('Nincs szállítható tétel a kijelöltek között (csak megrendelt vagy kész tételeket lehet szállítani)');
       return;
     }
     // Load pickup locations if not loaded yet
@@ -2460,10 +2461,10 @@ const RFQs: React.FC = () => {
       message.error('Válasszon átvételi pontot!');
       return;
     }
-    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && item.is_ordered);
+    const selectedItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId) && (
+      item.is_ordered || DELIVERABLE_RFQ_STATUSES.includes(item.rfq_status)
+    ));
     if (!selectedItems.length) return;
-
-    // Group by company (use company_name as key, also track company_id / contact data)
     const groups = new Map<string, { items: any[]; rfqId: number }>();
     selectedItems.forEach((item: any) => {
       const rfq = (rfqs || []).find((r: any) => r.id === item.rfq_id);
@@ -2586,6 +2587,69 @@ const RFQs: React.FC = () => {
       message.error('Hiba a számlázás előkészítésekor: ' + (err?.message || 'Ismeretlen hiba'));
     } finally {
       setBulkInvoiceLoading(false);
+    }
+  };
+
+  const openBulkCustomerModal = async () => {
+    setBulkCustomerCompanyId(null);
+    setBulkCustomerContactIds([]);
+    setBulkCustomerContacts([]);
+    // Ensure companies list is loaded
+    if (!companies.length) {
+      try {
+        const list = await crmService.getCompanies({ is_customer: true, compact: true });
+        setCompanies(list.results ?? list);
+      } catch {}
+    }
+    setBulkCustomerModalOpen(true);
+  };
+
+  const handleBulkCustomerCompanyChange = async (val: number | null) => {
+    setBulkCustomerCompanyId(val);
+    setBulkCustomerContactIds([]);
+    setBulkCustomerContacts([]);
+    if (val) {
+      setBulkCustomerContactsLoading(true);
+      try {
+        const cl = await crmService.getContactsByCompany(val);
+        setBulkCustomerContacts(Array.isArray(cl) ? cl : cl.results ?? []);
+      } catch {
+        setBulkCustomerContacts([]);
+      } finally {
+        setBulkCustomerContactsLoading(false);
+      }
+    }
+  };
+
+  const confirmBulkCustomerChange = async () => {
+    const rfqIds = Array.from(new Set(
+      flattenedItems
+        .filter((item: any) => bulkSelectedKeys.includes(item.uniqueId))
+        .map((item: any) => item.rfq_id as number)
+    ));
+    if (!rfqIds.length) return;
+    setBulkCustomerLoading(true);
+    let successCount = 0;
+    try {
+      for (const rfqId of rfqIds) {
+        try {
+          await salesService.updateQuoteRequestBasic(rfqId, {
+            company_id: bulkCustomerCompanyId ?? null,
+            contact_ids: bulkCustomerContactIds,
+          });
+          successCount++;
+        } catch {
+          message.error(`Hiba az RFQ #${rfqId} frissítésekor`);
+        }
+      }
+      if (successCount > 0) {
+        message.success(`${successCount} ajánlat frissítve`);
+        setBulkCustomerModalOpen(false);
+        setBulkSelectedKeys([]);
+        loadData();
+      }
+    } finally {
+      setBulkCustomerLoading(false);
     }
   };
 
@@ -2825,6 +2889,9 @@ const RFQs: React.FC = () => {
             <Button size="small" onClick={handleBulkSendEmail}>Árajánlat küldés</Button>
             <Button size="small" loading={bulkDeliveryLoading} onClick={handleBulkDelivery} style={{ background: '#e6f7ff', borderColor: '#91d5ff', color: '#096dd9' }}>Szállítás</Button>
             <Button size="small" loading={bulkInvoiceLoading} onClick={handleBulkInvoice} style={{ background: '#f6ffed', borderColor: '#b7eb8f', color: '#389e0d' }}>Számlázás</Button>
+            <Tooltip title="Ügyfél / kapcsolattartó csere">
+              <Button icon={<UserSwitchOutlined />} size="small" onClick={openBulkCustomerModal} />
+            </Tooltip>
             <Button size="small" danger onClick={handleBulkDelete}>Kijelöltek törlése</Button>
           </div>
         )}
@@ -4765,6 +4832,58 @@ const RFQs: React.FC = () => {
             </Select>
           </div>
         )}
+      </Modal>
+
+      {/* Bulk Ügyfél / kapcsolattartó csere modal */}
+      <Modal
+        title={<><UserSwitchOutlined style={{ marginRight: 8 }} />Ügyfél / kapcsolattartó csere</>}
+        open={bulkCustomerModalOpen}
+        onCancel={() => setBulkCustomerModalOpen(false)}
+        onOk={confirmBulkCustomerChange}
+        okText="Mentés"
+        cancelText="Mégse"
+        confirmLoading={bulkCustomerLoading}
+        width={480}
+        destroyOnClose
+      >
+        <div style={{ marginBottom: 4, color: '#888', fontSize: 12 }}>
+          {Array.from(new Set(
+            flattenedItems
+              .filter((item: any) => bulkSelectedKeys.includes(item.uniqueId))
+              .map((item: any) => item.rfq_id)
+          )).length} kijelölt ajánlat kerül frissítésre.
+        </div>
+        <Form layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item label="Ügyfél" style={{ marginBottom: 12 }}>
+            <Select
+              showSearch
+              allowClear
+              placeholder="Ügyfél kiválasztása…"
+              style={{ width: '100%' }}
+              value={bulkCustomerCompanyId}
+              onChange={handleBulkCustomerCompanyChange}
+              optionFilterProp="label"
+              filterOption={(input, option) =>
+                (option?.label as string ?? '').toLowerCase().includes(input.toLowerCase())
+              }
+              options={companies.map((c: any) => ({ value: c.id, label: c.name }))}
+            />
+          </Form.Item>
+          <Form.Item label="Kapcsolattartók" style={{ marginBottom: 0 }}>
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder={bulkCustomerCompanyId ? 'Kapcsolattartók kiválasztása…' : 'Előbb válasszon ügyfelet'}
+              style={{ width: '100%' }}
+              value={bulkCustomerContactIds}
+              onChange={(vals) => setBulkCustomerContactIds(vals)}
+              loading={bulkCustomerContactsLoading}
+              disabled={!bulkCustomerCompanyId}
+              optionFilterProp="label"
+              options={bulkCustomerContacts.map((c: any) => ({ value: c.id, label: c.name }))}
+            />
+          </Form.Item>
+        </Form>
       </Modal>
 
       <Modal

@@ -6711,16 +6711,72 @@ class DeliveryNoteViewSet(viewsets.ModelViewSet):
         if not rfq_item_ids:
             return Response({'error': 'rfq_item_ids kötelező'}, status=400)
 
+        DELIVERABLE_RFQ_STATUSES = ('ordered', 'confirmed', 'in_production', 'ready', 'in_delivery')
+
         items_data = []
+        # Track auto-created orders per RFQ to reuse within the same request
+        auto_created_orders: dict = {}
+
         for rfq_item_id in rfq_item_ids:
             try:
-                quote_item = QuoteRequestItem.objects.get(id=rfq_item_id)
+                quote_item = QuoteRequestItem.objects.select_related(
+                    'quote_request', 'product', 'material', 'manufacturing_product', 'service'
+                ).get(id=rfq_item_id)
             except QuoteRequestItem.DoesNotExist:
                 continue
 
-            cois = CustomerOrderItem.objects.filter(
+            cois = list(CustomerOrderItem.objects.filter(
                 quote_item=quote_item
-            ).exclude(customer_order__status='cancelled').exclude(status='cancelled')
+            ).exclude(customer_order__status='cancelled').exclude(status='cancelled'))
+
+            # If no CustomerOrderItem exists, auto-create one when RFQ is in a deliverable status
+            if not cois:
+                qr = quote_item.quote_request
+                if qr.status not in DELIVERABLE_RFQ_STATUSES:
+                    continue
+                # Reuse or create CustomerOrder for this RFQ
+                if qr.id in auto_created_orders:
+                    order = auto_created_orders[qr.id]
+                else:
+                    existing = CustomerOrder.objects.filter(
+                        quote_request=qr
+                    ).exclude(status='cancelled').first()
+                    if existing:
+                        order = existing
+                    else:
+                        rfq_num = qr.number or qr.request_number or f"QR{qr.id}"
+                        existing_count = CustomerOrder.objects.filter(quote_request=qr).count()
+                        order_number = rfq_num if existing_count == 0 else f"{rfq_num}-{existing_count + 1}"
+                        while CustomerOrder.objects.filter(order_number=order_number).exists():
+                            existing_count += 1
+                            order_number = f"{rfq_num}-{existing_count}"
+                        order = CustomerOrder.objects.create(
+                            quote_request=qr,
+                            order_number=order_number,
+                            status='new',
+                            created_by=request.user if request.user.is_authenticated else None,
+                        )
+                        try:
+                            QuoteLog.objects.create(
+                                quote=qr,
+                                user=request.user if request.user.is_authenticated else None,
+                                action=f'Szállításból auto-létrehozott megrendelés: {order.order_number}',
+                            )
+                        except Exception:
+                            pass
+                    auto_created_orders[qr.id] = order
+                # Create the COI
+                coi = CustomerOrderItem.objects.create(
+                    customer_order=order,
+                    quote_item=quote_item,
+                    quantity=quote_item.quantity or 1,
+                    unit=quote_item.unit or 'db',
+                    net_unit_price=quote_item.net_unit_price or 0,
+                    vat_rate=quote_item.vat_rate or 27,
+                    discount_percent=quote_item.discount_percent or 0,
+                    description=quote_item.description or '',
+                )
+                cois = [coi]
 
             for coi in cois:
                 delivered = DeliveryNoteItem.objects.filter(

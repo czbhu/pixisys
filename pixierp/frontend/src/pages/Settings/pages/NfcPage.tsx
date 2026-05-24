@@ -7,7 +7,7 @@ import {
 import NumInput from '../../../components/NumInput';
 import {
   PlusOutlined, EditOutlined, DeleteOutlined, CheckCircleOutlined,
-  CloseCircleOutlined, CopyOutlined, ScanOutlined,
+  CloseCircleOutlined, CopyOutlined, ScanOutlined, HistoryOutlined,
 } from '@ant-design/icons';
 import api from '../../../services/api';
 
@@ -24,6 +24,19 @@ interface IoTDevice {
   is_active: boolean;
 }
 
+interface TriggerLogEntry {
+  id: number;
+  triggered_at: string;
+  success: boolean;
+  note: string;
+  user_display: string;
+}
+
+interface Department {
+  id: number;
+  name: string;
+}
+
 interface NfcTag {
   id: number;
   name: string;
@@ -37,6 +50,7 @@ interface NfcTag {
   iot_channel: number;
   sun_key: string;
   last_counter: number;
+  allowed_departments: number[];
   created_at: string;
   updated_at: string;
 }
@@ -55,12 +69,35 @@ const DEVICE_TYPE_CHANNELS: Record<string, { id: number; label: string }[]> = {
 const NfcPage: React.FC = () => {
   const [tags, setTags] = useState<NfcTag[]>([]);
   const [iotDevices, setIotDevices] = useState<IoTDevice[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingTag, setEditingTag] = useState<NfcTag | null>(null);
   const [saving, setSaving] = useState(false);
   const [copiedId, setCopiedId] = useState<number | null>(null);
   const [form] = Form.useForm();
+
+  // Log modal
+  const [logModalOpen, setLogModalOpen] = useState(false);
+  const [logTag, setLogTag] = useState<NfcTag | null>(null);
+  const [logEntries, setLogEntries] = useState<TriggerLogEntry[]>([]);
+  const [logLoading, setLogLoading] = useState(false);
+
+  const openLog = async (tag: NfcTag) => {
+    setLogTag(tag);
+    setLogEntries([]);
+    setLogModalOpen(true);
+    setLogLoading(true);
+    try {
+      const res = await api.get(`/nfc-tags/${tag.id}/logs/`);
+      setLogEntries(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      message.error('Napló betöltése sikertelen');
+    } finally {
+      setLogLoading(false);
+    }
+  };
+
   const selectedDeviceId = Form.useWatch('iot_device', form);
   const tagType = Form.useWatch('tag_type', form);
 
@@ -72,14 +109,17 @@ const NfcPage: React.FC = () => {
   const loadData = async () => {
     setLoading(true);
     try {
-      const [tagsRes, devicesRes] = await Promise.all([
+      const [tagsRes, devicesRes, deptsRes] = await Promise.all([
         api.get('/nfc-tags/'),
         api.get('/iot-devices/'),
+        api.get('/hr/departments/'),
       ]);
       const tagsData = tagsRes.data?.results ?? tagsRes.data;
       const devicesData = devicesRes.data?.results ?? devicesRes.data;
+      const deptsData = deptsRes.data?.results ?? deptsRes.data;
       setTags(Array.isArray(tagsData) ? tagsData : []);
       setIotDevices(Array.isArray(devicesData) ? devicesData : []);
+      setDepartments(Array.isArray(deptsData) ? deptsData : []);
     } catch (e: any) {
       message.error(e?.response?.data?.error || 'Nem sikerült betölteni az adatokat');
     } finally {
@@ -106,6 +146,7 @@ const NfcPage: React.FC = () => {
       iot_device: tag.iot_device ?? undefined,
       iot_channel: tag.iot_channel,
       sun_key: tag.sun_key,
+      allowed_departments: tag.allowed_departments ?? [],
     });
     setModalOpen(true);
   };
@@ -203,6 +244,21 @@ const NfcPage: React.FC = () => {
           : <Text type="secondary">—</Text>,
     },
     {
+      title: 'Osztályok',
+      key: 'allowed_departments',
+      render: (_: any, record: NfcTag) => {
+        if (!record.allowed_departments?.length) return <Text type="secondary" style={{ fontSize: 12 }}>Minden osztály</Text>;
+        return (
+          <Space size={4} wrap>
+            {record.allowed_departments.map(id => {
+              const dept = departments.find(d => d.id === id);
+              return <Tag key={id} color="blue" style={{ fontSize: 11 }}>{dept?.name ?? id}</Tag>;
+            })}
+          </Space>
+        );
+      },
+    },
+    {
       title: 'Állapot',
       dataIndex: 'is_active',
       key: 'is_active',
@@ -234,6 +290,9 @@ const NfcPage: React.FC = () => {
         <Space>
           <Button size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             Szerkeszt
+          </Button>
+          <Button size="small" icon={<HistoryOutlined />} onClick={() => openLog(record)}>
+            Napló
           </Button>
           <Popconfirm
             title="Biztosan törlöd ezt az NFC taget?"
@@ -319,6 +378,20 @@ const NfcPage: React.FC = () => {
 
           <Form.Item name="location" label="Hely / leírás">
             <Input placeholder="pl. Szerver szoba bejárat" />
+          </Form.Item>
+
+          <Form.Item
+            name="allowed_departments"
+            label="Engedélyezett osztályok"
+            help="Ha üres, minden osztály aktiválhatja. Ha meg van adva, csak a kiválasztott osztályok használhatják."
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="Minden osztály (nincs korlátozás)"
+              options={departments.map(d => ({ value: d.id, label: d.name }))}
+              optionFilterProp="label"
+            />
           </Form.Item>
 
           <Divider orientation="left" style={{ fontSize: 13 }}>IoT kapcsolat</Divider>
@@ -452,6 +525,55 @@ const NfcPage: React.FC = () => {
           )}
 
         </Form>
+      </Modal>
+
+      {/* Trigger log modal */}
+      <Modal
+        open={logModalOpen}
+        title={<Space><HistoryOutlined />Aktiválási napló{logTag ? ` — ${logTag.name}` : ''}</Space>}
+        onCancel={() => setLogModalOpen(false)}
+        footer={<Button onClick={() => setLogModalOpen(false)}>Bezár</Button>}
+        width={620}
+        destroyOnHidden
+      >
+        <Table
+          dataSource={logEntries}
+          rowKey="id"
+          loading={logLoading}
+          size="small"
+          pagination={{ pageSize: 20, size: 'small' }}
+          locale={{ emptyText: 'Még nincs aktiválási esemény' }}
+          columns={[
+            {
+              title: 'Időpont',
+              dataIndex: 'triggered_at',
+              key: 'triggered_at',
+              render: (v: string) => new Date(v).toLocaleString('hu-HU'),
+              width: 180,
+            },
+            {
+              title: 'Felhasználó',
+              dataIndex: 'user_display',
+              key: 'user_display',
+            },
+            {
+              title: 'Eredmény',
+              dataIndex: 'success',
+              key: 'success',
+              width: 100,
+              render: (v: boolean) =>
+                v
+                  ? <Tag icon={<CheckCircleOutlined />} color="success">Sikeres</Tag>
+                  : <Tag icon={<CloseCircleOutlined />} color="error">Hiba</Tag>,
+            },
+            {
+              title: 'Megjegyzés',
+              dataIndex: 'note',
+              key: 'note',
+              render: (v: string) => v || <Text type="secondary">—</Text>,
+            },
+          ]}
+        />
       </Modal>
     </Card>
   );

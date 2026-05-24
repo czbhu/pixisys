@@ -52,6 +52,7 @@ class Company(models.Model):
     logo = models.ImageField(upload_to='company/logos/', blank=True, null=True, verbose_name="Logó")
     is_default = models.BooleanField(default=False, verbose_name="Alapértelmezett")
     is_active = models.BooleanField(default=True, verbose_name="Aktív")
+    quote_validity_days = models.PositiveIntegerField(default=30, verbose_name="Ajánlati érvényesség (nap)")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -660,6 +661,13 @@ class NfcTag(models.Model):
         verbose_name='Bejelentkezés szükséges',
         help_text='Ha ki van kapcsolva, az NFC tag bejelentkezés nélkül is aktivál (csak NTAG424 SUN kriptó szükséges). Zárolt képernyőnél is működik.',
     )
+    allowed_departments = models.ManyToManyField(
+        'hr.Department',
+        blank=True,
+        related_name='nfc_tags',
+        verbose_name='Engedélyezett osztályok',
+        help_text='Ha üres, minden osztály használhatja. Ha meg van adva, csak ezek az osztályok aktiválhatják.',
+    )
 
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -672,6 +680,36 @@ class NfcTag(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.get_tag_type_display()})"
+
+
+class NfcTriggerLog(models.Model):
+    """Rögzíti minden NFC tag aktiválás eseményét."""
+    tag = models.ForeignKey(
+        NfcTag,
+        on_delete=models.CASCADE,
+        related_name='trigger_logs',
+        verbose_name='NFC tag',
+    )
+    triggered_by = models.ForeignKey(
+        'auth.User',
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='nfc_trigger_logs',
+        verbose_name='Felhasználó',
+    )
+    triggered_at = models.DateTimeField(auto_now_add=True, verbose_name='Időpont')
+    success = models.BooleanField(default=True, verbose_name='Sikeres')
+    note = models.CharField(max_length=255, blank=True, default='', verbose_name='Megjegyzés')
+
+    class Meta:
+        verbose_name = 'NFC trigger napló'
+        verbose_name_plural = 'NFC trigger naplók'
+        ordering = ['-triggered_at']
+        db_table = 'nfc_trigger_logs'
+
+    def __str__(self):
+        user = self.triggered_by.get_full_name() if self.triggered_by else 'Névtelen'
+        return f"{self.tag.name} — {user} @ {self.triggered_at}"
 
 
 class ActivityLog(models.Model):

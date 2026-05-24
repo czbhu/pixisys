@@ -2831,11 +2831,23 @@ class NfcTagViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         from .models import NfcTag
-        return NfcTag.objects.select_related('iot_device').all()
+        return NfcTag.objects.select_related('iot_device').prefetch_related('allowed_departments').all()
 
     def get_serializer_class(self):
         from .serializers import NfcTagSerializer
         return NfcTagSerializer
+
+    @action(detail=True, methods=['get'], url_path='logs')
+    def logs(self, request, pk=None):
+        """Return trigger log for this NFC tag (newest first)."""
+        tag = self.get_object()
+        from .models import NfcTriggerLog
+        from .serializers import NfcTriggerLogSerializer
+        qs = (NfcTriggerLog.objects
+              .filter(tag=tag)
+              .select_related('triggered_by')
+              .order_by('-triggered_at')[:200])
+        return Response(NfcTriggerLogSerializer(qs, many=True).data)
 
     @action(detail=True, methods=['get', 'post'], permission_classes=[])
     def trigger(self, request, pk=None):
@@ -3178,6 +3190,16 @@ class NfcTagViewSet(viewsets.ModelViewSet):
                     auth = (device.shelly_auth_user, device.shelly_auth_pass)
                 r = req.post(url, json=payload, auth=auth, timeout=5)
                 r.raise_for_status()
+                # Log successful trigger
+                try:
+                    from .models import NfcTriggerLog
+                    NfcTriggerLog.objects.create(
+                        tag=tag,
+                        triggered_by=request.user if request.user.is_authenticated else None,
+                        success=True,
+                    )
+                except Exception:
+                    pass
                 # HTML kérés: PRG — redirect ?done=1-re, hogy frissítéskor ne aktiváljon újra
                 if 'text/html' in request.META.get('HTTP_ACCEPT', ''):
                     from django.http import HttpResponseRedirect
@@ -3185,6 +3207,16 @@ class NfcTagViewSet(viewsets.ModelViewSet):
                     return HttpResponseRedirect(f'{base_url}?done=1')
                 return _resp(True, 'Aktiválva', f'A relé sikeresen aktiválva ({tag.name}).', 200)
             except Exception as e:
+                try:
+                    from .models import NfcTriggerLog
+                    NfcTriggerLog.objects.create(
+                        tag=tag,
+                        triggered_by=request.user if request.user.is_authenticated else None,
+                        success=False,
+                        note=str(e)[:255],
+                    )
+                except Exception:
+                    pass
                 return _resp(False, 'Eszköz hiba', f'Az IoT eszköz nem elérhető: {e}', 400)
         return _resp(False, 'Ismeretlen eszköz', 'Ismeretlen IoT eszköz típus.', 400)
 
