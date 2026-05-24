@@ -39,6 +39,15 @@ def sync_company_to_local_db(data):
                  # Let's trust PixInvoice as Source of Truth for Name
                  company.name = new_name
 
+            # Sync address fields from PixInvoice (source of truth)
+            for _src, _dst in [('postal_code', 'postal_code'), ('city', 'city'),
+                                ('street_name', 'street_name'), ('address', 'address'),
+                                ('country', 'country'),
+                                ('public_place_category', 'public_place_category'),
+                                ('street_number', 'house_number')]:
+                _val = data.get(_src) or ''
+                if _val and not getattr(company, _dst, ''):
+                    setattr(company, _dst, _val)
             company.save()
         else:
             # Fallback 2: Check by Name (exact match)
@@ -144,6 +153,16 @@ def bulk_sync_companies_to_local_db(items):
             if name and (cur.startswith('External Client') or not cur or cur == 'Névtelen'):
                 company.name = name
                 changed = True
+            # Sync address fields from PixInvoice (source of truth)
+            for _src, _dst in [('postal_code', 'postal_code'), ('city', 'city'),
+                                ('street_name', 'street_name'), ('address', 'address'),
+                                ('country', 'country'),
+                                ('public_place_category', 'public_place_category'),
+                                ('street_number', 'house_number')]:
+                _val = item.get(_src) or ''
+                if _val and not getattr(company, _dst, ''):
+                    setattr(company, _dst, _val)
+                    changed = True
             if changed:
                 to_update.append(company)
             result[cid] = company
@@ -162,7 +181,9 @@ def bulk_sync_companies_to_local_db(items):
     if to_update:
         Company.objects.bulk_update(
             to_update,
-            ['external_id', 'is_supplier', 'is_customer', 'tax_number', 'name'],
+            ['external_id', 'is_supplier', 'is_customer', 'tax_number', 'name',
+             'postal_code', 'city', 'street_name', 'address', 'country',
+             'public_place_category', 'house_number'],
             batch_size=200,
         )
 
