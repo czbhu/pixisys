@@ -1120,7 +1120,7 @@ const RFQs: React.FC = () => {
         )}
         {isMfg && (
           <>
-            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments onStatusChange={loadData} />
+            <ProductSubItemsTable productId={Number(r.manufacturing_product)} showNotesAndAttachments />
             <MaterialNeedsTree
               manufacturingProductId={Number(r.manufacturing_product)}
               quantity={Number(r.quantity || 1)}

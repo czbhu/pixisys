@@ -34,6 +34,7 @@ const STATUS_OPTIONS: { value: string; label: string; color: string }[] = [
   { value: 'new', label: 'Új', color: 'blue' },
   { value: 'confirmed', label: 'Megerősítve', color: 'cyan' },
   { value: 'sent', label: 'Kiküldve', color: 'gold' },
+  { value: 'ordered', label: 'Megrendelve', color: 'geekblue' },
   { value: 'in_production', label: 'Gyártásban', color: 'orange' },
   { value: 'ready', label: 'Kész', color: 'green' },
   { value: 'in_delivery', label: 'Száll. alatt', color: 'purple' },
