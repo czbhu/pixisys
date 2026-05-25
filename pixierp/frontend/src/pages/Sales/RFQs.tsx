@@ -85,6 +85,7 @@ const RFQs: React.FC = () => {
   const [backgroundLoading, setBackgroundLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [rfqs, setRfqs] = useState<any[]>([]);
+  const [costStatusOverrides, setCostStatusOverrides] = useState<Record<number, string>>({});
   const [filtered, setFiltered] = useState<any[]>([]);
   const [companies, setCompanies] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -705,6 +706,7 @@ const RFQs: React.FC = () => {
       const firstResults: any[] = firstPageData.results ?? [];
       const totalCount: number = firstPageData.count ?? firstResults.length;
       setRfqs(firstResults);
+      setCostStatusOverrides({});  // clear overrides when fresh data loads
       setProjects(projRes as any);
       setLoading(false);
 
@@ -917,8 +919,8 @@ const RFQs: React.FC = () => {
     if (!costStatuses.length) {
       return renderRfqStatusControl(r, r.rfq_id);
     }
-    const topStatus = r._costTopStatus || 'new';
-    const isPartial = r._costIsPartial;
+    const topStatus = costStatusOverrides[r.id] ?? r._costTopStatus ?? 'new';
+    const isPartial = costStatusOverrides[r.id] ? false : r._costIsPartial;
     const meta = COST_STATUS_META[topStatus] || { color: 'default', text: topStatus };
     const displayLabel = isPartial ? `${meta.text} (részben)` : meta.text;
 
@@ -929,22 +931,8 @@ const RFQs: React.FC = () => {
         try {
           await salesService.updateRfqItemCostItemsStatus(r.id, newStatus);
           message.success(`Státusz módosítva: ${COST_ITEM_STATUS_OPTIONS.find(o => o.value === newStatus)?.label}`);
-          // Update local state after confirmed API success
-          setRfqs(prev => prev.map(rfq => {
-            if (rfq.id !== r.rfq_id) return rfq;
-            return {
-              ...rfq,
-              items: (rfq.items || []).map((item: any) => {
-                if (item.id !== r.id) return item;
-                return {
-                  ...item,
-                  cost_items_statuses: (item.cost_items_statuses || []).map((ci: any) =>
-                    ci.status === 'cancelled' ? ci : { ...ci, status: newStatus }
-                  ),
-                };
-              }),
-            };
-          }));
+          // Directly override the displayed status for this item (bypasses rfqs→filtered→flattenedItems chain)
+          setCostStatusOverrides(prev => ({ ...prev, [r.id]: newStatus }));
         } catch {
           message.error('Hiba a státusz frissítésekor');
         }
@@ -1374,7 +1362,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, loadData, setSendOpenId, createOrderLoading]);
+  ]), [navigate, loadData, setSendOpenId, createOrderLoading, costStatusOverrides]);
 
   const handleCreate = async () => {
     try {
