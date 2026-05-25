@@ -1094,7 +1094,7 @@ const RFQDetail: React.FC = () => {
         <div style={{ background: '#e6f4ff', border: '1px solid #91caff', borderRadius: 8, padding: '8px 14px 4px', marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 600, color: '#0958d9', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Tételek</div>
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
-            <Col xs={24} md={10}>
+            <Col xs={24} md={24}>
               <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
                 <Select
                   allowClear
@@ -1111,11 +1111,16 @@ const RFQDetail: React.FC = () => {
                     }
                   }}
                 >
-                  {(projects || []).filter((p: any) => p.status === 'open').map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.company_name ? `${p.company_name} – ${p.name}` : p.name}>
-                      {p.company_name ? <>{p.company_name} <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
-                    </Select.Option>
-                  ))}
+                  {(projects || []).filter((p: any) => p.status === 'open').map((p: any) => {
+                    const co = p.company_name || '';
+                    const coShort = co.length > 15 ? co.slice(0, 15) + '…' : co;
+                    const label = co ? `${co} – ${p.name}` : p.name;
+                    return (
+                      <Select.Option key={p.id} value={p.id} label={label}>
+                        {co ? <><span title={co}>{coShort}</span> <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
+                      </Select.Option>
+                    );
+                  })}
                 </Select>
               </Form.Item>
             </Col>

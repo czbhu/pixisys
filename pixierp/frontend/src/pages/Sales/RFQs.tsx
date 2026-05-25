@@ -4992,7 +4992,7 @@ const RFQs: React.FC = () => {
             const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
             return norm(text).includes(norm(input));
           }}
-          options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => ({ value: p.id, label: p.company_name ? `${p.company_name} – ${p.name}` : p.name }))}
+          options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => { const co = p.company_name || ''; const coShort = co.length > 15 ? co.slice(0, 15) + '…' : co; return { value: p.id, label: co ? `${coShort} – ${p.name}` : p.name }; })}
         />
       </Modal>
 
