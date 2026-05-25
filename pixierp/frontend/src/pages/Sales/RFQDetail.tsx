@@ -1117,7 +1117,7 @@ const RFQDetail: React.FC = () => {
                     const label = co ? `${co} – ${p.name}` : p.name;
                     return (
                       <Select.Option key={p.id} value={p.id} label={label}>
-                        {co ? <><span title={co}>{coShort}</span> <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
+                        {co ? <><Tooltip title={co}><span>{coShort}</span></Tooltip> <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
                       </Select.Option>
                     );
                   })}
