@@ -4976,12 +4976,6 @@ const RFQs: React.FC = () => {
           style={{ width: '100%' }}
           placeholder="Válassz projektet…"
           value={bulkProjectId}
-          onChange={(v) => setBulkProjectId(v)}
-          filterOption={(input, option) => {
-            const text = String(option?.label || '');
-            const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-            return norm(text).includes(norm(input));
-          }}
           onChange={(v) => {
             if (!v) { setBulkProjectId(v); return; }
             const proj = (projects || []).find((p: any) => p.id === v);
@@ -4992,6 +4986,11 @@ const RFQs: React.FC = () => {
               return;
             }
             setBulkProjectId(v);
+          }}
+          filterOption={(input, option) => {
+            const text = String(option?.label || '');
+            const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+            return norm(text).includes(norm(input));
           }}
           options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => ({ value: p.id, label: p.company_name ? `${p.company_name} – ${p.name}` : p.name }))}
         />
