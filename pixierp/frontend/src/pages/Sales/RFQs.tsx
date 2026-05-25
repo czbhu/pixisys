@@ -919,8 +919,8 @@ const RFQs: React.FC = () => {
     if (!costStatuses.length) {
       return renderRfqStatusControl(r, r.rfq_id);
     }
-    const topStatus = costStatusOverrides[r.id] ?? r._costTopStatus ?? 'new';
-    const isPartial = costStatusOverrides[r.id] ? false : r._costIsPartial;
+    const topStatus = r._costTopStatus ?? 'new';
+    const isPartial = r._costIsPartial;
     const meta = COST_STATUS_META[topStatus] || { color: 'default', text: topStatus };
     const displayLabel = isPartial ? `${meta.text} (részben)` : meta.text;
 
@@ -1016,6 +1016,9 @@ const RFQs: React.FC = () => {
             )
           : null;
         const costIsPartial = costTopStatus !== null && rawCostStatuses.some(s => s !== costTopStatus);
+        // Apply any pending local override so the row reference changes immediately after a status change
+        const overriddenStatus = costStatusOverrides[item.id] ?? costTopStatus;
+        const overriddenIsPartial = costStatusOverrides[item.id] ? false : costIsPartial;
         return {
           ...item,
           uniqueId: `${rfq.id}_${item.id ?? idx}`,
@@ -1036,8 +1039,8 @@ const RFQs: React.FC = () => {
           currency_symbol: rfq.currency_symbol || rfq.currency_code || 'Ft',
           currency_code: rfq.currency_code || '',
           created_by_name: rfq.created_by_name,
-          _costTopStatus: costTopStatus,
-          _costIsPartial: costIsPartial,
+          _costTopStatus: overriddenStatus,
+          _costIsPartial: overriddenIsPartial,
         };
       };
 
@@ -1075,7 +1078,7 @@ const RFQs: React.FC = () => {
       });
     }
     return res;
-  }, [filtered, statusFilter]);
+  }, [filtered, statusFilter, costStatusOverrides]);
 
   const renderExpandedItemRow = (r: any) => {
     const subItems: any[] = r.sub_items || [];
@@ -1362,7 +1365,7 @@ const RFQs: React.FC = () => {
         </Space>
       ),
     },
-  ]), [navigate, loadData, setSendOpenId, createOrderLoading, costStatusOverrides]);
+  ]), [navigate, loadData, setSendOpenId, createOrderLoading]);
 
   const handleCreate = async () => {
     try {
