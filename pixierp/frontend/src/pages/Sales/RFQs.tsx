@@ -877,9 +877,17 @@ const RFQs: React.FC = () => {
             disabled={option.value === currentStatus}
             style={{ paddingTop: 1, paddingBottom: 1, lineHeight: 1.4 }}
             onClick={async () => {
-              await salesService.setQuoteRequestStatus(rfqId, option.value);
-              message.success(`Státusz: ${option.label}`);
-              loadData();
+              // Optimistic update
+              setRfqs(prev => prev.map(rfq =>
+                rfq.id !== rfqId ? rfq : { ...rfq, status: option.value, effective_status: option.value, effective_status_label: option.label }
+              ));
+              try {
+                await salesService.setQuoteRequestStatus(rfqId, option.value);
+                message.success(`Státusz: ${option.label}`);
+              } catch {
+                message.error('Hiba a státusz frissítésekor');
+                loadData(); // revert on error
+              }
             }}
           >
             {option.label}
@@ -920,12 +928,28 @@ const RFQs: React.FC = () => {
       const IN_PROD_ABOVE = ['in_production', 'ready', 'in_delivery', 'delivered'];
       const activeCount = costStatuses.filter(ci => IN_PROD_ABOVE.includes(ci.status)).length;
       const doUpdate = async () => {
+        // Optimistic update: apply new status to local state immediately
+        setRfqs(prev => prev.map(rfq => {
+          if (rfq.id !== r.rfq_id) return rfq;
+          return {
+            ...rfq,
+            items: (rfq.items || []).map((item: any) => {
+              if (item.id !== r.id) return item;
+              return {
+                ...item,
+                cost_items_statuses: (item.cost_items_statuses || []).map((ci: any) =>
+                  ci.status === 'cancelled' ? ci : { ...ci, status: newStatus }
+                ),
+              };
+            }),
+          };
+        }));
         try {
           await salesService.updateRfqItemCostItemsStatus(r.id, newStatus);
           message.success(`Státusz módosítva: ${COST_ITEM_STATUS_OPTIONS.find(o => o.value === newStatus)?.label}`);
-          loadData();
         } catch {
           message.error('Hiba a státusz frissítésekor');
+          loadData(); // revert optimistic update on error
         }
       };
       if (activeCount > 0) {
