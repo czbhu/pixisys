@@ -22,6 +22,8 @@ export interface Project {
     contact_names: string[];
     project_manager_name?: string;
     status: 'open' | 'closed';
+    company?: number | null;
+    company_name?: string | null;
     created_at: string;
     updated_at: string;
 }

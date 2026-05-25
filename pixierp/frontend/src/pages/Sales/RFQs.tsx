@@ -1011,6 +1011,7 @@ const RFQs: React.FC = () => {
           rfq_id: rfq.id,
           rfq_title: rfq.title,
           company_name: rfqCompanyName,
+          company_id: rfq.company?.id ?? null,
           contact_names: rfqContactNames,
           is_private: rfqIsPrivate,
           issue_date: rfq.issue_date,
@@ -4981,7 +4982,18 @@ const RFQs: React.FC = () => {
             const norm = (s: string) => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
             return norm(text).includes(norm(input));
           }}
-          options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => ({ value: p.id, label: p.name }))}
+          onChange={(v) => {
+            if (!v) { setBulkProjectId(v); return; }
+            const proj = (projects || []).find((p: any) => p.id === v);
+            const selectedRfqItems = flattenedItems.filter((item: any) => bulkSelectedKeys.includes(item.uniqueId));
+            const rfqCompanyIds = Array.from(new Set(selectedRfqItems.map((item: any) => item.company_id).filter(Boolean)));
+            if (proj?.company && rfqCompanyIds.length > 0 && !rfqCompanyIds.every((cid: any) => cid === proj.company)) {
+              message.warning(`A kiválasztott projekt más ügyfélhez tartozik (${proj.company_name || proj.company}). Kérlek válassz az ajánlat ügyfeléhez tartozó projektet!`);
+              return;
+            }
+            setBulkProjectId(v);
+          }}
+          options={(projects || []).filter((p: any) => p.status === 'open').map((p: any) => ({ value: p.id, label: p.company_name ? `${p.company_name} – ${p.name}` : p.name }))}
         />
       </Modal>
 

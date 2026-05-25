@@ -1093,9 +1093,25 @@ const RFQDetail: React.FC = () => {
           <Row gutter={[8, 4]} style={{ marginBottom: 6 }}>
             <Col xs={24} md={10}>
               <Form.Item label="Projekt" name="project_id" style={{ marginBottom: 0 }}>
-                <Select allowClear showSearch optionFilterProp="label" placeholder="Válassz projektet">
-                  {(projects || []).map((p: any) => (
-                    <Select.Option key={p.id} value={p.id} label={p.name}>{p.name}</Select.Option>
+                <Select
+                  allowClear
+                  showSearch
+                  optionFilterProp="label"
+                  placeholder="Válassz projektet"
+                  onChange={(v: number | undefined) => {
+                    if (!v) return;
+                    const proj = (projects || []).find((p: any) => p.id === v);
+                    const rfqCompanyId = rfq?.company?.id ?? null;
+                    if (proj?.company && rfqCompanyId && proj.company !== rfqCompanyId) {
+                      message.warning(`Ez a projekt más ügyfélhez tartozik (${proj.company_name || proj.company}). Kérlek válassz az ajánlat ügyfeléhez tartozó projektet!`);
+                      formBasic.setFieldValue('project_id', undefined);
+                    }
+                  }}
+                >
+                  {(projects || []).filter((p: any) => p.status === 'open').map((p: any) => (
+                    <Select.Option key={p.id} value={p.id} label={p.company_name ? `${p.company_name} – ${p.name}` : p.name}>
+                      {p.company_name ? <>{p.company_name} <span style={{ color: '#888' }}>–</span> {p.name}</> : p.name}
+                    </Select.Option>
                   ))}
                 </Select>
               </Form.Item>
