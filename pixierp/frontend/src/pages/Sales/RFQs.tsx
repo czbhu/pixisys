@@ -2363,8 +2363,12 @@ const RFQs: React.FC = () => {
     setBulkStatusChangeLoading(true);
     let successCount = 0;
 
-    // Items with cost items: change cost_items status (visible status comes from cost_items_statuses)
-    const itemsWithCosts = selectedItems.filter((item: any) => (item.cost_items_statuses || []).length > 0);
+    // Items with cost items: change cost_items status only when status is valid for cost items
+    const COST_ITEM_VALID_STATUSES = ['new', 'confirmed', 'sent', 'in_production', 'ready', 'in_delivery', 'delivered', 'rejected'];
+    const isCostItemStatus = COST_ITEM_VALID_STATUSES.includes(newStatus);
+    const itemsWithCosts = isCostItemStatus
+      ? selectedItems.filter((item: any) => (item.cost_items_statuses || []).length > 0)
+      : [];
     for (const item of itemsWithCosts) {
       try {
         await salesService.updateRfqItemCostItemsStatus(item.id, newStatus);
@@ -2374,10 +2378,10 @@ const RFQs: React.FC = () => {
       }
     }
 
-    // Items without cost items: change RFQ (QuoteRequest) status
+    // Items without cost items (or non-cost-item statuses): change RFQ (QuoteRequest) status
     const rfqIdsNoCost = Array.from(new Set(
       selectedItems
-        .filter((item: any) => !(item.cost_items_statuses || []).length)
+        .filter((item: any) => !isCostItemStatus || !(item.cost_items_statuses || []).length)
         .map((item: any) => item.rfq_id as number)
     ));
     for (const rfqId of rfqIdsNoCost) {
