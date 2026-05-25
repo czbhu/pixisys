@@ -829,6 +829,7 @@ const RFQs: React.FC = () => {
     { value: 'delivered', label: 'Leszállítva' },
     { value: 'invoiced', label: 'Kiszámlázva' },
     { value: 'expired', label: 'Lejárt' },
+    { value: 'archived', label: 'Archív' },
     { value: 'rejected', label: 'Elutasítva' },
   ];
 
